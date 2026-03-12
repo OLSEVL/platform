@@ -1,0 +1,48 @@
+# Пример конфига nginx для домена bot13123.online
+# Скопируйте в /etc/nginx/sites-available/ и создайте симлинк в sites-enabled:
+#   sudo cp nginx-bot13123.conf.example /etc/nginx/sites-available/bot13123.online
+#   sudo ln -s /etc/nginx/sites-available/bot13123.online /etc/nginx/sites-enabled/
+#   sudo nginx -t && sudo systemctl reload nginx
+#
+# В этом случае Laravel запускайте через php-fpm или оставьте php artisan serve на 127.0.0.1:8000
+# и nginx будет проксировать на него.
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name bot13123.online www.bot13123.online;
+
+    root /root/platform/public;
+    index index.php;
+
+    location / {
+        try_files $uri $uri/ /index.php?$query_string;
+    }
+
+    location ~ \.php$ {
+        fastcgi_pass unix:/var/run/php/php8.3-fpm.sock;
+        fastcgi_param SCRIPT_FILENAME $realpath_root$fastcgi_script_name;
+        include fastcgi_params;
+        fastcgi_hide_header X-Powered-By;
+    }
+
+    location ~ /\.(?!well-known).* {
+        deny all;
+    }
+}
+
+# Вариант: если Laravel работает через php artisan serve на порту 8000
+# (удалите блок выше и раскомментируйте ниже)
+#
+# server {
+#     listen 80;
+#     server_name bot13123.online www.bot13123.online;
+#     location / {
+#         proxy_pass http://127.0.0.1:8000;
+#         proxy_http_version 1.1;
+#         proxy_set_header Host $host;
+#         proxy_set_header X-Real-IP $remote_addr;
+#         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+#         proxy_set_header X-Forwarded-Proto $scheme;
+#     }
+# }
