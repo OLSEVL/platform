@@ -41,7 +41,7 @@ php artisan migrate
 
 1. Установлены **nginx** и **php8.3-fpm**, конфиг развёрнут из `nginx-platform.conf`:
    ```bash
-   sudo cp /root/platform/nginx-platform.conf /etc/nginx/sites-available/platform
+   sudo cp /home/o/platform/nginx-platform.conf /etc/nginx/sites-available/platform
    sudo ln -sf /etc/nginx/sites-available/platform /etc/nginx/sites-enabled/
    sudo rm -f /etc/nginx/sites-enabled/default   # опционально
    sudo chown -R www-data:www-data storage bootstrap/cache
@@ -57,7 +57,7 @@ php artisan migrate
 ### Запуск всей платформы одной командой
 
 ```bash
-cd /root/platform
+cd /home/o/platform
 ./start-all.sh
 ```
 

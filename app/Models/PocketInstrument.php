@@ -8,7 +8,7 @@ class PocketInstrument extends Model
 {
     protected $fillable = [
         'instrument', 'display_name', 'priority',
-        'session_token', 'uid', 'is_demo', 'is_active',
+        'session_token', 'uid', 'is_demo', 'is_active', 'proxy_url',
     ];
 
     protected function casts(): array

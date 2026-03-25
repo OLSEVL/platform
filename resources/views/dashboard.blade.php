@@ -56,6 +56,44 @@
     let oldestLoadedTime = null;
     let allChartData = [];
     let loadingMore = false;
+    let refreshInterval = null;
+
+    function startAutoRefresh() {
+        if (refreshInterval) clearInterval(refreshInterval);
+        refreshInterval = setInterval(() => {
+            if (!currentInstrument || loadingMore) return;
+            fetchCandles(currentInstrument)
+                .then(data => {
+                    const candles = data.candles || [];
+                    if (candles.length === 0) return;
+                    const newBars = buildChartData(candles);
+                    const existingTimes = new Set(allChartData.map(c => c.time));
+                    
+                    let hasNewData = false;
+                    newBars.forEach(bar => {
+                        try {
+                            // Update existing bar or add new one
+                            candlestickSeries.update(bar);
+                        } catch (e) {}
+
+                        if (!existingTimes.has(bar.time)) {
+                            allChartData.push(bar);
+                            existingTimes.add(bar.time);
+                            hasNewData = true;
+                        } else {
+                            const index = allChartData.findIndex(c => c.time === bar.time);
+                            if (index !== -1) allChartData[index] = bar;
+                        }
+                    });
+
+                    if (hasNewData) {
+                        allChartData.sort((a, b) => a.time - b.time);
+                        oldestLoadedTime = Math.min(...allChartData.map(c => c.time));
+                    }
+                })
+                .catch(console.error);
+        }, 15000);
+    }
 
     function setLoading(show) {
         chartLoading.classList.toggle('hidden', !show);
@@ -151,10 +189,16 @@
                     oldestLoadedTime = Math.min(...allChartData.map(c => c.time));
                     candlestickSeries.setData(allChartData);
                     chart.timeScale().fitContent();
+                    startAutoRefresh();
+                } else {
+                    if (refreshInterval) clearInterval(refreshInterval);
                 }
                 setLoading(false);
             })
-            .catch(() => setLoading(false));
+            .catch(() => {
+                setLoading(false);
+                if (refreshInterval) clearInterval(refreshInterval);
+            });
     }
 
     document.querySelectorAll('.instrument-btn').forEach(btn => {

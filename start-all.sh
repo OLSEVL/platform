@@ -43,7 +43,7 @@ fi
 
 # 5. Прокси свечей (Python, WebSocket → Pocket Options), если задан --with-proxy
 if $WITH_PROXY; then
-  PROXY_DIR="/root/bot"
+  PROXY_DIR="/home/o/platform/bot"
   if pgrep -f "pocket-options-proxy" >/dev/null 2>&1; then
     echo "[OK] Прокси свечей уже запущен"
   elif [[ -f "$PROXY_DIR/pocket-options-proxy.py" ]]; then
@@ -51,7 +51,7 @@ if $WITH_PROXY; then
     mkdir -p storage/logs
     PROXY_PY="$PROXY_DIR/.venv/bin/python3"
     [[ -x "$PROXY_PY" ]] || PROXY_PY="python3"
-    (cd "$PROXY_DIR" && nohup $PROXY_PY pocket-options-proxy.py >> /root/platform/storage/logs/proxy.log 2>&1 &)
+    (cd "$PROXY_DIR" && nohup $PROXY_PY pocket-options-proxy.py >> /home/o/platform/storage/logs/proxy.log 2>&1 &)
     echo "[OK] Прокси (логи: storage/logs/proxy.log)"
   else
     echo "[--] Прокси не найден в $PROXY_DIR, пропуск"

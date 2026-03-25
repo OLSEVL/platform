@@ -40,7 +40,7 @@ python pocket-options-proxy.py
 Установка и запуск (от root или через sudo):
 
 ```bash
-sudo cp /root/bot/pocket-options-proxy.service /etc/systemd/system/
+sudo cp /home/o/platform/bot/pocket-options-proxy.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable pocket-options-proxy.service
 sudo systemctl start pocket-options-proxy.service
@@ -100,6 +100,6 @@ php artisan candles:prune-old
 
 Чтобы расписание выполнялось автоматически, в cron должен быть вызов планировщика раз в минуту (для пользователя, под которым крутится приложение):
 ```bash
-* * * * * cd /root/platform && php artisan schedule:run >> /dev/null 2>&1
+* * * * * cd /home/o/platform && php artisan schedule:run >> /dev/null 2>&1
 ```
 Проверка запланированных задач: `php artisan schedule:list`.

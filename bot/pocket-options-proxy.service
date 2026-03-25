@@ -1,0 +1,18 @@
+[Unit]
+Description=Pocket Options Proxy (HTTP API + ingest candles to platform)
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/home/o/platform/bot
+EnvironmentFile=/home/o/platform/bot/proxy.env
+ExecStart=/home/o/platform/bot/.venv/bin/python pocket-options-proxy.py
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=pocket-options-proxy
+
+[Install]
+WantedBy=multi-user.target

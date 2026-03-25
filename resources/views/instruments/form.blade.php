@@ -36,6 +36,10 @@
                 <input type="password" name="session_token" placeholder="{{ $session_token_placeholder ?? '' }}" class="w-full px-3 py-2 border rounded font-mono text-sm" autocomplete="off">
             </div>
             <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">Proxy URL</label>
+                <input type="text" name="proxy_url" value="{{ old('proxy_url', $instrument?->proxy_url) }}" placeholder="http://user:pass@127.0.0.1:8080" class="w-full px-3 py-2 border rounded font-mono text-sm" autocomplete="off">
+            </div>
+            <div>
                 <label class="block text-sm font-medium text-gray-700 mb-1">UID</label>
                 <input type="text" name="uid" value="{{ old('uid', $instrument?->uid) }}" class="w-full px-3 py-2 border rounded" autocomplete="off">
             </div>

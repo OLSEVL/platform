@@ -24,7 +24,7 @@
 Из папки с ботом:
 
 ```bash
-cd /root/bot
+cd /home/o/platform/bot
 pip install -r requirements.txt   # один раз
 python pocket-options-proxy.py
 ```

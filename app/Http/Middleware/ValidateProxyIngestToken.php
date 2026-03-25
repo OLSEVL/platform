@@ -8,15 +8,11 @@ use Symfony\Component\HttpFoundation\Response;
 
 class ValidateProxyIngestToken
 {
+    /**
+     * Прокси и инжест на одной машине — проверка токена отключена.
+     */
     public function handle(Request $request, Closure $next): Response
     {
-        $token = config('services.pocket_options_proxy.ingest_token');
-        if (empty($token)) {
-            return $next($request);
-        }
-        if ($request->header('X-Proxy-Token') !== $token) {
-            return response()->json(['error' => 'Unauthorized'], 401);
-        }
         return $next($request);
     }
 }

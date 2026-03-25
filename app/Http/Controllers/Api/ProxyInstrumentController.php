@@ -20,6 +20,7 @@ class ProxyInstrumentController extends Controller
                 'session_token' => $r->session_token,
                 'uid' => $r->uid,
                 'is_demo' => $r->is_demo,
+                'proxy_url' => $r->proxy_url,
             ]);
         return response()->json($list->values()->all());
     }

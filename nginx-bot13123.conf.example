@@ -12,7 +12,7 @@ server {
     listen [::]:80;
     server_name bot13123.online www.bot13123.online;
 
-    root /root/platform/public;
+    root /home/o/platform/public;
     index index.php;
 
     location / {

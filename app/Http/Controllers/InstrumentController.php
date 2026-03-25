@@ -28,6 +28,7 @@ class InstrumentController extends Controller
             'uid' => 'nullable|string|max:63',
             'is_demo' => 'boolean',
             'is_active' => 'boolean',
+            'proxy_url' => 'nullable|string|max:255',
         ];
         if ($request->filled('session_token')) {
             $rules['uid'] = 'required_with:session_token|string|max:63';
@@ -41,6 +42,7 @@ class InstrumentController extends Controller
             'uid' => $v['uid'] ?? null,
             'is_demo' => $request->boolean('is_demo'),
             'is_active' => $request->boolean('is_active', true),
+            'proxy_url' => $v['proxy_url'] ?? null,
         ]);
         return redirect()->route('instruments.index')->with('success', 'Инструмент добавлен.');
     }
@@ -63,6 +65,7 @@ class InstrumentController extends Controller
             'uid' => 'nullable|string|max:63',
             'is_demo' => 'boolean',
             'is_active' => 'boolean',
+            'proxy_url' => 'nullable|string|max:255',
         ];
         if ($request->filled('session_token')) {
             $rules['uid'] = 'required_with:session_token|string|max:63';
@@ -74,6 +77,7 @@ class InstrumentController extends Controller
             'priority' => (int) ($v['priority'] ?? 0),
             'is_demo' => $request->boolean('is_demo'),
             'is_active' => $request->boolean('is_active'),
+            'proxy_url' => $v['proxy_url'] ?? null,
         ];
         if ($request->filled('session_token')) {
             $data['session_token'] = $v['session_token'];
