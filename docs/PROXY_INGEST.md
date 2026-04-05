@@ -8,7 +8,6 @@
 
 ```env
 POCKET_OPTIONS_PROXY_URL=http://127.0.0.1:3000
-POCKET_OPTIONS_PROXY_INGEST_TOKEN=секретный_токен
 ```
 
 В разделе **Инструменты** добавьте нужные активы и включите их. Для каждого укажите `session_token` и `uid` — они хранятся в БД (`pocket_instruments`) и передаются в API вместе с остальными параметрами инструмента.
@@ -19,14 +18,13 @@ POCKET_OPTIONS_PROXY_INGEST_TOKEN=секретный_токен
 
 ```bash
 export PLATFORM_URL="http://localhost:8000"     # URL платформы
-export X_PROXY_TOKEN="секретный_токен"          # тот же, что POCKET_OPTIONS_PROXY_INGEST_TOKEN
 export INGEST_MAX_CONNECTIONS=100               # макс. соединений (по умолчанию 100)
 export INSTRUMENTS_REFRESH_SEC=300              # обновление списка инструментов (сек)
 
 python pocket-options-proxy.py
 ```
 
-При наличии `PLATFORM_URL` и `X_PROXY_TOKEN` прокси автоматически запускает фоновую задачу инжеста: загружает инструменты с платформы и для каждого (до `INGEST_MAX_CONNECTIONS`) держит одно постоянное соединение, раз в минуту запрашивает M1 и отправляет свечи на платформу. При обрыве соединения — переподключение к тому же инструменту.
+При наличии `PLATFORM_URL` прокси автоматически запускает фоновую задачу инжеста: загружает инструменты с платформы и для каждого (до `INGEST_MAX_CONNECTIONS`) держит одно постоянное соединение, раз в минуту запрашивает M1 и отправляет свечи на платформу. При обрыве соединения — переподключение к тому же инструменту.
 
 ---
 
@@ -35,7 +33,7 @@ python pocket-options-proxy.py
 В каталоге `bot` есть unit-файл и env-файл:
 
 - `bot/pocket-options-proxy.service` — unit для systemd
-- `bot/proxy.env` — переменные `PLATFORM_URL` и `X_PROXY_TOKEN` (при необходимости отредактируйте)
+- `bot/proxy.env` — переменная `PLATFORM_URL` (при необходимости отредактируйте)
 
 Установка и запуск (от root или через sudo):
 
@@ -64,26 +62,22 @@ sudo systemctl stop pocket-options-proxy     # остановка
 1. **Порт платформы**  
    `PLATFORM_URL` должен указывать на тот же хост и порт, на которых реально отвечает приложение (Laravel). Например, при `php artisan serve` это обычно `http://127.0.0.1:8000`, при nginx на 8080 — `http://127.0.0.1:8080`. Проверка с той же машины, где крутится прокси:
    ```bash
-   curl -s -o /dev/null -w "%{http_code}" -H "X-Proxy-Token: ВАШ_ТОКЕН" "http://127.0.0.1:ПОРТ/api/proxy/instruments"
+   curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:ПОРТ/api/proxy/instruments"
    ```
    Ожидается 200 и JSON-массив (пустой или с инструментами).
 
-2. **Токен**  
-   Значение `X_PROXY_TOKEN` при запуске прокси должно совпадать с `POCKET_OPTIONS_PROXY_INGEST_TOKEN` в `.env` платформы. Иначе запросы к `/api/proxy/instruments` и `/api/ingest-candles` вернут 401.
-
-3. **Активные инструменты**  
+2. **Активные инструменты**  
    В разделе «Инструменты» должны быть включённые инструменты (`is_active = 1`). Иначе API отдаёт пустой список и воркеры не создаются.
 
-4. **Auth для инструментов**  
+3. **Auth для инструментов**  
    У каждого инструмента в БД (`pocket_instruments`) должны быть заполнены `session_token` и `uid` (в форме инструмента). Эти данные отдаются в API вместе с остальными параметрами инструмента. Без них воркеры не стартуют (в логе прокси будет строка вида `[INGEST] skip ...: no session_token`).
 
-5. **Логи прокси**  
+4. **Логи прокси**  
    Запускайте прокси в foreground и смотрите вывод:
    - `[INGEST] background task started` — инжест включён;
    - `[INGEST] fetched N instruments` — платформа отдала список;
    - `[INGEST] started worker for X` — воркер по инструменту X запущен;
    - `[INGEST] X: sent N candles` — свечи по X отправлены в платформу;
-   - `[INGEST] fetch_instruments HTTP 401` / `post_ingest_candles HTTP 401` — неверный токен;
    - `[INGEST] no instruments` — пустой список (проверить активные инструменты и доступность платформы).
 
 ---

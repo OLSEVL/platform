@@ -6,7 +6,7 @@ import asyncio
 import json
 import ssl
 import time
-from typing import Optional, Callable, Dict, Any, List, Deque
+from typing import Optional, Callable, Dict, Any, List, Deque, Union
 from datetime import datetime
 from collections import deque
 import websockets
@@ -700,10 +700,26 @@ class AsyncWebSocketClient:
                 data = json.loads(json_part)
                 await self._handle_json_message(data)
 
-            elif message.startswith("42") and "NotAuthorized" in message:
-                logger.error("Authentication failed: Invalid SSID")
-                await self._emit_event("auth_error", {"message": "Invalid SSID"})
-            
+            elif message.startswith("42"):
+                if "NotAuthorized" in message:
+                    logger.error("Authentication failed: Invalid SSID")
+                    await self._emit_event("auth_error", {"message": "Invalid SSID"})
+                else:
+                    # Socket.IO event packet: 42["eventName", payload] — тики, updateStream, successauth и т.д.
+                    try:
+                        raw = message[2:]
+                        data = json.loads(raw)
+                        if isinstance(data, list) and len(data) >= 1:
+                            await self._handle_json_message(data)
+                            if len(data) >= 2:
+                                payload = data[1]
+                                if isinstance(payload, (dict, list)):
+                                    await self._emit_event("json_data", payload)
+                    except json.JSONDecodeError:
+                        logger.debug(
+                            "Socket.IO 42 packet not JSON: %s...", message[:80]
+                        )
+
             elif message == "41":
                 # Socket.IO disconnect message - server wants to close connection
                 logger.debug("Received Socket.IO disconnect message (41)")
@@ -838,13 +854,13 @@ class AsyncWebSocketClient:
                 "unknown_event", {"type": event_type, "data": event_data}
             )
 
-    async def _emit_event(self, event: str, data: Dict[str, Any]) -> None:
+    async def _emit_event(self, event: str, data: Union[Dict[str, Any], List[Any]]) -> None:
         """
         Emit event to registered handlers
 
         Args:
             event: Event name
-            data: Event data
+            data: Event data (dict или list — например сырые тики для json_data)
         """
         if event in self._event_handlers:
             for handler in self._event_handlers[event]:

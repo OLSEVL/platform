@@ -7,7 +7,8 @@ import json
 import time
 import uuid
 from typing import Optional, List, Dict, Any, Union, Callable
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+import os
 from collections import defaultdict
 import pandas as pd
 from loguru import logger
@@ -480,7 +481,7 @@ class AsyncPocketOptionClient:
         if asset not in ASSETS:
             raise InvalidParameterError(f"Invalid asset: {asset}")
 
-        # Set default end time
+        send_to = end_time is not None
         if not end_time:
             end_time = datetime.now()
 
@@ -489,7 +490,11 @@ class AsyncPocketOptionClient:
             try:
                 # Request candle data
                 candles = await self._request_candles(
-                    asset, timeframe_seconds, count, end_time
+                    asset,
+                    timeframe_seconds,
+                    count,
+                    end_time,
+                    send_to=send_to,
                 )
 
                 # Cache results
@@ -1070,14 +1075,32 @@ class AsyncPocketOptionClient:
         }
 
     async def _request_candles(
-        self, asset: str, timeframe: int, count: int, end_time: datetime
+        self,
+        asset: str,
+        timeframe: int,
+        count: int,
+        end_time: Optional[datetime] = None,
+        *,
+        send_to: bool = False,
     ):
-        """Request candle data via changeSymbol (быстро, до ~100 свечей)."""
-        end_ts = int(end_time.timestamp()) if end_time else int(datetime.now().timestamp())
+        """Request candle data via changeSymbol (быстро, до ~100 свечей).
+
+        По умолчанию поле ``to`` не отправляется: сервер отдаёт последние ``count``
+        минутных свечей от текущего момента. Явная передача ``to`` (send_to=True)
+        нужна только для исторического среза; формат времени — Unix-секунды, либо
+        миллисекунды при POCKET_CANDLE_TO_MS=1 в окружении.
+        """
         data = {"asset": str(asset), "period": timeframe}
         if count > 0:
             data["count"] = min(count, 100)
-        if end_time:
+        if send_to and end_time is not None:
+            end_ts = int(end_time.timestamp())
+            if os.environ.get("POCKET_CANDLE_TO_MS", "").strip().lower() in (
+                "1",
+                "true",
+                "yes",
+            ):
+                end_ts = int(end_time.timestamp() * 1000)
             data["to"] = end_ts
         message_data = ["changeSymbol", data]
         message = f"42{json.dumps(message_data)}"
@@ -1123,8 +1146,6 @@ class AsyncPocketOptionClient:
                     if isinstance(candle_data, (list, tuple)) and len(candle_data) >= 5:
                         # Server format: [timestamp, open, close, high, low]
                         # ИСПРАВЛЕНО: Реальный формат от сервера - [timestamp, open, close, high, low]
-                        from datetime import timezone
-                        
                         timestamp = candle_data[0]
                         open_price = float(candle_data[1])
                         close_price = float(candle_data[2])
@@ -1338,6 +1359,9 @@ class AsyncPocketOptionClient:
         if self.enable_logging:
             logger.debug(f"📡 Stream update: {data}")
 
+        if not isinstance(data, dict):
+            return
+
         # Check if this is candle data from changeSymbol subscription
         if (
             "asset" in data
@@ -1464,7 +1488,9 @@ class AsyncPocketOptionClient:
                 for item in candle_data:
                     if isinstance(item, dict):
                         candle = Candle(
-                            timestamp=datetime.fromtimestamp(item.get("time", 0)),
+                            timestamp=datetime.fromtimestamp(
+                                float(item.get("time", 0)), tz=timezone.utc
+                            ),
                             open=float(item.get("open", 0)),
                             high=float(item.get("high", 0)),
                             low=float(item.get("low", 0)),
@@ -1476,7 +1502,9 @@ class AsyncPocketOptionClient:
                         candles.append(candle)
                     elif isinstance(item, (list, tuple)) and len(item) >= 6:
                         candle = Candle(
-                            timestamp=datetime.fromtimestamp(item[0]),
+                            timestamp=datetime.fromtimestamp(
+                                float(item[0]), tz=timezone.utc
+                            ),
                             open=float(item[1]),
                             high=float(item[3]),
                             low=float(item[4]),

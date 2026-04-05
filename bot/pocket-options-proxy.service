@@ -1,13 +1,15 @@
 [Unit]
 Description=Pocket Options Proxy (HTTP API + ingest candles to platform)
-After=network.target
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple
 User=root
 WorkingDirectory=/home/o/platform/bot
 EnvironmentFile=/home/o/platform/bot/proxy.env
-ExecStart=/home/o/platform/bot/.venv/bin/python pocket-options-proxy.py
+# Явный интерпретатор venv (не полагаемся на shebang у скриптов в .venv/bin)
+ExecStart=/home/o/platform/bot/.venv/bin/python /home/o/platform/bot/pocket-options-proxy.py
 Restart=always
 RestartSec=10
 StandardOutput=journal

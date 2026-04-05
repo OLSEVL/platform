@@ -9,7 +9,7 @@ use Symfony\Component\HttpFoundation\Response;
 class ValidateProxyIngestToken
 {
     /**
-     * Прокси и инжест на одной машине — проверка токена отключена.
+     * Доступ к API прокси ограничивается сетью (VPN / внутренняя сеть), отдельный секрет не используется.
      */
     public function handle(Request $request, Closure $next): Response
     {

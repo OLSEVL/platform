@@ -617,8 +617,10 @@ async def get_asset_data(client: AsyncPocketOptionClient, asset_name: str, perio
                     print(f"    [DEBUG] Существующие запросы: {existing_requests}", flush=True)
             
             candles = await asyncio.wait_for(
-                client._request_candles(asset_for_request, period, max(count, 150), datetime.now()),
-                timeout=15.0
+                client._request_candles(
+                    asset_for_request, period, max(count, 150), None
+                ),
+                timeout=15.0,
             )
             if is_debug:
                 print(f"    [DEBUG] Получено свечей из API: {len(candles) if candles else 0}", flush=True)

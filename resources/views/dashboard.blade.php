@@ -58,6 +58,16 @@
     let loadingMore = false;
     let refreshInterval = null;
 
+    /** true, если видимый диапазон у правого края данных (смотрим «живой» хвост) */
+    function isViewNearRightEdge() {
+        if (!chart || allChartData.length === 0) return true;
+        const range = chart.timeScale().getVisibleLogicalRange();
+        if (!range) return true;
+        const lastIdx = allChartData.length - 1;
+        const barsTolerance = 3;
+        return range.to >= lastIdx - barsTolerance;
+    }
+
     function startAutoRefresh() {
         if (refreshInterval) clearInterval(refreshInterval);
         refreshInterval = setInterval(() => {
@@ -66,6 +76,7 @@
                 .then(data => {
                     const candles = data.candles || [];
                     if (candles.length === 0) return;
+                    const stickToLatest = isViewNearRightEdge();
                     const newBars = buildChartData(candles);
                     const existingTimes = new Set(allChartData.map(c => c.time));
                     
@@ -89,6 +100,9 @@
                     if (hasNewData) {
                         allChartData.sort((a, b) => a.time - b.time);
                         oldestLoadedTime = Math.min(...allChartData.map(c => c.time));
+                        if (stickToLatest && chart) {
+                            chart.timeScale().scrollToRealTime();
+                        }
                     }
                 })
                 .catch(console.error);
@@ -141,7 +155,12 @@
         candlestickSeries = chart.addCandlestickSeries({
             upColor: '#26a69a',
             downColor: '#ef5350',
-            borderVisible: false
+            borderVisible: false,
+            priceFormat: {
+                type: 'price',
+                precision: 5,
+                minMove: 0.00001
+            }
         });
 
         chart.timeScale().fitContent();
@@ -208,6 +227,11 @@
             selectInstrument(btn.dataset.instrument, btn.dataset.displayName);
         });
     });
+
+    const firstInstrumentBtn = document.querySelector('.instrument-btn');
+    if (firstInstrumentBtn) {
+        firstInstrumentBtn.click();
+    }
 })();
 </script>
 @endsection

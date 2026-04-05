@@ -18,6 +18,7 @@ import sys
 import io
 import os
 import asyncio
+from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Optional, List, Dict, Any
 from fastapi import FastAPI, HTTPException, Query, Body
@@ -63,30 +64,39 @@ async def _shutdown_ingest():
         except asyncio.CancelledError:
             pass
         _ingest_task = None
-        print("[INGEST] stopped")
+        print("[INGEST] stopped", flush=True)
+    try:
+        from ingest_stream import close_ingest_http_session
+
+        await close_ingest_http_session()
+    except Exception:
+        pass
 
 
-# Создаем FastAPI приложение
-app = FastAPI(title="Pocket Options WebSocket Proxy", version="1.0.0")
-
-
-@app.on_event("startup")
-async def startup_event():
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    global _ingest_task
     if os.environ.get("PLATFORM_URL"):
         try:
             from ingest_stream import run_ingest_forever
-            global _ingest_task
+
             _ingest_task = asyncio.create_task(run_ingest_forever())
-            print("[INGEST] background task started (one WebSocket per instrument)")
+            print("[INGEST] background task started (one WebSocket per instrument)", flush=True)
         except Exception as e:
             import traceback
-            print(f"[INGEST] failed to start: {e}")
+
+            print(f"[INGEST] failed to start: {e}", flush=True)
             traceback.print_exc()
-
-
-@app.on_event("shutdown")
-async def shutdown_event():
+    yield
     await _shutdown_ingest()
+
+
+# Создаем FastAPI приложение
+app = FastAPI(
+    title="Pocket Options WebSocket Proxy",
+    version="1.0.0",
+    lifespan=lifespan,
+)
 
 
 # Настройка CORS
@@ -152,7 +162,11 @@ async def get_proxy_for_session(session_token: str) -> Optional[str]:
         try:
             url = f"{platform_url}/api/proxy/instruments"
             async with aiohttp.ClientSession() as session:
-                async with session.get(url, timeout=10) as resp:
+                async with session.get(
+                    url,
+                    headers={"Accept": "application/json"},
+                    timeout=10,
+                ) as resp:
                     if resp.status == 200:
                         _instruments_cache = await resp.json()
                         _last_cache_update = time.time()
@@ -438,11 +452,21 @@ async def get_candles_data(
         # Один быстрый запрос через changeSymbol (макс. 100 свечей)
         request_end = end_time or datetime.now()
         candles_count = min(max(count, 1), 100)
-        print(f"[INFO] Запрос свечей: asset={asset_for_request}, period={period}, count={candles_count}, to={request_end}")
+        use_to = end_time is not None
+        print(
+            f"[INFO] Запрос свечей: asset={asset_for_request}, period={period}, count={candles_count}, "
+            f"send_to={use_to} end={request_end if use_to else 'latest'}",
+        )
         try:
             candles = await asyncio.wait_for(
-                client._request_candles(asset_for_request, period, candles_count, request_end),
-                timeout=15.0
+                client._request_candles(
+                    asset_for_request,
+                    period,
+                    candles_count,
+                    request_end,
+                    send_to=use_to,
+                ),
+                timeout=15.0,
             )
         except asyncio.TimeoutError:
             print(f"[WARNING] Таймаут при запросе свечей для {asset_for_request}")

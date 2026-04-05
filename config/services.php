@@ -37,7 +37,6 @@ return [
 
     'pocket_options_proxy' => [
         'url' => env('POCKET_OPTIONS_PROXY_URL', 'http://127.0.0.1:3000'),
-        'ingest_token' => env('POCKET_OPTIONS_PROXY_INGEST_TOKEN'),
     ],
 
 ];

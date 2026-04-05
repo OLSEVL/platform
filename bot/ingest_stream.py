@@ -1,20 +1,20 @@
 # -*- coding: utf-8 -*-
 """
-По плану PLAN_RELEASE: прокси держит постоянные WebSocket по одному на актив.
-Загружает список инструментов из платформы (GET /api/proxy/instruments),
-для каждого создаёт одно постоянное соединение к Pocket Option, подписка на M1,
-полученные свечи отправляет на POST /api/ingest-candles.
+True Streaming Ingest: держит постоянные WebSocket-соединения к Pocket Option,
+ловит каждый тик в реальном времени, формирует минутные свечи и пишет их в БД
+по завершению каждой минуты.
 
-Запуск: задаются переменные окружения, затем этот модуль стартует как фоновая задача
-из pocket-options-proxy.py (lifespan) или отдельно: asyncio.run(run_ingest_forever()).
+Запуск: из pocket-options-proxy.py (lifespan) или отдельно:
+  asyncio.run(run_ingest_forever())
 """
 
 import os
 import asyncio
+import time
 from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any
 
-# Путь к PocketOptionAPI (как в pocket-options-proxy.py)
+# Путь к PocketOptionAPI
 import sys
 _bot_dir = os.path.dirname(os.path.abspath(__file__))
 _pocket_path = os.path.join(_bot_dir, "python", "PocketOptionAPI-main")
@@ -24,14 +24,118 @@ if _pocket_path not in sys.path:
 import aiohttp
 from pocketoptionapi_async import AsyncPocketOptionClient
 
-# Конфиг из env (прокси и платформа на одной машине — токен не используется)
+# Конфиг из env
 PLATFORM_URL = os.environ.get("PLATFORM_URL", "").rstrip("/")
 MAX_CONNECTIONS = int(os.environ.get("INGEST_MAX_CONNECTIONS", "100"))
 INSTRUMENTS_REFRESH_SEC = int(os.environ.get("INSTRUMENTS_REFRESH_SEC", "300"))
-M1_POLL_SEC = 60  # запрос свечей M1 раз в минуту по каждому соединению
 M1_PERIOD = 60  # период минутной свечи в секундах
-WAIT_FOR_STREAM_SEC = 2  # ожидание тиков из stream для формирования последних свечей
-CANDLES_REQUEST_COUNT = 100  # количество закрытых свечей в запросе к API
+CANDLES_REQUEST_COUNT = 100  # количество свечей для начального backfill
+FLUSH_CHECK_INTERVAL = 5  # проверка завершённых свечей каждые N секунд
+INGEST_USE_API_CANDLES = os.environ.get("INGEST_USE_API_CANDLES", "1").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+)
+# Stream-first: fallback запрашиваем только если поток "замолчал".
+INGEST_FALLBACK_IDLE_SEC = int(os.environ.get("INGEST_FALLBACK_IDLE_SEC", "20"))
+INGEST_FALLBACK_MIN_INTERVAL_SEC = int(
+    os.environ.get("INGEST_FALLBACK_MIN_INTERVAL_SEC", "60")
+)
+# 0/false: только сводка flush; 1/true: строка flush_detail на каждую свечу (удобно для journalctl)
+INGEST_FLUSH_DETAIL = os.environ.get("INGEST_FLUSH_DETAIL", "1").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+)
+# 0: не удалять из памяти завершённые свечи, пока POST не пройдёт (безопасно при сбоях API).
+# >0: удалять завершённые свечи старше N секунд (защита от утечки RAM при вечно мёртвом бэкенде).
+INGEST_PRUNE_COMPLETED_OLDER_THAN_SEC = int(
+    os.environ.get("INGEST_PRUNE_COMPLETED_OLDER_THAN_SEC", "0")
+)
+INGEST_HTTP_CONN_LIMIT = int(os.environ.get("INGEST_HTTP_CONN_LIMIT", "100"))
+INGEST_HTTP_CONN_PER_HOST = int(os.environ.get("INGEST_HTTP_CONN_PER_HOST", "30"))
+
+_ingest_http_session: Optional[aiohttp.ClientSession] = None
+_ingest_http_lock: Optional[asyncio.Lock] = None
+
+
+def _ingest_lock() -> asyncio.Lock:
+    global _ingest_http_lock
+    if _ingest_http_lock is None:
+        _ingest_http_lock = asyncio.Lock()
+    return _ingest_http_lock
+
+
+def _tick_volume_delta(tick_row: Any) -> float:
+    """
+    Прирост объёма по одному тику.
+    Формат стрима: [asset, ts, price] или реже [asset, ts, price, volume, ...].
+    """
+    if isinstance(tick_row, (list, tuple)) and len(tick_row) >= 4:
+        try:
+            return float(tick_row[3])
+        except (TypeError, ValueError):
+            pass
+    return 1.0
+
+
+def _volume_from_candle_array(cd: Any) -> float:
+    """Свеча с сервера: [ts, open, close, high, low, volume?]."""
+    if isinstance(cd, (list, tuple)) and len(cd) > 5:
+        try:
+            return float(cd[5])
+        except (TypeError, ValueError):
+            pass
+    return 0.0
+
+
+def _to_unix_seconds(ts: Any) -> int:
+    """PocketOption может отдавать timestamp как секунды или миллисекунды.
+
+    Если похоже на миллисекунды (значительно больше, чем current Unix seconds),
+    нормализуем к секундами.
+    """
+    try:
+        raw = int(float(ts))
+    except (TypeError, ValueError):
+        return 0
+
+    # Unix seconds сейчас ~1.7e9. Иногда можно встретить ms/micros/nanos.
+    # Делаем деление на 1000 пока число похоже не "на секунды".
+    if raw <= 0:
+        return 0
+
+    while raw > 10_000_000_000:
+        raw //= 1000
+    return raw
+
+
+async def _ensure_ingest_http_session() -> aiohttp.ClientSession:
+    """Один ClientSession на процесс (пул соединений), см. aiohttp: переиспользование сессии."""
+    global _ingest_http_session
+    async with _ingest_lock():
+        if _ingest_http_session is None or _ingest_http_session.closed:
+            connector = aiohttp.TCPConnector(
+                limit=INGEST_HTTP_CONN_LIMIT,
+                limit_per_host=INGEST_HTTP_CONN_PER_HOST,
+                enable_cleanup_closed=True,
+            )
+            _ingest_http_session = aiohttp.ClientSession(
+                connector=connector,
+                timeout=aiohttp.ClientTimeout(total=30),
+                headers={"Accept": "application/json"},
+            )
+        return _ingest_http_session
+
+
+async def close_ingest_http_session() -> None:
+    """Закрыть пул HTTP (вызывать при остановке приложения)."""
+    global _ingest_http_session
+    async with _ingest_lock():
+        if _ingest_http_session is not None and not _ingest_http_session.closed:
+            await _ingest_http_session.close()
+            await asyncio.sleep(0.25)
+        _ingest_http_session = None
 
 
 def create_ssid(session_token: str, uid: str, is_demo: bool = True) -> str:
@@ -48,20 +152,20 @@ async def fetch_instruments() -> List[Dict[str, Any]]:
     url = f"{PLATFORM_URL}/api/proxy/instruments"
     headers = {"Accept": "application/json"}
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=30)) as resp:
-                if resp.status != 200:
-                    body = await resp.text()
-                    print(f"[INGEST] fetch_instruments HTTP {resp.status} url={url} body={body[:200]}")
-                    return []
-                return await resp.json()
+        session = await _ensure_ingest_http_session()
+        async with session.get(url, headers=headers) as resp:
+            if resp.status != 200:
+                body = await resp.text()
+                print(f"[INGEST] fetch_instruments HTTP {resp.status} url={url} body={body[:200]}")
+                return []
+            return await resp.json()
     except Exception as e:
         print(f"[INGEST] fetch_instruments error url={url}: {e}")
         return []
 
 
 async def post_ingest_candles(instrument: str, candles: List[Dict[str, Any]]) -> bool:
-    """POST /api/ingest-candles. candles: [{ time, open, high, low, close, volume? }]."""
+    """POST /api/ingest-candles."""
     if not PLATFORM_URL or not candles:
         return False
     url = f"{PLATFORM_URL}/api/ingest-candles"
@@ -85,13 +189,13 @@ async def post_ingest_candles(instrument: str, candles: List[Dict[str, Any]]) ->
         ],
     }
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.post(url, headers=headers, json=payload, timeout=aiohttp.ClientTimeout(total=15)) as resp:
-                if resp.status != 200:
-                    body = await resp.text()
-                    print(f"[INGEST] post_ingest_candles {instrument} HTTP {resp.status} body={body[:300]}")
-                    return False
-                return True
+        session = await _ensure_ingest_http_session()
+        async with session.post(url, headers=headers, json=payload) as resp:
+            if resp.status not in (200, 201, 204):
+                body = await resp.text()
+                print(f"[INGEST] post_ingest_candles {instrument} HTTP {resp.status} body={body[:300]}")
+                return False
+            return True
     except Exception as e:
         print(f"[INGEST] post_ingest_candles {instrument}: {e}")
         return False
@@ -124,177 +228,372 @@ async def run_instrument_worker(
     stop_event: asyncio.Event,
 ) -> None:
     """
-    Один постоянный WebSocket на один инструмент.
-    Подписка на M1, раз в M1_POLL_SEC запрашиваем свечи и отправляем на платформу.
-    При обрыве — переподключение к тому же инструменту.
-    Актив передаётся в API как приходит из БД, без нормализации.
+    True streaming worker: one persistent WebSocket per instrument.
+    - On connect: one-time backfill of historical candles
+    - Permanent json_data handler captures every tick in real time
+    - Completed candles are flushed to DB when minute boundary crosses
     """
     if not instrument:
-        print(f"[INGEST] skip: empty instrument name")
         return
     if not session_token:
         print(f"[INGEST] skip {instrument}: no session_token")
         return
 
     ssid = create_ssid(session_token, uid, is_demo)
-    client = AsyncPocketOptionClient(
-        ssid,
-        is_demo=is_demo,
-        enable_logging=False,
-        persistent_connection=False,
-        auto_reconnect=True,
-        proxy_url=proxy_url,
-    )
+    instrument_norm = (instrument or "").replace("#", "").upper()
+
+    # Живёт между переподключениями WebSocket: неотправленные свечи не сбрасываются при падении прокси.
+    current_candles: Dict[int, Dict[str, Any]] = {}
+    connect_fail_streak = 0
 
     while not stop_event.is_set():
+        client = None
+        on_json_data = None
         try:
-            if not client.is_connected:
-                ok = await client.connect()
-                if not ok:
-                    print(f"[INGEST] {instrument}: connect failed (session_token/uid or network unreachable to Pocket Option)", flush=True)
-                    await asyncio.sleep(10)
-                    continue
-                await asyncio.sleep(3)
-
-            if not client.is_connected:
-                await asyncio.sleep(10)
-                continue
-
-            # Словарь формирующихся свечей из тиков (как в asset_scanner_websocket)
-            stream_candles: Dict[int, Dict[str, Any]] = {}
-            instrument_norm = (instrument or "").replace("#", "").upper()
+            client = AsyncPocketOptionClient(
+                ssid,
+                is_demo=is_demo,
+                enable_logging=False,
+                persistent_connection=False,
+                auto_reconnect=True,
+                proxy_url=proxy_url,
+            )
+            last_stream_activity_at = time.time()
+            last_fallback_at = 0.0
 
             def _tick_asset_matches(tick_asset: str) -> bool:
                 return (tick_asset or "").replace("#", "").upper() == instrument_norm
 
             def on_json_data(data: Any) -> None:
+                """Permanent handler: captures every tick and candle update."""
+                nonlocal last_stream_activity_at
                 try:
-                    # Тики: список [['ASSET', timestamp, price], ...]
+                    # Ticks: list of [['ASSET', timestamp, price], ...]
                     if isinstance(data, list) and len(data) > 0:
                         for tick_data in data:
                             if isinstance(tick_data, list) and len(tick_data) >= 3:
-                                tick_asset, tick_ts, tick_price = str(tick_data[0]), float(tick_data[1]), float(tick_data[2])
+                                tick_asset = str(tick_data[0])
                                 if not _tick_asset_matches(tick_asset):
                                     continue
-                                ts = int(tick_ts)
-                                candle_ts = (ts // M1_PERIOD) * M1_PERIOD
-                                if candle_ts not in stream_candles:
-                                    stream_candles[candle_ts] = {
+                                last_stream_activity_at = time.time()
+                                tick_ts = _to_unix_seconds(tick_data[1])
+                                tick_price = float(tick_data[2])
+                                candle_ts = (tick_ts // M1_PERIOD) * M1_PERIOD
+                                dv = _tick_volume_delta(tick_data)
+
+                                if candle_ts not in current_candles:
+                                    current_candles[candle_ts] = {
                                         "time": candle_ts,
                                         "open": tick_price,
                                         "high": tick_price,
                                         "low": tick_price,
                                         "close": tick_price,
-                                        "volume": 0.0,
-                                        "source": "tick",
+                                        "volume": float(dv),
+                                        "tick_count": 1,
+                                        "ohlc_source": "ticks",
                                     }
                                 else:
-                                    c = stream_candles[candle_ts]
-                                    if c.get("source") != "websocket_candles":
-                                        c["high"] = max(c["high"], tick_price)
-                                        c["low"] = min(c["low"], tick_price)
-                                        c["close"] = tick_price
-                    # Ответ с готовыми свечами или history
+                                    c = current_candles[candle_ts]
+                                    c["high"] = max(c["high"], tick_price)
+                                    c["low"] = min(c["low"], tick_price)
+                                    c["close"] = tick_price
+                                    c["tick_count"] = c.get("tick_count", 0) + 1
+                                    c["volume"] = float(c.get("volume", 0)) + float(dv)
+                                    c["ohlc_source"] = "ticks"
+
+                    # Server candle data (changeSymbol response / history)
                     if isinstance(data, dict) and "asset" in data:
                         asset = data.get("asset", "")
                         if not _tick_asset_matches(asset):
                             return
+                        last_stream_activity_at = time.time()
                         period_in = data.get("period")
                         if period_in is not None and int(period_in) != M1_PERIOD:
                             return
                         if "candles" in data:
-                            for candle_data in data.get("candles", []):
-                                if isinstance(candle_data, (list, tuple)) and len(candle_data) >= 5:
-                                    ts = int(float(candle_data[0]))
-                                    if ts not in stream_candles:
-                                        stream_candles[ts] = {
-                                            "time": ts,
-                                            "open": float(candle_data[1]),
-                                            "close": float(candle_data[2]),
-                                            "high": float(candle_data[3]),
-                                            "low": float(candle_data[4]),
-                                            "volume": 0.0,
-                                            "source": "websocket_candles",
-                                        }
+                            for cd in data.get("candles", []):
+                                if isinstance(cd, (list, tuple)) and len(cd) >= 5:
+                                    ts = _to_unix_seconds(cd[0])
+                                    vol = _volume_from_candle_array(cd)
+                                    ex = current_candles.get(ts)
+                                    if ex and ex.get("tick_count", 0) > 0:
+                                        if vol > float(ex.get("volume", 0)):
+                                            ex["volume"] = vol
+                                        continue
+                                    current_candles[ts] = {
+                                        "time": ts,
+                                        "open": float(cd[1]),
+                                        "close": float(cd[2]),
+                                        "high": float(cd[3]),
+                                        "low": float(cd[4]),
+                                        "volume": vol,
+                                        "tick_count": 0,
+                                        "ohlc_source": "ws_candles",
+                                    }
                         if "history" in data:
                             for tick in data.get("history", []):
                                 if isinstance(tick, (list, tuple)) and len(tick) >= 2:
-                                    ts = int(float(tick[0]))
+                                    ts = _to_unix_seconds(tick[0])
                                     candle_ts = (ts // M1_PERIOD) * M1_PERIOD
                                     val = float(tick[1])
-                                    if candle_ts not in stream_candles:
-                                        stream_candles[candle_ts] = {
+                                    dv = _tick_volume_delta(tick)
+                                    if candle_ts not in current_candles:
+                                        current_candles[candle_ts] = {
                                             "time": candle_ts,
                                             "open": val,
                                             "high": val,
                                             "low": val,
                                             "close": val,
-                                            "volume": 0.0,
-                                            "source": "stream",
+                                            "volume": float(dv),
+                                            "tick_count": 1,
+                                            "ohlc_source": "ticks",
                                         }
                                     else:
-                                        c = stream_candles[candle_ts]
-                                        if c.get("source") != "websocket_candles":
-                                            c["high"] = max(c.get("high", val), val)
-                                            c["low"] = min(c.get("low", val), val)
-                                            c["close"] = val
+                                        c = current_candles[candle_ts]
+                                        c["high"] = max(c.get("high", val), val)
+                                        c["low"] = min(c.get("low", val), val)
+                                        c["close"] = val
+                                        c["tick_count"] = c.get("tick_count", 0) + 1
+                                        c["volume"] = float(c.get("volume", 0)) + float(dv)
+                                        c["ohlc_source"] = "ticks"
                 except Exception:
                     pass
 
             client._websocket.add_event_handler("json_data", on_json_data)
-            candles: List[Any] = []
-            try:
-                end_time = datetime.now(timezone.utc)
-                candles = await asyncio.wait_for(
-                    client._request_candles(instrument, M1_PERIOD, CANDLES_REQUEST_COUNT, end_time),
-                    timeout=15.0,
+            client._websocket.add_event_handler("stream_update", on_json_data)
+            client._websocket.add_event_handler("history_update", on_json_data)
+
+            ok = await client.connect()
+            if not ok:
+                connect_fail_streak += 1
+                delay = min(300, 5 * (2 ** min(connect_fail_streak - 1, 6)))
+                print(
+                    f"[INGEST] {instrument}: connect failed (streak={connect_fail_streak}), "
+                    f"sleep {delay}s",
+                    flush=True,
                 )
-                await asyncio.sleep(WAIT_FOR_STREAM_SEC)
-            finally:
+                await asyncio.sleep(delay)
+                continue
+            connect_fail_streak = 0
+            await asyncio.sleep(3)
+
+            if not client.is_connected:
+                connect_fail_streak += 1
+                delay = min(300, 5 * (2 ** min(connect_fail_streak - 1, 6)))
+                print(
+                    f"[INGEST] {instrument}: not connected after wait, sleep {delay}s",
+                    flush=True,
+                )
+                await asyncio.sleep(delay)
+                continue
+            connect_fail_streak = 0
+
+            proxy_info = f" via proxy" if proxy_url else ""
+            print(f"[INGEST] {instrument}: connected{proxy_info}, streaming ticks...", flush=True)
+
+            # --- One-time backfill on connect ---
+            if INGEST_USE_API_CANDLES:
+                print(f"[INGEST] {instrument}: starting backfill...", flush=True)
+                try:
+                    candles = await asyncio.wait_for(
+                        client._request_candles(
+                            instrument, M1_PERIOD, CANDLES_REQUEST_COUNT, None
+                        ),
+                        timeout=15.0,
+                    )
+                    print(f"[INGEST] {instrument}: _request_candles returned {len(candles) if candles else 0} candles", flush=True)
+                    if candles:
+                        backfill = [candle_to_dict(c) for c in candles]
+                        ok = await post_ingest_candles(instrument, backfill)
+                        if ok:
+                            print(f"[INGEST] {instrument}: backfill {len(backfill)} historical candles OK", flush=True)
+                        else:
+                            print(f"[INGEST] {instrument}: backfill post failed", flush=True)
+                except asyncio.TimeoutError:
+                    print(f"[INGEST] {instrument}: backfill timeout (continuing with stream)", flush=True)
+                except Exception as e:
+                    import traceback
+                    print(f"[INGEST] {instrument}: backfill error: {e}", flush=True)
+                    traceback.print_exc()
+            else:
+                print(
+                    f"[INGEST] {instrument}: API candle backfill disabled (INGEST_USE_API_CANDLES=0), "
+                    "using live ticks only",
+                    flush=True,
+                )
+
+            # --- Main streaming loop ---
+            print(f"[INGEST] {instrument}: entering streaming loop (flush every {FLUSH_CHECK_INTERVAL}s)", flush=True)
+
+            while not stop_event.is_set():
+                if not client.is_connected:
+                    print(
+                        f"[INGEST] {instrument}: connection lost, reconnecting... "
+                        f"(keeping {len(current_candles)} in-memory candle bucket(s))",
+                        flush=True,
+                    )
+                    break
+
+                await asyncio.sleep(FLUSH_CHECK_INTERVAL)
+
+                now_ts = int(datetime.now(timezone.utc).timestamp())
+                current_minute = (now_ts // M1_PERIOD) * M1_PERIOD
+
+                # Stream-first fallback: только при "тишине" в потоке.
+                if INGEST_USE_API_CANDLES:
+                    now_mono = time.time()
+                    stream_idle_for = now_mono - last_stream_activity_at
+                    since_last_fallback = now_mono - last_fallback_at
+                else:
+                    stream_idle_for = 0.0
+                    since_last_fallback = 0.0
+
+                if (
+                    INGEST_USE_API_CANDLES
+                    and stream_idle_for >= INGEST_FALLBACK_IDLE_SEC
+                    and since_last_fallback >= INGEST_FALLBACK_MIN_INTERVAL_SEC
+                ):
+                    try:
+                        fresh = await asyncio.wait_for(
+                            client._request_candles(instrument, M1_PERIOD, 5, None),
+                            timeout=10.0,
+                        )
+                        if fresh:
+                            print(f"[INGEST] {instrument}: fallback fetch got {len(fresh)} candles", flush=True)
+                            for fc in fresh:
+                                cd = candle_to_dict(fc)
+                                ts = cd["time"]
+                                ex = current_candles.get(ts)
+                                if ex and ex.get("tick_count", 0) > 0:
+                                    fv = float(cd.get("volume", 0))
+                                    if fv > float(ex.get("volume", 0)):
+                                        ex["volume"] = fv
+                                    continue
+                                current_candles[ts] = {
+                                    "time": ts,
+                                    "open": cd["open"],
+                                    "high": cd["high"],
+                                    "low": cd["low"],
+                                    "close": cd["close"],
+                                    "volume": float(cd.get("volume", 0)),
+                                    "tick_count": 0,
+                                    "ohlc_source": "fallback",
+                                }
+                        else:
+                            print(f"[INGEST] {instrument}: fallback fetch returned empty list/None", flush=True)
+                    except asyncio.TimeoutError:
+                        print(f"[INGEST] {instrument}: fallback fetch timed out", flush=True)
+                    except Exception as e:
+                        print(f"[INGEST] {instrument}: fallback fetch error: {e}", flush=True)
+                    finally:
+                        last_fallback_at = time.time()
+
+                # Flush all completed candles (timestamp < current minute)
+                completed_payload: List[Dict[str, Any]] = []
+                completed_meta: List[Dict[str, Any]] = []
+                # Не привязываемся к локальному времени: считаем "завершёнными"
+                # все минуты, которые старше самой свежей минуты из текущего буфера.
+                latest_ts = max(current_candles.keys()) if current_candles else None
+                if latest_ts is not None:
+                    for candle_ts in sorted(current_candles.keys()):
+                        if candle_ts >= latest_ts:
+                            continue
+                        c = current_candles[candle_ts]
+                        completed_payload.append(
+                            {
+                                "time": c["time"],
+                                "open": float(c["open"]),
+                                "high": float(c["high"]),
+                                "low": float(c["low"]),
+                                "close": float(c["close"]),
+                                "volume": float(c.get("volume", 0)),
+                            }
+                        )
+                        completed_meta.append(
+                            {
+                                "time": c["time"],
+                                "tick_count": int(c.get("tick_count", 0)),
+                                "ohlc_source": str(
+                                    c.get("ohlc_source", "unknown")
+                                ),
+                                "volume": float(c.get("volume", 0)),
+                            }
+                        )
+
+                if completed_payload:
+                    ok = await post_ingest_candles(instrument, completed_payload)
+                    if ok:
+                        ticks_total = sum(m["tick_count"] for m in completed_meta)
+                        print(
+                            f"[INGEST] {instrument}: flushed {len(completed_payload)} candle(s), "
+                            f"total_ticks_in_those_minutes={ticks_total}",
+                            flush=True,
+                        )
+                        if INGEST_FLUSH_DETAIL:
+                            for m in completed_meta:
+                                print(
+                                    f"[INGEST] {instrument}: flush_detail ts={m['time']} "
+                                    f"ticks_in_minute={m['tick_count']} ohlc_source={m['ohlc_source']} "
+                                    f"volume={m['volume']}",
+                                    flush=True,
+                                )
+                    else:
+                        print(
+                            f"[INGEST] {instrument}: post failed, keeping {len(completed_payload)} "
+                            f"candle(s) in memory for retry",
+                            flush=True,
+                        )
+                    if ok:
+                        for row in completed_payload:
+                            current_candles.pop(row["time"], None)
+
+                # Опционально: выкинуть только давно завершённые минуты (не трогаем «хвост» при POST-ошибках).
+                if INGEST_PRUNE_COMPLETED_OLDER_THAN_SEC > 0:
+                    threshold = current_minute - INGEST_PRUNE_COMPLETED_OLDER_THAN_SEC
+                    for ts in list(current_candles.keys()):
+                        if ts < current_minute and ts < threshold:
+                            print(
+                                f"[INGEST] {instrument}: prune stale completed candle ts={ts} "
+                                f"(older than {INGEST_PRUNE_COMPLETED_OLDER_THAN_SEC}s)",
+                                flush=True,
+                            )
+                            current_candles.pop(ts, None)
+
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            print(f"[INGEST] {instrument} error: {e}", flush=True)
+            connect_fail_streak += 1
+            delay = min(300, 5 * (2 ** min(connect_fail_streak - 1, 6)))
+            await asyncio.sleep(delay)
+        finally:
+            if client and on_json_data:
                 try:
                     client._websocket.remove_event_handler("json_data", on_json_data)
                 except Exception:
                     pass
+                try:
+                    client._websocket.remove_event_handler("stream_update", on_json_data)
+                except Exception:
+                    pass
+                try:
+                    client._websocket.remove_event_handler("history_update", on_json_data)
+                except Exception:
+                    pass
+            if client:
+                try:
+                    await client.disconnect()
+                except Exception:
+                    pass
 
-            # Закрытые свечи из API
-            closed_list = [candle_to_dict(c) for c in (candles or [])]
-            closed_times = {c["time"] for c in closed_list}
-            # Добавляем из stream те минуты, которых нет в ответе API (последние 6–7 формирующихся)
-            for ts, cd in stream_candles.items():
-                if ts not in closed_times:
-                    closed_list.append({
-                        "time": cd["time"],
-                        "open": float(cd["open"]),
-                        "high": float(cd["high"]),
-                        "low": float(cd["low"]),
-                        "close": float(cd["close"]),
-                        "volume": float(cd.get("volume", 0)),
-                    })
-            closed_list.sort(key=lambda x: x["time"])
-            if closed_list:
-                ok = await post_ingest_candles(instrument, closed_list)
-                if ok:
-                    print(f"[INGEST] {instrument}: sent {len(closed_list)} candles")
-                else:
-                    print(f"[INGEST] {instrument}: post_ingest_candles returned False")
-            else:
-                print(f"[INGEST] {instrument}: got 0 candles from Pocket Option")
-            await asyncio.sleep(M1_POLL_SEC)
-        except asyncio.TimeoutError:
-            await asyncio.sleep(5)
-        except asyncio.CancelledError:
-            break
-        except Exception as e:
-            print(f"[INGEST] {instrument} error: {e}")
-            await asyncio.sleep(10)
 
 # Global cache accessible to pocket-options-proxy.py
 instruments_cache: List[Dict[str, Any]] = []
 
 async def run_ingest_forever() -> None:
     """
-    Фоновый цикл: периодически загружаем список инструментов с платформы,
-    держим по одному постоянному соединению на инструмент (до MAX_CONNECTIONS).
+    Background loop: periodically fetches instrument list from platform,
+    maintains one persistent streaming connection per instrument.
     """
     if not PLATFORM_URL:
         print("[INGEST] PLATFORM_URL required. Ingest disabled.")
@@ -304,6 +603,8 @@ async def run_ingest_forever() -> None:
     workers: Dict[str, asyncio.Task] = {}
     global instruments_cache
 
+    startup_logged = False
+
     try:
         while True:
             fresh = await fetch_instruments()
@@ -312,10 +613,24 @@ async def run_ingest_forever() -> None:
                 instruments_cache.sort(
                     key=lambda x: (-(x.get("priority") or 0), x.get("instrument", ""))
                 )
-                print(f"[INGEST] fetched {len(instruments_cache)} instruments from {PLATFORM_URL}")
+                print(f"[INGEST] fetched {len(instruments_cache)} instruments from {PLATFORM_URL}", flush=True)
             else:
                 if not instruments_cache:
-                    print(f"[INGEST] no instruments (check platform at {PLATFORM_URL} and active instruments in DB)")
+                    print(f"[INGEST] no instruments (check platform at {PLATFORM_URL} and active instruments in DB)", flush=True)
+
+            if not startup_logged:
+                startup_logged = True
+                if fresh:
+                    print(
+                        f"[INGEST] startup: API returned {len(fresh)} instrument(s); workers will use WebSocket ingest",
+                        flush=True,
+                    )
+                else:
+                    print(
+                        "[INGEST] startup: API returned 0 instruments — включите is_active и session_token в админке, "
+                        "или проверьте PLATFORM_URL (должен открываться с хоста прокси, напр. http://127.0.0.1:8080)",
+                        flush=True,
+                    )
 
             to_run = instruments_cache[:MAX_CONNECTIONS]
             current_keys = {item.get("instrument") for item in to_run if item.get("instrument")}
@@ -365,8 +680,10 @@ async def run_ingest_forever() -> None:
                 await t
             except asyncio.CancelledError:
                 pass
+    finally:
+        await close_ingest_http_session()
 
 
 async def run_ingest_background() -> None:
-    """Точка входа: запуск в фоне (не блокирует)."""
+    """Entry point: run in background (non-blocking)."""
     asyncio.create_task(run_ingest_forever())

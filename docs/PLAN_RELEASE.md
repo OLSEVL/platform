@@ -91,7 +91,7 @@
 
 **Endpoint:** `GET /api/proxy/instruments`
 
-- Защита: заголовок `X-Proxy-Token` (значение из `config('services.pocket_options_proxy.ingest_token')`). Без токена — 401.
+- Доступ ограничивается сетью (не публичный endpoint); отдельный токен не используется.
 - Выборка: только `is_active = true`, сортировка `priority DESC`, затем `instrument`.
 - Ответ — JSON-массив объектов: instrument, display_name, priority, session_token (расшифрованный или null), uid, is_demo.
 
@@ -99,7 +99,7 @@
 
 **Endpoint:** `POST /api/ingest-candles`
 
-- Защита: тот же `X-Proxy-Token`.
+- Доступ ограничивается сетью; отдельный токен не используется.
 - Тело: `instrument`, `timeframe` (ожидается 1), `candles: [{ time, open, high, low, close, volume }, ...]`.
 - Действие: upsert в таблицу `candles` по ключу `(instrument, timeframe, time)`.
 
@@ -138,7 +138,7 @@
 
 ### 7.1. Конфигурация
 
-- Глобальные (env): URL платформы и токен для API (`X-Proxy-Token`).
+- Глобальные (env): URL платформы (`PLATFORM_URL` у прокси).
 - Список инструментов — только из `GET /api/proxy/instruments` (не из файла). В ответе по каждому инструменту приходят session_token, uid и прочие параметры из БД (`pocket_instruments`).
 
 ### 7.2. Фоновый цикл
@@ -157,10 +157,7 @@
 
 ```php
 'url' => env('POCKET_OPTIONS_PROXY_URL', 'http://127.0.0.1:3000'),
-'ingest_token' => env('POCKET_OPTIONS_PROXY_INGEST_TOKEN'),
 ```
-
-В `.env`: задать `POCKET_OPTIONS_PROXY_INGEST_TOKEN` (секретная строка для прокси).
 
 ---
 
@@ -170,7 +167,7 @@
 |---|------|----------|
 | 1 | Миграции и модели | Создать миграции `pocket_instruments`, `candles`; модели PocketInstrument, InstrumentCandle. |
 | 2 | Админка инструментов | Контроллер InstrumentController (web), маршруты, представления (index, create, edit), ссылка в навигации. |
-| 3 | API для прокси | GET /api/proxy/instruments, POST /api/ingest-candles; middleware или проверка X-Proxy-Token; добавление ingest_token в config. |
+| 3 | API для прокси | GET /api/proxy/instruments, POST /api/ingest-candles; маршруты за middleware-заглушкой (доступ по сети). |
 | 4 | Сервис свечей | CandleService::getCandles (M1 из БД, M5/M15 — агрегация в PHP). |
 | 5 | Интеграция RunBotJob | Подключить CandleService, приоритет чтения из БД, fallback на PocketOptionsProxyClient. |
 | 6 | Прокси (отдельно) | Загрузка списка из API, постоянные соединения, отправка M1 на платформу. |
