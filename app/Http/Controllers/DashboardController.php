@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\PocketInstrument;
 use App\Services\CandleService;
 use App\Services\CandleStructureZoneDetector;
+use App\Services\CurrentCandleCacheService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
@@ -42,7 +43,11 @@ class DashboardController extends Controller
         ]);
     }
 
-    public function candles(Request $request, CandleService $candleService): JsonResponse
+    public function candles(
+        Request $request,
+        CandleService $candleService,
+        CurrentCandleCacheService $currentCandleCache
+    ): JsonResponse
     {
         $request->validate([
             'instrument' => 'required|string|max:63',
@@ -50,12 +55,14 @@ class DashboardController extends Controller
             'limit' => 'nullable|integer|min:1|max:2000',
             'before' => 'nullable|integer',
             'since' => 'nullable|integer|min:0',
+            'include_partial' => 'nullable|boolean',
         ]);
         $instrument = $request->input('instrument');
         $timeframe = (int) ($request->input('timeframe') ?? 1);
         $limit = (int) ($request->input('limit') ?? 1440);
         $before = $request->input('before') !== null ? (int) $request->input('before') : null;
         $since = $request->input('since') !== null ? (int) $request->input('since') : null;
+        $includePartial = (bool) $request->boolean('include_partial', false);
 
         if ($timeframe !== 1 && $before !== null) {
             return response()->json(['candles' => []]);
@@ -76,7 +83,27 @@ class DashboardController extends Controller
             'low' => round($c['low'], 5),
             'close' => round($c['close'], 5),
             'volume' => round($c['volume'] ?? 0, 2),
+            'is_partial' => false,
         ], $rows);
+
+        if ($includePartial && $timeframe === 1 && $before === null) {
+            $partial = $currentCandleCache->getPartial($instrument);
+            if ($partial && $currentCandleCache->isFresh($partial, 30)) {
+                $lastClosedTime = !empty($data) ? (int) end($data)['time'] : 0;
+                $partialTime = (int) ($partial['time'] ?? 0);
+                if ($partialTime > $lastClosedTime) {
+                    $data[] = [
+                        'time' => $partialTime,
+                        'open' => round((float) ($partial['open'] ?? 0), 5),
+                        'high' => round((float) ($partial['high'] ?? 0), 5),
+                        'low' => round((float) ($partial['low'] ?? 0), 5),
+                        'close' => round((float) ($partial['close'] ?? 0), 5),
+                        'volume' => round((float) ($partial['volume'] ?? 0), 2),
+                        'is_partial' => true,
+                    ];
+                }
+            }
+        }
 
         return response()->json(['candles' => $data]);
     }

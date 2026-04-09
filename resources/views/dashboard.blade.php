@@ -457,10 +457,9 @@
                 .then(data => {
                     const candles = data.candles || [];
                     if (candles.length === 0) return;
-                    allChartData = buildChartData(candles);
-                    oldestLoadedTime = Math.min(...allChartData.map(c => c.time));
-                    candlestickSeries.setData(allChartData);
-                    const newLastT = allChartData[allChartData.length - 1].time;
+                    const newData = buildChartData(candles);
+                    const newLastT = newData[newData.length - 1].time;
+                    applyIncrementalChartUpdate(newData);
                     if (stickToLatest && chart && prevLastT !== null && newLastT > prevLastT) {
                         chart.timeScale().scrollToRealTime();
                     }
@@ -468,7 +467,7 @@
                     fetchStructures();
                 })
                 .catch(console.error);
-        }, 15000);
+        }, 2000);
     }
 
     function setLoading(show) {
@@ -483,6 +482,9 @@
             since: String(candlesSince())
         });
         if (before != null) params.set('before', before);
+        if (currentTimeframeMinutes === 1 && before == null) {
+            params.set('include_partial', '1');
+        }
         return fetch(CANDLES_URL + '?' + params.toString(), {
             headers: { 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' }
         }).then(r => r.json());
@@ -496,6 +498,35 @@
             low: c.low,
             close: c.close
         })).sort((a, b) => a.time - b.time);
+    }
+
+    function applyIncrementalChartUpdate(newData) {
+        if (!candlestickSeries || !Array.isArray(newData) || newData.length === 0) return;
+
+        if (allChartData.length === 0) {
+            allChartData = newData;
+            oldestLoadedTime = Math.min(...allChartData.map(c => c.time));
+            candlestickSeries.setData(allChartData);
+            return;
+        }
+
+        const oldFirstTime = allChartData[0]?.time ?? null;
+        const newFirstTime = newData[0]?.time ?? null;
+        if (oldFirstTime == null || newFirstTime == null || oldFirstTime !== newFirstTime) {
+            allChartData = newData;
+            oldestLoadedTime = Math.min(...allChartData.map(c => c.time));
+            candlestickSeries.setData(allChartData);
+            return;
+        }
+
+        // LightweightCharts.update() умеет менять только последний бар или добавлять новый.
+        // Поэтому обновляем только безопасный "хвост": последний и, при смене минуты, следующий за ним.
+        const lastKnownTime = allChartData[allChartData.length - 1]?.time ?? 0;
+        const tailCandles = newData.slice(-2).filter(c => c.time >= lastKnownTime);
+        tailCandles.forEach(c => candlestickSeries.update(c));
+
+        allChartData = newData;
+        oldestLoadedTime = Math.min(...allChartData.map(c => c.time));
     }
 
     function createChart() {

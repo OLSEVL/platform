@@ -63,6 +63,15 @@ INGEST_PAYOUT_TTL_SEC = int(os.environ.get("INGEST_PAYOUT_TTL_SEC", "120"))
 INGEST_PAYOUT_POST_DEBOUNCE_SEC = int(
     os.environ.get("INGEST_PAYOUT_POST_DEBOUNCE_SEC", "30")
 )
+INGEST_CURRENT_CANDLE_ENABLE = os.environ.get("INGEST_CURRENT_CANDLE_ENABLE", "1").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+)
+INGEST_CURRENT_CANDLE_TTL_SEC = int(os.environ.get("INGEST_CURRENT_CANDLE_TTL_SEC", "180"))
+INGEST_CURRENT_CANDLE_POST_DEBOUNCE_SEC = int(
+    os.environ.get("INGEST_CURRENT_CANDLE_POST_DEBOUNCE_SEC", "5")
+)
 
 _ingest_http_session: Optional[aiohttp.ClientSession] = None
 _ingest_http_lock: Optional[asyncio.Lock] = None
@@ -244,6 +253,43 @@ async def post_ingest_payout(
         return False
 
 
+async def post_ingest_current_candle(
+    instrument: str,
+    candle: Dict[str, Any],
+    ttl_sec: int,
+) -> bool:
+    """POST /api/ingest-current-candle."""
+    if not PLATFORM_URL:
+        return False
+    url = f"{PLATFORM_URL}/api/ingest-current-candle"
+    headers = {
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    }
+    payload = {
+        "instrument": instrument,
+        "time": int(candle.get("time", 0)),
+        "open": float(candle.get("open", 0)),
+        "high": float(candle.get("high", 0)),
+        "low": float(candle.get("low", 0)),
+        "close": float(candle.get("close", 0)),
+        "volume": float(candle.get("volume", 0)),
+        "updated_at": int(time.time()),
+        "ttl_sec": int(ttl_sec),
+    }
+    try:
+        session = await _ensure_ingest_http_session()
+        async with session.post(url, headers=headers, json=payload) as resp:
+            if resp.status not in (200, 201, 204):
+                body = await resp.text()
+                print(f"[INGEST] post_ingest_current_candle {instrument} HTTP {resp.status} body={body[:300]}")
+                return False
+            return True
+    except Exception as e:
+        print(f"[INGEST] post_ingest_current_candle {instrument}: {e}")
+        return False
+
+
 def candle_to_dict(candle) -> Dict[str, Any]:
     """Candle model -> dict для ingest."""
     ts = candle.timestamp
@@ -311,6 +357,8 @@ async def run_instrument_worker(
             last_payout_event_at = 0.0
             last_payout_post_at = 0.0
             last_payout_posted_value: Optional[float] = None
+            last_current_candle_post_at = 0.0
+            last_current_candle_posted_ts: Optional[int] = None
 
             def _tick_asset_matches(tick_asset: str) -> bool:
                 return _norm_asset_name(tick_asset) == instrument_norm
@@ -594,6 +642,23 @@ async def run_instrument_worker(
                                 f"[INGEST] {instrument}: payout={last_payout_value} source={last_payout_source} stale={payout_is_stale}",
                                 flush=True,
                             )
+
+                if INGEST_CURRENT_CANDLE_ENABLE and current_candles:
+                    now_mono = time.time()
+                    debounce_ok = (now_mono - last_current_candle_post_at) >= INGEST_CURRENT_CANDLE_POST_DEBOUNCE_SEC
+                    latest_ts = max(current_candles.keys())
+                    candle_changed = latest_ts != last_current_candle_posted_ts
+                    if debounce_ok or candle_changed:
+                        latest_candle = current_candles.get(latest_ts)
+                        if latest_candle:
+                            ok = await post_ingest_current_candle(
+                                instrument=instrument,
+                                candle=latest_candle,
+                                ttl_sec=INGEST_CURRENT_CANDLE_TTL_SEC,
+                            )
+                            if ok:
+                                last_current_candle_post_at = now_mono
+                                last_current_candle_posted_ts = latest_ts
 
                 # Flush all completed candles (timestamp < current minute)
                 completed_payload: List[Dict[str, Any]] = []

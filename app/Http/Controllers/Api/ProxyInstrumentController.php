@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\InstrumentCandle;
 use App\Models\PocketInstrument;
+use App\Services\CurrentCandleCacheService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -78,6 +79,31 @@ class ProxyInstrumentController extends Controller
             'ok' => true,
             'instrument' => $instrument->instrument,
             'is_stale' => (bool)($data['is_stale'] ?? false),
+        ]);
+    }
+
+    public function ingestCurrentCandle(Request $request, CurrentCandleCacheService $cache): JsonResponse
+    {
+        $data = $request->validate([
+            'instrument' => 'required|string|max:63',
+            'time' => 'required|integer|min:1',
+            'open' => 'required|numeric',
+            'high' => 'required|numeric',
+            'low' => 'required|numeric',
+            'close' => 'required|numeric',
+            'volume' => 'nullable|numeric',
+            'updated_at' => 'nullable|integer|min:1',
+            'ttl_sec' => 'nullable|integer|min:30|max:600',
+        ]);
+
+        $ttlSec = (int) ($data['ttl_sec'] ?? 180);
+        $cache->putPartial($data['instrument'], $data, $ttlSec);
+
+        return response()->json([
+            'ok' => true,
+            'instrument' => $data['instrument'],
+            'time' => (int) $data['time'],
+            'is_partial' => true,
         ]);
     }
 }
