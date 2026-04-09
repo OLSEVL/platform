@@ -7,3 +7,4 @@ Route::middleware(ValidateProxyIngestToken::class)->prefix('proxy')->group(funct
     Route::get('instruments', [App\Http\Controllers\Api\ProxyInstrumentController::class, 'instruments']);
 });
 Route::middleware(ValidateProxyIngestToken::class)->post('ingest-candles', [App\Http\Controllers\Api\ProxyInstrumentController::class, 'ingestCandles']);
+Route::middleware(ValidateProxyIngestToken::class)->post('ingest-payout', [App\Http\Controllers\Api\ProxyInstrumentController::class, 'ingestPayout']);

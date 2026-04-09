@@ -10,7 +10,13 @@ class InstrumentController extends Controller
 {
     public function index()
     {
-        return view('instruments.index', ['instruments' => PocketInstrument::orderByPriority()->get()]);
+        return view('instruments.index', [
+            'instruments' => PocketInstrument::query()
+//                ->orderByDesc('current_payout')
+                ->orderByDesc('priority')
+                ->orderBy('instrument')
+                ->get()
+        ]);
     }
 
     public function create()

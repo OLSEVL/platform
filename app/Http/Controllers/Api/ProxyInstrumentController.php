@@ -21,6 +21,9 @@ class ProxyInstrumentController extends Controller
                 'uid' => $r->uid,
                 'is_demo' => $r->is_demo,
                 'proxy_url' => $r->proxy_url,
+                'current_payout' => $r->current_payout,
+                'last_payout_at' => optional($r->last_payout_at)?->toIso8601String(),
+                'payout_source' => $r->payout_source,
             ]);
         return response()->json($list->values()->all());
     }
@@ -48,5 +51,33 @@ class ProxyInstrumentController extends Controller
             );
         }
         return response()->json(['ok' => true, 'count' => count($request->input('candles'))]);
+    }
+
+    public function ingestPayout(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'instrument' => 'required|string|max:63',
+            'current_payout' => 'nullable|numeric|min:0|max:100',
+            'last_payout_at' => 'nullable|date',
+            'payout_source' => 'nullable|string|max:32',
+            'is_stale' => 'nullable|boolean',
+        ]);
+
+        $instrument = PocketInstrument::query()->where('instrument', $data['instrument'])->first();
+        if (!$instrument) {
+            return response()->json(['ok' => false, 'error' => 'instrument_not_found'], 404);
+        }
+
+        $instrument->update([
+            'current_payout' => $data['current_payout'] ?? null,
+            'last_payout_at' => $data['last_payout_at'] ?? null,
+            'payout_source' => $data['payout_source'] ?? null,
+        ]);
+
+        return response()->json([
+            'ok' => true,
+            'instrument' => $instrument->instrument,
+            'is_stale' => (bool)($data['is_stale'] ?? false),
+        ]);
     }
 }

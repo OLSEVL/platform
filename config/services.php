@@ -39,4 +39,8 @@ return [
         'url' => env('POCKET_OPTIONS_PROXY_URL', 'http://127.0.0.1:3000'),
     ],
 
+    'webshare' => [
+        'api_key' => env('WEBSHARE_API_KEY'),
+    ],
+
 ];

@@ -54,6 +54,15 @@ INGEST_PRUNE_COMPLETED_OLDER_THAN_SEC = int(
 )
 INGEST_HTTP_CONN_LIMIT = int(os.environ.get("INGEST_HTTP_CONN_LIMIT", "100"))
 INGEST_HTTP_CONN_PER_HOST = int(os.environ.get("INGEST_HTTP_CONN_PER_HOST", "30"))
+INGEST_PAYOUT_ENABLE = os.environ.get("INGEST_PAYOUT_ENABLE", "1").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+)
+INGEST_PAYOUT_TTL_SEC = int(os.environ.get("INGEST_PAYOUT_TTL_SEC", "120"))
+INGEST_PAYOUT_POST_DEBOUNCE_SEC = int(
+    os.environ.get("INGEST_PAYOUT_POST_DEBOUNCE_SEC", "30")
+)
 
 _ingest_http_session: Optional[aiohttp.ClientSession] = None
 _ingest_http_lock: Optional[asyncio.Lock] = None
@@ -201,6 +210,40 @@ async def post_ingest_candles(instrument: str, candles: List[Dict[str, Any]]) ->
         return False
 
 
+async def post_ingest_payout(
+    instrument: str,
+    current_payout: Optional[float],
+    payout_source: Optional[str],
+    is_stale: bool,
+) -> bool:
+    """POST /api/ingest-payout."""
+    if not PLATFORM_URL:
+        return False
+    url = f"{PLATFORM_URL}/api/ingest-payout"
+    headers = {
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    }
+    payload = {
+        "instrument": instrument,
+        "current_payout": float(current_payout) if current_payout is not None else None,
+        "last_payout_at": datetime.now(timezone.utc).isoformat(),
+        "payout_source": payout_source,
+        "is_stale": bool(is_stale),
+    }
+    try:
+        session = await _ensure_ingest_http_session()
+        async with session.post(url, headers=headers, json=payload) as resp:
+            if resp.status not in (200, 201, 204):
+                body = await resp.text()
+                print(f"[INGEST] post_ingest_payout {instrument} HTTP {resp.status} body={body[:300]}")
+                return False
+            return True
+    except Exception as e:
+        print(f"[INGEST] post_ingest_payout {instrument}: {e}")
+        return False
+
+
 def candle_to_dict(candle) -> Dict[str, Any]:
     """Candle model -> dict для ingest."""
     ts = candle.timestamp
@@ -240,7 +283,10 @@ async def run_instrument_worker(
         return
 
     ssid = create_ssid(session_token, uid, is_demo)
-    instrument_norm = (instrument or "").replace("#", "").upper()
+    def _norm_asset_name(name: Optional[str]) -> str:
+        return (name or "").replace("#", "").replace("/", "").replace(" ", "").upper()
+
+    instrument_norm = _norm_asset_name(instrument)
 
     # Живёт между переподключениями WebSocket: неотправленные свечи не сбрасываются при падении прокси.
     current_candles: Dict[int, Dict[str, Any]] = {}
@@ -260,13 +306,43 @@ async def run_instrument_worker(
             )
             last_stream_activity_at = time.time()
             last_fallback_at = 0.0
+            last_payout_value: Optional[float] = None
+            last_payout_source: Optional[str] = None
+            last_payout_event_at = 0.0
+            last_payout_post_at = 0.0
+            last_payout_posted_value: Optional[float] = None
 
             def _tick_asset_matches(tick_asset: str) -> bool:
-                return (tick_asset or "").replace("#", "").upper() == instrument_norm
+                return _norm_asset_name(tick_asset) == instrument_norm
+
+            def on_payout_update(payload: Any) -> None:
+                nonlocal last_payout_value, last_payout_source, last_payout_event_at
+                try:
+                    if not isinstance(payload, dict):
+                        return
+                    symbol = (
+                        payload.get("symbol")
+                        or payload.get("asset")
+                        or payload.get("name")
+                        or ""
+                    )
+                    if not _tick_asset_matches(str(symbol)):
+                        return
+                    payout_raw = payload.get("payout")
+                    if payout_raw is None:
+                        return
+                    payout_val = float(payout_raw)
+                    if payout_val < 0 or payout_val > 100:
+                        return
+                    last_payout_value = payout_val
+                    last_payout_source = "payout_update"
+                    last_payout_event_at = time.time()
+                except Exception:
+                    pass
 
             def on_json_data(data: Any) -> None:
                 """Permanent handler: captures every tick and candle update."""
-                nonlocal last_stream_activity_at
+                nonlocal last_stream_activity_at, last_payout_value, last_payout_source, last_payout_event_at
                 try:
                     # Ticks: list of [['ASSET', timestamp, price], ...]
                     if isinstance(data, list) and len(data) > 0:
@@ -307,6 +383,15 @@ async def run_instrument_worker(
                         if not _tick_asset_matches(asset):
                             return
                         last_stream_activity_at = time.time()
+                        if "payout" in data:
+                            try:
+                                payout_val = float(data.get("payout"))
+                                if 0 <= payout_val <= 100:
+                                    last_payout_value = payout_val
+                                    last_payout_source = "json_data"
+                                    last_payout_event_at = time.time()
+                            except (TypeError, ValueError):
+                                pass
                         period_in = data.get("period")
                         if period_in is not None and int(period_in) != M1_PERIOD:
                             return
@@ -362,6 +447,7 @@ async def run_instrument_worker(
             client._websocket.add_event_handler("json_data", on_json_data)
             client._websocket.add_event_handler("stream_update", on_json_data)
             client._websocket.add_event_handler("history_update", on_json_data)
+            client._websocket.add_event_handler("payout_update", on_payout_update)
 
             ok = await client.connect()
             if not ok:
@@ -488,6 +574,27 @@ async def run_instrument_worker(
                     finally:
                         last_fallback_at = time.time()
 
+                # Payout ingest: без активного запроса request_payment_update, только по входящим событиям.
+                if INGEST_PAYOUT_ENABLE and last_payout_event_at > 0:
+                    now_mono = time.time()
+                    payout_is_stale = (now_mono - last_payout_event_at) > INGEST_PAYOUT_TTL_SEC
+                    payout_changed = last_payout_posted_value != last_payout_value
+                    debounce_ok = (now_mono - last_payout_post_at) >= INGEST_PAYOUT_POST_DEBOUNCE_SEC
+                    if payout_changed or debounce_ok:
+                        ok = await post_ingest_payout(
+                            instrument=instrument,
+                            current_payout=last_payout_value,
+                            payout_source=last_payout_source,
+                            is_stale=payout_is_stale,
+                        )
+                        if ok:
+                            last_payout_post_at = now_mono
+                            last_payout_posted_value = last_payout_value
+                            print(
+                                f"[INGEST] {instrument}: payout={last_payout_value} source={last_payout_source} stale={payout_is_stale}",
+                                flush=True,
+                            )
+
                 # Flush all completed candles (timestamp < current minute)
                 completed_payload: List[Dict[str, Any]] = []
                 completed_meta: List[Dict[str, Any]] = []
@@ -578,6 +685,10 @@ async def run_instrument_worker(
                     pass
                 try:
                     client._websocket.remove_event_handler("history_update", on_json_data)
+                except Exception:
+                    pass
+                try:
+                    client._websocket.remove_event_handler("payout_update", on_payout_update)
                 except Exception:
                     pass
             if client:

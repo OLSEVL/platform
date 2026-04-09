@@ -187,8 +187,9 @@ class AsyncWebSocketClient:
                 # Legacy API более стабилен для Socket.IO протокола
                 from websockets.legacy.client import connect as legacy_connect
                 if self.proxy_url:
-                    from websockets_proxy import proxy_connect
-                    connect_func = lambda *args, **kwargs: proxy_connect(*args, proxy=self.proxy_url, **kwargs)
+                    from websockets_proxy import Proxy, proxy_connect
+                    proxy = Proxy.from_url(self.proxy_url)
+                    connect_func = lambda *args, **kwargs: proxy_connect(*args, proxy=proxy, **kwargs)
                 else:
                     connect_func = legacy_connect
 
@@ -209,8 +210,9 @@ class AsyncWebSocketClient:
                     logger.warning(f"Legacy connect failed: {e}, trying new API")
                     connect_func_new = websockets.connect
                     if self.proxy_url:
-                        from websockets_proxy import proxy_connect
-                        connect_func_new = lambda *args, **kwargs: proxy_connect(*args, proxy=self.proxy_url, **kwargs)
+                        from websockets_proxy import Proxy, proxy_connect
+                        proxy = Proxy.from_url(self.proxy_url)
+                        connect_func_new = lambda *args, **kwargs: proxy_connect(*args, proxy=proxy, **kwargs)
                     ws = await asyncio.wait_for(
                         connect_func_new(
                             url,
