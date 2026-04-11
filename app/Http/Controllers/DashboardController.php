@@ -2,12 +2,14 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\BotTrade;
 use App\Models\PocketInstrument;
 use App\Services\CandleService;
 use App\Services\CandleStructureZoneDetector;
 use App\Services\CurrentCandleCacheService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
 use Illuminate\View\View;
 
@@ -15,16 +17,9 @@ class DashboardController extends Controller
 {
     public function index(): View
     {
-        $instruments = PocketInstrument::active()
-            ->orderByDesc('current_payout')
-            ->orderByDesc('priority')
-            ->orderBy('instrument')
-            ->get([
-            'id',
-            'instrument',
-            'display_name',
-            'current_payout',
-            ]);
+        $sidebar = $this->dashboardSidebarInstrumentsPayload((int) auth()->id());
+        $instruments = $sidebar['instruments'];
+        $openTradeInstruments = collect(array_keys($sidebar['open_trade_set']))->values();
         $timeframes = [
             ['minutes' => 1, 'label' => '1м'],
             ['minutes' => 2, 'label' => '2м'],
@@ -39,16 +34,110 @@ class DashboardController extends Controller
 
         return view('dashboard', [
             'instruments' => $instruments,
+            'openTradeInstruments' => $openTradeInstruments,
+            'nearestExpiryByInstrument' => $sidebar['nearest_expiry_ts'],
             'timeframes' => $timeframes,
         ]);
+    }
+
+    public function instrumentsSidebarData(): JsonResponse
+    {
+        $sidebar = $this->dashboardSidebarInstrumentsPayload((int) auth()->id());
+        $expiryMap = $sidebar['nearest_expiry_ts'];
+
+        return response()->json([
+            'instruments' => $sidebar['instruments']->map(fn (PocketInstrument $inst) => [
+                'instrument' => $inst->instrument,
+                'display_name' => $inst->display_name ?? $inst->instrument,
+                'current_payout' => $inst->current_payout !== null ? (float) $inst->current_payout : null,
+                'open_trade' => isset($sidebar['open_trade_set'][$inst->instrument]),
+                'expiry_ts' => $expiryMap[$inst->instrument] ?? null,
+            ])->values(),
+            'server_time' => now()->toIso8601String(),
+        ]);
+    }
+
+    /**
+     * @return array{instruments: \Illuminate\Support\Collection<int, PocketInstrument>, open_trade_set: array<string, true>, nearest_expiry_ts: array<string, int>}
+     */
+    private function dashboardSidebarInstrumentsPayload(int $userId): array
+    {
+        if ($userId <= 0) {
+            $instruments = PocketInstrument::active()
+                ->orderByDesc('current_payout')
+                ->orderByDesc('priority')
+                ->orderBy('instrument')
+                ->get([
+                    'id',
+                    'instrument',
+                    'display_name',
+                    'current_payout',
+                ]);
+
+            return [
+                'instruments' => $instruments,
+                'open_trade_set' => [],
+                'nearest_expiry_ts' => [],
+            ];
+        }
+
+        $nearestExpiryTs = DB::table('bot_trades as t')
+            ->join('bots as b', 'b.id', '=', 't.bot_id')
+            ->where('b.user_id', $userId)
+            ->where('t.status', BotTrade::STATUS_OPEN)
+            ->where('t.expiry_time', '>', now())
+            ->selectRaw('t.instrument, MIN(t.expiry_time) as min_expiry')
+            ->groupBy('t.instrument')
+            ->pluck('min_expiry', 'instrument')
+            ->map(fn ($v) => \Carbon\Carbon::parse($v)->timestamp)
+            ->all();
+
+        $openTradeInstruments = DB::table('bot_trades as t')
+            ->join('bots as b', 'b.id', '=', 't.bot_id')
+            ->where('b.user_id', $userId)
+            ->where('t.status', BotTrade::STATUS_OPEN)
+            ->where('t.expiry_time', '>', now())
+            ->distinct()
+            ->pluck('t.instrument');
+        $openTradeSet = array_fill_keys($openTradeInstruments->all(), true);
+
+        $instruments = PocketInstrument::active()
+            ->orderByDesc('current_payout')
+            ->orderByDesc('priority')
+            ->orderBy('instrument')
+            ->get([
+                'id',
+                'instrument',
+                'display_name',
+                'current_payout',
+            ]);
+        $instruments = $instruments->sort(function ($a, $b) use ($openTradeSet) {
+            $aOpen = isset($openTradeSet[$a->instrument]) ? 1 : 0;
+            $bOpen = isset($openTradeSet[$b->instrument]) ? 1 : 0;
+            if ($aOpen !== $bOpen) {
+                return $bOpen <=> $aOpen;
+            }
+            $aPayout = $a->current_payout !== null ? (float) $a->current_payout : -INF;
+            $bPayout = $b->current_payout !== null ? (float) $b->current_payout : -INF;
+            if ($aPayout !== $bPayout) {
+                return $bPayout <=> $aPayout;
+            }
+
+            return strcmp((string) $a->instrument, (string) $b->instrument);
+        })->values();
+
+        return [
+            'instruments' => $instruments,
+            'open_trade_set' => $openTradeSet,
+            'nearest_expiry_ts' => $nearestExpiryTs,
+        ];
     }
 
     public function candles(
         Request $request,
         CandleService $candleService,
         CurrentCandleCacheService $currentCandleCache
-    ): JsonResponse
-    {
+    ): JsonResponse {
         $request->validate([
             'instrument' => 'required|string|max:63',
             'timeframe' => ['nullable', 'integer', Rule::in(CandleService::DASHBOARD_TIMEFRAMES)],
@@ -89,7 +178,7 @@ class DashboardController extends Controller
         if ($includePartial && $timeframe === 1 && $before === null) {
             $partial = $currentCandleCache->getPartial($instrument);
             if ($partial && $currentCandleCache->isFresh($partial, 30)) {
-                $lastClosedTime = !empty($data) ? (int) end($data)['time'] : 0;
+                $lastClosedTime = ! empty($data) ? (int) end($data)['time'] : 0;
                 $partialTime = (int) ($partial['time'] ?? 0);
                 if ($partialTime > $lastClosedTime) {
                     $data[] = [

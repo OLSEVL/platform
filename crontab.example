@@ -1,0 +1,6 @@
+# Laravel: запуск расписания каждую минуту (боты bots:scan / bots:settle, candles:prune-old).
+# Установка: crontab -e и вставить ОДНУ строку ниже (раскомментировать), подставив свой путь и при необходимости путь к php.
+#
+# Важно: cd — только абсолютный путь к каталогу, где лежит artisan.
+
+* * * * * cd /home/o/platform && /usr/bin/php artisan schedule:run >> /home/o/platform/storage/logs/scheduler.log 2>&1

@@ -20,7 +20,7 @@
     }
 </style>
 {{-- Классы ниже нужны Tailwind CDN (выставляются из JS) --}}
-<span class="sr-only pointer-events-none bg-blue-900/40 bg-blue-900/50" aria-hidden="true"></span>
+<span class="sr-only pointer-events-none bg-blue-900/40 bg-blue-900/50 bg-amber-950/30" aria-hidden="true"></span>
 <div class="flex min-h-0 flex-1 w-full gap-0 overflow-hidden">
     {{-- Список инструментов слева --}}
     <aside class="w-56 shrink-0 bg-zinc-900 border-r border-zinc-800 overflow-hidden flex flex-col min-h-0">
@@ -46,33 +46,28 @@
         </div>
         <ul id="instrument-list" class="min-h-0 flex-1 overflow-y-auto overscroll-y-contain divide-y divide-zinc-800">
             @forelse($instruments as $inst)
+                @php($isOpenTradeInstrument = $openTradeInstruments->contains($inst->instrument))
             <li>
                 <button type="button"
-                    class="instrument-btn w-full text-left px-4 py-3 hover:bg-zinc-800 focus:bg-zinc-800 focus:outline-none transition-colors"
+                    class="instrument-btn w-full text-left px-4 py-3 hover:bg-zinc-800 focus:bg-zinc-800 focus:outline-none transition-colors {{ $isOpenTradeInstrument ? 'bg-amber-950/30' : '' }}"
                     data-instrument="{{ $inst->instrument }}"
                     data-display-name="{{ e($inst->display_name ?? $inst->instrument) }}"
-                    data-search="{{ mb_strtolower(($inst->display_name ?? $inst->instrument).' '.$inst->instrument) }}">
+                    data-search="{{ mb_strtolower(($inst->display_name ?? $inst->instrument).' '.$inst->instrument) }}"
+                    data-open-trade="{{ $isOpenTradeInstrument ? '1' : '0' }}">
                     <div class="flex items-center justify-between gap-2">
-                        <span class="font-medium text-zinc-100 truncate">{{ $inst->display_name ?? $inst->instrument }}</span>
-                        @if($inst->current_payout !== null)
-                            @php
-                                $payout = (float) $inst->current_payout;
-                                $payoutClass = $payout >= 80
-                                    ? 'text-emerald-400'
-                                    : ($payout >= 60 ? 'text-amber-400' : 'text-rose-400');
-                            @endphp
-                            <span
-                                class="instrument-payout text-xs font-medium {{ $payoutClass }}"
-                                data-instrument="{{ $inst->instrument }}"
-                                data-payout="{{ $payout }}"
-                            >{{ number_format($payout, 0) }}%</span>
-                        @else
-                            <span
-                                class="instrument-payout text-xs text-zinc-500"
-                                data-instrument="{{ $inst->instrument }}"
-                                data-payout=""
-                            >—</span>
-                        @endif
+                        <div class="flex min-w-0 flex-1 items-center gap-1.5">
+                            <span class="font-medium text-zinc-100 truncate">{{ $inst->display_name ?? $inst->instrument }}</span>
+                            @if($isOpenTradeInstrument && isset($nearestExpiryByInstrument[$inst->instrument]))
+                                @php($expTs = (int) $nearestExpiryByInstrument[$inst->instrument])
+                                @php($secLeft = max(0, $expTs - now()->timestamp))
+                                <span class="instrument-trade-timer shrink-0 text-xs font-mono tabular-nums text-amber-400/90" data-expiry-ts="{{ $expTs }}">{{ str_pad((string) intdiv($secLeft, 60), 2, '0', STR_PAD_LEFT) }}:{{ str_pad((string) ($secLeft % 60), 2, '0', STR_PAD_LEFT) }}</span>
+                            @endif
+                        </div>
+                        <span
+                            class="instrument-payout text-xs font-medium {{ $inst->current_payout === null ? 'text-zinc-500' : (((float) $inst->current_payout >= 80) ? 'text-emerald-400' : (((float) $inst->current_payout >= 60) ? 'text-amber-400' : 'text-rose-400')) }}"
+                            data-instrument="{{ $inst->instrument }}"
+                            data-payout="{{ $inst->current_payout !== null ? (string) ((float) $inst->current_payout) : '' }}"
+                        >{{ $inst->current_payout !== null ? number_format((float) $inst->current_payout, 0).'%' : '—' }}</span>
                     </div>
                 </button>
             </li>
@@ -141,7 +136,7 @@
 (function() {
     const CANDLES_URL = '{{ route("candles.data") }}';
     const STRUCTURES_URL = '{{ route("structures.data") }}';
-    const PAYOUTS_URL = '{{ route("payouts.data") }}';
+    const INSTRUMENTS_SIDEBAR_URL = '{{ route("dashboard.instruments.data") }}';
     const LIMIT = 1440;
     const WINDOW_SEC = 86400;
 
@@ -159,6 +154,7 @@
     const layerFvg = document.getElementById('layer-fvg');
     const instrumentSearchInput = document.getElementById('instrument-search');
     const instrumentSearchClearBtn = document.getElementById('instrument-search-clear');
+    const instrumentListEl = document.getElementById('instrument-list');
 
     const LAYER_PREFS_KEY = 'platform.dashboard.chartLayers';
 
@@ -192,7 +188,8 @@
     let allChartData = [];
     let loadingMore = false;
     let refreshInterval = null;
-    let payoutRefreshInterval = null;
+    let instrumentListRefreshInterval = null;
+    let sidebarTimerInterval = null;
     let lastZones = [];
 
     function payoutClassByValue(value) {
@@ -202,62 +199,85 @@
         return 'text-rose-400';
     }
 
-    function updateInstrumentPayoutsUI(payouts) {
-        if (!Array.isArray(payouts)) return;
-        const map = new Map();
-        payouts.forEach((item) => {
-            if (!item || !item.instrument) return;
-            map.set(item.instrument, item.current_payout);
-        });
+    function formatMmSs(totalSeconds) {
+        const sec = Math.max(0, Math.floor(totalSeconds));
+        const mm = Math.floor(sec / 60);
+        const ss = sec % 60;
+        return String(mm).padStart(2, '0') + ':' + String(ss).padStart(2, '0');
+    }
 
-        document.querySelectorAll('.instrument-payout').forEach((el) => {
-            const instrument = el.dataset.instrument;
-            if (!instrument || !map.has(instrument)) return;
-            const val = map.get(instrument);
-            const numeric = (val === null || val === undefined) ? null : Number(val);
-            el.classList.remove('text-zinc-500', 'text-emerald-400', 'text-amber-400', 'text-rose-400');
-            el.classList.add(payoutClassByValue(numeric));
-            if (numeric == null || Number.isNaN(numeric)) {
-                el.textContent = '—';
-                el.dataset.payout = '';
-            } else {
-                el.textContent = `${Math.round(numeric)}%`;
-                el.dataset.payout = String(numeric);
+    function tickSidebarTradeTimers() {
+        const nowSec = Math.floor(Date.now() / 1000);
+        document.querySelectorAll('.instrument-trade-timer[data-expiry-ts]').forEach((el) => {
+            const ts = Number(el.dataset.expiryTs);
+            if (!Number.isFinite(ts)) return;
+            el.textContent = formatMmSs(ts - nowSec);
+        });
+    }
+
+    function renderInstrumentSidebarRows(instruments) {
+        if (!instrumentListEl) return;
+        instrumentListEl.replaceChildren();
+        if (!instruments.length) {
+            const li = document.createElement('li');
+            li.className = 'px-4 py-6 text-sm text-zinc-500';
+            li.textContent = 'Нет активных инструментов.';
+            instrumentListEl.appendChild(li);
+            return;
+        }
+        instruments.forEach((inst) => {
+            const li = document.createElement('li');
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'instrument-btn w-full text-left px-4 py-3 hover:bg-zinc-800 focus:bg-zinc-800 focus:outline-none transition-colors' + (inst.open_trade ? ' bg-amber-950/30' : '');
+            btn.dataset.instrument = inst.instrument;
+            btn.dataset.displayName = inst.display_name;
+            btn.dataset.search = normalizeText(`${inst.display_name || ''} ${inst.instrument || ''}`);
+            btn.dataset.openTrade = inst.open_trade ? '1' : '0';
+            const row = document.createElement('div');
+            row.className = 'flex items-center justify-between gap-2';
+            const nameWrap = document.createElement('div');
+            nameWrap.className = 'flex min-w-0 flex-1 items-center gap-1.5';
+            const name = document.createElement('span');
+            name.className = 'font-medium text-zinc-100 truncate';
+            name.textContent = inst.display_name || inst.instrument;
+            nameWrap.appendChild(name);
+            if (inst.open_trade && inst.expiry_ts) {
+                const timer = document.createElement('span');
+                timer.className = 'instrument-trade-timer shrink-0 text-xs font-mono tabular-nums text-amber-400/90';
+                timer.dataset.expiryTs = String(inst.expiry_ts);
+                const nowSec = Math.floor(Date.now() / 1000);
+                timer.textContent = formatMmSs(Number(inst.expiry_ts) - nowSec);
+                nameWrap.appendChild(timer);
             }
+            const payout = document.createElement('span');
+            const pv = inst.current_payout;
+            const n = (pv === null || pv === undefined) ? null : Number(pv);
+            payout.className = 'instrument-payout text-xs font-medium ' + payoutClassByValue(n);
+            payout.dataset.instrument = inst.instrument;
+            payout.dataset.payout = (n == null || Number.isNaN(n)) ? '' : String(n);
+            payout.textContent = (n == null || Number.isNaN(n)) ? '—' : `${Math.round(n)}%`;
+            row.appendChild(nameWrap);
+            row.appendChild(payout);
+            btn.appendChild(row);
+            li.appendChild(btn);
+            instrumentListEl.appendChild(li);
         });
-
-        sortInstrumentListByPayout();
     }
 
-    function sortInstrumentListByPayout() {
-        const list = document.getElementById('instrument-list');
-        if (!list) return;
-
-        const items = Array.from(list.querySelectorAll('li'));
-        items.sort((a, b) => {
-            const aPayout = a.querySelector('.instrument-payout')?.dataset.payout ?? '';
-            const bPayout = b.querySelector('.instrument-payout')?.dataset.payout ?? '';
-            const aVal = aPayout === '' ? Number.NEGATIVE_INFINITY : Number(aPayout);
-            const bVal = bPayout === '' ? Number.NEGATIVE_INFINITY : Number(bPayout);
-
-            if (bVal !== aVal) return bVal - aVal;
-
-            const aBtn = a.querySelector('.instrument-btn');
-            const bBtn = b.querySelector('.instrument-btn');
-            const aInstrument = (aBtn?.dataset.instrument ?? '').toLowerCase();
-            const bInstrument = (bBtn?.dataset.instrument ?? '').toLowerCase();
-            return aInstrument.localeCompare(bInstrument);
-        });
-
-        items.forEach((item) => list.appendChild(item));
-    }
-
-    function refreshInstrumentPayouts() {
-        fetch(PAYOUTS_URL, {
-            headers: { 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' }
-        })
-            .then(r => r.json())
-            .then(data => updateInstrumentPayoutsUI(data.payouts || []))
+    function refreshInstrumentSidebar() {
+        return fetch(INSTRUMENTS_SIDEBAR_URL, { headers: { 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' } })
+            .then((r) => r.json())
+            .then((d) => {
+                renderInstrumentSidebarRows(d.instruments || []);
+                if (instrumentSearchInput) {
+                    applyInstrumentFilter(instrumentSearchInput.value);
+                }
+                syncSearchClearButton();
+                if (currentInstrument) {
+                    document.querySelectorAll('.instrument-btn').forEach((b) => b.classList.toggle('bg-blue-900/40', b.dataset.instrument === currentInstrument));
+                }
+            })
             .catch(() => {});
     }
 
@@ -300,6 +320,23 @@
 
     function candlesSince() {
         return Math.floor(Date.now() / 1000) - WINDOW_SEC;
+    }
+
+    /** ~кол-во свечей по горизонтали и «воздух» справа (в долях бара), как на референсе */
+    const CHART_DEFAULT_VISIBLE_BARS = 110;
+    const CHART_RIGHT_GAP_BARS = 22;
+
+    function applyDefaultChartViewport() {
+        if (!chart || allChartData.length === 0) return;
+        const n = allChartData.length;
+        const lastIdx = n - 1;
+        const visible = Math.min(CHART_DEFAULT_VISIBLE_BARS, n);
+        const from = Math.max(0, lastIdx - visible + 1);
+        const to = lastIdx + CHART_RIGHT_GAP_BARS;
+        requestAnimationFrame(() => {
+            if (!chart) return;
+            chart.timeScale().setVisibleLogicalRange({ from, to });
+        });
     }
 
     /** true, если видимый диапазон у правого края данных (смотрим «живой» хвост) */
@@ -538,7 +575,7 @@
 
         chart = LightweightCharts.createChart(chartWrapper, {
             layout: {
-                background: { type: 'solid', color: '#09090b' },
+                background: { type: 'solid', color: '#191c30' },
                 textColor: '#a1a1aa'
             },
             grid: { vertLines: { color: '#27272a' }, horzLines: { color: '#27272a' } },
@@ -563,8 +600,6 @@
                 minMove: 0.00001
             }
         });
-
-        chart.timeScale().fitContent();
 
         chart.timeScale().subscribeVisibleLogicalRangeChange(() => {
             const range = chart.timeScale().getVisibleLogicalRange();
@@ -612,7 +647,7 @@
                 if (allChartData.length) {
                     oldestLoadedTime = Math.min(...allChartData.map(c => c.time));
                     candlestickSeries.setData(allChartData);
-                    chart.timeScale().fitContent();
+                    applyDefaultChartViewport();
                     fetchStructures();
                 } else {
                     candlestickSeries.setData([]);
@@ -630,6 +665,7 @@
         if (currentInstrument === instrument) return;
         currentInstrument = instrument;
         currentDisplayName = displayName;
+        document.querySelectorAll('.instrument-btn').forEach((b) => b.classList.toggle('bg-blue-900/40', b.dataset.instrument === instrument));
         lastZones = [];
         structureOverlay.innerHTML = '';
         updateChartTitle();
@@ -644,7 +680,7 @@
                 if (allChartData.length) {
                     oldestLoadedTime = Math.min(...allChartData.map(c => c.time));
                     candlestickSeries.setData(allChartData);
-                    chart.timeScale().fitContent();
+                    applyDefaultChartViewport();
                     startAutoRefresh();
                     requestAnimationFrame(() => {
                         redrawStructureOverlay();
@@ -711,13 +747,13 @@
         requestAnimationFrame(redrawStructureOverlay);
     }).observe(chartWrapper);
 
-    document.querySelectorAll('.instrument-btn').forEach(btn => {
-        btn.addEventListener('click', () => {
-            document.querySelectorAll('.instrument-btn').forEach(b => b.classList.remove('bg-blue-900/40'));
-            btn.classList.add('bg-blue-900/40');
+    if (instrumentListEl) {
+        instrumentListEl.addEventListener('click', (e) => {
+            const btn = e.target.closest('.instrument-btn');
+            if (!btn) return;
             selectInstrument(btn.dataset.instrument, btn.dataset.displayName);
         });
-    });
+    }
 
     if (chartTitle) {
         chartTitle.addEventListener('click', copyCurrentInstrumentName);
@@ -762,15 +798,15 @@
     }
 
     updateTfOptionStyles();
-
-    const firstInstrumentBtn = document.querySelector('.instrument-btn');
-    if (firstInstrumentBtn) {
-        firstInstrumentBtn.click();
-    }
     syncSearchClearButton();
 
-    refreshInstrumentPayouts();
-    payoutRefreshInterval = setInterval(refreshInstrumentPayouts, 15000);
+    instrumentListRefreshInterval = setInterval(refreshInstrumentSidebar, 1000);
+    sidebarTimerInterval = setInterval(tickSidebarTradeTimers, 1000);
+    tickSidebarTradeTimers();
+    refreshInstrumentSidebar().then(() => {
+        const first = document.querySelector('#instrument-list .instrument-btn');
+        if (first) first.click();
+    });
 })();
 </script>
 @endsection

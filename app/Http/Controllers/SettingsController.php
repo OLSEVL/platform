@@ -39,13 +39,13 @@ class SettingsController extends Controller
         }
 
         $rows = $response->json('results');
-        if (!is_array($rows) || count($rows) === 0) {
+        if (! is_array($rows) || count($rows) === 0) {
             return back()->with('error', 'Webshare вернул пустой список прокси.');
         }
 
         $proxyPool = [];
         foreach ($rows as $row) {
-            if (!is_array($row)) {
+            if (! is_array($row)) {
                 continue;
             }
 
@@ -55,7 +55,7 @@ class SettingsController extends Controller
             $port = $row['port'] ?? null;
             $isValid = $row['valid'] ?? true;
 
-            if (!$isValid || !$username || !$password || !$address || !$port) {
+            if (! $isValid || ! $username || ! $password || ! $address || ! $port) {
                 continue;
             }
 
@@ -82,7 +82,11 @@ class SettingsController extends Controller
         }
 
         $proxyCount = count($proxyPool);
-        DB::transaction(function () use ($activeInstruments, $proxyPool, $proxyCount) {
+        $clearedCount = 0;
+        DB::transaction(function () use ($activeInstruments, $proxyPool, $proxyCount, &$clearedCount) {
+            // Полная замена списка: сначала очищаем все старые proxy_url.
+            $clearedCount = PocketInstrument::query()->whereNotNull('proxy_url')->update(['proxy_url' => null]);
+
             foreach ($activeInstruments as $index => $instrument) {
                 $instrument->update([
                     'proxy_url' => $proxyPool[$index % $proxyCount],
@@ -93,7 +97,8 @@ class SettingsController extends Controller
         return back()->with(
             'success',
             sprintf(
-                'Прокси обновлены: %d активных инструментов, %d прокси (циклическое назначение).',
+                'Прокси полностью заменены: очищено %d старых назначений, назначено %d активным инструментам из %d новых прокси.',
+                $clearedCount,
                 $activeInstruments->count(),
                 $proxyCount,
             )

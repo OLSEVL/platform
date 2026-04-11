@@ -58,11 +58,18 @@ if $WITH_PROXY; then
   fi
 fi
 
+ROOT_DIR="$(pwd)"
 echo ""
 echo "Платформа запущена."
 echo "  Сайт:    http://bot13123.online:8080  (или http://localhost:8080)"
 echo "  Очередь: в фоне (логи: storage/logs/queue.log)"
 $WITH_PROXY && echo "  Прокси:  http://127.0.0.1:3000 (свечи/активы через WebSocket)"
+echo ""
+echo "Планировщик Laravel (боты, свечи): без него bots:scan не пойдёт по времени."
+echo "  Cron (рекомендуется на сервере):"
+echo "    * * * * * cd ${ROOT_DIR} && php artisan schedule:run >> ${ROOT_DIR}/storage/logs/scheduler.log 2>&1"
+echo "  Или в отдельном терминале: php artisan schedule:work"
+echo "  Пример файла: crontab.example"
 echo ""
 echo "Остановить очередь: kill \$(cat storage/app/queue.pid 2>/dev/null) 2>/dev/null"
 echo ""

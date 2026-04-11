@@ -24,4 +24,14 @@ class Bot extends Model
     {
         return $this->hasMany(BotRun::class);
     }
+
+    public function signals(): HasMany
+    {
+        return $this->hasMany(BotSignal::class);
+    }
+
+    public function trades(): HasMany
+    {
+        return $this->hasMany(BotTrade::class);
+    }
 }

@@ -28,7 +28,18 @@ php artisan migrate
    - по внутреннему IP: `APP_URL=http://192.168.1.100:8000` (подставьте свой IP).
 2. Запустите прокси свечей (из папки bot): `python pocket-options-proxy.py`
 3. Очередь (в отдельном терминале): `php artisan queue:work`
-4. Планировщик (крон каждую минуту): `* * * * * cd /path/to/platform && php artisan schedule:run >> /dev/null 2>&1`
+4. Планировщик Laravel — **обязателен для ботов** (`bots:scan`, `bots:settle`, обрезка свечей). Выберите один вариант:
+   - **Cron (продакшен):** строка в crontab пользователя, под которым крутится PHP (часто тот же, что и владелец файлов проекта, или `www-data`):
+     ```bash
+     crontab -e
+     ```
+     Добавьте **одну** строку (замените путь на каталог с `artisan`, при необходимости укажите полный путь к `php`, например `/usr/bin/php`):
+     ```
+     * * * * * cd /home/o/platform && php artisan schedule:run >> storage/logs/scheduler.log 2>&1
+     ```
+     Путь в `cd` должен быть **абсолютным**. Логи: `storage/logs/scheduler.log` (каталог `storage/logs` должен существовать и быть доступен на запись).
+   - **Без cron (разработка / один терминал):** `php artisan schedule:work` — процесс сам раз в минуту вызывает расписание.
+   - Пример готовой строки для копирования: см. файл **`crontab.example`** в корне репозитория.
 5. Веб-сервер (доступ с любого IP и по домену):
    - **`./start.sh`** или **`./start.sh 8000`** — слушает `0.0.0.0:8000`;
    - либо вручную: `php artisan serve --host=0.0.0.0 --port=8000`
@@ -50,7 +61,7 @@ php artisan migrate
    ```
 2. Сайт слушает **порт 8080** (порт 80 был занят; чтобы перейти на 80, освободите его и в конфиге раскомментируйте `listen 80`, закомментируйте `listen 8080`, затем `sudo systemctl reload nginx`).
 3. В `.env` укажите **APP_URL** с портом, если используете 8080: `APP_URL=http://bot13123.online:8080` или `APP_URL=http://ВАШ_IP:8080`.
-4. Очередь по-прежнему: `php artisan queue:work` (и крон для `schedule:run`).
+4. Очередь по-прежнему: `php artisan queue:work`, плюс **cron** на `schedule:run` (см. выше) или `php artisan schedule:work`.
 
 Открывайте в браузере: **http://localhost:8080**, **http://ваш-IP:8080** или **http://bot13123.online:8080** (домен на выделенном сервере, без Traefik).
 

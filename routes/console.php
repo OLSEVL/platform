@@ -1,6 +1,13 @@
 <?php
 
+use App\Models\Bot;
+use App\Models\BotSignal;
+use App\Models\BotTrade;
 use App\Models\InstrumentCandle;
+use App\Models\PocketInstrument;
+use App\Models\User;
+use App\Services\Bots\BotEngineService;
+use App\Services\Bots\BotSettlementService;
 use Illuminate\Foundation\Inspiring;
 use Illuminate\Support\Facades\Artisan;
 
@@ -39,3 +46,114 @@ Artisan::command('candles:ingest-status', function () {
         ));
     }
 })->purpose('Показать свежесть свечей в БД (проверка инжеста)');
+
+Artisan::command('bots:status', function () {
+    $bots = Bot::query()->orderBy('id')->get(['id', 'name', 'type', 'is_active']);
+    $this->line('Боты: '.$bots->count());
+    foreach ($bots as $b) {
+        $this->line(sprintf(
+            '  #%d %s (%s) %s',
+            $b->id,
+            $b->name,
+            $b->type,
+            $b->is_active ? 'active' : 'inactive'
+        ));
+    }
+
+    $activeInstruments = PocketInstrument::active()->count();
+    $this->line('Активных инструментов (PocketInstrument): '.$activeInstruments);
+
+    $signals = BotSignal::query()->count();
+    $trades = BotTrade::query()->count();
+    $open = BotTrade::query()->where('status', BotTrade::STATUS_OPEN)->count();
+    $lastSignal = BotSignal::query()->latest('signal_at')->first();
+    $this->line(sprintf('Сигналов: %d, сделок: %d, открытых сделок: %d', $signals, $trades, $open));
+    if ($lastSignal) {
+        $this->line('Последний сигнал: '.$lastSignal->signal_at->toIso8601String().' ('.$lastSignal->instrument.')');
+    } else {
+        $this->warn('Сигналов ещё не было. Запустите: php artisan bots:scan');
+    }
+
+    $this->newLine();
+    $this->comment('Автоскан: в .env-среде должен работать планировщик (cron каждую минуту: php artisan schedule:run) или локально: php artisan schedule:work');
+    $this->comment('Вручную: php artisan bots:scan && php artisan bots:settle');
+    $this->comment('Нет новых сделок при повторном скане — нормально, если по инструменту уже есть открытая сделка, сработал dedupe на минуту, или стратегия не видит паттерн «3 свечи подряд».');
+})->purpose('Диагностика ботов: данные, открытые сделки, напоминание про планировщик');
+
+Artisan::command('bots:bootstrap', function () {
+    $user = User::query()->orderBy('id')->first();
+    if (! $user) {
+        $this->error('Нет пользователей. Сначала зарегистрируйте пользователя.');
+
+        return;
+    }
+
+    $bot = Bot::query()->firstOrCreate(
+        ['user_id' => $user->id, 'name' => 'Three Candles Bot', 'type' => 'three_candles_in_row'],
+        [
+            'is_active' => true,
+            'config' => [
+                'count' => 120,
+                'expiry_sec' => 180,
+                'min_confidence' => 0.55,
+                'stale_after_sec' => 30,
+                'version' => 'v1',
+            ],
+        ]
+    );
+
+    $this->info("Бот готов: #{$bot->id} {$bot->name} ({$bot->type})");
+})->purpose('Создать базового бота "3 свечи в ряд"');
+
+Artisan::command('bots:scan {--bot_id=} {--active-only=1}', function (BotEngineService $engine) {
+    $botId = $this->option('bot_id');
+    $activeOnly = (string) $this->option('active-only') !== '0';
+
+    $q = Bot::query()->orderBy('id');
+    if ($botId) {
+        $q->where('id', (int) $botId);
+    }
+    if ($activeOnly) {
+        $q->where('is_active', true);
+    }
+    $bots = $q->get();
+    if ($bots->isEmpty()) {
+        $this->warn('Нет ботов для сканирования.');
+
+        return;
+    }
+
+    $summary = ['processed' => 0, 'signals' => 0, 'trades' => 0];
+    foreach ($bots as $bot) {
+        $r = $engine->scanBot($bot);
+        $summary['processed'] += (int) $r['processed'];
+        $summary['signals'] += (int) $r['signals'];
+        $summary['trades'] += (int) $r['trades'];
+        $this->line(sprintf(
+            '[bot:%d] processed=%d signals=%d trades=%d',
+            $bot->id,
+            $r['processed'],
+            $r['signals'],
+            $r['trades']
+        ));
+    }
+
+    $this->info(sprintf(
+        'Итог: processed=%d signals=%d trades=%d',
+        $summary['processed'],
+        $summary['signals'],
+        $summary['trades']
+    ));
+})->purpose('Сканировать пары активными ботами и создавать сигналы/сделки');
+
+Artisan::command('bots:settle {--bot_id=} {--limit=1000}', function (BotSettlementService $settlement) {
+    $botId = $this->option('bot_id') ? (int) $this->option('bot_id') : null;
+    $limit = max(1, (int) $this->option('limit'));
+    $res = $settlement->settleDueTrades($botId, $limit);
+    $this->info(sprintf(
+        'checked=%d settled=%d skipped=%d',
+        $res['checked'],
+        $res['settled'],
+        $res['skipped']
+    ));
+})->purpose('Закрыть просроченные paper-сделки ботов');
