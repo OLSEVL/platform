@@ -30,7 +30,10 @@ MAX_CONNECTIONS = int(os.environ.get("INGEST_MAX_CONNECTIONS", "100"))
 INSTRUMENTS_REFRESH_SEC = int(os.environ.get("INSTRUMENTS_REFRESH_SEC", "300"))
 M1_PERIOD = 60  # период минутной свечи в секундах
 CANDLES_REQUEST_COUNT = 100  # количество свечей для начального backfill
-FLUSH_CHECK_INTERVAL = 5  # проверка завершённых свечей каждые N секунд
+# Интервал главного цикла (flush завершённых минут, POST текущей свечи, payout).
+# Раньше было 5s: при этом даже при debounce=1s текущая свеча на платформу уходила не чаще раз в 5s —
+# отсюда ощущаемое отставание ~5–10s от графика Pocket Options.
+FLUSH_CHECK_INTERVAL = int(os.environ.get("INGEST_LOOP_INTERVAL_SEC", "1"))
 INGEST_USE_API_CANDLES = os.environ.get("INGEST_USE_API_CANDLES", "1").strip().lower() in (
     "1",
     "true",
@@ -69,8 +72,8 @@ INGEST_CURRENT_CANDLE_ENABLE = os.environ.get("INGEST_CURRENT_CANDLE_ENABLE", "1
     "yes",
 )
 INGEST_CURRENT_CANDLE_TTL_SEC = int(os.environ.get("INGEST_CURRENT_CANDLE_TTL_SEC", "180"))
-INGEST_CURRENT_CANDLE_POST_DEBOUNCE_SEC = int(
-    os.environ.get("INGEST_CURRENT_CANDLE_POST_DEBOUNCE_SEC", "5")
+INGEST_CURRENT_CANDLE_POST_DEBOUNCE_SEC = float(
+    os.environ.get("INGEST_CURRENT_CANDLE_POST_DEBOUNCE_SEC", "1")
 )
 
 _ingest_http_session: Optional[aiohttp.ClientSession] = None

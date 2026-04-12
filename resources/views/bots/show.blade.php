@@ -96,6 +96,15 @@
             </div>
             <div id="chart-wrapper" class="absolute inset-0 hidden z-[1]"></div>
             <div id="structure-overlay" class="absolute inset-0 z-[5] pointer-events-none overflow-visible hidden"></div>
+            <div id="candle-timer-overlay"
+                class="pointer-events-none absolute z-[6] hidden h-0 w-0 overflow-visible"
+                title="До закрытия текущей минутной свечи (мм:сс)">
+                <span id="candle-tf-label"
+                    class="absolute left-1/2 z-[6] -translate-x-1/2 whitespace-nowrap text-[11px] font-medium leading-none text-zinc-400">M1</span>
+                <span id="candle-close-timer"
+                    class="absolute left-1/2 z-[6] -translate-x-1/2 whitespace-nowrap font-mono text-[11px] tabular-nums leading-none text-zinc-400"
+                    aria-live="polite"></span>
+            </div>
             <div id="open-trades-overlay" class="absolute left-2 top-2 z-[8] pointer-events-none flex flex-col gap-1"></div>
         </div>
     </div>
@@ -122,6 +131,28 @@
     const OPEN_TRADES_URL = '{{ route("bots.open-trades.data", $bot) }}';
     const LIMIT = 1440;
     const WINDOW_SEC = 86400;
+    const M1_COUNTDOWN_SECONDS = 60;
+    let m1CloseCountdownAnchorSec = null;
+    let m1CloseCountdownAnchorPerfMs = null;
+
+    function applyM1CountdownFromPayload(payload) {
+        if (!payload || typeof payload.m1_seconds_to_close !== 'number' || !Number.isFinite(payload.m1_seconds_to_close)) {
+            m1CloseCountdownAnchorSec = null;
+            m1CloseCountdownAnchorPerfMs = null;
+            return;
+        }
+        m1CloseCountdownAnchorSec = Math.max(0, Math.min(M1_COUNTDOWN_SECONDS, payload.m1_seconds_to_close));
+        m1CloseCountdownAnchorPerfMs = performance.now();
+    }
+
+    function m1CountdownLeftNow() {
+        if (m1CloseCountdownAnchorSec === null || m1CloseCountdownAnchorPerfMs === null) return null;
+        const elapsed = (performance.now() - m1CloseCountdownAnchorPerfMs) / 1000;
+        return Math.max(0, Math.min(M1_COUNTDOWN_SECONDS, m1CloseCountdownAnchorSec - elapsed));
+    }
+
+    const CANDLE_TIMER_GAP_T = 3;
+
     const signals = @json($chartSignals);
     const initialInstrument = @json($initialInstrument);
     const botName = @json($bot->name);
@@ -129,6 +160,9 @@
     const chartPlaceholder = document.getElementById('chart-placeholder');
     const chartWrapper = document.getElementById('chart-wrapper');
     const structureOverlay = document.getElementById('structure-overlay');
+    const candleTimerOverlay = document.getElementById('candle-timer-overlay');
+    const candleCloseTimerEl = document.getElementById('candle-close-timer');
+    const candleTfLabelEl = document.getElementById('candle-tf-label');
     const openTradesOverlay = document.getElementById('open-trades-overlay');
     const chartTitle = document.getElementById('chart-title');
     const chartLoading = document.getElementById('chart-loading');
@@ -428,6 +462,88 @@
             el.textContent = formatMmSs(ts - nowSec);
         });
     }
+
+    function positionCandleTimerOverlay() {
+        if (currentTimeframeMinutes !== 1) {
+            if (candleTimerOverlay) candleTimerOverlay.classList.add('hidden');
+            return;
+        }
+        if (!candleTimerOverlay || !chart || !candlestickSeries || !allChartData.length) {
+            if (candleTimerOverlay) candleTimerOverlay.classList.add('hidden');
+            return;
+        }
+        const last = allChartData[allChartData.length - 1];
+        const lastT = Number(last.time);
+        if (!Number.isFinite(lastT)) {
+            candleTimerOverlay.classList.add('hidden');
+            return;
+        }
+        const yPrice = candlestickSeries.priceToCoordinate(last.close);
+        if (yPrice == null || Number.isNaN(yPrice)) {
+            candleTimerOverlay.classList.add('hidden');
+            return;
+        }
+        const ts = chart.timeScale();
+        const lastIdx = allChartData.length - 1;
+        const t = Math.max(0, CANDLE_TIMER_GAP_T);
+        const bs = typeof ts.barSpacing === 'function' ? ts.barSpacing() : 6;
+        let x0 = null;
+        let x1 = null;
+        if (typeof ts.logicalToCoordinate === 'function') {
+            x0 = ts.logicalToCoordinate(lastIdx);
+            x1 = ts.logicalToCoordinate(lastIdx + 1);
+        }
+        if (x0 == null || Number.isNaN(x0)) x0 = ts.timeToCoordinate(lastT);
+        if (x0 == null || Number.isNaN(x0)) {
+            candleTimerOverlay.classList.add('hidden');
+            return;
+        }
+        if (x1 == null || Number.isNaN(x1) || Math.abs(x1 - x0) < 0.5) x1 = x0 + bs;
+        const xCenter = x0 + (x1 - x0) * t;
+        candleTimerOverlay.classList.remove('hidden');
+        const gapPx = 3;
+        candleTimerOverlay.style.left = xCenter + 'px';
+        candleTimerOverlay.style.top = Math.max(0, yPrice) + 'px';
+        candleTimerOverlay.style.transform = '';
+        if (candleTfLabelEl) {
+            candleTfLabelEl.style.bottom = gapPx + 'px';
+            candleTfLabelEl.style.top = 'auto';
+        }
+        if (candleCloseTimerEl) {
+            candleCloseTimerEl.style.top = gapPx + 'px';
+            candleCloseTimerEl.style.bottom = 'auto';
+        }
+    }
+
+    function tickCandleCloseTimer() {
+        if (!candleCloseTimerEl) return;
+        if (!currentInstrument || !candlestickSeries || !allChartData.length) {
+            if (candleTimerOverlay) candleTimerOverlay.classList.add('hidden');
+            candleCloseTimerEl.textContent = '';
+            return;
+        }
+        if (currentTimeframeMinutes !== 1) {
+            if (candleTimerOverlay) candleTimerOverlay.classList.add('hidden');
+            candleCloseTimerEl.textContent = '';
+            return;
+        }
+        const lastT = Number(allChartData[allChartData.length - 1].time);
+        if (!Number.isFinite(lastT)) {
+            if (candleTimerOverlay) candleTimerOverlay.classList.add('hidden');
+            candleCloseTimerEl.textContent = '';
+            return;
+        }
+        const left = m1CountdownLeftNow();
+        if (left === null) {
+            if (candleTimerOverlay) candleTimerOverlay.classList.add('hidden');
+            candleCloseTimerEl.textContent = '';
+            return;
+        }
+        if (candleTfLabelEl) candleTfLabelEl.textContent = 'M' + String(currentTimeframeMinutes);
+        candleCloseTimerEl.textContent = formatMmSs(left);
+        requestAnimationFrame(positionCandleTimerOverlay);
+    }
+
     function renderOpenTradesOverlay() {
         if (!openTradesOverlay) return;
         if (!currentInstrument) {
@@ -480,7 +596,12 @@
         const params = new URLSearchParams({ instrument, timeframe: String(currentTimeframeMinutes), limit: LIMIT, since: String(candlesSince()) });
         if (before != null) params.set('before', before);
         if (currentTimeframeMinutes === 1 && before == null) params.set('include_partial', '1');
-        return fetch(`${CANDLES_URL}?${params.toString()}`, { headers: { 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' } }).then(r => r.json());
+        return fetch(`${CANDLES_URL}?${params.toString()}`, { headers: { 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' } })
+            .then((r) => r.json())
+            .then((payload) => {
+                applyM1CountdownFromPayload(payload);
+                return payload;
+            });
     }
     function fetchStructures() {
         if (!currentInstrument) return;
@@ -533,6 +654,7 @@
             candlestickSeries.setData(allChartData);
             renderChartMarkers();
             renderEntryPriceLines();
+            tickCandleCloseTimer();
             return;
         }
         const oldFirst = allChartData[0]?.time;
@@ -543,6 +665,7 @@
             candlestickSeries.setData(allChartData);
             renderChartMarkers();
             renderEntryPriceLines();
+            tickCandleCloseTimer();
             return;
         }
         const lastKnown = allChartData[allChartData.length - 1]?.time ?? 0;
@@ -551,6 +674,7 @@
         oldestLoadedTime = Math.min(...allChartData.map(c => c.time));
         renderChartMarkers();
         renderEntryPriceLines();
+        tickCandleCloseTimer();
     }
     function createChart() {
         entryPriceLineHandles = [];
@@ -575,6 +699,7 @@
             const range = chart.timeScale().getVisibleLogicalRange();
             if (range && currentTimeframeMinutes === 1 && !loadingMore && oldestLoadedTime != null && range.from < 2) loadMoreCandles();
             redrawStructureOverlay();
+            requestAnimationFrame(positionCandleTimerOverlay);
         });
     }
     function loadMoreCandles() {
@@ -593,7 +718,11 @@
             renderEntryPriceLines();
             redrawStructureOverlay();
             fetchStructures();
-        }).finally(() => { loadingMore = false; setLoading(false); });
+        }).finally(() => {
+            loadingMore = false;
+            setLoading(false);
+            tickCandleCloseTimer();
+        });
     }
     function startAutoRefresh() {
         if (refreshInterval) clearInterval(refreshInterval);
@@ -632,6 +761,7 @@
             updateChartTitle();
             redrawStructureOverlay();
             renderEntryPriceLines();
+            tickCandleCloseTimer();
         }).finally(() => setLoading(false));
     }
     function selectInstrument(instrument, displayName) {
@@ -663,6 +793,7 @@
                 clearInterval(refreshInterval);
             }
             updateChartTitle();
+            tickCandleCloseTimer();
         }).finally(() => setLoading(false));
     }
 
@@ -682,7 +813,13 @@
     document.addEventListener('click', () => { layersPanel.classList.add('hidden'); tfPanel.classList.add('hidden'); });
     layerOb.addEventListener('change', () => { saveLayerPrefs(); redrawStructureOverlay(); });
     layerFvg.addEventListener('change', () => { saveLayerPrefs(); redrawStructureOverlay(); });
-    new ResizeObserver(() => { if (chart && chartWrapper.clientWidth) { chart.resize(chartWrapper.clientWidth, chartWrapper.clientHeight); redrawStructureOverlay(); } }).observe(chartWrapper);
+    new ResizeObserver(() => {
+        if (chart && chartWrapper.clientWidth) {
+            chart.resize(chartWrapper.clientWidth, chartWrapper.clientHeight);
+            redrawStructureOverlay();
+            requestAnimationFrame(positionCandleTimerOverlay);
+        }
+    }).observe(chartWrapper);
     instrumentListEl.addEventListener('click', (e) => {
         const btn = e.target.closest('.instrument-btn');
         if (!btn) return;
@@ -710,9 +847,11 @@
     openTradesTickInterval = setInterval(() => {
         renderOpenTradesOverlay();
         tickSidebarTradeTimers();
+        tickCandleCloseTimer();
     }, 1000);
     renderOpenTradesOverlay();
     tickSidebarTradeTimers();
+    tickCandleCloseTimer();
     openTradesFetchInterval = setInterval(refreshOpenTrades, 3000);
     refreshInstrumentSidebar().then(() => {
         let ib = null;

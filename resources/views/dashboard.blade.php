@@ -127,6 +127,15 @@
             </div>
             <div id="chart-wrapper" class="absolute inset-0 hidden z-[1]"></div>
             <div id="structure-overlay" class="absolute inset-0 z-[5] pointer-events-none overflow-visible hidden"></div>
+            <div id="candle-timer-overlay"
+                class="pointer-events-none absolute z-[6] hidden h-0 w-0 overflow-visible"
+                title="До закрытия текущей минутной свечи (по времени открытия бара с графика, мм:сс)">
+                <span id="candle-tf-label"
+                    class="absolute left-1/2 z-[6] -translate-x-1/2 whitespace-nowrap text-[11px] font-medium leading-none text-zinc-400">M1</span>
+                <span id="candle-close-timer"
+                    class="absolute left-1/2 z-[6] -translate-x-1/2 whitespace-nowrap font-mono text-[11px] tabular-nums leading-none text-zinc-400"
+                    aria-live="polite"></span>
+            </div>
         </div>
     </div>
 </div>
@@ -139,15 +148,48 @@
     const INSTRUMENTS_SIDEBAR_URL = '{{ route("dashboard.instruments.data") }}';
     const LIMIT = 1440;
     const WINDOW_SEC = 86400;
+    const M1_COUNTDOWN_SECONDS = 60;
+    /**
+     * Таймер M1: сервер в каждом ответе /candles отдаёт m1_seconds_to_close (учёт смещения шкалы time свечей vs PHP time).
+     * Между опросами убываем локально по performance.now(), без смешивания «часов» на клиенте.
+     */
+    let m1CloseCountdownAnchorSec = null;
+    let m1CloseCountdownAnchorPerfMs = null;
+
+    function applyM1CountdownFromPayload(payload) {
+        if (!payload || typeof payload.m1_seconds_to_close !== 'number' || !Number.isFinite(payload.m1_seconds_to_close)) {
+            m1CloseCountdownAnchorSec = null;
+            m1CloseCountdownAnchorPerfMs = null;
+            return;
+        }
+        m1CloseCountdownAnchorSec = Math.max(0, Math.min(M1_COUNTDOWN_SECONDS, payload.m1_seconds_to_close));
+        m1CloseCountdownAnchorPerfMs = performance.now();
+    }
+
+    function m1CountdownLeftNow() {
+        if (m1CloseCountdownAnchorSec === null || m1CloseCountdownAnchorPerfMs === null) {
+            return null;
+        }
+        const elapsed = (performance.now() - m1CloseCountdownAnchorPerfMs) / 1000;
+        return Math.max(0, Math.min(M1_COUNTDOWN_SECONDS, m1CloseCountdownAnchorSec - elapsed));
+    }
+    /**
+     * Горизонталь таймера: xCenter = x0 + (x1 - x0) * t, где x0/x1 — якорь последнего бара и слот справа (≈ barSpacing).
+     * t = 0 — у x0; t = 1 — на один интервал вправо; t = 1.5 / 2 — ещё дальше (полтора/два интервала). Только нижняя граница 0.
+     */
+    const CANDLE_TIMER_GAP_T = 3;
 
     const chartPlaceholder = document.getElementById('chart-placeholder');
     const chartWrapper = document.getElementById('chart-wrapper');
     const structureOverlay = document.getElementById('structure-overlay');
+    const candleTimerOverlay = document.getElementById('candle-timer-overlay');
     const chartTitle = document.getElementById('chart-title');
     const chartLoading = document.getElementById('chart-loading');
     const tfBtn = document.getElementById('tf-dropdown-btn');
     const tfPanel = document.getElementById('tf-dropdown-panel');
     const tfLabelEl = document.getElementById('tf-dropdown-label');
+    const candleCloseTimerEl = document.getElementById('candle-close-timer');
+    const candleTfLabelEl = document.getElementById('candle-tf-label');
     const layersBtn = document.getElementById('layers-dropdown-btn');
     const layersPanel = document.getElementById('layers-dropdown-panel');
     const layerOb = document.getElementById('layer-ob');
@@ -213,6 +255,97 @@
             if (!Number.isFinite(ts)) return;
             el.textContent = formatMmSs(ts - nowSec);
         });
+    }
+
+    function positionCandleTimerOverlay() {
+        if (currentTimeframeMinutes !== 1) {
+            if (candleTimerOverlay) candleTimerOverlay.classList.add('hidden');
+            return;
+        }
+        if (!candleTimerOverlay || !chart || !candlestickSeries || !allChartData.length) {
+            if (candleTimerOverlay) {
+                candleTimerOverlay.classList.add('hidden');
+            }
+            return;
+        }
+        const last = allChartData[allChartData.length - 1];
+        const lastT = Number(last.time);
+        if (!Number.isFinite(lastT)) {
+            candleTimerOverlay.classList.add('hidden');
+            return;
+        }
+        const yPrice = candlestickSeries.priceToCoordinate(last.close);
+        if (yPrice == null || Number.isNaN(yPrice)) {
+            candleTimerOverlay.classList.add('hidden');
+            return;
+        }
+        const ts = chart.timeScale();
+        const lastIdx = allChartData.length - 1;
+        const t = Math.max(0, CANDLE_TIMER_GAP_T);
+        const bs = typeof ts.barSpacing === 'function' ? ts.barSpacing() : 6;
+
+        let x0 = null;
+        let x1 = null;
+        if (typeof ts.logicalToCoordinate === 'function') {
+            x0 = ts.logicalToCoordinate(lastIdx);
+            x1 = ts.logicalToCoordinate(lastIdx + 1);
+        }
+        if (x0 == null || Number.isNaN(x0)) {
+            x0 = ts.timeToCoordinate(lastT);
+        }
+        if (x0 == null || Number.isNaN(x0)) {
+            candleTimerOverlay.classList.add('hidden');
+            return;
+        }
+        // Часто x1 === x0 или |x1-x0|≈0 — тогда (x1-x0)*t всегда 0 и CANDLE_TIMER_GAP_T «не работает».
+        if (x1 == null || Number.isNaN(x1) || Math.abs(x1 - x0) < 0.5) {
+            x1 = x0 + bs;
+        }
+        const xCenter = x0 + (x1 - x0) * t;
+        candleTimerOverlay.classList.remove('hidden');
+        const gapPx = 3;
+        candleTimerOverlay.style.left = xCenter + 'px';
+        candleTimerOverlay.style.top = Math.max(0, yPrice) + 'px';
+        candleTimerOverlay.style.transform = '';
+        if (candleTfLabelEl) {
+            candleTfLabelEl.style.bottom = gapPx + 'px';
+            candleTfLabelEl.style.top = 'auto';
+        }
+        if (candleCloseTimerEl) {
+            candleCloseTimerEl.style.top = gapPx + 'px';
+            candleCloseTimerEl.style.bottom = 'auto';
+        }
+    }
+
+    function tickCandleCloseTimer() {
+        if (!candleCloseTimerEl) return;
+        if (!currentInstrument || !candlestickSeries || !allChartData.length) {
+            if (candleTimerOverlay) candleTimerOverlay.classList.add('hidden');
+            candleCloseTimerEl.textContent = '';
+            return;
+        }
+        if (currentTimeframeMinutes !== 1) {
+            if (candleTimerOverlay) candleTimerOverlay.classList.add('hidden');
+            candleCloseTimerEl.textContent = '';
+            return;
+        }
+        const lastT = Number(allChartData[allChartData.length - 1].time);
+        if (!Number.isFinite(lastT)) {
+            if (candleTimerOverlay) candleTimerOverlay.classList.add('hidden');
+            candleCloseTimerEl.textContent = '';
+            return;
+        }
+        const left = m1CountdownLeftNow();
+        if (left === null) {
+            if (candleTimerOverlay) candleTimerOverlay.classList.add('hidden');
+            candleCloseTimerEl.textContent = '';
+            return;
+        }
+        if (candleTfLabelEl) {
+            candleTfLabelEl.textContent = 'M' + String(currentTimeframeMinutes);
+        }
+        candleCloseTimerEl.textContent = formatMmSs(left);
+        requestAnimationFrame(positionCandleTimerOverlay);
     }
 
     function renderInstrumentSidebarRows(instruments) {
@@ -497,6 +630,7 @@
                     const newData = buildChartData(candles);
                     const newLastT = newData[newData.length - 1].time;
                     applyIncrementalChartUpdate(newData);
+                    tickCandleCloseTimer();
                     if (stickToLatest && chart && prevLastT !== null && newLastT > prevLastT) {
                         chart.timeScale().scrollToRealTime();
                     }
@@ -504,7 +638,7 @@
                     fetchStructures();
                 })
                 .catch(console.error);
-        }, 2000);
+        }, 1000);
     }
 
     function setLoading(show) {
@@ -523,8 +657,13 @@
             params.set('include_partial', '1');
         }
         return fetch(CANDLES_URL + '?' + params.toString(), {
-            headers: { 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' }
-        }).then(r => r.json());
+            headers: { 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+        })
+            .then((r) => r.json())
+            .then((payload) => {
+                applyM1CountdownFromPayload(payload);
+                return payload;
+            });
     }
 
     function buildChartData(candles) {
@@ -544,6 +683,7 @@
             allChartData = newData;
             oldestLoadedTime = Math.min(...allChartData.map(c => c.time));
             candlestickSeries.setData(allChartData);
+            tickCandleCloseTimer();
             return;
         }
 
@@ -553,6 +693,7 @@
             allChartData = newData;
             oldestLoadedTime = Math.min(...allChartData.map(c => c.time));
             candlestickSeries.setData(allChartData);
+            tickCandleCloseTimer();
             return;
         }
 
@@ -564,6 +705,7 @@
 
         allChartData = newData;
         oldestLoadedTime = Math.min(...allChartData.map(c => c.time));
+        tickCandleCloseTimer();
     }
 
     function createChart() {
@@ -607,6 +749,7 @@
                 loadMoreCandles();
             }
             redrawStructureOverlay();
+            requestAnimationFrame(positionCandleTimerOverlay);
         });
     }
 
@@ -631,6 +774,7 @@
                 candlestickSeries.setData(allChartData);
                 loadingMore = false;
                 setLoading(false);
+                tickCandleCloseTimer();
                 requestAnimationFrame(redrawStructureOverlay);
                 fetchStructures();
             })
@@ -655,10 +799,14 @@
                     structureOverlay.innerHTML = '';
                 }
                 updateChartTitle();
+                tickCandleCloseTimer();
                 requestAnimationFrame(redrawStructureOverlay);
                 setLoading(false);
             })
-            .catch(() => { setLoading(false); });
+            .catch(() => {
+                setLoading(false);
+                tickCandleCloseTimer();
+            });
     }
 
     function selectInstrument(instrument, displayName) {
@@ -670,6 +818,7 @@
         structureOverlay.innerHTML = '';
         updateChartTitle();
         updateTfOptionStyles();
+        tickCandleCloseTimer();
         setLoading(true);
         createChart();
 
@@ -690,11 +839,13 @@
                     if (refreshInterval) clearInterval(refreshInterval);
                 }
                 updateChartTitle();
+                tickCandleCloseTimer();
                 setLoading(false);
             })
             .catch(() => {
                 setLoading(false);
                 if (refreshInterval) clearInterval(refreshInterval);
+                tickCandleCloseTimer();
             });
     }
 
@@ -744,7 +895,10 @@
     new ResizeObserver(() => {
         if (!chart || !chartWrapper.clientWidth) return;
         chart.resize(chartWrapper.clientWidth, chartWrapper.clientHeight);
-        requestAnimationFrame(redrawStructureOverlay);
+        requestAnimationFrame(() => {
+            redrawStructureOverlay();
+            positionCandleTimerOverlay();
+        });
     }).observe(chartWrapper);
 
     if (instrumentListEl) {
@@ -801,9 +955,13 @@
     syncSearchClearButton();
 
     instrumentListRefreshInterval = setInterval(refreshInstrumentSidebar, 1000);
-    sidebarTimerInterval = setInterval(tickSidebarTradeTimers, 1000);
+    sidebarTimerInterval = setInterval(() => {
+        tickSidebarTradeTimers();
+        tickCandleCloseTimer();
+    }, 1000);
     tickSidebarTradeTimers();
     refreshInstrumentSidebar().then(() => {
+        tickCandleCloseTimer();
         const first = document.querySelector('#instrument-list .instrument-btn');
         if (first) first.click();
     });

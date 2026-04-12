@@ -7,6 +7,7 @@ use App\Models\PocketInstrument;
 use App\Services\CandleService;
 use App\Services\CandleStructureZoneDetector;
 use App\Services\CurrentCandleCacheService;
+use App\Support\M1CandleCountdown;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -153,8 +154,14 @@ class DashboardController extends Controller
         $since = $request->input('since') !== null ? (int) $request->input('since') : null;
         $includePartial = (bool) $request->boolean('include_partial', false);
 
+        $serverUnix = time();
+
         if ($timeframe !== 1 && $before !== null) {
-            return response()->json(['candles' => []]);
+            return response()->json([
+                'candles' => [],
+                'server_unix' => $serverUnix,
+                'm1_seconds_to_close' => null,
+            ]);
         }
 
         $rows = $candleService->seriesForDashboard(
@@ -194,7 +201,20 @@ class DashboardController extends Controller
             }
         }
 
-        return response()->json(['candles' => $data]);
+        $lastOpen = null;
+        if ($timeframe === 1 && $data !== []) {
+            $lastOpen = (int) end($data)['time'];
+        }
+
+        $m1SecondsToClose = ($lastOpen !== null && $lastOpen > 0)
+            ? M1CandleCountdown::secondsToClose($lastOpen, $serverUnix)
+            : null;
+
+        return response()->json([
+            'candles' => $data,
+            'server_unix' => $serverUnix,
+            'm1_seconds_to_close' => $m1SecondsToClose,
+        ]);
     }
 
     public function structures(Request $request, CandleStructureZoneDetector $detector, CandleService $candleService): JsonResponse
