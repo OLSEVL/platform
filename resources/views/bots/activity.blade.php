@@ -7,9 +7,13 @@
             <h1 class="text-2xl font-semibold">{{ $bot->name }}</h1>
             <span class="text-sm text-zinc-500">Сигналы и сделки</span>
         </div>
-        <div class="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
-            <a href="{{ route('bots.show', $bot) }}" class="text-blue-400 hover:text-blue-300">← График бота</a>
-            <a href="{{ route('bots.index') }}" class="text-blue-400 hover:text-blue-300">К списку ботов</a>
+        <div class="flex flex-wrap items-center gap-2 text-sm">
+            <a href="{{ route('bots.show', $bot) }}"
+                class="inline-flex items-center rounded border border-zinc-600 bg-zinc-800 px-2.5 py-1 text-xs font-medium text-zinc-200 shadow-sm transition-colors hover:bg-zinc-700 hover:border-zinc-500 hover:text-zinc-50 focus:outline-none focus:ring-2 focus:ring-blue-500/50">← График</a>
+            <a href="{{ route('bots.settings', $bot) }}"
+                class="inline-flex items-center rounded border border-zinc-600 bg-zinc-800 px-2.5 py-1 text-xs font-medium text-zinc-200 shadow-sm transition-colors hover:bg-zinc-700 hover:border-zinc-500 hover:text-zinc-50 focus:outline-none focus:ring-2 focus:ring-blue-500/50">Настройки</a>
+            <a href="{{ route('bots.index') }}"
+                class="inline-flex items-center rounded border border-zinc-600 bg-zinc-800 px-2.5 py-1 text-xs font-medium text-zinc-200 shadow-sm transition-colors hover:bg-zinc-700 hover:border-zinc-500 hover:text-zinc-50 focus:outline-none focus:ring-2 focus:ring-blue-500/50">К списку</a>
         </div>
     </div>
 

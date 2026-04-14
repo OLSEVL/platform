@@ -12,7 +12,7 @@
     #instrument-list::-webkit-scrollbar-track { background: #27272a; }
     #instrument-list::-webkit-scrollbar-thumb { background: #52525b; border-radius: 4px; }
 </style>
-<span class="sr-only pointer-events-none bg-blue-900/40 bg-blue-900/50" aria-hidden="true"></span>
+<span class="sr-only pointer-events-none bg-blue-900/40 bg-blue-900/50 bg-stone-800/45 text-stone-200" aria-hidden="true"></span>
 <div class="flex min-h-0 flex-1 w-full gap-0 overflow-hidden">
     <aside class="w-56 shrink-0 bg-zinc-900 border-r border-zinc-800 overflow-hidden flex flex-col min-h-0">
         <div class="shrink-0 p-3 border-b border-zinc-800 bg-zinc-900/80">
@@ -29,7 +29,7 @@
                 @php($isOpenTradeInstrument = $openTradeInstruments->contains($inst->instrument))
                 <li>
                     <button type="button"
-                        class="instrument-btn w-full text-left px-4 py-3 hover:bg-zinc-800 focus:bg-zinc-800 focus:outline-none transition-colors {{ $isOpenTradeInstrument ? 'bg-amber-950/30' : '' }}"
+                        class="instrument-btn w-full text-left px-4 py-3 hover:bg-zinc-800 focus:bg-zinc-800 focus:outline-none transition-colors {{ $isOpenTradeInstrument ? 'bg-stone-800/45' : '' }}"
                         data-instrument="{{ $inst->instrument }}"
                         data-display-name="{{ e($inst->display_name ?? $inst->instrument) }}"
                         data-search="{{ mb_strtolower(($inst->display_name ?? $inst->instrument).' '.$inst->instrument) }}"
@@ -40,7 +40,7 @@
                                 @if($isOpenTradeInstrument && isset($nearestExpiryByInstrument[$inst->instrument]))
                                     @php($expTs = (int) $nearestExpiryByInstrument[$inst->instrument])
                                     @php($secLeft = max(0, $expTs - now()->timestamp))
-                                    <span class="instrument-trade-timer shrink-0 text-xs font-mono tabular-nums text-amber-400/90" data-expiry-ts="{{ $expTs }}">{{ str_pad((string) intdiv($secLeft, 60), 2, '0', STR_PAD_LEFT) }}:{{ str_pad((string) ($secLeft % 60), 2, '0', STR_PAD_LEFT) }}</span>
+                                    <span class="instrument-trade-timer shrink-0 text-xs font-mono tabular-nums text-stone-200" data-expiry-ts="{{ $expTs }}">{{ str_pad((string) intdiv($secLeft, 60), 2, '0', STR_PAD_LEFT) }}:{{ str_pad((string) ($secLeft % 60), 2, '0', STR_PAD_LEFT) }}</span>
                                 @endif
                             </div>
                             <span
@@ -83,13 +83,39 @@
                         </label>
                     </div>
                 </div>
-                <a href="{{ route('bots.activity', $bot) }}" class="text-sm text-blue-400 hover:text-blue-300">Сигналы и сделки</a>
+                <div class="flex flex-wrap items-center gap-1.5 shrink-0">
+                    <button type="button" id="bot-analysis-btn"
+                        class="inline-flex items-center rounded border border-zinc-600 bg-zinc-800 px-2.5 py-1 text-xs font-medium text-zinc-200 shadow-sm transition-colors hover:bg-zinc-700 hover:border-zinc-500 hover:text-zinc-50 focus:outline-none focus:ring-2 focus:ring-blue-500/50">Анализ</button>
+                    <a href="{{ route('bots.activity', $bot) }}"
+                        class="inline-flex items-center rounded border border-zinc-600 bg-zinc-800 px-2.5 py-1 text-xs font-medium text-zinc-200 shadow-sm transition-colors hover:bg-zinc-700 hover:border-zinc-500 hover:text-zinc-50 focus:outline-none focus:ring-2 focus:ring-blue-500/50">Сигналы и сделки</a>
+                    <a href="{{ route('bots.settings', $bot) }}"
+                        class="inline-flex items-center rounded border border-zinc-600 bg-zinc-800 px-2.5 py-1 text-xs font-medium text-zinc-200 shadow-sm transition-colors hover:bg-zinc-700 hover:border-zinc-500 hover:text-zinc-50 focus:outline-none focus:ring-2 focus:ring-blue-500/50">Настройки</a>
+                </div>
             </div>
             <div class="flex items-center gap-3 shrink-0">
                 <span id="bot-name-badge" class="text-2xl font-semibold text-emerald-400">{{ $bot->name }}</span>
                 <span id="chart-loading" class="text-sm text-zinc-500 hidden">Загрузка…</span>
             </div>
         </div>
+        {{-- Панель объяснения входа вынесена над графиком: абсолютные слои графика не перекрывают текст анализа. --}}
+        <div id="bot-analysis-panel" class="hidden border-b border-zinc-800 bg-zinc-900/95 px-3 py-2 text-xs">
+                <div class="flex items-start justify-between gap-3">
+                    <div class="min-w-0">
+                        <div id="bot-analysis-summary" class="font-medium text-zinc-200">Анализ не запрошен.</div>
+                        <div id="bot-analysis-meta" class="mt-0.5 text-zinc-500"></div>
+                    </div>
+                    <button type="button" id="bot-analysis-close" class="shrink-0 rounded border border-zinc-700 bg-zinc-800 px-2 py-0.5 text-[11px] text-zinc-300 hover:bg-zinc-700">Закрыть</button>
+                </div>
+                <div id="bot-analysis-text" class="mt-2 whitespace-pre-wrap break-words text-zinc-300"></div>
+                <div id="bot-analysis-reasons-wrap" class="mt-2 hidden">
+                    <div class="text-[10px] uppercase tracking-wide text-zinc-500">Причины / триггеры</div>
+                    <ul id="bot-analysis-reasons" class="mt-1 list-disc space-y-1 pl-4 text-zinc-300"></ul>
+                </div>
+                <div id="bot-analysis-blockers-wrap" class="mt-2 hidden">
+                    <div class="text-[10px] uppercase tracking-wide text-rose-400">Что блокирует вход</div>
+                    <ul id="bot-analysis-blockers" class="mt-1 list-disc space-y-1 pl-4 text-rose-300"></ul>
+                </div>
+            </div>
         <div id="chart-container" class="flex-1 min-h-0 relative">
             <div id="chart-placeholder" class="absolute inset-0 flex items-center justify-center text-zinc-500 bg-zinc-950/90 z-0">
                 Нажмите на инструмент слева, чтобы показать минутный график
@@ -112,11 +138,41 @@
     <aside class="w-52 shrink-0 border-l border-zinc-800 bg-zinc-950/40 overflow-hidden min-h-0 flex flex-col">
         <div class="px-3 py-2.5 bg-zinc-900 text-xs font-medium text-zinc-400 uppercase tracking-wide">Статистика</div>
         <div class="p-3 flex flex-col gap-2 overflow-y-auto min-h-0">
-            <div class="rounded border border-zinc-800 bg-zinc-900/50 p-3"><div class="text-xs text-zinc-400">Всего</div><div class="text-lg tabular-nums">{{ $stats['total'] }}</div></div>
-            <div class="rounded border border-zinc-800 bg-zinc-900/50 p-3"><div class="text-xs text-zinc-400">Wins</div><div class="text-lg tabular-nums text-emerald-400">{{ $stats['wins'] }}</div></div>
-            <div class="rounded border border-zinc-800 bg-zinc-900/50 p-3"><div class="text-xs text-zinc-400">Losses</div><div class="text-lg tabular-nums text-rose-400">{{ $stats['losses'] }}</div></div>
-            <div class="rounded border border-zinc-800 bg-zinc-900/50 p-3"><div class="text-xs text-zinc-400">Открыто</div><div class="text-lg tabular-nums">{{ $stats['open'] }}</div></div>
-            <div class="rounded border border-zinc-800 bg-zinc-900/50 p-3"><div class="text-xs text-zinc-400">Winrate</div><div class="text-lg tabular-nums">{{ $stats['winrate'] !== null ? $stats['winrate'].'%' : '—' }}</div></div>
+            {{-- Компактная статистика: меньше отступы, 2 колонки, чтобы блок занимал меньше места. --}}
+            <div class="grid grid-cols-2 gap-1.5">
+                <div class="rounded border border-zinc-800 bg-zinc-900/50 px-2 py-1.5"><div class="text-[10px] text-zinc-400 uppercase">Всего</div><div class="text-sm tabular-nums">{{ $stats['total'] }}</div></div>
+                <div class="rounded border border-zinc-800 bg-zinc-900/50 px-2 py-1.5"><div class="text-[10px] text-zinc-400 uppercase">Открыто</div><div class="text-sm tabular-nums">{{ $stats['open'] }}</div></div>
+                <div class="rounded border border-zinc-800 bg-zinc-900/50 px-2 py-1.5"><div class="text-[10px] text-zinc-400 uppercase">Wins</div><div class="text-sm tabular-nums text-emerald-400">{{ $stats['wins'] }}</div></div>
+                <div class="rounded border border-zinc-800 bg-zinc-900/50 px-2 py-1.5"><div class="text-[10px] text-zinc-400 uppercase">Losses</div><div class="text-sm tabular-nums text-rose-400">{{ $stats['losses'] }}</div></div>
+                <div class="col-span-2 rounded border border-zinc-800 bg-zinc-900/50 px-2 py-1.5"><div class="text-[10px] text-zinc-400 uppercase">Winrate</div><div class="text-sm tabular-nums">{{ $stats['winrate'] !== null ? $stats['winrate'].'%' : '—' }}</div></div>
+            </div>
+            {{-- Панель синхронизируется с выбранной парой через JS (updateSidebarActiveTrade); поля совпадают с openTradeSidebarRow() в BotController. --}}
+            <div id="sidebar-active-trade-panel" class="rounded border border-amber-700/40 bg-amber-950/20 px-2 py-2 text-xs @unless($activeTradeSidebar) hidden @endunless">
+                <div class="flex items-center justify-between gap-2">
+                    <span class="font-medium text-amber-300">Сделка в работе</span>
+                    <span id="sidebar-trade-timer" class="font-mono text-amber-200 @unless($activeTrade && $activeTradeSecondsLeft !== null) hidden @endunless">@if($activeTrade && $activeTradeSecondsLeft !== null){{ str_pad((string) intdiv($activeTradeSecondsLeft, 60), 2, '0', STR_PAD_LEFT) }}:{{ str_pad((string) ($activeTradeSecondsLeft % 60), 2, '0', STR_PAD_LEFT) }}@endif</span>
+                </div>
+                <div id="sidebar-trade-detail" class="mt-2 space-y-1.5 text-[11px] leading-snug text-zinc-300">
+                    <div id="sidebar-trade-headline" class="font-medium text-zinc-200">@if($activeTradeSidebar){{ $activeTradeSidebar['instrument'] }} · {{ strtoupper((string) $activeTradeSidebar['side']) }} · {{ $activeTradeSidebar['confidence_fmt'] }} confidence @endif</div>
+                    <div id="sidebar-trade-times" class="text-zinc-400">@if($activeTradeSidebar)Сигнал: {{ $activeTradeSidebar['signal_at_fmt'] }} · Сделка: {{ $activeTradeSidebar['entry_at_fmt'] }}@endif</div>
+                    <div id="sidebar-trade-state">@if($activeTradeSidebar){{ $activeTradeSidebar['state_line'] }}@endif</div>
+                    <div id="sidebar-trade-pnl">@if($activeTradeSidebar)PnL: {{ $activeTradeSidebar['pnl_display'] ?? '—' }}@endif</div>
+                    {{-- @class: условия видимости вынесены из inline-@unless, иначе Blade путается в кавычках/скобках внутри class="…". --}}
+                    <div id="sidebar-trade-analysis-wrap" @class([
+                        'rounded border border-zinc-800 bg-zinc-900/60 px-2 py-1.5 text-[11px] leading-relaxed',
+                        'hidden' => ! $activeTradeSidebar || trim((string) ($activeTradeSidebar['analysis_text'] ?? '')) === '',
+                    ])>
+                        <div class="mb-1 text-[10px] uppercase tracking-wide text-zinc-500">Анализ (модель)</div>
+                        <div id="sidebar-trade-analysis-text" class="whitespace-pre-wrap break-words">@if($activeTradeSidebar){{ $activeTradeSidebar['analysis_text'] }}@endif</div>
+                    </div>
+                    <div id="sidebar-trade-reasons-wrap" @class([
+                        'text-zinc-400',
+                        'hidden' => ! $activeTradeSidebar || empty($activeTradeSidebar['reasons_short'] ?? []),
+                    ])>
+                        <div id="sidebar-trade-reasons-text">@if($activeTradeSidebar && ! empty($activeTradeSidebar['reasons_short'])){{ implode(' · ', $activeTradeSidebar['reasons_short']) }}@endif</div>
+                    </div>
+                </div>
+            </div>
             <a href="{{ route('bots.index') }}" class="text-sm text-blue-400 hover:text-blue-300 pt-1">← К списку ботов</a>
         </div>
     </aside>
@@ -129,6 +185,7 @@
     const STRUCTURES_URL = '{{ route("structures.data") }}';
     const INSTRUMENTS_SIDEBAR_URL = '{{ route("bots.instruments.sidebar-data", $bot) }}';
     const OPEN_TRADES_URL = '{{ route("bots.open-trades.data", $bot) }}';
+    const BOT_ANALYSIS_URL = '{{ route("bots.analysis.data", $bot) }}';
     const LIMIT = 1440;
     const WINDOW_SEC = 86400;
     const M1_COUNTDOWN_SECONDS = 60;
@@ -175,6 +232,16 @@
     const layerFvg = document.getElementById('layer-fvg');
     const instrumentSearchInput = document.getElementById('instrument-search');
     const instrumentSearchClearBtn = document.getElementById('instrument-search-clear');
+    const botAnalysisBtn = document.getElementById('bot-analysis-btn');
+    const botAnalysisPanel = document.getElementById('bot-analysis-panel');
+    const botAnalysisCloseBtn = document.getElementById('bot-analysis-close');
+    const botAnalysisSummary = document.getElementById('bot-analysis-summary');
+    const botAnalysisMeta = document.getElementById('bot-analysis-meta');
+    const botAnalysisText = document.getElementById('bot-analysis-text');
+    const botAnalysisReasonsWrap = document.getElementById('bot-analysis-reasons-wrap');
+    const botAnalysisReasons = document.getElementById('bot-analysis-reasons');
+    const botAnalysisBlockersWrap = document.getElementById('bot-analysis-blockers-wrap');
+    const botAnalysisBlockers = document.getElementById('bot-analysis-blockers');
     const LAYER_PREFS_KEY = 'platform.bot.show.chartLayers.v2';
 
     let chart = null;
@@ -189,6 +256,9 @@
     let instrumentListRefreshInterval = null;
     let openTradesFetchInterval = null;
     let openTradesTickInterval = null;
+    let botAnalysisLoading = false;
+    // Последний ручной анализ по кнопке "Анализ" для выбранной пары; используем в правой панели при отсутствии сделки.
+    let latestManualAnalysis = null;
     let lastZones = [];
     let openTrades = [];
     let entryPriceLineHandles = [];
@@ -328,6 +398,92 @@
     function candlesSince() { return Math.floor(Date.now() / 1000) - WINDOW_SEC; }
     function setLoading(show) { chartLoading.classList.toggle('hidden', !show); }
     function normalizeText(s) { return (s || '').toString().toLowerCase().trim(); }
+    function clearList(el) {
+        while (el && el.firstChild) el.removeChild(el.firstChild);
+    }
+    function fillList(el, items) {
+        clearList(el);
+        (items || []).forEach((txt) => {
+            const li = document.createElement('li');
+            li.textContent = String(txt || '');
+            el.appendChild(li);
+        });
+    }
+    function renderBotAnalysis(data) {
+        if (!botAnalysisPanel) return;
+        botAnalysisPanel.classList.remove('hidden');
+        latestManualAnalysis = data || null;
+
+        const canEnter = !!(data && data.can_enter);
+        botAnalysisSummary.textContent = (data && data.summary) ? String(data.summary) : 'Нет данных анализа.';
+        botAnalysisSummary.classList.toggle('text-emerald-300', canEnter);
+        botAnalysisSummary.classList.toggle('text-rose-300', !canEnter);
+
+        const instrument = data && data.instrument ? String(data.instrument) : (currentInstrument || '—');
+        const side = data && data.side ? String(data.side) : '—';
+        const conf = (data && data.confidence != null && Number.isFinite(Number(data.confidence))) ? Number(data.confidence).toFixed(2) : '—';
+        const minConf = (data && data.min_confidence != null && Number.isFinite(Number(data.min_confidence))) ? Number(data.min_confidence).toFixed(2) : '—';
+        botAnalysisMeta.textContent = `${instrument} · side: ${side} · confidence: ${conf} / min: ${minConf}`;
+
+        botAnalysisText.textContent = data && data.analysis_text ? String(data.analysis_text) : '';
+        const reasons = Array.isArray(data && data.reasons_short) ? data.reasons_short : [];
+        const blockers = Array.isArray(data && data.blockers) ? data.blockers : [];
+        fillList(botAnalysisReasons, reasons);
+        fillList(botAnalysisBlockers, blockers);
+        botAnalysisReasonsWrap.classList.toggle('hidden', reasons.length === 0);
+        botAnalysisBlockersWrap.classList.toggle('hidden', blockers.length === 0);
+        // Синхронизируем правую панель сразу после получения анализа, чтобы можно было сравнить с режимом "сделка открыта".
+        updateSidebarActiveTradePanel();
+    }
+    async function fetchBotAnalysis() {
+        if (botAnalysisLoading) return;
+        if (!currentInstrument) {
+            renderBotAnalysis({
+                can_enter: false,
+                summary: 'Сначала выберите инструмент слева, затем запустите анализ.',
+                instrument: '—',
+                side: '—',
+                confidence: null,
+                min_confidence: null,
+                analysis_text: '',
+                reasons_short: [],
+                blockers: [],
+            });
+            return;
+        }
+
+        botAnalysisLoading = true;
+        const prevLabel = botAnalysisBtn ? botAnalysisBtn.textContent : '';
+        if (botAnalysisBtn) {
+            botAnalysisBtn.disabled = true;
+            botAnalysisBtn.textContent = 'Анализ…';
+        }
+        try {
+            const url = `${BOT_ANALYSIS_URL}?instrument=${encodeURIComponent(currentInstrument)}`;
+            const res = await fetch(url, { headers: { 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' } });
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const payload = await res.json();
+            renderBotAnalysis(payload);
+        } catch (_) {
+            renderBotAnalysis({
+                can_enter: false,
+                summary: 'Не удалось получить анализ от сервера.',
+                instrument: currentInstrument,
+                side: '—',
+                confidence: null,
+                min_confidence: null,
+                analysis_text: '',
+                reasons_short: [],
+                blockers: ['Проверьте доступность API и повторите запрос.'],
+            });
+        } finally {
+            botAnalysisLoading = false;
+            if (botAnalysisBtn) {
+                botAnalysisBtn.disabled = false;
+                botAnalysisBtn.textContent = prevLabel || 'Анализ';
+            }
+        }
+    }
     const CHART_DEFAULT_VISIBLE_BARS = 110;
     const CHART_RIGHT_GAP_BARS = 22;
 
@@ -371,7 +527,7 @@
             const li = document.createElement('li');
             const btn = document.createElement('button');
             btn.type = 'button';
-            btn.className = 'instrument-btn w-full text-left px-4 py-3 hover:bg-zinc-800 focus:bg-zinc-800 focus:outline-none transition-colors' + (inst.open_trade ? ' bg-amber-950/30' : '');
+            btn.className = 'instrument-btn w-full text-left px-4 py-3 hover:bg-zinc-800 focus:bg-zinc-800 focus:outline-none transition-colors' + (inst.open_trade ? ' bg-stone-800/45' : '');
             btn.dataset.instrument = inst.instrument;
             btn.dataset.displayName = inst.display_name;
             btn.dataset.search = normalizeText(`${inst.display_name || ''} ${inst.instrument || ''}`);
@@ -386,7 +542,7 @@
             nameWrap.appendChild(name);
             if (inst.open_trade && inst.expiry_ts) {
                 const timer = document.createElement('span');
-                timer.className = 'instrument-trade-timer shrink-0 text-xs font-mono tabular-nums text-amber-400/90';
+                timer.className = 'instrument-trade-timer shrink-0 text-xs font-mono tabular-nums text-stone-200';
                 timer.dataset.expiryTs = String(inst.expiry_ts);
                 const nowSec = Math.floor(Date.now() / 1000);
                 timer.textContent = formatMmSs(Number(inst.expiry_ts) - nowSec);
@@ -453,6 +609,118 @@
         const mm = Math.floor(sec / 60);
         const ss = sec % 60;
         return String(mm).padStart(2, '0') + ':' + String(ss).padStart(2, '0');
+    }
+
+    /** Склеивает reasons_short из API в одну строку (как на сервере). */
+    function joinTradeReasonsLines(arr) {
+        if (!Array.isArray(arr) || !arr.length) return '';
+        return arr.map((x) => String(x).trim()).filter(Boolean).join(' · ');
+    }
+
+    /** Правая колонка: полный блок по текущей паре (те же поля, что openTradeSidebarRow в BotController). */
+    function updateSidebarActiveTradePanel() {
+        const panel = document.getElementById('sidebar-active-trade-panel');
+        const timerEl = document.getElementById('sidebar-trade-timer');
+        const headlineEl = document.getElementById('sidebar-trade-headline');
+        const timesEl = document.getElementById('sidebar-trade-times');
+        const stateEl = document.getElementById('sidebar-trade-state');
+        const pnlEl = document.getElementById('sidebar-trade-pnl');
+        const analysisWrap = document.getElementById('sidebar-trade-analysis-wrap');
+        const analysisTextEl = document.getElementById('sidebar-trade-analysis-text');
+        const reasonsWrap = document.getElementById('sidebar-trade-reasons-wrap');
+        const reasonsTextEl = document.getElementById('sidebar-trade-reasons-text');
+        if (!panel || !headlineEl || !timesEl || !stateEl || !pnlEl) return;
+
+        if (!currentInstrument) {
+            panel.classList.add('hidden');
+            return;
+        }
+        const nowSec = Math.floor(Date.now() / 1000);
+        const rows = (openTrades || [])
+            .filter((t) => t.instrument === currentInstrument && Number(t.expiry_ts || 0) > nowSec)
+            .sort((a, b) => Number(a.expiry_ts || 0) - Number(b.expiry_ts || 0));
+        if (!rows.length) {
+            // Если активной сделки нет, но пользователь запросил "Анализ", показываем этот же блок справа в режиме диагностики.
+            const a = latestManualAnalysis;
+            const sameInstrument = a && a.instrument && String(a.instrument) === String(currentInstrument);
+            if (!sameInstrument) {
+                panel.classList.add('hidden');
+                return;
+            }
+            panel.classList.remove('hidden');
+            if (timerEl) {
+                timerEl.textContent = '';
+                timerEl.classList.add('hidden');
+            }
+
+            const sideU = (a.side || '—').toString().toUpperCase();
+            const confFmt = (a.confidence != null && Number.isFinite(Number(a.confidence)))
+                ? Number(a.confidence).toFixed(2)
+                : '—';
+            headlineEl.textContent = `${currentInstrument} · ${sideU} · ${confFmt} confidence`;
+            timesEl.textContent = 'Режим сравнения: анализ без активной сделки';
+            stateEl.textContent = a.can_enter
+                ? 'Сигнал есть: вход возможен'
+                : 'Сигнал/вход отсутствует или заблокирован';
+            pnlEl.textContent = 'PnL: —';
+
+            const analysis = (a.analysis_text != null && a.analysis_text !== '') ? String(a.analysis_text).trim() : '';
+            if (analysis && analysisWrap && analysisTextEl) {
+                analysisTextEl.textContent = analysis;
+                analysisWrap.classList.remove('hidden');
+            } else if (analysisWrap) {
+                analysisWrap.classList.add('hidden');
+            }
+
+            const reasons = Array.isArray(a.reasons_short) ? a.reasons_short : [];
+            const blockers = Array.isArray(a.blockers) ? a.blockers : [];
+            const reasonsLine = joinTradeReasonsLines([...reasons, ...blockers.map((x) => `BLOCK: ${x}`)]);
+            if (reasonsLine && reasonsWrap && reasonsTextEl) {
+                reasonsTextEl.textContent = reasonsLine;
+                reasonsWrap.classList.remove('hidden');
+            } else if (reasonsWrap) {
+                reasonsWrap.classList.add('hidden');
+            }
+            return;
+        }
+        const t = rows[0];
+        panel.classList.remove('hidden');
+        const left = Number(t.expiry_ts || 0) - nowSec;
+        if (timerEl) {
+            timerEl.textContent = formatMmSs(left);
+            timerEl.classList.remove('hidden');
+        }
+
+        const sideU = (t.side || '').toString().toUpperCase();
+        let confFmt = t.confidence_fmt;
+        if (confFmt == null || confFmt === '') {
+            const c = t.confidence;
+            confFmt = (c != null && Number.isFinite(Number(c))) ? Number(c).toFixed(2) : '—';
+        }
+        headlineEl.textContent = `${t.instrument} · ${sideU} · ${confFmt} confidence`;
+        timesEl.textContent = `Сигнал: ${t.signal_at_fmt || '—'} · Сделка: ${t.entry_at_fmt || '—'}`;
+        const statusRu = t.status_ru || (t.trade_status === 'open' ? 'открыта' : (t.trade_status || ''));
+        stateEl.textContent = t.state_line || `${t.trade_result || 'pending'} ${statusRu}`;
+        const pnlShown = (t.pnl_display != null && t.pnl_display !== '')
+            ? String(t.pnl_display)
+            : ((t.pnl != null && Number.isFinite(Number(t.pnl))) ? Number(t.pnl).toFixed(2) : '—');
+        pnlEl.textContent = 'PnL: ' + pnlShown;
+
+        const analysis = (t.analysis_text != null && t.analysis_text !== '') ? String(t.analysis_text).trim() : '';
+        if (analysis && analysisWrap && analysisTextEl) {
+            analysisTextEl.textContent = analysis;
+            analysisWrap.classList.remove('hidden');
+        } else if (analysisWrap) {
+            analysisWrap.classList.add('hidden');
+        }
+
+        const reasonsLine = joinTradeReasonsLines(t.reasons_short);
+        if (reasonsLine && reasonsWrap && reasonsTextEl) {
+            reasonsTextEl.textContent = reasonsLine;
+            reasonsWrap.classList.remove('hidden');
+        } else if (reasonsWrap) {
+            reasonsWrap.classList.add('hidden');
+        }
     }
     function tickSidebarTradeTimers() {
         const nowSec = Math.floor(Date.now() / 1000);
@@ -585,6 +853,7 @@
                 openTrades = d.trades || [];
                 renderOpenTradesOverlay();
                 renderEntryPriceLines();
+                updateSidebarActiveTradePanel();
             })
             .catch(() => {});
     }
@@ -766,10 +1035,15 @@
     }
     function selectInstrument(instrument, displayName) {
         if (currentInstrument === instrument) return;
+        const hadPriorInstrument = currentInstrument !== null;
         currentInstrument = instrument;
         currentDisplayName = displayName;
         openTrades = [];
         renderOpenTradesOverlay();
+        // При смене пары сразу убираем старый анализ; при первом выборе оставляем SSR до ответа open-trades (без мигания).
+        if (hadPriorInstrument) updateSidebarActiveTradePanel();
+        // Сразу тянем открытые сделки по новой паре (параллельно со свечами), чтобы анализ справа не отставал от графика.
+        refreshOpenTrades();
         document.querySelectorAll('.instrument-btn').forEach((b) => b.classList.toggle('bg-blue-900/40', b.dataset.instrument === instrument));
         lastZones = [];
         structureOverlay.innerHTML = '';
@@ -788,7 +1062,6 @@
                 startAutoRefresh();
                 redrawStructureOverlay();
                 fetchStructures();
-                refreshOpenTrades();
             } else if (refreshInterval) {
                 clearInterval(refreshInterval);
             }
@@ -839,6 +1112,8 @@
         syncSearchClearButton();
         instrumentSearchInput.focus();
     });
+    botAnalysisBtn.addEventListener('click', fetchBotAnalysis);
+    botAnalysisCloseBtn.addEventListener('click', () => botAnalysisPanel.classList.add('hidden'));
 
     loadLayerPrefs();
     updateTfOptionStyles();
@@ -846,6 +1121,7 @@
     instrumentListRefreshInterval = setInterval(refreshInstrumentSidebar, 1000);
     openTradesTickInterval = setInterval(() => {
         renderOpenTradesOverlay();
+        updateSidebarActiveTradePanel();
         tickSidebarTradeTimers();
         tickCandleCloseTimer();
     }, 1000);

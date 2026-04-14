@@ -77,7 +77,7 @@ Artisan::command('bots:status', function () {
     $this->newLine();
     $this->comment('Автоскан: в .env-среде должен работать планировщик (cron каждую минуту: php artisan schedule:run) или локально: php artisan schedule:work');
     $this->comment('Вручную: php artisan bots:scan && php artisan bots:settle');
-    $this->comment('Нет новых сделок при повторном скане — нормально, если по инструменту уже есть открытая сделка, сработал dedupe на минуту, или стратегия не видит паттерн «3 свечи подряд».');
+    $this->comment('Нет новых сделок при повторном скане — нормально, если по инструменту уже есть открытая сделка, сработал dedupe (для Feshan — по окну экспирации), или стратегия не даёт сигнал (3 свечи / Feshan MTF).');
 })->purpose('Диагностика ботов: данные, открытые сделки, напоминание про планировщик');
 
 Artisan::command('bots:bootstrap', function () {
@@ -94,16 +94,42 @@ Artisan::command('bots:bootstrap', function () {
             'is_active' => true,
             'config' => [
                 'count' => 120,
-                'expiry_sec' => 180,
+                // Одна минута под стандартный M1: три свечи в одну сторону → вход на противоположную.
+                'expiry_sec' => 60,
                 'min_confidence' => 0.55,
-                'stale_after_sec' => 30,
-                'version' => 'v1',
+                'stale_after_sec' => 45,
+                'version' => 'v7_three_same_opposite',
             ],
         ]
     );
 
     $this->info("Бот готов: #{$bot->id} {$bot->name} ({$bot->type})");
 })->purpose('Создать базового бота "3 свечи в ряд"');
+
+Artisan::command('bots:feshan-bootstrap', function () {
+    $user = User::query()->orderBy('id')->first();
+    if (! $user) {
+        $this->error('Нет пользователей. Сначала зарегистрируйте пользователя.');
+
+        return;
+    }
+
+    $bot = Bot::query()->firstOrCreate(
+        ['user_id' => $user->id, 'name' => 'Feshan bot', 'type' => 'feshan'],
+        [
+            'is_active' => false,
+            'config' => [
+                'count' => 2500,
+                'expiry_sec' => 300,
+                'min_confidence' => 0.55,
+                'stale_after_sec' => 45,
+                'version' => 'feshan_mtf_v1',
+            ],
+        ]
+    );
+
+    $this->info("Feshan бот: #{$bot->id} {$bot->name} ({$bot->type}) — включите в настройках при необходимости.");
+})->purpose('Создать бота Feshan (MTF-стратегия)');
 
 Artisan::command('bots:scan {--bot_id=} {--active-only=1}', function (BotEngineService $engine) {
     $botId = $this->option('bot_id');

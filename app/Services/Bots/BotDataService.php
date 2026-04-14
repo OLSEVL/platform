@@ -3,12 +3,14 @@
 namespace App\Services\Bots;
 
 use App\Models\InstrumentCandle;
+use App\Services\CandleService;
 use App\Services\CurrentCandleCacheService;
 
 class BotDataService
 {
     public function __construct(
         private readonly CurrentCandleCacheService $currentCandleCache,
+        private readonly CandleService $candleService,
     ) {}
 
     /**
@@ -54,5 +56,33 @@ class BotDataService
             'partial' => $partial,
             'series' => $series,
         ];
+    }
+
+    /**
+     * Агрегированные свечи для MTF-стратегий (из M1 в БД). Ключи — минуты таймфрейма.
+     *
+     * @param  array<int, int>  $tfToMaxBars
+     * @return array<string, list<array{time:int,open:float,high:float,low:float,close:float,volume:float}>>
+     */
+    public function mtfSeries(string $instrument, array $tfToMaxBars): array
+    {
+        $out = [];
+        foreach ($tfToMaxBars as $minutes => $maxBars) {
+            $minutes = (int) $minutes;
+            if (! CandleService::isDashboardTimeframe($minutes)) {
+                continue;
+            }
+            $rows = $this->candleService->seriesForDashboard($instrument, $minutes, null, null, (int) $maxBars);
+            $out[(string) $minutes] = array_map(static fn (array $c) => [
+                'time' => (int) $c['time'],
+                'open' => (float) $c['open'],
+                'high' => (float) $c['high'],
+                'low' => (float) $c['low'],
+                'close' => (float) $c['close'],
+                'volume' => (float) ($c['volume'] ?? 0),
+            ], $rows);
+        }
+
+        return $out;
     }
 }

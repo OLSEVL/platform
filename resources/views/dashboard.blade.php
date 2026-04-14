@@ -20,7 +20,7 @@
     }
 </style>
 {{-- Классы ниже нужны Tailwind CDN (выставляются из JS) --}}
-<span class="sr-only pointer-events-none bg-blue-900/40 bg-blue-900/50 bg-amber-950/30" aria-hidden="true"></span>
+<span class="sr-only pointer-events-none bg-blue-900/40 bg-blue-900/50 bg-stone-800/45 text-stone-200" aria-hidden="true"></span>
 <div class="flex min-h-0 flex-1 w-full gap-0 overflow-hidden">
     {{-- Список инструментов слева --}}
     <aside class="w-56 shrink-0 bg-zinc-900 border-r border-zinc-800 overflow-hidden flex flex-col min-h-0">
@@ -49,7 +49,7 @@
                 @php($isOpenTradeInstrument = $openTradeInstruments->contains($inst->instrument))
             <li>
                 <button type="button"
-                    class="instrument-btn w-full text-left px-4 py-3 hover:bg-zinc-800 focus:bg-zinc-800 focus:outline-none transition-colors {{ $isOpenTradeInstrument ? 'bg-amber-950/30' : '' }}"
+                    class="instrument-btn w-full text-left px-4 py-3 hover:bg-zinc-800 focus:bg-zinc-800 focus:outline-none transition-colors {{ $isOpenTradeInstrument ? 'bg-stone-800/45' : '' }}"
                     data-instrument="{{ $inst->instrument }}"
                     data-display-name="{{ e($inst->display_name ?? $inst->instrument) }}"
                     data-search="{{ mb_strtolower(($inst->display_name ?? $inst->instrument).' '.$inst->instrument) }}"
@@ -60,7 +60,7 @@
                             @if($isOpenTradeInstrument && isset($nearestExpiryByInstrument[$inst->instrument]))
                                 @php($expTs = (int) $nearestExpiryByInstrument[$inst->instrument])
                                 @php($secLeft = max(0, $expTs - now()->timestamp))
-                                <span class="instrument-trade-timer shrink-0 text-xs font-mono tabular-nums text-amber-400/90" data-expiry-ts="{{ $expTs }}">{{ str_pad((string) intdiv($secLeft, 60), 2, '0', STR_PAD_LEFT) }}:{{ str_pad((string) ($secLeft % 60), 2, '0', STR_PAD_LEFT) }}</span>
+                                <span class="instrument-trade-timer shrink-0 text-xs font-mono tabular-nums text-stone-200" data-expiry-ts="{{ $expTs }}">{{ str_pad((string) intdiv($secLeft, 60), 2, '0', STR_PAD_LEFT) }}:{{ str_pad((string) ($secLeft % 60), 2, '0', STR_PAD_LEFT) }}</span>
                             @endif
                         </div>
                         <span
@@ -362,7 +362,7 @@
             const li = document.createElement('li');
             const btn = document.createElement('button');
             btn.type = 'button';
-            btn.className = 'instrument-btn w-full text-left px-4 py-3 hover:bg-zinc-800 focus:bg-zinc-800 focus:outline-none transition-colors' + (inst.open_trade ? ' bg-amber-950/30' : '');
+            btn.className = 'instrument-btn w-full text-left px-4 py-3 hover:bg-zinc-800 focus:bg-zinc-800 focus:outline-none transition-colors' + (inst.open_trade ? ' bg-stone-800/45' : '');
             btn.dataset.instrument = inst.instrument;
             btn.dataset.displayName = inst.display_name;
             btn.dataset.search = normalizeText(`${inst.display_name || ''} ${inst.instrument || ''}`);
@@ -377,7 +377,7 @@
             nameWrap.appendChild(name);
             if (inst.open_trade && inst.expiry_ts) {
                 const timer = document.createElement('span');
-                timer.className = 'instrument-trade-timer shrink-0 text-xs font-mono tabular-nums text-amber-400/90';
+                timer.className = 'instrument-trade-timer shrink-0 text-xs font-mono tabular-nums text-stone-200';
                 timer.dataset.expiryTs = String(inst.expiry_ts);
                 const nowSec = Math.floor(Date.now() / 1000);
                 timer.textContent = formatMmSs(Number(inst.expiry_ts) - nowSec);

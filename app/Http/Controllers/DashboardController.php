@@ -112,12 +112,7 @@ class DashboardController extends Controller
                 'display_name',
                 'current_payout',
             ]);
-        $instruments = $instruments->sort(function ($a, $b) use ($openTradeSet) {
-            $aOpen = isset($openTradeSet[$a->instrument]) ? 1 : 0;
-            $bOpen = isset($openTradeSet[$b->instrument]) ? 1 : 0;
-            if ($aOpen !== $bOpen) {
-                return $bOpen <=> $aOpen;
-            }
+        $instruments = $instruments->sort(function ($a, $b) {
             $aPayout = $a->current_payout !== null ? (float) $a->current_payout : -INF;
             $bPayout = $b->current_payout !== null ? (float) $b->current_payout : -INF;
             if ($aPayout !== $bPayout) {
