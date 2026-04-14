@@ -242,7 +242,7 @@ class BotEngineService
         ]);
         if (! $decision) {
             $feshanDebug = $bot->type === 'feshan'
-                ? $this->feshanTriggerDiagnostics($closed, $mtf)
+                ? $this->feshanTriggerDiagnostics($closed, $mtf, $runtime['config'])
                 : null;
             $feshanUnmet = is_array($feshanDebug['unmet'] ?? null) ? $feshanDebug['unmet'] : [];
             $feshanPassed = is_array($feshanDebug['passed'] ?? null) ? $feshanDebug['passed'] : [];
@@ -360,7 +360,7 @@ class BotEngineService
      * @param  array<string, list<array<string,mixed>>>  $mtf
      * @return array{passed:list<string>,unmet:list<string>,features:array<string,mixed>}
      */
-    private function feshanTriggerDiagnostics(array $closed, array $mtf): array
+    private function feshanTriggerDiagnostics(array $closed, array $mtf, array $config): array
     {
         if ($closed === []) {
             return [
@@ -389,20 +389,33 @@ class BotEngineService
         $imb5Bull = $this->lastBullishImbalanceByBars($bars5);
         $imb5Bear = $this->lastBearishImbalanceByBars($bars5);
 
+        // Учитываем включатели из настроек бота, чтобы диагностика строго совпадала с рабочим входом.
+        $useBias240 = (bool) ($config['trigger_bias_240'] ?? true);
+        $useBias60 = (bool) ($config['trigger_bias_60'] ?? true);
+        $useH1Candle = (bool) ($config['trigger_h1_candle'] ?? true);
+        $useM5Align = (bool) ($config['trigger_m5_align'] ?? true);
+        $useM1Candle = (bool) ($config['trigger_m1_candle'] ?? true);
+        $useAbsorb = (bool) ($config['trigger_absorption'] ?? false);
+        $useImbalance = (bool) ($config['trigger_imbalance'] ?? false);
+
         // Явно считаем оба триггера, чтобы пользователь видел, какой сценарий почти собран.
         $callChecks = [
-            '4H bias = up' => $bias240 === 'up',
-            '1H bias != down' => $bias60 !== 'down' && $bias60 !== null,
-            'последняя 1H свеча bullish' => $h1Bull,
-            '5M aligned up >= 2 из 3' => $m5AlignUp >= 2,
-            'последняя M1 bullish' => $m1Bull,
+            '4H bias = up' => ! $useBias240 || $bias240 === 'up',
+            '1H bias != down' => ! $useBias60 || ($bias60 !== 'down' && $bias60 !== null),
+            'последняя 1H свеча bullish' => ! $useH1Candle || $h1Bull,
+            '5M aligned up >= 2 из 3' => ! $useM5Align || $m5AlignUp >= 2,
+            'последняя M1 bullish' => ! $useM1Candle || $m1Bull,
+            'M1 absorption bullish' => ! $useAbsorb || $absorbBull,
+            '5M imbalance bullish' => ! $useImbalance || $imb5Bull,
         ];
         $putChecks = [
-            '4H bias = down' => $bias240 === 'down',
-            '1H bias != up' => $bias60 !== 'up' && $bias60 !== null,
-            'последняя 1H свеча bearish' => $h1Bear,
-            '5M aligned down >= 2 из 3' => $m5AlignDown >= 2,
-            'последняя M1 bearish' => $m1Bear,
+            '4H bias = down' => ! $useBias240 || $bias240 === 'down',
+            '1H bias != up' => ! $useBias60 || ($bias60 !== 'up' && $bias60 !== null),
+            'последняя 1H свеча bearish' => ! $useH1Candle || $h1Bear,
+            '5M aligned down >= 2 из 3' => ! $useM5Align || $m5AlignDown >= 2,
+            'последняя M1 bearish' => ! $useM1Candle || $m1Bear,
+            'M1 absorption bearish' => ! $useAbsorb || $absorbBear,
+            '5M imbalance bearish' => ! $useImbalance || $imb5Bear,
         ];
         $callCoreOk = ! in_array(false, $callChecks, true);
         $putCoreOk = ! in_array(false, $putChecks, true);
@@ -462,6 +475,13 @@ class BotEngineService
                 'absorb_bear' => $absorbBear,
                 'imb5_bull' => $imb5Bull,
                 'imb5_bear' => $imb5Bear,
+                'trigger_bias_240' => $useBias240,
+                'trigger_bias_60' => $useBias60,
+                'trigger_h1_candle' => $useH1Candle,
+                'trigger_m5_align' => $useM5Align,
+                'trigger_m1_candle' => $useM1Candle,
+                'trigger_absorption' => $useAbsorb,
+                'trigger_imbalance' => $useImbalance,
                 'call_core_ok' => $callCoreOk,
                 'put_core_ok' => $putCoreOk,
             ],

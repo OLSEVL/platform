@@ -123,6 +123,14 @@ Artisan::command('bots:feshan-bootstrap', function () {
                 'expiry_sec' => 300,
                 'min_confidence' => 0.55,
                 'stale_after_sec' => 45,
+                // Дефолтные триггеры: core включены, подтверждения (absorption/imbalance) выключены.
+                'trigger_bias_240' => true,
+                'trigger_bias_60' => true,
+                'trigger_h1_candle' => true,
+                'trigger_m5_align' => true,
+                'trigger_m1_candle' => true,
+                'trigger_absorption' => false,
+                'trigger_imbalance' => false,
                 'version' => 'feshan_mtf_v1',
             ],
         ]

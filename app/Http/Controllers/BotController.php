@@ -285,12 +285,28 @@ class BotController extends Controller
                 'expiry_sec' => ['required', 'integer', 'min:60', 'max:900'],
                 'min_confidence' => ['required', 'numeric', 'min:0', 'max:1'],
                 'stale_after_sec' => ['required', 'integer', 'min:5', 'max:600'],
+                // Каждый trigger_* — включатель/выключатель конкретного условия входа Feshan.
+                'trigger_bias_240' => ['sometimes', 'boolean'],
+                'trigger_bias_60' => ['sometimes', 'boolean'],
+                'trigger_h1_candle' => ['sometimes', 'boolean'],
+                'trigger_m5_align' => ['sometimes', 'boolean'],
+                'trigger_m1_candle' => ['sometimes', 'boolean'],
+                'trigger_absorption' => ['sometimes', 'boolean'],
+                'trigger_imbalance' => ['sometimes', 'boolean'],
             ]);
             $config = array_merge($bot->config ?? [], [
                 'count' => (int) $extra['count'],
                 'expiry_sec' => (int) $extra['expiry_sec'],
                 'min_confidence' => (float) $extra['min_confidence'],
                 'stale_after_sec' => (int) $extra['stale_after_sec'],
+                // Для чекбоксов HTML отсутствие ключа = false, поэтому читаем через boolean().
+                'trigger_bias_240' => $request->boolean('trigger_bias_240'),
+                'trigger_bias_60' => $request->boolean('trigger_bias_60'),
+                'trigger_h1_candle' => $request->boolean('trigger_h1_candle'),
+                'trigger_m5_align' => $request->boolean('trigger_m5_align'),
+                'trigger_m1_candle' => $request->boolean('trigger_m1_candle'),
+                'trigger_absorption' => $request->boolean('trigger_absorption'),
+                'trigger_imbalance' => $request->boolean('trigger_imbalance'),
                 'version' => 'feshan_mtf_v1',
             ]);
         } else {

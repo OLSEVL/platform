@@ -84,6 +84,7 @@
                         @error('stale_after_sec')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                 </div>
+
             </div>
         @elseif ($bot->type === 'feshan')
             <div class="space-y-4 border-t border-zinc-800 pt-4">
@@ -117,6 +118,48 @@
                             value="{{ old('stale_after_sec', $cfg['stale_after_sec'] ?? 45) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
                         @error('stale_after_sec')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                </div>
+
+                {{-- Триггеры Feshan: можно включать/выключать отдельные условия входа прямо из UI. --}}
+                <div class="space-y-2 border-t border-zinc-800 pt-4">
+                    <div class="text-xs font-medium uppercase tracking-wide text-zinc-500">Триггеры входа Feshan</div>
+                    <div class="grid gap-2 sm:grid-cols-2">
+                        <label class="flex items-center gap-2 text-xs text-zinc-300">
+                            <input type="checkbox" name="trigger_bias_240" value="1" class="rounded border-zinc-600 bg-zinc-800 text-blue-500"
+                                @checked(old('trigger_bias_240', $cfg['trigger_bias_240'] ?? true))>
+                            4H bias (глобальный тренд)
+                        </label>
+                        <label class="flex items-center gap-2 text-xs text-zinc-300">
+                            <input type="checkbox" name="trigger_bias_60" value="1" class="rounded border-zinc-600 bg-zinc-800 text-blue-500"
+                                @checked(old('trigger_bias_60', $cfg['trigger_bias_60'] ?? true))>
+                            1H bias (фильтр направления)
+                        </label>
+                        <label class="flex items-center gap-2 text-xs text-zinc-300">
+                            <input type="checkbox" name="trigger_h1_candle" value="1" class="rounded border-zinc-600 bg-zinc-800 text-blue-500"
+                                @checked(old('trigger_h1_candle', $cfg['trigger_h1_candle'] ?? true))>
+                            Направление последней 1H свечи
+                        </label>
+                        <label class="flex items-center gap-2 text-xs text-zinc-300">
+                            <input type="checkbox" name="trigger_m5_align" value="1" class="rounded border-zinc-600 bg-zinc-800 text-blue-500"
+                                @checked(old('trigger_m5_align', $cfg['trigger_m5_align'] ?? true))>
+                            5M alignment (2 из 3)
+                        </label>
+                        <label class="flex items-center gap-2 text-xs text-zinc-300">
+                            <input type="checkbox" name="trigger_m1_candle" value="1" class="rounded border-zinc-600 bg-zinc-800 text-blue-500"
+                                @checked(old('trigger_m1_candle', $cfg['trigger_m1_candle'] ?? true))>
+                            Направление последней M1 свечи
+                        </label>
+                        <label class="flex items-center gap-2 text-xs text-zinc-300">
+                            <input type="checkbox" name="trigger_absorption" value="1" class="rounded border-zinc-600 bg-zinc-800 text-blue-500"
+                                @checked(old('trigger_absorption', $cfg['trigger_absorption'] ?? false))>
+                            Поглощение (тень M1)
+                        </label>
+                        <label class="flex items-center gap-2 text-xs text-zinc-300 sm:col-span-2">
+                            <input type="checkbox" name="trigger_imbalance" value="1" class="rounded border-zinc-600 bg-zinc-800 text-blue-500"
+                                @checked(old('trigger_imbalance', $cfg['trigger_imbalance'] ?? false))>
+                            Имбаланс 5M (FVG)
+                        </label>
                     </div>
                 </div>
             </div>

@@ -13,6 +13,8 @@ class FeshanStrategy implements BotStrategyInterface
     {
         /** @var array<string, list<array<string, mixed>>> $mtf */
         $mtf = is_array($context['mtf'] ?? null) ? $context['mtf'] : [];
+        /** @var array<string, mixed> $cfg */
+        $cfg = is_array($context['config'] ?? null) ? $context['config'] : [];
         if (count($closedCandles) < 5) {
             return null;
         }
@@ -47,7 +49,31 @@ class FeshanStrategy implements BotStrategyInterface
         $analysisSide = null;
         $reasons = [];
 
-        if ($bias240 === 'up' && $bias60 !== 'down' && $h1Bull && $m5AlignUp >= 2 && $m1Bull) {
+        // Гибкие триггеры (из настроек бота): каждый можно включить/выключить в UI.
+        $useBias240 = $this->flag($cfg, 'trigger_bias_240', true);
+        $useBias60 = $this->flag($cfg, 'trigger_bias_60', true);
+        $useH1Candle = $this->flag($cfg, 'trigger_h1_candle', true);
+        $useM5Align = $this->flag($cfg, 'trigger_m5_align', true);
+        $useM1Candle = $this->flag($cfg, 'trigger_m1_candle', true);
+        // Эти 2 триггера работают как доп.подтверждения к core-сигналу.
+        $useAbsorb = $this->flag($cfg, 'trigger_absorption', false);
+        $useImbalance = $this->flag($cfg, 'trigger_imbalance', false);
+
+        $callCoreOk = (! $useBias240 || $bias240 === 'up')
+            && (! $useBias60 || $bias60 !== 'down')
+            && (! $useH1Candle || $h1Bull)
+            && (! $useM5Align || $m5AlignUp >= 2)
+            && (! $useM1Candle || $m1Bull);
+        $putCoreOk = (! $useBias240 || $bias240 === 'down')
+            && (! $useBias60 || $bias60 !== 'up')
+            && (! $useH1Candle || $h1Bear)
+            && (! $useM5Align || $m5AlignDown >= 2)
+            && (! $useM1Candle || $m1Bear);
+
+        $callExtraOk = (! $useAbsorb || $absorbBull) && (! $useImbalance || $imb5Bull);
+        $putExtraOk = (! $useAbsorb || $absorbBear) && (! $useImbalance || $imb5Bear);
+
+        if ($callCoreOk && $callExtraOk) {
             $analysisSide = 'CALL';
             $reasons[] = '4H/1H бычий контекст, 5M ≥2/3 в сторону роста, M1 бычья';
             if ($absorbBull) {
@@ -56,7 +82,7 @@ class FeshanStrategy implements BotStrategyInterface
             if ($imb5Bull) {
                 $reasons[] = '5M: признак перекрытия бычьего имбаланса';
             }
-        } elseif ($bias240 === 'down' && $bias60 !== 'up' && $h1Bear && $m5AlignDown >= 2 && $m1Bear) {
+        } elseif ($putCoreOk && $putExtraOk) {
             $analysisSide = 'PUT';
             $reasons[] = '4H/1H медвежий контекст, 5M ≥2/3 в сторону снижения, M1 медвежья';
             if ($absorbBear) {
@@ -120,6 +146,13 @@ class FeshanStrategy implements BotStrategyInterface
                 'absorb_bear' => $absorbBear,
                 'imb5_bull' => $imb5Bull,
                 'imb5_bear' => $imb5Bear,
+                'trigger_bias_240' => $useBias240,
+                'trigger_bias_60' => $useBias60,
+                'trigger_h1_candle' => $useH1Candle,
+                'trigger_m5_align' => $useM5Align,
+                'trigger_m1_candle' => $useM1Candle,
+                'trigger_absorption' => $useAbsorb,
+                'trigger_imbalance' => $useImbalance,
                 'payout' => $payout,
                 'partial_present' => $partialCandle !== null,
             ],
@@ -253,5 +286,19 @@ class FeshanStrategy implements BotStrategyInterface
         $c = $bars[$n - 1];
 
         return (float) $c['high'] < (float) $a['low'];
+    }
+
+    /**
+     * Читает bool-флаг из конфига стратегии. Если ключа нет — использует дефолт.
+     *
+     * @param  array<string,mixed>  $cfg
+     */
+    private function flag(array $cfg, string $key, bool $default): bool
+    {
+        if (! array_key_exists($key, $cfg)) {
+            return $default;
+        }
+
+        return filter_var($cfg[$key], FILTER_VALIDATE_BOOL, FILTER_NULL_ON_FAILURE) ?? $default;
     }
 }
