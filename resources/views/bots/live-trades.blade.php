@@ -24,11 +24,12 @@
                     <th class="px-4 py-3 text-left">До конца</th>
                     <th class="px-4 py-3 text-left">Результат</th>
                     <th class="px-4 py-3 text-left">PnL</th>
+                    <th class="px-4 py-3 text-left">Анализ</th>
                 </tr>
             </thead>
             <tbody id="live-trades-body" class="divide-y divide-zinc-800 bg-zinc-950/40">
                 <tr>
-                    <td colspan="8" class="px-4 py-8 text-center text-zinc-500">Загрузка…</td>
+                    <td colspan="9" class="px-4 py-8 text-center text-zinc-500">Загрузка…</td>
                 </tr>
             </tbody>
         </table>
@@ -38,6 +39,7 @@
 <script>
 (function() {
     const DATA_URL = '{{ route("bots.live-trades.data") }}';
+    const ACTIVITY_ROUTE_TEMPLATE = '{{ route("bots.activity", ["bot" => "__BOT_ID__"]) }}';
     const body = document.getElementById('live-trades-body');
     const meta = document.getElementById('live-meta');
     // targetTradeId приходит из show-графика (?trade_id=123) для авто-подсветки и прокрутки строки.
@@ -76,7 +78,7 @@
 
     function renderRows(trades) {
         if (!trades.length) {
-            body.innerHTML = '<tr><td colspan="8" class="px-4 py-8 text-center text-zinc-500">За последние 2 часа сделок нет.</td></tr>';
+            body.innerHTML = '<tr><td colspan="9" class="px-4 py-8 text-center text-zinc-500">За последние 2 часа сделок нет.</td></tr>';
             return;
         }
 
@@ -84,6 +86,12 @@
         body.innerHTML = trades.map(t => {
             const isNew = !lastIds.has(t.id);
             const isTarget = targetTradeId !== null && Number(t.id) === targetTradeId;
+            // Ссылка на "Сигналы и сделки" конкретного бота + trade_id.
+            // Так пользователь мгновенно открывает именно нужный анализ сделки.
+            const hasBot = Number.isFinite(Number(t.bot_id)) && Number(t.bot_id) > 0;
+            const activityUrl = hasBot
+                ? ACTIVITY_ROUTE_TEMPLATE.replace('__BOT_ID__', encodeURIComponent(String(t.bot_id))) + `?trade_id=${encodeURIComponent(String(t.id))}`
+                : null;
             return `
                 <tr data-trade-id="${t.id}" class="hover:bg-zinc-900/50 ${isTarget ? 'bg-amber-900/40 ring-1 ring-amber-500/50' : (isNew ? 'bg-sky-950/30' : '')}">
                     <td class="px-4 py-3 text-zinc-300">${t.entry_time ?? '—'}</td>
@@ -94,6 +102,11 @@
                     <td class="px-4 py-3">${timeLeftCell(t)}</td>
                     <td class="px-4 py-3">${resultCell(t.result)}</td>
                     <td class="px-4 py-3 text-zinc-300">${t.pnl ?? '—'}</td>
+                    <td class="px-4 py-3">
+                        ${activityUrl
+                            ? `<a href="${activityUrl}" class="inline-flex items-center rounded border border-zinc-700 bg-zinc-800 px-2 py-1 text-xs text-zinc-200 hover:bg-zinc-700">Открыть</a>`
+                            : '<span class="text-zinc-500 text-xs">—</span>'}
+                    </td>
                 </tr>
             `;
         }).join('');

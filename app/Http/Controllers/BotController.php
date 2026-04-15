@@ -229,6 +229,9 @@ class BotController extends Controller
             ->get()
             ->map(fn (BotTrade $t) => [
                 'id' => $t->id,
+                // bot_id нужен фронту, чтобы построить прямую ссылку на "Сигналы и сделки"
+                // именно того бота, которому принадлежит текущая строка ленты.
+                'bot_id' => (int) $t->bot_id,
                 'entry_time' => optional($t->entry_time)->format('Y-m-d H:i:s'),
                 'bot_name' => $t->bot?->name ?? '—',
                 'instrument' => $t->instrument,
@@ -339,15 +342,26 @@ class BotController extends Controller
     {
         $this->ensureBotOwner($bot);
 
-        $signalsWithTrades = $bot->signals()
+        $targetTradeId = request()->integer('trade_id');
+
+        $q = $bot->signals()
             ->with('trade')
-            ->latest('signal_at')
-            ->limit(50)
-            ->get();
+            ->latest('signal_at');
+
+        if ($targetTradeId > 0) {
+            // Точечный переход из "Ленты"/"Истории": показываем конкретную сделку с анализом,
+            // чтобы пользователь сразу попал в нужную запись и не искал её в общем списке.
+            $q->whereHas('trade', fn ($tq) => $tq->whereKey($targetTradeId));
+        } else {
+            $q->limit(50);
+        }
+
+        $signalsWithTrades = $q->get();
 
         return view('bots.activity', [
             'bot' => $bot,
             'signalsWithTrades' => $signalsWithTrades,
+            'targetTradeId' => $targetTradeId > 0 ? $targetTradeId : null,
         ]);
     }
 

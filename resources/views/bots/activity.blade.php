@@ -24,7 +24,8 @@
                 @php
                     $t = $s->trade;
                 @endphp
-                <div class="px-4 py-3 text-sm space-y-2">
+                <div data-trade-id="{{ $t?->id ? (int) $t->id : '' }}"
+                     class="px-4 py-3 text-sm space-y-2 @if(!empty($targetTradeId) && $t && (int) $targetTradeId === (int) $t->id) bg-amber-900/40 ring-1 ring-amber-500/50 @endif">
                     <div class="flex flex-wrap items-start justify-between gap-2">
                         <div class="space-y-0.5 min-w-0">
                             <div class="font-medium text-zinc-100">
@@ -71,6 +72,15 @@
                                         {{ number_format((float) $t->expiry_price, 5) }}
                                     @endif
                                 </div>
+                                <div class="pt-1">
+                                    {{-- Переход на график к конкретной сделке:
+                                         передаём trade_id, чтобы JS на странице графика выбрал нужный инструмент,
+                                         подсветил маркер сделки и сфокусировал видимый диапазон на ней. --}}
+                                    <a href="{{ route('bots.show', ['bot' => $bot->id, 'trade_id' => $t->id]) }}"
+                                        class="inline-flex items-center rounded border border-zinc-700 bg-zinc-800 px-2 py-1 text-xs text-zinc-200 hover:bg-zinc-700">
+                                        Открыть на графике
+                                    </a>
+                                </div>
                             @else
                                 <span class="text-xs text-zinc-500">Сделка не найдена</span>
                             @endif
@@ -89,4 +99,15 @@
         </div>
     </div>
 </div>
+@if(!empty($targetTradeId))
+<script>
+(function() {
+    // При переходе из "Ленты"/"Истории" к конкретной сделке прокручиваем её в центр.
+    const targetId = @json((int) $targetTradeId);
+    const row = document.querySelector(`[data-trade-id="${targetId}"]`);
+    if (!row) return;
+    row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+})();
+</script>
+@endif
 @endsection

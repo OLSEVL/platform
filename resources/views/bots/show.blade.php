@@ -116,7 +116,7 @@
                     <ul id="bot-analysis-blockers" class="mt-1 list-disc space-y-1 pl-4 text-rose-300"></ul>
                 </div>
             </div>
-        @if(config('app.debug'))
+        @if(config('app.time_debug_panel'))
             {{-- Отладочная плашка времени: помогает быстро увидеть рассинхрон между серверным временем,
                  локальными часами браузера и временем последнего маркера на графике. --}}
             <div id="time-debug-panel" class="border-b border-zinc-800 bg-zinc-950/80 px-3 py-1.5 text-[11px] text-zinc-400">
@@ -227,6 +227,9 @@
     let signals = @json($chartSignals);
     const initialInstrument = @json($initialInstrument);
     const botName = @json($bot->name);
+    // targetTradeId приходит из страницы "Сигналы и сделки" (?trade_id=...).
+    // Используем его, чтобы открыть правильный инструмент и визуально выделить эту сделку на графике.
+    const targetTradeId = Number(new URLSearchParams(window.location.search).get('trade_id') || 0) || null;
 
     const chartPlaceholder = document.getElementById('chart-placeholder');
     const chartWrapper = document.getElementById('chart-wrapper');
@@ -287,6 +290,7 @@
     let lastServerTimes = { signals: null, openTrades: null, instruments: null, stats: null };
     // Временные маркеры закрытых сделок: используем как мост между open-trades и полной историей сигналов.
     let syntheticClosedSignals = [];
+    let targetTradeFocusDone = false;
 
     function saveSelectedInstrument(instrument) {
         try {
@@ -390,10 +394,18 @@
         const markers = [];
         ([...(signals || []), ...syntheticClosedSignals]).forEach((s) => {
             if (s.instrument !== instrument) return;
+            const tradeId = (s.trade && s.trade.id) ? Number(s.trade.id) : null;
+            const isTargetTrade = targetTradeId !== null && Number.isFinite(tradeId) && tradeId === targetTradeId;
             const signalTime = toBucketTime(toUnixSec(s.signal_at));
             if (signalTime) {
                 const isCall = s.side === 'CALL';
-                markers.push({ time: signalTime, position: isCall ? 'belowBar' : 'aboveBar', color: isCall ? '#10b981' : '#f43f5e', shape: isCall ? 'arrowUp' : 'arrowDown', text: `entry ${s.side}` });
+                markers.push({
+                    time: signalTime,
+                    position: isCall ? 'belowBar' : 'aboveBar',
+                    color: isTargetTrade ? '#f59e0b' : (isCall ? '#10b981' : '#f43f5e'),
+                    shape: isTargetTrade ? 'circle' : (isCall ? 'arrowUp' : 'arrowDown'),
+                    text: isTargetTrade ? `TARGET #${tradeId}` : `entry ${s.side}`,
+                });
             }
             const expiryRaw = (s.trade && s.trade.expiry_time) ? s.trade.expiry_time : s.expiry_time;
             if (expiryRaw) {
@@ -407,11 +419,47 @@
                     const side = (s.side || '').toUpperCase();
                     const expiryPos = side === 'CALL' ? 'belowBar' : 'aboveBar';
                     const expiryShape = result === 'pending' ? 'circle' : 'square';
-                    markers.push({ time: expiryTime, position: expiryPos, color, shape: expiryShape, text: `exp ${result}` });
+                    markers.push({
+                        time: expiryTime,
+                        position: expiryPos,
+                        color: isTargetTrade ? '#f59e0b' : color,
+                        shape: isTargetTrade ? 'diamond' : expiryShape,
+                        text: isTargetTrade ? `TARGET exp ${result}` : `exp ${result}`,
+                    });
                 }
             }
         });
         return markers.sort((a, b) => a.time - b.time);
+    }
+    function findTargetSignal() {
+        if (targetTradeId === null) return null;
+        const all = [...(signals || []), ...syntheticClosedSignals];
+        return all.find((s) => {
+            const tid = (s.trade && s.trade.id) ? Number(s.trade.id) : null;
+            return Number.isFinite(tid) && tid === targetTradeId;
+        }) || null;
+    }
+    function targetTradeMarkerTimeForInstrument(instrument) {
+        if (!instrument || targetTradeId === null) return null;
+        const s = findTargetSignal();
+        if (!s || s.instrument !== instrument) return null;
+        // Предпочитаем маркер экспирации (итог сделки), fallback — время входа.
+        const expiryRaw = (s.trade && s.trade.expiry_time) ? s.trade.expiry_time : s.expiry_time;
+        const expiryTs = toBucketTime(toUnixSec(expiryRaw));
+        if (Number.isFinite(expiryTs)) return expiryTs;
+        const entryTs = toBucketTime(toUnixSec(s.signal_at));
+        return Number.isFinite(entryTs) ? entryTs : null;
+    }
+    function focusTargetTradeOnChart() {
+        if (targetTradeFocusDone || !chart || !allChartData.length || !currentInstrument) return;
+        const targetTs = targetTradeMarkerTimeForInstrument(currentInstrument);
+        if (!Number.isFinite(targetTs)) return;
+        const idx = allChartData.findIndex((c) => Number(c.time) >= targetTs);
+        if (idx < 0) return;
+        const from = Math.max(0, idx - 40);
+        const to = Math.min(allChartData.length - 1 + CHART_RIGHT_GAP_BARS, idx + 40);
+        chart.timeScale().setVisibleLogicalRange({ from, to });
+        targetTradeFocusDone = true;
     }
     function earliestSignalTsForInstrument(instrument) {
         if (!instrument) return null;
@@ -1367,6 +1415,8 @@
                 renderChartMarkers();
                 renderEntryPriceLines();
                 applyDefaultChartViewport();
+                // После дефолтного viewport прицельно фокусируемся на целевой сделке (если есть trade_id).
+                focusTargetTradeOnChart();
                 startAutoRefresh();
                 redrawStructureOverlay();
                 fetchStructures();
@@ -1447,10 +1497,18 @@
     refreshBotStats();
     refreshInstrumentSidebar().then(() => {
         let ib = null;
+        const targetSignal = findTargetSignal();
         const persisted = loadSelectedInstrument();
-        document.querySelectorAll('.instrument-btn').forEach((b) => {
-            if (persisted && b.dataset.instrument === persisted) ib = b;
-        });
+        if (targetSignal && targetSignal.instrument) {
+            document.querySelectorAll('.instrument-btn').forEach((b) => {
+                if (b.dataset.instrument === targetSignal.instrument) ib = b;
+            });
+        }
+        if (!ib) {
+            document.querySelectorAll('.instrument-btn').forEach((b) => {
+                if (persisted && b.dataset.instrument === persisted) ib = b;
+            });
+        }
         if (!ib) {
             document.querySelectorAll('.instrument-btn').forEach((b) => {
                 if (b.dataset.instrument === initialInstrument) ib = b;

@@ -34,6 +34,7 @@
                     <th class="px-4 py-3 text-left">До конца</th>
                     <th class="px-4 py-3 text-left">Результат</th>
                     <th class="px-4 py-3 text-left">PnL</th>
+                    <th class="px-4 py-3 text-left">Анализ</th>
                 </tr>
             </thead>
             <tbody class="divide-y divide-zinc-800 bg-zinc-950/40">
@@ -71,10 +72,22 @@
                             @endif
                         </td>
                         <td class="px-4 py-3 text-zinc-300">{{ $t->pnl !== null ? number_format((float)$t->pnl, 4) : '—' }}</td>
+                        <td class="px-4 py-3">
+                            @if($t->bot)
+                                {{-- Прямой переход к соответствующей записи "Сигнал → итог сделки" с trade_id.
+                                     На целевой странице строка подсветится и прокрутится в центр. --}}
+                                <a href="{{ route('bots.activity', ['bot' => $t->bot->id, 'trade_id' => $t->id]) }}"
+                                   class="inline-flex items-center rounded border border-zinc-700 bg-zinc-800 px-2 py-1 text-xs text-zinc-200 hover:bg-zinc-700">
+                                    Открыть
+                                </a>
+                            @else
+                                <span class="text-zinc-500 text-xs">—</span>
+                            @endif
+                        </td>
                     </tr>
                 @empty
                     <tr>
-                        <td colspan="8" class="px-4 py-8 text-center text-zinc-500">Сделок пока нет.</td>
+                        <td colspan="9" class="px-4 py-8 text-center text-zinc-500">Сделок пока нет.</td>
                     </tr>
                 @endforelse
             </tbody>
