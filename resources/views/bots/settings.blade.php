@@ -45,6 +45,19 @@
             <label for="is_active" class="text-sm text-zinc-300">Бот активен (участвует в плановом сканировании)</label>
         </div>
 
+        <div class="flex items-start gap-2">
+            {{-- Эта настройка управляет UX графика:
+                 когда включена, на странице графика работает tradingview-подобный кроссхейр
+                 (вертикальная/горизонтальная линии + подписи времени и цены под курсором).
+                 По умолчанию флаг включен для новых/старых ботов, если ключ еще не задан в config. --}}
+            <input type="checkbox" name="tv_crosshair_enabled" id="tv_crosshair_enabled" value="1"
+                class="mt-0.5 rounded border-zinc-600 bg-zinc-800 text-blue-500"
+                @checked(old('tv_crosshair_enabled', $cfg['tv_crosshair_enabled'] ?? true))>
+            <label for="tv_crosshair_enabled" class="text-sm text-zinc-300">
+                Кроссхейр как в TradingView (линии X/Y и подсказки цены/времени)
+            </label>
+        </div>
+
         <div class="space-y-1">
             <span class="block text-sm font-medium text-zinc-300">Тип стратегии</span>
             <p class="text-sm text-zinc-500 font-mono">{{ $bot->type }}</p>

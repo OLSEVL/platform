@@ -270,6 +270,9 @@ class BotController extends Controller
         $base = $request->validate([
             'name' => ['required', 'string', 'max:255'],
             'is_active' => ['sometimes', 'boolean'],
+            // UI-настройка графика: включает/выключает tradingview-подобный кроссхейр (линии X/Y + подписи цены/времени).
+            // Поле опциональное, потому что HTML-checkbox не отправляется в payload, когда выключен.
+            'tv_crosshair_enabled' => ['sometimes', 'boolean'],
         ]);
 
         $isActive = $request->boolean('is_active');
@@ -329,6 +332,12 @@ class BotController extends Controller
             }
             $config = $decoded;
         }
+
+        // Настройка UI графика хранится в config бота:
+        // true  -> свободный кроссхейр как в TradingView (по умолчанию),
+        // false -> более простой режим без TV-поведения.
+        // Всегда записываем явное boolean-значение, чтобы поведение не зависело от отсутствия ключа.
+        $config['tv_crosshair_enabled'] = $request->boolean('tv_crosshair_enabled');
 
         $bot->update([
             'name' => $base['name'],
@@ -493,6 +502,11 @@ class BotController extends Controller
         $sidebar = $this->sidebarInstrumentsPayload($bot);
         $instruments = $sidebar['instruments'];
         $openTradeInstruments = collect(array_keys($sidebar['open_trade_set']))->values();
+        $botConfig = is_array($bot->config) ? $bot->config : [];
+        // Если ключ еще не сохранен (старые записи), считаем настройку включенной по умолчанию.
+        $tvCrosshairEnabled = array_key_exists('tv_crosshair_enabled', $botConfig)
+            ? (bool) $botConfig['tv_crosshair_enabled']
+            : true;
         $initialInstrument = $signalInstruments->first() ?: optional($instruments->first())->instrument;
         $timeframes = [
             ['minutes' => 1, 'label' => '1м'],
@@ -548,6 +562,7 @@ class BotController extends Controller
             'activeTrade' => $activeTrade,
             'activeTradeSecondsLeft' => $activeTradeSecondsLeft,
             'activeTradeSidebar' => $activeTradeSidebar,
+            'tvCrosshairEnabled' => $tvCrosshairEnabled,
         ]);
     }
 

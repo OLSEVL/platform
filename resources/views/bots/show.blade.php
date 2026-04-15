@@ -201,6 +201,9 @@
     const TRADES_HISTORY_URL = '{{ route("bots.trades") }}';
     const BOT_ANALYSIS_URL = '{{ route("bots.analysis.data", $bot) }}';
     const BOT_STATS_URL = '{{ route("bots.stats.data", $bot) }}';
+    // Флаг приходит из настроек бота и управляет tradingview-подобным кроссхейром на графике.
+    // По умолчанию true (если ключа еще нет в config), чтобы сохранить текущее UX-поведение.
+    const TV_CROSSHAIR_ENABLED = @json($tvCrosshairEnabled);
     const SELECTED_INSTRUMENT_KEY = 'platform.bot.show.selectedInstrument.{{ $bot->id }}';
     const LIMIT = 1440;
     const WINDOW_SEC = 86400;
@@ -1021,6 +1024,21 @@
         requestAnimationFrame(() => {
             if (!chart) return;
             chart.timeScale().setVisibleLogicalRange({ from, to });
+            // Защита от редкого race-condition при первом рендере:
+            // иногда после setData/resize библиотека может вернуть "весь график" вместо нашего окна.
+            // Проверяем фактический span и при необходимости повторно применяем целевой диапазон.
+            requestAnimationFrame(() => {
+                if (!chart) return;
+                const range = chart.timeScale().getVisibleLogicalRange();
+                if (!range || !Number.isFinite(range.from) || !Number.isFinite(range.to)) return;
+                const span = range.to - range.from;
+                const expectedSpan = to - from;
+                // Для обычного открытия (без trade_id) не допускаем разворот на всю историю.
+                // Небольшой буфер оставляем, чтобы не "драться" с округлением библиотеки.
+                if (targetTradeId === null && span > expectedSpan + 25) {
+                    chart.timeScale().setVisibleLogicalRange({ from, to });
+                }
+            });
         });
     }
 
@@ -1590,17 +1608,12 @@
         chartWrapper.classList.remove('hidden');
         structureOverlay.classList.remove('hidden');
         chartPlaceholder.classList.add('hidden');
-        chart = LightweightCharts.createChart(chartWrapper, {
-            layout: { background: { type: 'solid', color: '#191c30' }, textColor: '#a1a1aa' },
-            grid: { vertLines: { color: '#27272a' }, horzLines: { color: '#27272a' } },
-            rightPriceScale: { borderColor: '#3f3f46', scaleMargins: { top: 0.1, bottom: 0.2 } },
-            timeScale: { borderColor: '#3f3f46', timeVisible: true, secondsVisible: false },
-            crosshair: {
-                // Включаем "tradingview-like" режим кроссхейра:
-                // курсор свободно следует за мышью (не прилипает к ближайшей свече),
-                // чтобы оператор мог читать цену/время в любой точке графика.
+        // Собираем конфиг кроссхейра в зависимости от настройки из "Настройки бота":
+        // - true: режим как в TradingView (свободный курсор + линии X/Y + подписи),
+        // - false: упрощенный режим (прилипание к барам, скрытые линии и их подписи).
+        const crosshairOptions = TV_CROSSHAIR_ENABLED
+            ? {
                 mode: LightweightCharts.CrosshairMode.Normal,
-                // Вертикальная линия (ось X / время).
                 vertLine: {
                     visible: true,
                     width: 1,
@@ -1609,7 +1622,6 @@
                     labelVisible: true,
                     labelBackgroundColor: '#334155',
                 },
-                // Горизонтальная линия (ось Y / цена).
                 horzLine: {
                     visible: true,
                     width: 1,
@@ -1618,7 +1630,50 @@
                     labelVisible: true,
                     labelBackgroundColor: '#334155',
                 },
+            }
+            : {
+                mode: LightweightCharts.CrosshairMode.Magnet,
+                vertLine: {
+                    visible: false,
+                    labelVisible: false,
+                },
+                horzLine: {
+                    visible: false,
+                    labelVisible: false,
+                },
+            };
+        chart = LightweightCharts.createChart(chartWrapper, {
+            layout: { background: { type: 'solid', color: '#191c30' }, textColor: '#a1a1aa' },
+            grid: { vertLines: { color: '#27272a' }, horzLines: { color: '#27272a' } },
+            rightPriceScale: { borderColor: '#3f3f46', scaleMargins: { top: 0.1, bottom: 0.2 } },
+            timeScale: { borderColor: '#3f3f46', timeVisible: true, secondsVisible: false },
+            // Включаем "tradingview-like" интерактивность перемещения графика:
+            // - drag мышью (зажали и тянем) = прокрутка истории влево/вправо,
+            // - wheel и drag по осям = удобная навигация по времени/цене,
+            // - touch-gesture = мобильное перетаскивание.
+            // Явно задаем эти флаги, чтобы поведение было стабильным и не зависело от дефолтов версии библиотеки.
+            handleScroll: {
+                mouseWheel: true,
+                pressedMouseMove: true,
+                horzTouchDrag: true,
+                vertTouchDrag: true,
             },
+            // Разрешаем масштаб/смещение через взаимодействие с осями,
+            // что приближает UX к TradingView при работе мышью.
+            handleScale: {
+                mouseWheel: true,
+                pinch: true,
+                axisPressedMouseMove: {
+                    time: true,
+                    price: true,
+                },
+            },
+            // "Инерционный" доскролл после отпускания мыши/пальца для более естественного ощущения перетаскивания.
+            kineticScroll: {
+                mouse: true,
+                touch: true,
+            },
+            crosshair: crosshairOptions,
             width: chartWrapper.clientWidth,
             height: chartWrapper.clientHeight
         });
