@@ -40,6 +40,9 @@
     const DATA_URL = '{{ route("bots.live-trades.data") }}';
     const body = document.getElementById('live-trades-body');
     const meta = document.getElementById('live-meta');
+    // targetTradeId приходит из show-графика (?trade_id=123) для авто-подсветки и прокрутки строки.
+    const targetTradeId = Number(new URLSearchParams(window.location.search).get('trade_id') || 0) || null;
+    let targetTradeScrolled = false;
     let lastIds = new Set();
     let timer = null;
 
@@ -80,8 +83,9 @@
         const newIds = new Set(trades.map(t => t.id));
         body.innerHTML = trades.map(t => {
             const isNew = !lastIds.has(t.id);
+            const isTarget = targetTradeId !== null && Number(t.id) === targetTradeId;
             return `
-                <tr class="hover:bg-zinc-900/50 ${isNew ? 'bg-sky-950/30' : ''}">
+                <tr data-trade-id="${t.id}" class="hover:bg-zinc-900/50 ${isTarget ? 'bg-amber-900/40 ring-1 ring-amber-500/50' : (isNew ? 'bg-sky-950/30' : '')}">
                     <td class="px-4 py-3 text-zinc-300">${t.entry_time ?? '—'}</td>
                     <td class="px-4 py-3 text-zinc-100">${t.bot_name ?? '—'}</td>
                     <td class="px-4 py-3 text-zinc-300">${t.instrument ?? '—'}</td>
@@ -94,6 +98,14 @@
             `;
         }).join('');
         lastIds = newIds;
+
+        if (targetTradeId !== null && !targetTradeScrolled) {
+            const row = body.querySelector(`tr[data-trade-id="${targetTradeId}"]`);
+            if (row) {
+                row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                targetTradeScrolled = true;
+            }
+        }
     }
 
     async function refreshOnce() {
@@ -105,7 +117,10 @@
             const data = await res.json();
             renderRows(data.trades || []);
             const now = new Date();
-            meta.textContent = `Обновление: ${now.toLocaleTimeString()} • записей: ${data.count ?? 0}`;
+            const targetHint = (targetTradeId !== null && !targetTradeScrolled)
+                ? ` • ищем сделку #${targetTradeId}`
+                : '';
+            meta.textContent = `Обновление: ${now.toLocaleTimeString()} • записей: ${data.count ?? 0}${targetHint}`;
         } catch (_) {
             meta.textContent = 'Ошибка обновления. Повторяем…';
         }

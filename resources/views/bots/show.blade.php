@@ -116,6 +116,16 @@
                     <ul id="bot-analysis-blockers" class="mt-1 list-disc space-y-1 pl-4 text-rose-300"></ul>
                 </div>
             </div>
+        @if(config('app.debug'))
+            {{-- Отладочная плашка времени: помогает быстро увидеть рассинхрон между серверным временем,
+                 локальными часами браузера и временем последнего маркера на графике. --}}
+            <div id="time-debug-panel" class="border-b border-zinc-800 bg-zinc-950/80 px-3 py-1.5 text-[11px] text-zinc-400">
+                <span class="font-medium text-zinc-300">Time debug:</span>
+                <span id="time-debug-server" class="ml-2">server: —</span>
+                <span id="time-debug-client" class="ml-2">client: —</span>
+                <span id="time-debug-marker" class="ml-2">last marker: —</span>
+            </div>
+        @endif
         <div id="chart-container" class="flex-1 min-h-0 relative">
             <div id="chart-placeholder" class="absolute inset-0 flex items-center justify-center text-zinc-500 bg-zinc-950/90 z-0">
                 Нажмите на инструмент слева, чтобы показать минутный график
@@ -140,11 +150,11 @@
         <div class="p-3 flex flex-col gap-2 overflow-y-auto min-h-0">
             {{-- Компактная статистика: меньше отступы, 2 колонки, чтобы блок занимал меньше места. --}}
             <div class="grid grid-cols-2 gap-1.5">
-                <div class="rounded border border-zinc-800 bg-zinc-900/50 px-2 py-1.5"><div class="text-[10px] text-zinc-400 uppercase">Всего</div><div class="text-sm tabular-nums">{{ $stats['total'] }}</div></div>
-                <div class="rounded border border-zinc-800 bg-zinc-900/50 px-2 py-1.5"><div class="text-[10px] text-zinc-400 uppercase">Открыто</div><div class="text-sm tabular-nums">{{ $stats['open'] }}</div></div>
-                <div class="rounded border border-zinc-800 bg-zinc-900/50 px-2 py-1.5"><div class="text-[10px] text-zinc-400 uppercase">Wins</div><div class="text-sm tabular-nums text-emerald-400">{{ $stats['wins'] }}</div></div>
-                <div class="rounded border border-zinc-800 bg-zinc-900/50 px-2 py-1.5"><div class="text-[10px] text-zinc-400 uppercase">Losses</div><div class="text-sm tabular-nums text-rose-400">{{ $stats['losses'] }}</div></div>
-                <div class="col-span-2 rounded border border-zinc-800 bg-zinc-900/50 px-2 py-1.5"><div class="text-[10px] text-zinc-400 uppercase">Winrate</div><div class="text-sm tabular-nums">{{ $stats['winrate'] !== null ? $stats['winrate'].'%' : '—' }}</div></div>
+                <div class="rounded border border-zinc-800 bg-zinc-900/50 px-2 py-1.5"><div class="text-[10px] text-zinc-400 uppercase">Всего</div><div id="bot-stat-total" class="text-sm tabular-nums">{{ $stats['total'] }}</div></div>
+                <div class="rounded border border-zinc-800 bg-zinc-900/50 px-2 py-1.5"><div class="text-[10px] text-zinc-400 uppercase">Открыто</div><div id="bot-stat-open" class="text-sm tabular-nums">{{ $stats['open'] }}</div></div>
+                <div class="rounded border border-zinc-800 bg-zinc-900/50 px-2 py-1.5"><div class="text-[10px] text-zinc-400 uppercase">Wins</div><div id="bot-stat-wins" class="text-sm tabular-nums text-emerald-400">{{ $stats['wins'] }}</div></div>
+                <div class="rounded border border-zinc-800 bg-zinc-900/50 px-2 py-1.5"><div class="text-[10px] text-zinc-400 uppercase">Losses</div><div id="bot-stat-losses" class="text-sm tabular-nums text-rose-400">{{ $stats['losses'] }}</div></div>
+                <div class="col-span-2 rounded border border-zinc-800 bg-zinc-900/50 px-2 py-1.5"><div class="text-[10px] text-zinc-400 uppercase">Winrate</div><div id="bot-stat-winrate" class="text-sm tabular-nums">{{ $stats['winrate'] !== null ? $stats['winrate'].'%' : '—' }}</div></div>
             </div>
             {{-- Панель синхронизируется с выбранной парой через JS (updateSidebarActiveTrade); поля совпадают с openTradeSidebarRow() в BotController. --}}
             <div id="sidebar-active-trade-panel" class="rounded border border-amber-700/40 bg-amber-950/20 px-2 py-2 text-xs @unless($activeTradeSidebar) hidden @endunless">
@@ -185,7 +195,11 @@
     const STRUCTURES_URL = '{{ route("structures.data") }}';
     const INSTRUMENTS_SIDEBAR_URL = '{{ route("bots.instruments.sidebar-data", $bot) }}';
     const OPEN_TRADES_URL = '{{ route("bots.open-trades.data", $bot) }}';
+    const SIGNALS_URL = '{{ route("bots.signals.data", $bot) }}';
+    const TRADES_HISTORY_URL = '{{ route("bots.trades") }}';
     const BOT_ANALYSIS_URL = '{{ route("bots.analysis.data", $bot) }}';
+    const BOT_STATS_URL = '{{ route("bots.stats.data", $bot) }}';
+    const SELECTED_INSTRUMENT_KEY = 'platform.bot.show.selectedInstrument.{{ $bot->id }}';
     const LIMIT = 1440;
     const WINDOW_SEC = 86400;
     const M1_COUNTDOWN_SECONDS = 60;
@@ -210,7 +224,7 @@
 
     const CANDLE_TIMER_GAP_T = 3;
 
-    const signals = @json($chartSignals);
+    let signals = @json($chartSignals);
     const initialInstrument = @json($initialInstrument);
     const botName = @json($bot->name);
 
@@ -242,6 +256,10 @@
     const botAnalysisReasons = document.getElementById('bot-analysis-reasons');
     const botAnalysisBlockersWrap = document.getElementById('bot-analysis-blockers-wrap');
     const botAnalysisBlockers = document.getElementById('bot-analysis-blockers');
+    const timeDebugPanel = document.getElementById('time-debug-panel');
+    const timeDebugServer = document.getElementById('time-debug-server');
+    const timeDebugClient = document.getElementById('time-debug-client');
+    const timeDebugMarker = document.getElementById('time-debug-marker');
     const LAYER_PREFS_KEY = 'platform.bot.show.chartLayers.v2';
 
     let chart = null;
@@ -256,12 +274,34 @@
     let instrumentListRefreshInterval = null;
     let openTradesFetchInterval = null;
     let openTradesTickInterval = null;
+    let signalsRefreshInterval = null;
+    let botStatsRefreshInterval = null;
     let botAnalysisLoading = false;
     // Последний ручной анализ по кнопке "Анализ" для выбранной пары; используем в правой панели при отсутствии сделки.
     let latestManualAnalysis = null;
     let lastZones = [];
     let openTrades = [];
     let entryPriceLineHandles = [];
+    // Кэш серверного времени из разных API-ответов (signals/open-trades/instruments/stats),
+    // чтобы в debug-плашке видеть фактический "опорный" серверный timestamp.
+    let lastServerTimes = { signals: null, openTrades: null, instruments: null, stats: null };
+    // Временные маркеры закрытых сделок: используем как мост между open-trades и полной историей сигналов.
+    let syntheticClosedSignals = [];
+
+    function saveSelectedInstrument(instrument) {
+        try {
+            if (!instrument) return;
+            localStorage.setItem(SELECTED_INSTRUMENT_KEY, String(instrument));
+        } catch (_) {}
+    }
+    function loadSelectedInstrument() {
+        try {
+            const v = localStorage.getItem(SELECTED_INSTRUMENT_KEY);
+            return v && v.trim() !== '' ? v : null;
+        } catch (_) {
+            return null;
+        }
+    }
 
     function loadLayerPrefs() {
         try {
@@ -286,38 +326,116 @@
         const t = Number(unixTs || 0);
         return t > 0 ? Math.floor(t / 60) * 60 : null;
     }
+    // Унифицированный парсер времени для всех источников (ISO, unix sec/ms, MySQL datetime).
+    // Важно: строки формата `YYYY-MM-DD HH:mm:ss` трактуем как UTC, иначе браузер может
+    // интерпретировать их как локальное время пользователя и сдвинуть маркеры на графике.
+    function toUnixSec(value) {
+        if (value == null || value === '') return null;
+        if (typeof value === 'number' && Number.isFinite(value)) {
+            return value > 1e12 ? Math.floor(value / 1000) : Math.floor(value);
+        }
+        if (typeof value === 'string') {
+            const raw = value.trim();
+            if (raw === '') return null;
+            const num = Number(raw);
+            if (Number.isFinite(num)) {
+                return num > 1e12 ? Math.floor(num / 1000) : Math.floor(num);
+            }
+            const hasTimezone = /([zZ]|[+\-]\d{2}:?\d{2})$/.test(raw);
+            const isoLike = raw.includes('T');
+            const normalized = (!hasTimezone && !isoLike && raw.includes(' '))
+                ? `${raw.replace(' ', 'T')}Z`
+                : raw;
+            const ms = Date.parse(normalized);
+            if (Number.isFinite(ms)) return Math.floor(ms / 1000);
+        }
+        return null;
+    }
+    // Форматирует timestamp одновременно в локальном времени браузера и в UTC:
+    // это убирает визуальную путаницу "отставания" на несколько часов при сравнении с server `date`.
+    function formatDebugTs(ts) {
+        if (!Number.isFinite(ts) || ts <= 0) return '—';
+        const d = new Date(ts * 1000);
+        const local = d.toLocaleString('ru-RU', {
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit',
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+            hour12: false,
+            timeZoneName: 'short',
+        });
+        const utc = d.toISOString();
+        return `${local} (UTC ${utc})`;
+    }
+    // Обновляет debug-плашку времени. Вызывается после обновления данных и по таймеру,
+    // чтобы видеть текущее клиентское время в реальном времени.
+    function renderTimeDebugPanel() {
+        if (!timeDebugPanel || !timeDebugServer || !timeDebugClient || !timeDebugMarker) return;
+        const nowSec = Math.floor(Date.now() / 1000);
+        const serverTsCandidates = Object.values(lastServerTimes)
+            .map((x) => toUnixSec(x))
+            .filter((x) => Number.isFinite(x) && x > 0);
+        const serverTs = serverTsCandidates.length ? Math.max(...serverTsCandidates) : null;
+        const markerTimes = markerTimesForInstrument(currentInstrument);
+        const lastMarkerTs = markerTimes.length ? Math.max(...markerTimes) : null;
+        const drift = (serverTs != null) ? (nowSec - serverTs) : null;
+
+        timeDebugServer.textContent = `server: ${formatDebugTs(serverTs)}${drift == null ? '' : ` (drift ${drift >= 0 ? '+' : ''}${drift}s)`}`;
+        timeDebugClient.textContent = `client: ${formatDebugTs(nowSec)}`;
+        timeDebugMarker.textContent = `last marker: ${formatDebugTs(lastMarkerTs)}`;
+    }
     function markersForInstrument(instrument) {
         const markers = [];
-        signals.forEach((s) => {
+        ([...(signals || []), ...syntheticClosedSignals]).forEach((s) => {
             if (s.instrument !== instrument) return;
-            const signalTime = toBucketTime(new Date(s.signal_at).getTime() / 1000);
+            const signalTime = toBucketTime(toUnixSec(s.signal_at));
             if (signalTime) {
                 const isCall = s.side === 'CALL';
                 markers.push({ time: signalTime, position: isCall ? 'belowBar' : 'aboveBar', color: isCall ? '#10b981' : '#f43f5e', shape: isCall ? 'arrowUp' : 'arrowDown', text: `entry ${s.side}` });
             }
-            if (s.trade && s.trade.expiry_time) {
-                const expiryTime = toBucketTime(new Date(s.trade.expiry_time).getTime() / 1000);
+            const expiryRaw = (s.trade && s.trade.expiry_time) ? s.trade.expiry_time : s.expiry_time;
+            if (expiryRaw) {
+                const expiryTime = toBucketTime(toUnixSec(expiryRaw));
                 if (expiryTime) {
-                    const result = (s.trade.result || 'pending');
+                    const result = ((s.trade && s.trade.result) || s.result || 'pending');
                     const color = result === 'win' ? '#10b981' : (result === 'loss' ? '#f43f5e' : '#a1a1aa');
-                    markers.push({ time: expiryTime, position: 'inBar', color, shape: 'circle', text: `exp ${result}` });
+                    // Важно: маркер завершения сделки рисуем ВНЕ свечи, иначе при плотном потоке баров/сигналов
+                    // круг inBar визуально "пропадает" в теле свечи и создаётся впечатление, что история исчезла.
+                    // Направление (над/под баром) привязываем к side, чтобы маркеры читались одинаково.
+                    const side = (s.side || '').toUpperCase();
+                    const expiryPos = side === 'CALL' ? 'belowBar' : 'aboveBar';
+                    const expiryShape = result === 'pending' ? 'circle' : 'square';
+                    markers.push({ time: expiryTime, position: expiryPos, color, shape: expiryShape, text: `exp ${result}` });
                 }
             }
         });
         return markers.sort((a, b) => a.time - b.time);
+    }
+    function earliestSignalTsForInstrument(instrument) {
+        if (!instrument) return null;
+        let minTs = null;
+        ([...(signals || []), ...syntheticClosedSignals]).forEach((s) => {
+            if (s.instrument !== instrument) return;
+            const ts = toUnixSec(s.signal_at);
+            if (!Number.isFinite(ts) || ts <= 0) return;
+            if (minTs === null || ts < minTs) minTs = ts;
+        });
+        return minTs;
     }
     function activeTradeMarkersForCurrentInstrument() {
         if (!currentInstrument) return [];
         const nowSec = Math.floor(Date.now() / 1000);
         const lastBarTime = allChartData.length ? Number(allChartData[allChartData.length - 1].time) : null;
         const active = (openTrades || [])
-            .filter((t) => t.instrument === currentInstrument && Number(t.expiry_ts || 0) > nowSec);
+            .filter((t) => t.instrument === currentInstrument && toUnixSec(t.expiry_ts) > nowSec);
         const markers = [];
         active.forEach((t) => {
             const side = (t.side || '').toUpperCase();
             const isCall = side === 'CALL';
-            const left = Number(t.expiry_ts || 0) - nowSec;
-            const entryTime = toBucketTime(Number(t.entry_ts || 0));
+            const left = toUnixSec(t.expiry_ts) - nowSec;
+            const entryTime = toBucketTime(toUnixSec(t.entry_ts));
             if (entryTime) {
                 markers.push({
                     time: entryTime,
@@ -345,6 +463,45 @@
         const active = activeTradeMarkersForCurrentInstrument();
         candlestickSeries.setMarkers([...base, ...active].sort((a, b) => a.time - b.time));
     }
+    // Ищет сделку по времени клика на графике:
+    // 1) сначала по времени экспирации (наиболее ожидаемый пользовательский кейс),
+    // 2) затем по времени входа, если клик пришёлся на entry-маркер.
+    function tradeIdByChartClickTime(clickedBucketTs) {
+        if (!Number.isFinite(clickedBucketTs) || !currentInstrument) return null;
+        const rows = ([...(signals || []), ...syntheticClosedSignals])
+            .filter((s) => s.instrument === currentInstrument)
+            .map((s) => {
+                const tradeId = (s.trade && s.trade.id) ? Number(s.trade.id) : null;
+                if (!Number.isFinite(tradeId) || tradeId <= 0) return null;
+                const entryTs = toBucketTime(toUnixSec(s.signal_at));
+                const expiryRaw = (s.trade && s.trade.expiry_time) ? s.trade.expiry_time : s.expiry_time;
+                const expiryTs = toBucketTime(toUnixSec(expiryRaw));
+                return {
+                    tradeId,
+                    entryTs,
+                    expiryTs,
+                    isSettled: ((s.trade && s.trade.result) || s.result || 'pending') !== 'pending',
+                };
+            })
+            .filter(Boolean);
+        if (!rows.length) return null;
+
+        const byExpiry = rows
+            .filter((x) => Number.isFinite(x.expiryTs) && x.expiryTs === clickedBucketTs)
+            .sort((a, b) => Number(b.isSettled) - Number(a.isSettled) || b.tradeId - a.tradeId);
+        if (byExpiry.length) return byExpiry[0].tradeId;
+
+        const byEntry = rows
+            .filter((x) => Number.isFinite(x.entryTs) && x.entryTs === clickedBucketTs)
+            .sort((a, b) => Number(b.isSettled) - Number(a.isSettled) || b.tradeId - a.tradeId);
+        return byEntry.length ? byEntry[0].tradeId : null;
+    }
+    // Переход в "Историю сделок" с подсветкой выбранной сделки.
+    function goToTradeHistoryById(tradeId) {
+        if (!Number.isFinite(Number(tradeId)) || Number(tradeId) <= 0) return;
+        const url = `${TRADES_HISTORY_URL}?trade_id=${encodeURIComponent(String(tradeId))}`;
+        window.location.href = url;
+    }
     function clearEntryPriceLines() {
         if (!candlestickSeries) {
             entryPriceLineHandles = [];
@@ -360,7 +517,7 @@
         if (!candlestickSeries || !currentInstrument) return;
         const nowSec = Math.floor(Date.now() / 1000);
         const active = (openTrades || [])
-            .filter((t) => t.instrument === currentInstrument && Number(t.expiry_ts || 0) > nowSec);
+            .filter((t) => t.instrument === currentInstrument && toUnixSec(t.expiry_ts) > nowSec);
         if (!active.length) return;
 
         const LS = window.LightweightCharts && window.LightweightCharts.LineStyle;
@@ -486,13 +643,47 @@
     }
     const CHART_DEFAULT_VISIBLE_BARS = 110;
     const CHART_RIGHT_GAP_BARS = 22;
+    const CHART_LEFT_GAP_BARS = 4;
+
+    function markerTimesForInstrument(instrument) {
+        if (!instrument) return [];
+        const out = [];
+        ([...(signals || []), ...syntheticClosedSignals]).forEach((s) => {
+            if (s.instrument !== instrument) return;
+            const signalTs = toUnixSec(s.signal_at);
+            if (Number.isFinite(signalTs) && signalTs > 0) out.push(toBucketTime(signalTs));
+            const expiryRaw = (s.trade && s.trade.expiry_time) ? s.trade.expiry_time : s.expiry_time;
+            const expiryTs = toUnixSec(expiryRaw);
+            if (Number.isFinite(expiryTs) && expiryTs > 0) out.push(toBucketTime(expiryTs));
+        });
+        (openTrades || []).forEach((t) => {
+            if (t.instrument !== instrument) return;
+            const entryTs = toUnixSec(t.entry_ts);
+            const expTs = toUnixSec(t.expiry_ts);
+            if (Number.isFinite(entryTs) && entryTs > 0) out.push(toBucketTime(entryTs));
+            if (Number.isFinite(expTs) && expTs > 0) out.push(toBucketTime(expTs));
+        });
+        return out.filter((x) => Number.isFinite(x) && x != null);
+    }
 
     function applyDefaultChartViewport() {
         if (!chart || allChartData.length === 0) return;
         const n = allChartData.length;
         const lastIdx = n - 1;
-        const visible = Math.min(CHART_DEFAULT_VISIBLE_BARS, n);
-        const from = Math.max(0, lastIdx - visible + 1);
+        const markerTimes = markerTimesForInstrument(currentInstrument);
+        let from = Math.max(0, lastIdx - Math.min(CHART_DEFAULT_VISIBLE_BARS, n) + 1);
+
+        // Если по выбранной паре есть сделки/сигналы, показываем весь диапазон этих маркеров сразу.
+        if (markerTimes.length > 0) {
+            const earliestMarker = Math.min(...markerTimes);
+            const idx = allChartData.findIndex((c) => Number(c.time) >= earliestMarker);
+            if (idx >= 0) {
+                from = Math.max(0, idx - CHART_LEFT_GAP_BARS);
+            } else {
+                // Если маркеры старше загруженных свечей — открываем максимально широкий вид текущего буфера.
+                from = 0;
+            }
+        }
         const to = lastIdx + CHART_RIGHT_GAP_BARS;
         requestAnimationFrame(() => {
             if (!chart) return;
@@ -543,9 +734,10 @@
             if (inst.open_trade && inst.expiry_ts) {
                 const timer = document.createElement('span');
                 timer.className = 'instrument-trade-timer shrink-0 text-xs font-mono tabular-nums text-stone-200';
-                timer.dataset.expiryTs = String(inst.expiry_ts);
+                // Нормализуем до unix-sec: так таймер и маркеры не "прыгают" при ms/строковом формате.
+                timer.dataset.expiryTs = String(toUnixSec(inst.expiry_ts) || '');
                 const nowSec = Math.floor(Date.now() / 1000);
-                timer.textContent = formatMmSs(Number(inst.expiry_ts) - nowSec);
+                timer.textContent = formatMmSs((toUnixSec(inst.expiry_ts) || 0) - nowSec);
                 nameWrap.appendChild(timer);
             }
             const payout = document.createElement('span');
@@ -566,12 +758,14 @@
         return fetch(INSTRUMENTS_SIDEBAR_URL, { headers: { 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' } })
             .then((r) => r.json())
             .then((d) => {
+                if (d && d.server_time) lastServerTimes.instruments = d.server_time;
                 renderInstrumentSidebarRows(d.instruments || []);
                 applyInstrumentFilter(instrumentSearchInput.value);
                 syncSearchClearButton();
                 if (currentInstrument) {
                     document.querySelectorAll('.instrument-btn').forEach((b) => b.classList.toggle('bg-blue-900/40', b.dataset.instrument === currentInstrument));
                 }
+                renderTimeDebugPanel();
             })
             .catch(() => {});
     }
@@ -611,6 +805,49 @@
         return String(mm).padStart(2, '0') + ':' + String(ss).padStart(2, '0');
     }
 
+    function formatStatNumber(value, fallback = '0') {
+        const n = Number(value);
+        if (!Number.isFinite(n)) return fallback;
+        return String(Math.max(0, Math.trunc(n)));
+    }
+
+    // Обновляем только текст внутри карточек статистики: это дешёвая DOM-операция,
+    // поэтому можно выполнять её часто, не затрагивая график и другие тяжёлые виджеты.
+    function applyStatsToSidebar(stats) {
+        if (!stats || typeof stats !== 'object') return;
+        const totalEl = document.getElementById('bot-stat-total');
+        const openEl = document.getElementById('bot-stat-open');
+        const winsEl = document.getElementById('bot-stat-wins');
+        const lossesEl = document.getElementById('bot-stat-losses');
+        const winrateEl = document.getElementById('bot-stat-winrate');
+        if (!totalEl || !openEl || !winsEl || !lossesEl || !winrateEl) return;
+
+        totalEl.textContent = formatStatNumber(stats.total, '0');
+        openEl.textContent = formatStatNumber(stats.open, '0');
+        winsEl.textContent = formatStatNumber(stats.wins, '0');
+        lossesEl.textContent = formatStatNumber(stats.losses, '0');
+
+        const winrate = stats.winrate;
+        if (winrate == null || !Number.isFinite(Number(winrate))) {
+            winrateEl.textContent = '—';
+        } else {
+            winrateEl.textContent = `${Number(winrate).toFixed(2)}%`;
+        }
+    }
+
+    function refreshBotStats() {
+        fetch(BOT_STATS_URL, {
+            headers: { 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+        })
+            .then((r) => r.json())
+            .then((d) => {
+                if (d && d.server_time) lastServerTimes.stats = d.server_time;
+                applyStatsToSidebar(d.stats || null);
+                renderTimeDebugPanel();
+            })
+            .catch(() => {});
+    }
+
     /** Склеивает reasons_short из API в одну строку (как на сервере). */
     function joinTradeReasonsLines(arr) {
         if (!Array.isArray(arr) || !arr.length) return '';
@@ -637,8 +874,8 @@
         }
         const nowSec = Math.floor(Date.now() / 1000);
         const rows = (openTrades || [])
-            .filter((t) => t.instrument === currentInstrument && Number(t.expiry_ts || 0) > nowSec)
-            .sort((a, b) => Number(a.expiry_ts || 0) - Number(b.expiry_ts || 0));
+            .filter((t) => t.instrument === currentInstrument && toUnixSec(t.expiry_ts) > nowSec)
+            .sort((a, b) => toUnixSec(a.expiry_ts || 0) - toUnixSec(b.expiry_ts || 0));
         if (!rows.length) {
             // Если активной сделки нет, но пользователь запросил "Анализ", показываем этот же блок справа в режиме диагностики.
             const a = latestManualAnalysis;
@@ -685,7 +922,7 @@
         }
         const t = rows[0];
         panel.classList.remove('hidden');
-        const left = Number(t.expiry_ts || 0) - nowSec;
+        const left = toUnixSec(t.expiry_ts) - nowSec;
         if (timerEl) {
             timerEl.textContent = formatMmSs(left);
             timerEl.classList.remove('hidden');
@@ -725,7 +962,7 @@
     function tickSidebarTradeTimers() {
         const nowSec = Math.floor(Date.now() / 1000);
         document.querySelectorAll('.instrument-trade-timer[data-expiry-ts]').forEach((el) => {
-            const ts = Number(el.dataset.expiryTs);
+            const ts = toUnixSec(el.dataset.expiryTs);
             if (!Number.isFinite(ts)) return;
             el.textContent = formatMmSs(ts - nowSec);
         });
@@ -822,8 +1059,8 @@
         }
         const nowSec = Math.floor(Date.now() / 1000);
         const rows = (openTrades || [])
-            .filter((t) => t.instrument === currentInstrument && Number(t.expiry_ts || 0) > nowSec)
-            .sort((a, b) => Number(a.expiry_ts || 0) - Number(b.expiry_ts || 0));
+            .filter((t) => t.instrument === currentInstrument && toUnixSec(t.expiry_ts) > nowSec)
+            .sort((a, b) => toUnixSec(a.expiry_ts || 0) - toUnixSec(b.expiry_ts || 0));
         if (!rows.length) {
             openTradesOverlay.innerHTML = '';
             renderChartMarkers();
@@ -831,7 +1068,7 @@
             return;
         }
         openTradesOverlay.innerHTML = rows.map((t) => {
-            const left = Number(t.expiry_ts || 0) - nowSec;
+            const left = toUnixSec(t.expiry_ts) - nowSec;
             const side = (t.side || '').toUpperCase();
             const sideClass = side === 'CALL' ? 'text-emerald-300' : 'text-rose-300';
             return `<div class="rounded border border-zinc-700/80 bg-zinc-900/85 px-2 py-1 text-xs shadow-sm shadow-black/30">
@@ -850,10 +1087,63 @@
         })
             .then((r) => r.json())
             .then((d) => {
+                if (d && d.server_time) lastServerTimes.openTrades = d.server_time;
+                const prevOpenTrades = openTrades || [];
                 openTrades = d.trades || [];
+                // Если сделка исчезла из open-list, считаем что она закрылась и ставим временный exp-маркер сразу.
+                const nowOpenIds = new Set(openTrades.map((t) => String(t.id)));
+                const disappearedTrades = prevOpenTrades.filter((t) => !nowOpenIds.has(String(t.id)));
+                disappearedTrades.forEach((t) => {
+                    const entryTs = toUnixSec(t.entry_ts);
+                    const expiryTs = toUnixSec(t.expiry_ts);
+                    if (!Number.isFinite(entryTs) || entryTs <= 0) return;
+                    if (!Number.isFinite(expiryTs) || expiryTs <= 0) return;
+                    const syntheticId = `closed-${t.id}-${expiryTs}`;
+                    if (syntheticClosedSignals.some((s) => String(s.id) === syntheticId)) return;
+                    syntheticClosedSignals.push({
+                        id: syntheticId,
+                        instrument: t.instrument,
+                        side: (t.side || '').toUpperCase(),
+                        signal_at: new Date(entryTs * 1000).toISOString(),
+                        expiry_time: new Date(expiryTs * 1000).toISOString(),
+                        result: (t.trade_result || 'pending'),
+                        trade: {
+                            id: t.id,
+                            expiry_time: new Date(expiryTs * 1000).toISOString(),
+                            result: (t.trade_result || 'pending'),
+                        },
+                    });
+                });
                 renderOpenTradesOverlay();
+                renderChartMarkers();
                 renderEntryPriceLines();
                 updateSidebarActiveTradePanel();
+                renderTimeDebugPanel();
+            })
+            .catch(() => {});
+    }
+    function refreshSignalsHistory() {
+        // История сигналов обновляется отдельно от open-trades, иначе после закрытия сделки маркер exp может пропасть до перезагрузки.
+        const params = new URLSearchParams();
+        if (currentInstrument) params.set('instrument', currentInstrument);
+        fetch(`${SIGNALS_URL}?${params.toString()}`, { headers: { 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' } })
+            .then((r) => r.json())
+            .then((d) => {
+                if (d && d.server_time) lastServerTimes.signals = d.server_time;
+                if (!Array.isArray(d.signals)) return;
+                signals = d.signals;
+                // Когда серверная история уже содержит сделку, убираем временную копию, чтобы не было дублей.
+                const serverKeys = new Set(signals.map((s) => {
+                    const expRaw = (s.trade && s.trade.expiry_time) ? s.trade.expiry_time : s.expiry_time;
+                    return `${s.instrument}|${s.signal_at}|${expRaw || ''}`;
+                }));
+                syntheticClosedSignals = syntheticClosedSignals.filter((s) => {
+                    const expRaw = (s.trade && s.trade.expiry_time) ? s.trade.expiry_time : s.expiry_time;
+                    const key = `${s.instrument}|${s.signal_at}|${expRaw || ''}`;
+                    return !serverKeys.has(key);
+                });
+                renderChartMarkers();
+                renderTimeDebugPanel();
             })
             .catch(() => {});
     }
@@ -862,7 +1152,12 @@
             .sort((a, b) => a.time - b.time);
     }
     function fetchCandles(instrument, before) {
-        const params = new URLSearchParams({ instrument, timeframe: String(currentTimeframeMinutes), limit: LIMIT, since: String(candlesSince()) });
+        // Для полного обзора используем динамический since: от самого раннего сигнала по выбранной паре (с часовым запасом).
+        const earliestSignalTs = earliestSignalTsForInstrument(instrument);
+        const dynamicSince = (earliestSignalTs && Number.isFinite(earliestSignalTs))
+            ? Math.min(candlesSince(), Math.max(0, earliestSignalTs - 3600))
+            : candlesSince();
+        const params = new URLSearchParams({ instrument, timeframe: String(currentTimeframeMinutes), limit: LIMIT, since: String(dynamicSince) });
         if (before != null) params.set('before', before);
         if (currentTimeframeMinutes === 1 && before == null) params.set('include_partial', '1');
         return fetch(`${CANDLES_URL}?${params.toString()}`, { headers: { 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' } })
@@ -964,6 +1259,13 @@
             upColor: '#26a69a', downColor: '#ef5350', borderVisible: false,
             priceFormat: { type: 'price', precision: 5, minMove: 0.00001 }
         });
+        chart.subscribeClick((param) => {
+            if (!param || param.time == null) return;
+            const clickedBucketTs = toBucketTime(toUnixSec(param.time));
+            if (!Number.isFinite(clickedBucketTs)) return;
+            const tradeId = tradeIdByChartClickTime(clickedBucketTs);
+            if (tradeId != null) goToTradeHistoryById(tradeId);
+        });
         chart.timeScale().subscribeVisibleLogicalRangeChange(() => {
             const range = chart.timeScale().getVisibleLogicalRange();
             if (range && currentTimeframeMinutes === 1 && !loadingMore && oldestLoadedTime != null && range.from < 2) loadMoreCandles();
@@ -973,7 +1275,11 @@
     }
     function loadMoreCandles() {
         if (currentTimeframeMinutes !== 1 || !currentInstrument || loadingMore || oldestLoadedTime == null) return;
-        if (oldestLoadedTime <= candlesSince()) return;
+        const earliestSignalTs = earliestSignalTsForInstrument(currentInstrument);
+        const dynamicSince = (earliestSignalTs && Number.isFinite(earliestSignalTs))
+            ? Math.min(candlesSince(), Math.max(0, earliestSignalTs - 3600))
+            : candlesSince();
+        if (oldestLoadedTime <= dynamicSince) return;
         loadingMore = true; setLoading(true);
         fetchCandles(currentInstrument, oldestLoadedTime).then((data) => {
             const newBars = buildChartData(data.candles || []);
@@ -1038,12 +1344,14 @@
         const hadPriorInstrument = currentInstrument !== null;
         currentInstrument = instrument;
         currentDisplayName = displayName;
+        saveSelectedInstrument(instrument);
         openTrades = [];
         renderOpenTradesOverlay();
         // При смене пары сразу убираем старый анализ; при первом выборе оставляем SSR до ответа open-trades (без мигания).
         if (hadPriorInstrument) updateSidebarActiveTradePanel();
         // Сразу тянем открытые сделки по новой паре (параллельно со свечами), чтобы анализ справа не отставал от графика.
         refreshOpenTrades();
+        refreshSignalsHistory();
         document.querySelectorAll('.instrument-btn').forEach((b) => b.classList.toggle('bg-blue-900/40', b.dataset.instrument === instrument));
         lastZones = [];
         structureOverlay.innerHTML = '';
@@ -1124,16 +1432,30 @@
         updateSidebarActiveTradePanel();
         tickSidebarTradeTimers();
         tickCandleCloseTimer();
+        renderTimeDebugPanel();
     }, 1000);
     renderOpenTradesOverlay();
     tickSidebarTradeTimers();
     tickCandleCloseTimer();
+    renderTimeDebugPanel();
+    refreshSignalsHistory();
     openTradesFetchInterval = setInterval(refreshOpenTrades, 3000);
+    signalsRefreshInterval = setInterval(refreshSignalsHistory, 5000);
+    // Блок "Статистика" рядом с графиком обновляем независимо от свечей и открытых сделок:
+    // так карточки Total/Open/Wins/Losses/Winrate всегда отражают актуальное состояние бота.
+    botStatsRefreshInterval = setInterval(refreshBotStats, 3000);
+    refreshBotStats();
     refreshInstrumentSidebar().then(() => {
         let ib = null;
+        const persisted = loadSelectedInstrument();
         document.querySelectorAll('.instrument-btn').forEach((b) => {
-            if (b.dataset.instrument === initialInstrument) ib = b;
+            if (persisted && b.dataset.instrument === persisted) ib = b;
         });
+        if (!ib) {
+            document.querySelectorAll('.instrument-btn').forEach((b) => {
+                if (b.dataset.instrument === initialInstrument) ib = b;
+            });
+        }
         if (!ib) ib = document.querySelector('.instrument-btn');
         if (ib) ib.click();
     });

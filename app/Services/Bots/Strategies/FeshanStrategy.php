@@ -24,10 +24,6 @@ class FeshanStrategy implements BotStrategyInterface
         $bars5 = $mtf['5'] ?? [];
         $lastM1 = $closedCandles[array_key_last($closedCandles)];
 
-        if ($bias240 === null || $bias240 === 'flat') {
-            return null;
-        }
-
         $h1Last = $this->lastBar($mtf['60'] ?? []);
         $h1Bull = $h1Last && $this->isBull($h1Last);
         $h1Bear = $h1Last && $this->isBear($h1Last);
@@ -58,6 +54,11 @@ class FeshanStrategy implements BotStrategyInterface
         // Эти 2 триггера работают как доп.подтверждения к core-сигналу.
         $useAbsorb = $this->flag($cfg, 'trigger_absorption', false);
         $useImbalance = $this->flag($cfg, 'trigger_imbalance', false);
+        // Важно: если 4H-триггер включен, но bias на 4H невалиден (null/flat), входа быть не должно.
+        // Если trigger_bias_240 выключен, этот ранний стоп не применяется.
+        if ($useBias240 && ($bias240 === null || $bias240 === 'flat')) {
+            return null;
+        }
 
         $callCoreOk = (! $useBias240 || $bias240 === 'up')
             && (! $useBias60 || $bias60 !== 'down')

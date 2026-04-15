@@ -190,8 +190,13 @@ class BotController extends Controller
     {
         $botId = $request->integer('bot_id');
         $result = (string) $request->input('result', '');
+        $tradeId = $request->integer('trade_id');
 
         $q = BotTrade::query()->with('bot')->latest('entry_time');
+        if ($tradeId > 0) {
+            // Точечный переход из графика: показываем именно выбранную сделку и не теряем её в пагинации.
+            $q->whereKey($tradeId);
+        }
         if ($botId) {
             $q->where('bot_id', $botId);
         }
@@ -204,6 +209,7 @@ class BotController extends Controller
             'bots' => Bot::query()->where('user_id', auth()->id())->orderBy('name')->get(['id', 'name']),
             'selectedBotId' => $botId,
             'selectedResult' => $result,
+            'selectedTradeId' => $tradeId > 0 ? $tradeId : null,
         ]);
     }
 
@@ -418,6 +424,44 @@ class BotController extends Controller
         ]);
     }
 
+    public function statsData(Bot $bot): JsonResponse
+    {
+        $this->ensureBotOwner($bot);
+
+        // Собираем все ключевые метрики правой панели в одном запросе к таблице сделок,
+        // чтобы фронт обновлял блок "Статистика" атомарно и без рассинхрона между карточками.
+        $raw = $bot->trades()
+            ->selectRaw('
+                COUNT(*) as total,
+                SUM(CASE WHEN status = ? THEN 1 ELSE 0 END) as open,
+                SUM(CASE WHEN result = ? THEN 1 ELSE 0 END) as wins,
+                SUM(CASE WHEN result = ? THEN 1 ELSE 0 END) as losses
+            ', [
+                BotTrade::STATUS_OPEN,
+                BotTrade::RESULT_WIN,
+                BotTrade::RESULT_LOSS,
+            ])
+            ->first();
+
+        $total = (int) ($raw?->total ?? 0);
+        $open = (int) ($raw?->open ?? 0);
+        $wins = (int) ($raw?->wins ?? 0);
+        $losses = (int) ($raw?->losses ?? 0);
+        $decisiveTrades = $wins + $losses;
+        $winrate = $decisiveTrades > 0 ? round(($wins * 100) / $decisiveTrades, 2) : null;
+
+        return response()->json([
+            'stats' => [
+                'total' => $total,
+                'open' => $open,
+                'wins' => $wins,
+                'losses' => $losses,
+                'winrate' => $winrate,
+            ],
+            'server_time' => now()->toIso8601String(),
+        ]);
+    }
+
     public function show(Bot $bot): View
     {
         $this->ensureBotOwner($bot);
@@ -425,10 +469,11 @@ class BotController extends Controller
         $chartSignals = $bot->signals()
             ->with('trade')
             ->latest('signal_at')
-            ->limit(200)
+            ->limit(1000)
             ->get()
             ->sortBy('signal_at')
             ->values();
+        $chartSignalsPayload = $this->chartSignalsPayload($chartSignals);
         $signalInstruments = $chartSignals->pluck('instrument')->unique()->values();
         $sidebar = $this->sidebarInstrumentsPayload($bot);
         $instruments = $sidebar['instruments'];
@@ -477,7 +522,7 @@ class BotController extends Controller
 
         return view('bots.show', [
             'bot' => $bot,
-            'chartSignals' => $chartSignals,
+            'chartSignals' => $chartSignalsPayload,
             'instruments' => $instruments,
             'timeframes' => $timeframes,
             'signalInstruments' => $signalInstruments,
@@ -488,6 +533,35 @@ class BotController extends Controller
             'activeTrade' => $activeTrade,
             'activeTradeSecondsLeft' => $activeTradeSecondsLeft,
             'activeTradeSidebar' => $activeTradeSidebar,
+        ]);
+    }
+
+    /**
+     * История сигналов для графика (entry + итог на экспирации).
+     * Нужен отдельный endpoint, чтобы UI подхватывал закрытие сделок без перезагрузки страницы.
+     */
+    public function signalsData(Bot $bot): JsonResponse
+    {
+        $this->ensureBotOwner($bot);
+
+        $instrument = request()->string('instrument')->toString();
+
+        $q = $bot->signals()
+            ->with('trade')
+            ->latest('signal_at');
+        if ($instrument !== '') {
+            // Для графика важнее глубокая история по текущей паре, чем общий короткий срез по всем инструментам.
+            $q->where('instrument', $instrument);
+        }
+        $signals = $q->limit($instrument !== '' ? 2000 : 1000)
+            ->get()
+            ->sortBy('signal_at')
+            ->values();
+
+        return response()->json([
+            'signals' => $this->chartSignalsPayload($signals),
+            'count' => $signals->count(),
+            'server_time' => now()->toIso8601String(),
         ]);
     }
 
@@ -536,6 +610,32 @@ class BotController extends Controller
     private function ensureBotOwner(Bot $bot): void
     {
         abort_unless((int) $bot->user_id === (int) auth()->id(), 403);
+    }
+
+    /**
+     * @param  Collection<int, \App\Models\BotSignal>  $signals
+     * @return array<int, array<string, mixed>>
+     */
+    private function chartSignalsPayload(Collection $signals): array
+    {
+        return $signals->map(function ($s): array {
+            $trade = $s->relationLoaded('trade') ? $s->trade : null;
+
+            return [
+                'id' => (int) $s->id,
+                'instrument' => (string) $s->instrument,
+                'side' => (string) $s->side,
+                'signal_at' => optional($s->signal_at)->toIso8601String(),
+                // Дублируем expiry/result из сигнала как fallback для маркеров истории, если relation trade временно не подгружен.
+                'expiry_time' => optional($s->expiry_time)->toIso8601String(),
+                'result' => $trade ? (string) ($trade->result ?? '') : '',
+                'trade' => $trade ? [
+                    'id' => (int) $trade->id,
+                    'expiry_time' => optional($trade->expiry_time)->toIso8601String(),
+                    'result' => (string) ($trade->result ?? ''),
+                ] : null,
+            ];
+        })->values()->all();
     }
 
     /**

@@ -27,7 +27,9 @@ Route::middleware('auth')->group(function () {
         Route::get('/live-trades', [BotController::class, 'liveTrades'])->name('live-trades');
         Route::get('/live-trades/data', [BotController::class, 'liveTradesData'])->name('live-trades.data');
         Route::get('/{bot}/open-trades/data', [BotController::class, 'openTradesData'])->name('open-trades.data');
+        Route::get('/{bot}/signals/data', [BotController::class, 'signalsData'])->name('signals.data');
         Route::get('/{bot}/analysis/data', [BotController::class, 'analysisData'])->name('analysis.data');
+        Route::get('/{bot}/stats/data', [BotController::class, 'statsData'])->name('stats.data');
         Route::get('/{bot}/instruments/data', [BotController::class, 'instrumentsSidebarData'])->name('instruments.sidebar-data');
         Route::get('/{bot}/activity', [BotController::class, 'activity'])->name('activity');
         Route::get('/{bot}/settings', [BotController::class, 'settings'])->name('settings');

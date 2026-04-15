@@ -4,6 +4,9 @@
 <div class="space-y-4">
     <h1 class="text-2xl font-semibold">История сделок</h1>
     <form method="GET" class="flex items-center gap-2 flex-wrap">
+        @if(!empty($selectedTradeId))
+            <input type="hidden" name="trade_id" value="{{ (int) $selectedTradeId }}">
+        @endif
         <select name="bot_id" class="rounded border border-zinc-700 bg-zinc-900 px-2 py-1 text-sm">
             <option value="">Все боты</option>
             @foreach($bots as $bot)
@@ -35,7 +38,8 @@
             </thead>
             <tbody class="divide-y divide-zinc-800 bg-zinc-950/40">
                 @forelse($trades as $t)
-                    <tr class="hover:bg-zinc-900/50">
+                    <tr data-trade-id="{{ (int) $t->id }}"
+                        class="hover:bg-zinc-900/50 @if(!empty($selectedTradeId) && (int) $selectedTradeId === (int) $t->id) bg-amber-900/40 ring-1 ring-amber-500/50 @endif">
                         <td class="px-4 py-3 text-zinc-300">{{ optional($t->entry_time)->format('Y-m-d H:i:s') }}</td>
                         <td class="px-4 py-3 text-zinc-100">{{ $t->bot?->name ?? '—' }}</td>
                         <td class="px-4 py-3 text-zinc-300">{{ $t->instrument }}</td>
@@ -79,5 +83,16 @@
 
     {{ $trades->links() }}
 </div>
+@if(!empty($selectedTradeId))
+<script>
+(function() {
+    // После перехода из графика центрируем нужную строку, чтобы сделка была видна сразу.
+    const targetId = @json((int) $selectedTradeId);
+    const row = document.querySelector(`tr[data-trade-id="${targetId}"]`);
+    if (!row) return;
+    row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+})();
+</script>
+@endif
 @endsection
 
