@@ -31,6 +31,7 @@
                     <th class="px-4 py-3 text-left">Инструмент</th>
                     <th class="px-4 py-3 text-left">Сторона</th>
                     <th class="px-4 py-3 text-left">Цена входа</th>
+                    <th class="px-4 py-3 text-left">Цена завершения</th>
                     <th class="px-4 py-3 text-left">До конца</th>
                     <th class="px-4 py-3 text-left">Результат</th>
                     <th class="px-4 py-3 text-left">PnL</th>
@@ -44,8 +45,21 @@
                         <td class="px-4 py-3 text-zinc-300">{{ optional($t->entry_time)->format('Y-m-d H:i:s') }}</td>
                         <td class="px-4 py-3 text-zinc-100">{{ $t->bot?->name ?? '—' }}</td>
                         <td class="px-4 py-3 text-zinc-300">{{ $t->instrument }}</td>
-                        <td class="px-4 py-3 text-zinc-300">{{ $t->side }}</td>
+                        <td class="px-4 py-3 text-zinc-300">
+                            {{-- Преобразуем биржевые коды направления сделки в понятные русские подписи для UI:
+                                 PUT означает ставку на снижение цены (ВНИЗ), CALL — ставку на рост цены (ВВЕРХ).
+                                 Для любых нестандартных значений оставляем исходное значение, чтобы не скрывать данные. --}}
+                            @php
+                                $sideLabel = match (strtoupper((string) $t->side)) {
+                                    'PUT' => 'ВНИЗ',
+                                    'CALL' => 'ВВЕРХ',
+                                    default => (string) $t->side,
+                                };
+                            @endphp
+                            {{ $sideLabel }}
+                        </td>
                         <td class="px-4 py-3 text-zinc-300 font-mono">{{ $t->entry_price !== null ? number_format((float)$t->entry_price, 5) : '—' }}</td>
+                        <td class="px-4 py-3 text-zinc-300 font-mono">{{ $t->expiry_price !== null ? number_format((float)$t->expiry_price, 5) : '—' }}</td>
                         <td class="px-4 py-3">
                             @if($t->status === 'open' && $t->expiry_time)
                                 @php
@@ -87,7 +101,7 @@
                     </tr>
                 @empty
                     <tr>
-                        <td colspan="9" class="px-4 py-8 text-center text-zinc-500">Сделок пока нет.</td>
+                        <td colspan="10" class="px-4 py-8 text-center text-zinc-500">Сделок пока нет.</td>
                     </tr>
                 @endforelse
             </tbody>

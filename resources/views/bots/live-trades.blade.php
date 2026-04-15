@@ -21,6 +21,7 @@
                     <th class="px-4 py-3 text-left">Инструмент</th>
                     <th class="px-4 py-3 text-left">Сторона</th>
                     <th class="px-4 py-3 text-left">Цена входа</th>
+                    <th class="px-4 py-3 text-left">Цена завершения</th>
                     <th class="px-4 py-3 text-left">До конца</th>
                     <th class="px-4 py-3 text-left">Результат</th>
                     <th class="px-4 py-3 text-left">PnL</th>
@@ -29,7 +30,7 @@
             </thead>
             <tbody id="live-trades-body" class="divide-y divide-zinc-800 bg-zinc-950/40">
                 <tr>
-                    <td colspan="9" class="px-4 py-8 text-center text-zinc-500">Загрузка…</td>
+                    <td colspan="10" class="px-4 py-8 text-center text-zinc-500">Загрузка…</td>
                 </tr>
             </tbody>
         </table>
@@ -47,6 +48,16 @@
     let targetTradeScrolled = false;
     let lastIds = new Set();
     let timer = null;
+
+    // Нормализуем сторону сделки для интерфейса:
+    // PUT = сделка на понижение ("ВНИЗ"), CALL = сделка на повышение ("ВВЕРХ").
+    // Если придет иное значение, показываем исходный код, чтобы не потерять диагностическую информацию.
+    function sideLabel(side) {
+        const raw = String(side ?? '').toUpperCase();
+        if (raw === 'PUT') return 'ВНИЗ';
+        if (raw === 'CALL') return 'ВВЕРХ';
+        return side ?? '—';
+    }
 
     function resultCell(result) {
         if (result === 'win') return '<span class="text-emerald-400">win</span>';
@@ -78,7 +89,7 @@
 
     function renderRows(trades) {
         if (!trades.length) {
-            body.innerHTML = '<tr><td colspan="9" class="px-4 py-8 text-center text-zinc-500">За последние 2 часа сделок нет.</td></tr>';
+            body.innerHTML = '<tr><td colspan="10" class="px-4 py-8 text-center text-zinc-500">За последние 2 часа сделок нет.</td></tr>';
             return;
         }
 
@@ -97,8 +108,9 @@
                     <td class="px-4 py-3 text-zinc-300">${t.entry_time ?? '—'}</td>
                     <td class="px-4 py-3 text-zinc-100">${t.bot_name ?? '—'}</td>
                     <td class="px-4 py-3 text-zinc-300">${t.instrument ?? '—'}</td>
-                    <td class="px-4 py-3 text-zinc-300">${t.side ?? '—'}</td>
+                    <td class="px-4 py-3 text-zinc-300">${sideLabel(t.side)}</td>
                     <td class="px-4 py-3 text-zinc-300 font-mono">${t.entry_price ?? '—'}</td>
+                    <td class="px-4 py-3 text-zinc-300 font-mono">${t.expiry_price ?? '—'}</td>
                     <td class="px-4 py-3">${timeLeftCell(t)}</td>
                     <td class="px-4 py-3">${resultCell(t.result)}</td>
                     <td class="px-4 py-3 text-zinc-300">${t.pnl ?? '—'}</td>

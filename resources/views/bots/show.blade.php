@@ -131,6 +131,8 @@
                 Нажмите на инструмент слева, чтобы показать минутный график
             </div>
             <div id="chart-wrapper" class="absolute inset-0 hidden z-[1]"></div>
+            {{-- Полосы длительности сделок (entry -> expiry) поверх графика. --}}
+            <div id="trade-duration-overlay" class="absolute inset-0 z-[4] pointer-events-none overflow-hidden hidden"></div>
             <div id="structure-overlay" class="absolute inset-0 z-[5] pointer-events-none overflow-visible hidden"></div>
             <div id="candle-timer-overlay"
                 class="pointer-events-none absolute z-[6] hidden h-0 w-0 overflow-visible"
@@ -227,12 +229,17 @@
     let signals = @json($chartSignals);
     const initialInstrument = @json($initialInstrument);
     const botName = @json($bot->name);
+    // Серверный seed активной сделки для стартового кадра:
+    // если /open-trades/data временно вернул 0, но на SSR есть "Сделка в работе",
+    // используем этот объект как fallback для визуализации голубой полосы.
+    const ssrActiveTradeSeed = @json($activeTradeSidebar);
     // targetTradeId приходит из страницы "Сигналы и сделки" (?trade_id=...).
     // Используем его, чтобы открыть правильный инструмент и визуально выделить эту сделку на графике.
     const targetTradeId = Number(new URLSearchParams(window.location.search).get('trade_id') || 0) || null;
 
     const chartPlaceholder = document.getElementById('chart-placeholder');
     const chartWrapper = document.getElementById('chart-wrapper');
+    const tradeDurationOverlay = document.getElementById('trade-duration-overlay');
     const structureOverlay = document.getElementById('structure-overlay');
     const candleTimerOverlay = document.getElementById('candle-timer-overlay');
     const candleCloseTimerEl = document.getElementById('candle-close-timer');
@@ -390,6 +397,25 @@
         timeDebugClient.textContent = `client: ${formatDebugTs(nowSec)}`;
         timeDebugMarker.textContent = `last marker: ${formatDebugTs(lastMarkerTs)}`;
     }
+
+    // Форматируем цену для подписи маркера:
+    // - принимаем любое "сырое" значение (строка/число/null),
+    // - приводим к числу,
+    // - показываем ровно 5 знаков после запятой, как в таблицах сделок.
+    // Если значение отсутствует или невалидно, возвращаем null и просто не добавляем цену в подпись.
+    function formatMarkerPrice(rawPrice) {
+        const p = Number(rawPrice);
+        if (!Number.isFinite(p)) return null;
+        return p.toFixed(5);
+    }
+
+    // Собираем хвост подписи вида " (1.23456)".
+    // Отдельная функция нужна, чтобы одинаково добавлять цену и к маркеру входа, и к маркеру завершения.
+    function markerPriceSuffix(rawPrice) {
+        const priceText = formatMarkerPrice(rawPrice);
+        return priceText ? ` (${priceText})` : '';
+    }
+
     function markersForInstrument(instrument) {
         const markers = [];
         ([...(signals || []), ...syntheticClosedSignals]).forEach((s) => {
@@ -399,12 +425,16 @@
             const signalTime = toBucketTime(toUnixSec(s.signal_at));
             if (signalTime) {
                 const isCall = s.side === 'CALL';
+                const tradeIdSuffix = Number.isFinite(tradeId) ? ` ${tradeId}` : '';
+                const entryPriceSuffix = markerPriceSuffix(s.trade ? s.trade.entry_price : null);
                 markers.push({
                     time: signalTime,
                     position: isCall ? 'belowBar' : 'aboveBar',
-                    color: isTargetTrade ? '#f59e0b' : (isCall ? '#10b981' : '#f43f5e'),
+                    color: '#ffffff',
                     shape: isTargetTrade ? 'circle' : (isCall ? 'arrowUp' : 'arrowDown'),
-                    text: isTargetTrade ? `TARGET #${tradeId}` : `entry ${s.side}`,
+                    text: isTargetTrade
+                        ? `TARGET${tradeIdSuffix}`
+                        : (isCall ? `ВВЕРХ${tradeIdSuffix}${entryPriceSuffix}` : `ВНИЗ${tradeIdSuffix}${entryPriceSuffix}`),
                 });
             }
             const expiryRaw = (s.trade && s.trade.expiry_time) ? s.trade.expiry_time : s.expiry_time;
@@ -413,6 +443,11 @@
                 if (expiryTime) {
                     const result = ((s.trade && s.trade.result) || s.result || 'pending');
                     const color = result === 'win' ? '#10b981' : (result === 'loss' ? '#f43f5e' : '#a1a1aa');
+                    const tradeIdSuffix = Number.isFinite(tradeId) ? ` ${tradeId}` : '';
+                    const expiryPriceSuffix = markerPriceSuffix(s.trade ? s.trade.expiry_price : null);
+                    let resultLabel = `EXP ${String(result || '').toUpperCase()}`.trim();
+                    if (result === 'win') resultLabel = `WIN${tradeIdSuffix}${expiryPriceSuffix}`;
+                    if (result === 'loss') resultLabel = `LOSE${tradeIdSuffix}${expiryPriceSuffix}`;
                     // Важно: маркер завершения сделки рисуем ВНЕ свечи, иначе при плотном потоке баров/сигналов
                     // круг inBar визуально "пропадает" в теле свечи и создаётся впечатление, что история исчезла.
                     // Направление (над/под баром) привязываем к side, чтобы маркеры читались одинаково.
@@ -423,8 +458,8 @@
                         time: expiryTime,
                         position: expiryPos,
                         color: isTargetTrade ? '#f59e0b' : color,
-                        shape: isTargetTrade ? 'diamond' : expiryShape,
-                        text: isTargetTrade ? `TARGET exp ${result}` : `exp ${result}`,
+                        shape: isTargetTrade ? 'square' : expiryShape,
+                        text: isTargetTrade ? `TARGET ${resultLabel}` : resultLabel,
                     });
                 }
             }
@@ -442,13 +477,23 @@
     function targetTradeMarkerTimeForInstrument(instrument) {
         if (!instrument || targetTradeId === null) return null;
         const s = findTargetSignal();
-        if (!s || s.instrument !== instrument) return null;
-        // Предпочитаем маркер экспирации (итог сделки), fallback — время входа.
-        const expiryRaw = (s.trade && s.trade.expiry_time) ? s.trade.expiry_time : s.expiry_time;
-        const expiryTs = toBucketTime(toUnixSec(expiryRaw));
-        if (Number.isFinite(expiryTs)) return expiryTs;
-        const entryTs = toBucketTime(toUnixSec(s.signal_at));
-        return Number.isFinite(entryTs) ? entryTs : null;
+        if (s && s.instrument === instrument) {
+            // Предпочитаем маркер экспирации (итог сделки), fallback — время входа.
+            const expiryRaw = (s.trade && s.trade.expiry_time) ? s.trade.expiry_time : s.expiry_time;
+            const expiryTs = toBucketTime(toUnixSec(expiryRaw));
+            if (Number.isFinite(expiryTs)) return expiryTs;
+            const entryTs = toBucketTime(toUnixSec(s.signal_at));
+            if (Number.isFinite(entryTs)) return entryTs;
+        }
+        // Fallback: если в signals записи ещё нет (или это активная сделка), берём время из openTrades.
+        const ot = (openTrades || []).find((t) => Number(t.id) === targetTradeId && t.instrument === instrument);
+        if (ot) {
+            const expiryTs = toBucketTime(toUnixSec(ot.expiry_ts));
+            if (Number.isFinite(expiryTs)) return expiryTs;
+            const entryTs = toBucketTime(toUnixSec(ot.entry_ts));
+            if (Number.isFinite(entryTs)) return entryTs;
+        }
+        return null;
     }
     function focusTargetTradeOnChart() {
         if (targetTradeFocusDone || !chart || !allChartData.length || !currentInstrument) return;
@@ -456,8 +501,14 @@
         if (!Number.isFinite(targetTs)) return;
         const idx = allChartData.findIndex((c) => Number(c.time) >= targetTs);
         if (idx < 0) return;
-        const from = Math.max(0, idx - 40);
-        const to = Math.min(allChartData.length - 1 + CHART_RIGHT_GAP_BARS, idx + 40);
+        // Дефолтный "сделочный" масштаб:
+        // держим целевую сделку немного правее центра, чтобы слева было видно предысторию входа,
+        // а справа оставалось немного места для ближайших баров (как на референс-скриншоте).
+        const TARGET_FOCUS_VISIBLE_BARS = 72;
+        const TARGET_FOCUS_LEFT_BARS = 52;
+        const TARGET_FOCUS_RIGHT_BARS = TARGET_FOCUS_VISIBLE_BARS - TARGET_FOCUS_LEFT_BARS;
+        const from = Math.max(0, idx - TARGET_FOCUS_LEFT_BARS);
+        const to = Math.min(allChartData.length - 1 + CHART_RIGHT_GAP_BARS, idx + TARGET_FOCUS_RIGHT_BARS);
         chart.timeScale().setVisibleLogicalRange({ from, to });
         targetTradeFocusDone = true;
     }
@@ -510,6 +561,273 @@
         const base = markersForInstrument(currentInstrument);
         const active = activeTradeMarkersForCurrentInstrument();
         candlestickSeries.setMarkers([...base, ...active].sort((a, b) => a.time - b.time));
+        renderTradeDurationOverlay();
+    }
+    /**
+     * Формируем интервалы сделок (entry -> expiry) для текущего инструмента.
+     * Это используется для "полосы времени" сделки на графике истории.
+     */
+    function tradeDurationsForInstrument(instrument) {
+        if (!instrument) return [];
+        const out = [];
+        ([...(signals || []), ...syntheticClosedSignals]).forEach((s) => {
+            if (s.instrument !== instrument) return;
+            // График в M1: привязываем интервалы к открытию минуты, иначе при seconds>00
+            // отрезок попадает в следующую свечу (визуальный сдвиг +1 мин).
+            const entryTs = toBucketTime(toUnixSec(s.signal_at));
+            const expiryRaw = (s.trade && s.trade.expiry_time) ? s.trade.expiry_time : s.expiry_time;
+            const expiryTs = toBucketTime(toUnixSec(expiryRaw));
+            if (!Number.isFinite(entryTs) || !Number.isFinite(expiryTs) || expiryTs <= entryTs) return;
+            const side = (s.side || '').toUpperCase();
+            const result = ((s.trade && s.trade.result) || s.result || 'pending');
+            const tradeId = (s.trade && s.trade.id) ? Number(s.trade.id) : null;
+            const entryPrice = (s.trade && s.trade.entry_price != null) ? Number(s.trade.entry_price) : null;
+            const expiryPrice = (s.trade && s.trade.expiry_price != null) ? Number(s.trade.expiry_price) : null;
+            out.push({ entryTs, expiryTs, side, result, tradeId, entryPrice, expiryPrice, source: 'history' });
+        });
+        return out;
+    }
+    /**
+     * Интервалы активных сделок: рисуем тем же типом полосы, но отдельным цветом,
+     * чтобы живые позиции визуально отличались от исторических.
+     */
+    function activeTradeDurationsForInstrument(instrument) {
+        if (!instrument) return [];
+        const nowSec = Math.floor(Date.now() / 1000);
+        let rows = (openTrades || [])
+            .filter((t) => t.instrument === instrument && toUnixSec(t.expiry_ts) > nowSec)
+        if (rows.length === 0 && ssrActiveTradeSeed && ssrActiveTradeSeed.instrument === instrument && toUnixSec(ssrActiveTradeSeed.expiry_ts) > nowSec) {
+            rows = [ssrActiveTradeSeed];
+        }
+        return rows
+            .map((t) => {
+                // Для активных сделок та же нормализация к минутному бакету.
+                const entryTs = toBucketTime(toUnixSec(t.entry_ts));
+                const expiryTs = toBucketTime(toUnixSec(t.expiry_ts));
+                if (!Number.isFinite(entryTs) || !Number.isFinite(expiryTs) || expiryTs <= entryTs) return null;
+                const side = (t.side || '').toUpperCase();
+                const tradeId = Number(t.id);
+                const entryPrice = (t.entry_price != null && t.entry_price !== '') ? Number(t.entry_price) : null;
+                return {
+                    entryTs,
+                    expiryTs,
+                    side,
+                    result: 'pending',
+                    tradeId: Number.isFinite(tradeId) ? tradeId : null,
+                    entryPrice,
+                    expiryPrice: null,
+                    source: 'active',
+                };
+            })
+            .filter(Boolean);
+    }
+    function resolveDurationX(ts, startTs, endTs) {
+        if (!Array.isArray(allChartData) || allChartData.length === 0) return null;
+        const lastIdx = allChartData.length - 1;
+        let startIdx = allChartData.findIndex((c) => Number(c.time) >= startTs);
+        let endIdx = allChartData.findIndex((c) => Number(c.time) >= endTs);
+        // Если начало сделки левее текущего окна свечей — рисуем от левой границы буфера, не теряя полосу.
+        if (startIdx < 0) startIdx = 0;
+        if (endIdx < 0) endIdx = lastIdx;
+        if (endIdx <= startIdx) endIdx = Math.min(lastIdx, startIdx + 1);
+        let x1 = null;
+        let x2 = null;
+        if (typeof ts.logicalToCoordinate === 'function') {
+            x1 = ts.logicalToCoordinate(startIdx);
+            x2 = ts.logicalToCoordinate(endIdx);
+        }
+        if (x1 == null || Number.isNaN(x1)) x1 = ts.timeToCoordinate(Number(allChartData[startIdx].time));
+        if (x2 == null || Number.isNaN(x2)) x2 = ts.timeToCoordinate(Number(allChartData[endIdx].time));
+        if (x1 == null || Number.isNaN(x1) || x2 == null || Number.isNaN(x2)) return null;
+        return { x1, x2 };
+    }
+    function resolveCandleAtOrAfterTs(unixTs) {
+        if (!Array.isArray(allChartData) || allChartData.length === 0 || !Number.isFinite(unixTs)) return null;
+        const bucketTs = toBucketTime(unixTs);
+        if (!Number.isFinite(bucketTs)) return null;
+        let idx = allChartData.findIndex((c) => Number(c.time) >= bucketTs);
+        if (idx < 0) idx = allChartData.length - 1;
+        const candle = allChartData[idx];
+        if (!candle) return null;
+        return { idx, candle };
+    }
+    function resolveCandleX(ts, unixTs) {
+        const resolved = resolveCandleAtOrAfterTs(unixTs);
+        if (!resolved) return null;
+        const idx = resolved.idx;
+        let x = null;
+        if (typeof ts.logicalToCoordinate === 'function') {
+            x = ts.logicalToCoordinate(idx);
+        }
+        if (x == null || Number.isNaN(x)) {
+            x = ts.timeToCoordinate(Number(resolved.candle.time));
+        }
+        return (x == null || Number.isNaN(x)) ? null : x;
+    }
+    function approxPriceByTime(ts) {
+        if (!Array.isArray(allChartData) || allChartData.length === 0 || !Number.isFinite(ts)) return null;
+        // Ищем ближайшую свечу справа (или последнюю доступную) и берём её close как опорную цену.
+        const idx = allChartData.findIndex((c) => Number(c.time) >= ts);
+        const c = idx >= 0 ? allChartData[idx] : allChartData[allChartData.length - 1];
+        const p = Number(c && c.close);
+        return Number.isFinite(p) ? p : null;
+    }
+    /**
+     * Рисуем горизонтальные полосы длительности сделок в нижней части графика.
+     * Полоса помогает визуально понять "когда вошли" и "когда закрылась" сделка.
+     */
+    function renderTradeDurationOverlay() {
+        if (!tradeDurationOverlay) return;
+        if (!chart || !currentInstrument || !allChartData.length) {
+            tradeDurationOverlay.classList.add('hidden');
+            tradeDurationOverlay.innerHTML = '';
+            return;
+        }
+        const activeDurations = activeTradeDurationsForInstrument(currentInstrument);
+        const activeIds = new Set(
+            activeDurations
+                .map((d) => Number(d.tradeId))
+                .filter((id) => Number.isFinite(id) && id > 0)
+        );
+        const historyDurations = tradeDurationsForInstrument(currentInstrument)
+            // Если сделка активна, рисуем только её "active"-полосу (не дублируем историей).
+            .filter((d) => !(Number.isFinite(Number(d.tradeId)) && activeIds.has(Number(d.tradeId))));
+        const durations = [...historyDurations, ...activeDurations];
+        if (!durations.length) {
+            tradeDurationOverlay.classList.add('hidden');
+            tradeDurationOverlay.innerHTML = '';
+            return;
+        }
+        const ts = chart.timeScale();
+        const lanesByY = new Map();
+        tradeDurationOverlay.innerHTML = '';
+        durations
+            .sort((a, b) => a.entryTs - b.entryTs || a.expiryTs - b.expiryTs)
+            .forEach((d) => {
+                const pos = resolveDurationX(ts, d.entryTs, d.expiryTs);
+                if (!pos) return;
+                const { x1, x2 } = pos;
+                const left = Math.min(x1, x2);
+                const width = Math.max(8, Math.abs(x2 - x1));
+
+                // Вертикальная привязка: сначала к entry_price сделки, иначе к цене ближайшей свечи.
+                const basePrice = Number.isFinite(d.entryPrice) ? d.entryPrice : approxPriceByTime(d.entryTs);
+                const y = basePrice != null ? candlestickSeries.priceToCoordinate(basePrice) : null;
+                if (y == null || Number.isNaN(y)) return;
+                let top = Math.max(2, Math.min((chartWrapper.clientHeight || 0) - 10, y - 3));
+
+                // Если полосы на том же уровне пересекаются по X — поднимаем чуть выше, чтобы читались.
+                const yBucket = Math.round(top / 6);
+                const laneEnd = lanesByY.get(yBucket);
+                if (laneEnd != null && left < laneEnd + 2) {
+                    top = Math.max(2, top - 8);
+                }
+                lanesByY.set(Math.round(top / 6), left + width);
+
+                const isTarget = targetTradeId !== null && Number.isFinite(d.tradeId) && d.tradeId === targetTradeId;
+                const isActive = d.source === 'active';
+                const color = isTarget
+                    ? '#f59e0b'
+                    : (isActive
+                        ? 'rgba(56,189,248,0.92)'
+                        : (d.side === 'CALL'
+                            ? (d.result === 'loss' ? 'rgba(16,185,129,0.45)' : 'rgba(16,185,129,0.75)')
+                            : (d.result === 'win' ? 'rgba(244,63,94,0.45)' : 'rgba(244,63,94,0.75)')));
+                const border = isTarget
+                    ? '1px solid rgba(245,158,11,0.95)'
+                    : (isActive ? '1px solid rgba(56,189,248,1)' : '1px solid rgba(255,255,255,0.18)');
+
+                const div = document.createElement('div');
+                div.style.position = 'absolute';
+                div.style.left = `${left}px`;
+                div.style.top = `${top}px`;
+                div.style.width = `${width}px`;
+                div.style.height = isActive ? '3px' : '1px';
+                div.style.borderRadius = '999px';
+                div.style.background = color;
+                div.style.border = border;
+                div.style.boxShadow = isTarget
+                    ? '0 0 8px rgba(245,158,11,0.75)'
+                    : (isActive ? '0 0 6px rgba(56,189,248,0.65)' : '0 0 3px rgba(255,255,255,0.25)');
+                tradeDurationOverlay.appendChild(div);
+
+                // Явные маркеры начала/конца отрезка — визуально подчеркивают "entry -> expiry".
+                const mkStart = document.createElement('div');
+                mkStart.style.position = 'absolute';
+                mkStart.style.left = `${Math.max(0, left - 1)}px`;
+                mkStart.style.top = `${Math.max(0, top - (isActive ? 2 : 1))}px`;
+                mkStart.style.width = '2px';
+                mkStart.style.height = isActive ? '9px' : '6px';
+                mkStart.style.borderRadius = '2px';
+                mkStart.style.background = isTarget ? '#f59e0b' : 'rgba(255,255,255,0.75)';
+                tradeDurationOverlay.appendChild(mkStart);
+
+                const mkEnd = document.createElement('div');
+                mkEnd.style.position = 'absolute';
+                mkEnd.style.left = `${Math.max(0, left + width - 2)}px`;
+                mkEnd.style.top = `${Math.max(0, top - (isActive ? 2 : 1))}px`;
+                mkEnd.style.width = '2px';
+                mkEnd.style.height = isActive ? '9px' : '6px';
+                mkEnd.style.borderRadius = '2px';
+                mkEnd.style.background = isTarget ? '#f59e0b' : 'rgba(255,255,255,0.75)';
+                tradeDurationOverlay.appendChild(mkEnd);
+
+                if (isActive && Number.isFinite(d.tradeId)) {
+                    const label = document.createElement('div');
+                    label.style.position = 'absolute';
+                    label.style.left = `${Math.max(0, left + 2)}px`;
+                    label.style.top = `${Math.max(0, top - 12)}px`;
+                    label.style.fontSize = '10px';
+                    label.style.lineHeight = '1';
+                    label.style.fontFamily = 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace';
+                    label.style.color = '#7dd3fc';
+                    label.style.textShadow = '0 0 4px rgba(2,132,199,0.9)';
+                    label.textContent = `OPEN #${d.tradeId}`;
+                    tradeDurationOverlay.appendChild(label);
+                }
+
+                // Для завершённых сделок показываем "уровень закрытия" на свече exp:
+                // короткая горизонтальная полоска шириной примерно в одну свечу.
+                // Это даёт визуальный ответ на вопрос "на каком уровне закрылась сделка".
+                const isSettled = d.result === 'win' || d.result === 'loss' || d.result === 'draw';
+                const expiryPrice = Number(d.expiryPrice);
+                if (isSettled) {
+                    const expCandle = resolveCandleAtOrAfterTs(d.expiryTs);
+                    // Ставим уровень отметки на close свечи exp (чётко "на свече"),
+                    // fallback — фактическая expiry_price из сделки.
+                    const expLevel = (expCandle && Number.isFinite(Number(expCandle.candle.close)))
+                        ? Number(expCandle.candle.close)
+                        : (Number.isFinite(expiryPrice) ? expiryPrice : null);
+                    if (!Number.isFinite(expLevel)) return;
+                    const yExp = candlestickSeries.priceToCoordinate(expLevel);
+                    if (yExp != null && !Number.isNaN(yExp)) {
+                        const expiryX = resolveCandleX(ts, d.expiryTs);
+                        if (expiryX == null) return;
+                        // Берём ширину ровно "одной свечи" по текущему масштабу timeScale.
+                        const bs = (typeof ts.barSpacing === 'function') ? Number(ts.barSpacing()) : 8;                        
+                        const candleW = Math.max(16, Math.min(20, bs * 0.95));
+                        const expLeft = Math.max(0, Math.min((chartWrapper.clientWidth || 0) - candleW, expiryX - candleW / 2));
+                        const expTop = Math.max(1, Math.min((chartWrapper.clientHeight || 0) - 3, yExp - 1.5));
+
+                        const expMark = document.createElement('div');
+                        expMark.style.position = 'absolute';
+                        expMark.style.left = `${expLeft}px`;
+                        expMark.style.top = `${expTop}px`;
+                        expMark.style.width = `${candleW}px`;
+                        expMark.style.height = '3px';
+                        expMark.style.borderRadius = '999px';
+                        expMark.style.background = isTarget ? '#f59e0b' : color;
+                        expMark.style.border = isTarget
+                            ? '1px solid rgba(245,158,11,1)'
+                            : '1px solid rgba(255,255,255,0.35)';
+                        expMark.style.boxShadow = isTarget
+                            ? '0 0 8px rgba(245,158,11,0.75)'
+                            : '0 0 4px rgba(255,255,255,0.35)';
+                        tradeDurationOverlay.appendChild(expMark);
+                    }
+                }
+            });
+        tradeDurationOverlay.classList.remove('hidden');
     }
     // Ищет сделку по времени клика на графике:
     // 1) сначала по времени экспирации (наиболее ожидаемый пользовательский кейс),
@@ -561,44 +879,10 @@
         entryPriceLineHandles = [];
     }
     function renderEntryPriceLines() {
+        // Пунктирные линии цены входа отключены по UX-требованию:
+        // вместо них используется полоса длительности сделки на уровне цены.
         clearEntryPriceLines();
-        if (!candlestickSeries || !currentInstrument) return;
-        const nowSec = Math.floor(Date.now() / 1000);
-        const active = (openTrades || [])
-            .filter((t) => t.instrument === currentInstrument && toUnixSec(t.expiry_ts) > nowSec);
-        if (!active.length) return;
-
-        const LS = window.LightweightCharts && window.LightweightCharts.LineStyle;
-        const lineStyleDashed = LS != null ? LS.Dashed : 2;
-        const groups = new Map();
-        active.forEach((t) => {
-            const raw = t.entry_price;
-            if (raw == null || raw === '') return;
-            const price = Number(raw);
-            if (!Number.isFinite(price)) return;
-            const key = price.toFixed(5);
-            if (!groups.has(key)) groups.set(key, { price, trades: [] });
-            groups.get(key).trades.push(t);
-        });
-        groups.forEach(({ price, trades }) => {
-            const sides = trades.map((x) => (x.side || '').toUpperCase());
-            const allCall = sides.every((s) => s === 'CALL');
-            const allPut = sides.every((s) => s === 'PUT');
-            const color = allCall ? '#10b981' : (allPut ? '#f43f5e' : '#f59e0b');
-            const priceLabel = trades[0].entry_price;
-            const title = trades.length === 1
-                ? `Вход ${priceLabel}`
-                : `Вход ${priceLabel} ×${trades.length}`;
-            const h = candlestickSeries.createPriceLine({
-                price,
-                color,
-                lineWidth: 2,
-                lineStyle: lineStyleDashed,
-                axisLabelVisible: true,
-                title,
-            });
-            entryPriceLineHandles.push(h);
-        });
+        return;
     }
     function candlesSince() { return Math.floor(Date.now() / 1000) - WINDOW_SEC; }
     function setLoading(show) { chartLoading.classList.toggle('hidden', !show); }
@@ -718,18 +1002,19 @@
         if (!chart || allChartData.length === 0) return;
         const n = allChartData.length;
         const lastIdx = n - 1;
-        const markerTimes = markerTimesForInstrument(currentInstrument);
         let from = Math.max(0, lastIdx - Math.min(CHART_DEFAULT_VISIBLE_BARS, n) + 1);
 
-        // Если по выбранной паре есть сделки/сигналы, показываем весь диапазон этих маркеров сразу.
-        if (markerTimes.length > 0) {
+        // Полный исторический охват по маркерам нужен только для точечного перехода на конкретную сделку.
+        if (targetTradeId !== null) {
+            const markerTimes = markerTimesForInstrument(currentInstrument);
             const earliestMarker = Math.min(...markerTimes);
-            const idx = allChartData.findIndex((c) => Number(c.time) >= earliestMarker);
-            if (idx >= 0) {
-                from = Math.max(0, idx - CHART_LEFT_GAP_BARS);
-            } else {
-                // Если маркеры старше загруженных свечей — открываем максимально широкий вид текущего буфера.
-                from = 0;
+            if (markerTimes.length > 0) {
+                const idx = allChartData.findIndex((c) => Number(c.time) >= earliestMarker);
+                if (idx >= 0) {
+                    from = Math.max(0, idx - CHART_LEFT_GAP_BARS);
+                } else {
+                    from = 0;
+                }
             }
         }
         const to = lastIdx + CHART_RIGHT_GAP_BARS;
@@ -1103,6 +1388,7 @@
             openTradesOverlay.innerHTML = '';
             renderChartMarkers();
             renderEntryPriceLines();
+            renderTradeDurationOverlay();
             return;
         }
         const nowSec = Math.floor(Date.now() / 1000);
@@ -1113,6 +1399,7 @@
             openTradesOverlay.innerHTML = '';
             renderChartMarkers();
             renderEntryPriceLines();
+            renderTradeDurationOverlay();
             return;
         }
         openTradesOverlay.innerHTML = rows.map((t) => {
@@ -1126,6 +1413,7 @@
             </div>`;
         }).join('');
         renderChartMarkers();
+        renderTradeDurationOverlay();
     }
     function refreshOpenTrades() {
         if (!currentInstrument) return;
@@ -1159,12 +1447,15 @@
                             id: t.id,
                             expiry_time: new Date(expiryTs * 1000).toISOString(),
                             result: (t.trade_result || 'pending'),
+                            entry_price: (t.entry_price != null && t.entry_price !== '') ? Number(t.entry_price) : null,
+                            expiry_price: null,
                         },
                     });
                 });
                 renderOpenTradesOverlay();
                 renderChartMarkers();
                 renderEntryPriceLines();
+                focusTargetTradeOnChart();
                 updateSidebarActiveTradePanel();
                 renderTimeDebugPanel();
             })
@@ -1191,6 +1482,7 @@
                     return !serverKeys.has(key);
                 });
                 renderChartMarkers();
+                focusTargetTradeOnChart();
                 renderTimeDebugPanel();
             })
             .catch(() => {});
@@ -1224,7 +1516,10 @@
     function redrawStructureOverlay() {
         if (!chart || !candlestickSeries || !structureOverlay) return;
         structureOverlay.innerHTML = '';
-        if (!allChartData.length || !lastZones.length) return;
+        if (!allChartData.length || !lastZones.length) {
+            renderTradeDurationOverlay();
+            return;
+        }
         const lastBarTime = allChartData[allChartData.length - 1].time;
         const showOb = layerOb.checked;
         const showFvg = layerFvg.checked;
@@ -1257,6 +1552,7 @@
             div.style.border = paint.border;
             structureOverlay.appendChild(div);
         });
+        renderTradeDurationOverlay();
     }
     function applyIncrementalChartUpdate(newData) {
         if (!candlestickSeries || !newData.length) return;
@@ -1299,7 +1595,30 @@
             grid: { vertLines: { color: '#27272a' }, horzLines: { color: '#27272a' } },
             rightPriceScale: { borderColor: '#3f3f46', scaleMargins: { top: 0.1, bottom: 0.2 } },
             timeScale: { borderColor: '#3f3f46', timeVisible: true, secondsVisible: false },
-            crosshair: { mode: 1 },
+            crosshair: {
+                // Включаем "tradingview-like" режим кроссхейра:
+                // курсор свободно следует за мышью (не прилипает к ближайшей свече),
+                // чтобы оператор мог читать цену/время в любой точке графика.
+                mode: LightweightCharts.CrosshairMode.Normal,
+                // Вертикальная линия (ось X / время).
+                vertLine: {
+                    visible: true,
+                    width: 1,
+                    color: '#94a3b8',
+                    style: LightweightCharts.LineStyle.Solid,
+                    labelVisible: true,
+                    labelBackgroundColor: '#334155',
+                },
+                // Горизонтальная линия (ось Y / цена).
+                horzLine: {
+                    visible: true,
+                    width: 1,
+                    color: '#94a3b8',
+                    style: LightweightCharts.LineStyle.Solid,
+                    labelVisible: true,
+                    labelBackgroundColor: '#334155',
+                },
+            },
             width: chartWrapper.clientWidth,
             height: chartWrapper.clientHeight
         });
@@ -1318,6 +1637,7 @@
             const range = chart.timeScale().getVisibleLogicalRange();
             if (range && currentTimeframeMinutes === 1 && !loadingMore && oldestLoadedTime != null && range.from < 2) loadMoreCandles();
             redrawStructureOverlay();
+            renderTradeDurationOverlay();
             requestAnimationFrame(positionCandleTimerOverlay);
         });
     }

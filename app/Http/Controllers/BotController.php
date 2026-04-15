@@ -239,6 +239,7 @@ class BotController extends Controller
                 'status' => $t->status,
                 'result' => $t->result ?? 'pending',
                 'entry_price' => $t->entry_price !== null ? number_format((float) $t->entry_price, 5, '.', '') : null,
+                'expiry_price' => $t->expiry_price !== null ? number_format((float) $t->expiry_price, 5, '.', '') : null,
                 'expiry_time' => optional($t->expiry_time)->format('Y-m-d H:i:s'),
                 'expiry_ts' => optional($t->expiry_time)?->timestamp,
                 'pnl' => $t->pnl !== null ? number_format((float) $t->pnl, 4, '.', '') : null,
@@ -647,6 +648,10 @@ class BotController extends Controller
                     'id' => (int) $trade->id,
                     'expiry_time' => optional($trade->expiry_time)->toIso8601String(),
                     'result' => (string) ($trade->result ?? ''),
+                    // Цены нужны фронту, чтобы рисовать полосу длительности сделки
+                    // на уровне самой сделки, а не "таймлайном" внизу графика.
+                    'entry_price' => $trade->entry_price !== null ? (float) $trade->entry_price : null,
+                    'expiry_price' => $trade->expiry_price !== null ? (float) $trade->expiry_price : null,
                 ] : null,
             ];
         })->values()->all();
