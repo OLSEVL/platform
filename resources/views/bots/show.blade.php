@@ -301,6 +301,10 @@
     // Временные маркеры закрытых сделок: используем как мост между open-trades и полной историей сигналов.
     let syntheticClosedSignals = [];
     let targetTradeFocusDone = false;
+    // Кэш исторических интервалов (entry -> expiry) по инструменту.
+    const historyDurationCache = new Map();
+    // Кэш карточек open-trades в overlay (tradeId -> refs), чтобы обновлять только таймер.
+    const openTradeOverlayCardMap = new Map();
 
     function saveSelectedInstrument(instrument) {
         try {
@@ -418,10 +422,29 @@
         const priceText = formatMarkerPrice(rawPrice);
         return priceText ? ` (${priceText})` : '';
     }
+    // Единая лента сигналов без дублей:
+    // сначала добавляем synthetic (мгновенная визуализация закрытия),
+    // затем серверные signals с приоритетом по trade.id.
+    function mergedSignals(includeInstrument = null) {
+        const byKey = new Map();
+        const put = (row, priority) => {
+            if (!row) return;
+            if (includeInstrument && row.instrument !== includeInstrument) return;
+            const tradeId = (row.trade && Number(row.trade.id)) || null;
+            const key = Number.isFinite(tradeId) && tradeId > 0
+                ? `trade:${tradeId}`
+                : `sig:${row.instrument || ''}|${row.signal_at || ''}|${(row.trade && row.trade.expiry_time) || row.expiry_time || ''}|${(row.side || '').toUpperCase()}`;
+            const prev = byKey.get(key);
+            if (!prev || priority > prev.priority) byKey.set(key, { row, priority });
+        };
+        (syntheticClosedSignals || []).forEach((s) => put(s, 1));
+        (signals || []).forEach((s) => put(s, 2));
+        return [...byKey.values()].map((x) => x.row);
+    }
 
     function markersForInstrument(instrument) {
         const markers = [];
-        ([...(signals || []), ...syntheticClosedSignals]).forEach((s) => {
+        mergedSignals(instrument).forEach((s) => {
             if (s.instrument !== instrument) return;
             const tradeId = (s.trade && s.trade.id) ? Number(s.trade.id) : null;
             const isTargetTrade = targetTradeId !== null && Number.isFinite(tradeId) && tradeId === targetTradeId;
@@ -471,7 +494,7 @@
     }
     function findTargetSignal() {
         if (targetTradeId === null) return null;
-        const all = [...(signals || []), ...syntheticClosedSignals];
+        const all = mergedSignals();
         return all.find((s) => {
             const tid = (s.trade && s.trade.id) ? Number(s.trade.id) : null;
             return Number.isFinite(tid) && tid === targetTradeId;
@@ -518,7 +541,7 @@
     function earliestSignalTsForInstrument(instrument) {
         if (!instrument) return null;
         let minTs = null;
-        ([...(signals || []), ...syntheticClosedSignals]).forEach((s) => {
+        mergedSignals(instrument).forEach((s) => {
             if (s.instrument !== instrument) return;
             const ts = toUnixSec(s.signal_at);
             if (!Number.isFinite(ts) || ts <= 0) return;
@@ -536,7 +559,6 @@
         active.forEach((t) => {
             const side = (t.side || '').toUpperCase();
             const isCall = side === 'CALL';
-            const left = toUnixSec(t.expiry_ts) - nowSec;
             const entryTime = toBucketTime(toUnixSec(t.entry_ts));
             if (entryTime) {
                 markers.push({
@@ -544,7 +566,7 @@
                     position: isCall ? 'belowBar' : 'aboveBar',
                     color: isCall ? '#10b981' : '#f43f5e',
                     shape: 'circle',
-                    text: `● OPEN ${formatMmSs(left)}`,
+                    text: '● OPEN',
                 });
             }
             if (lastBarTime) {
@@ -553,7 +575,7 @@
                     position: isCall ? 'belowBar' : 'aboveBar',
                     color: isCall ? '#10b981' : '#f43f5e',
                     shape: 'square',
-                    text: `${side} ${formatMmSs(left)}`,
+                    text: `${side} OPEN`,
                 });
             }
         });
@@ -572,8 +594,9 @@
      */
     function tradeDurationsForInstrument(instrument) {
         if (!instrument) return [];
+        if (historyDurationCache.has(instrument)) return historyDurationCache.get(instrument) || [];
         const out = [];
-        ([...(signals || []), ...syntheticClosedSignals]).forEach((s) => {
+        mergedSignals(instrument).forEach((s) => {
             if (s.instrument !== instrument) return;
             // График в M1: привязываем интервалы к открытию минуты, иначе при seconds>00
             // отрезок попадает в следующую свечу (визуальный сдвиг +1 мин).
@@ -588,6 +611,7 @@
             const expiryPrice = (s.trade && s.trade.expiry_price != null) ? Number(s.trade.expiry_price) : null;
             out.push({ entryTs, expiryTs, side, result, tradeId, entryPrice, expiryPrice, source: 'history' });
         });
+        historyDurationCache.set(instrument, out);
         return out;
     }
     /**
@@ -695,18 +719,33 @@
         const historyDurations = tradeDurationsForInstrument(currentInstrument)
             // Если сделка активна, рисуем только её "active"-полосу (не дублируем историей).
             .filter((d) => !(Number.isFinite(Number(d.tradeId)) && activeIds.has(Number(d.tradeId))));
-        const durations = [...historyDurations, ...activeDurations];
-        if (!durations.length) {
+        const ts = chart.timeScale();
+        // Отрисовываем только интервалы, пересекающие текущий видимый диапазон.
+        const range = ts.getVisibleLogicalRange();
+        let visibleFromTs = Number(allChartData[0].time);
+        let visibleToTs = Number(allChartData[allChartData.length - 1].time);
+        if (range) {
+            const leftIdx = Math.max(0, Math.floor(Math.max(0, range.from)));
+            const rightIdx = Math.min(allChartData.length - 1, Math.ceil(Math.max(0, range.to)));
+            if (allChartData[leftIdx]) visibleFromTs = Number(allChartData[leftIdx].time);
+            if (allChartData[rightIdx]) visibleToTs = Number(allChartData[rightIdx].time);
+        }
+        const durations = [...historyDurations, ...activeDurations]
+            .filter((d) => d.expiryTs >= visibleFromTs && d.entryTs <= visibleToTs)
+            .sort((a, b) => a.entryTs - b.entryTs || a.expiryTs - b.expiryTs);
+        // Ограничиваем количество исторических полос в кадре для плавного pan/zoom.
+        const MAX_VISIBLE_DURATION_ROWS = 280;
+        const activeCount = durations.filter((d) => d.source === 'active').length;
+        const maxTotal = Math.max(activeCount, MAX_VISIBLE_DURATION_ROWS);
+        const trimmedDurations = durations.length > maxTotal ? durations.slice(durations.length - maxTotal) : durations;
+        if (!trimmedDurations.length) {
             tradeDurationOverlay.classList.add('hidden');
             tradeDurationOverlay.innerHTML = '';
             return;
         }
-        const ts = chart.timeScale();
         const lanesByY = new Map();
         tradeDurationOverlay.innerHTML = '';
-        durations
-            .sort((a, b) => a.entryTs - b.entryTs || a.expiryTs - b.expiryTs)
-            .forEach((d) => {
+        trimmedDurations.forEach((d) => {
                 const pos = resolveDurationX(ts, d.entryTs, d.expiryTs);
                 if (!pos) return;
                 const { x1, x2 } = pos;
@@ -837,7 +876,7 @@
     // 2) затем по времени входа, если клик пришёлся на entry-маркер.
     function tradeIdByChartClickTime(clickedBucketTs) {
         if (!Number.isFinite(clickedBucketTs) || !currentInstrument) return null;
-        const rows = ([...(signals || []), ...syntheticClosedSignals])
+        const rows = mergedSignals(currentInstrument)
             .filter((s) => s.instrument === currentInstrument)
             .map((s) => {
                 const tradeId = (s.trade && s.trade.id) ? Number(s.trade.id) : null;
@@ -1403,10 +1442,8 @@
     function renderOpenTradesOverlay() {
         if (!openTradesOverlay) return;
         if (!currentInstrument) {
-            openTradesOverlay.innerHTML = '';
-            renderChartMarkers();
-            renderEntryPriceLines();
-            renderTradeDurationOverlay();
+            openTradeOverlayCardMap.clear();
+            openTradesOverlay.replaceChildren();
             return;
         }
         const nowSec = Math.floor(Date.now() / 1000);
@@ -1414,24 +1451,53 @@
             .filter((t) => t.instrument === currentInstrument && toUnixSec(t.expiry_ts) > nowSec)
             .sort((a, b) => toUnixSec(a.expiry_ts || 0) - toUnixSec(b.expiry_ts || 0));
         if (!rows.length) {
-            openTradesOverlay.innerHTML = '';
-            renderChartMarkers();
-            renderEntryPriceLines();
-            renderTradeDurationOverlay();
+            openTradeOverlayCardMap.clear();
+            openTradesOverlay.replaceChildren();
             return;
         }
-        openTradesOverlay.innerHTML = rows.map((t) => {
+        const seenIds = new Set();
+        const fragment = document.createDocumentFragment();
+        rows.forEach((t) => {
+            const tradeId = String(t.id);
+            seenIds.add(tradeId);
             const left = toUnixSec(t.expiry_ts) - nowSec;
             const side = (t.side || '').toUpperCase();
             const sideClass = side === 'CALL' ? 'text-emerald-300' : 'text-rose-300';
-            return `<div class="rounded border border-zinc-700/80 bg-zinc-900/85 px-2 py-1 text-xs shadow-sm shadow-black/30">
-                <span class="font-medium ${sideClass}">● OPEN ${side || 'TRADE'}</span>
-                <span class="text-zinc-400"> #${t.id}</span>
-                <span class="text-zinc-200 font-mono ml-2">${formatMmSs(left)}</span>
-            </div>`;
-        }).join('');
-        renderChartMarkers();
-        renderTradeDurationOverlay();
+
+            let cardRef = openTradeOverlayCardMap.get(tradeId);
+            if (!cardRef) {
+                const root = document.createElement('div');
+                root.className = 'rounded border border-zinc-700/80 bg-zinc-900/85 px-2 py-1 text-xs shadow-sm shadow-black/30';
+                const sideEl = document.createElement('span');
+                const idEl = document.createElement('span');
+                idEl.className = 'text-zinc-400';
+                const timerEl = document.createElement('span');
+                timerEl.className = 'text-zinc-200 font-mono ml-2';
+                root.appendChild(sideEl);
+                root.appendChild(idEl);
+                root.appendChild(timerEl);
+                cardRef = { root, sideEl, idEl, timerEl, expiryTs: null };
+                openTradeOverlayCardMap.set(tradeId, cardRef);
+            }
+            cardRef.sideEl.className = `font-medium ${sideClass}`;
+            cardRef.sideEl.textContent = `● OPEN ${side || 'TRADE'}`;
+            cardRef.idEl.textContent = ` #${tradeId}`;
+            cardRef.expiryTs = toUnixSec(t.expiry_ts);
+            cardRef.timerEl.textContent = formatMmSs(left);
+            fragment.appendChild(cardRef.root);
+        });
+        [...openTradeOverlayCardMap.keys()].forEach((id) => {
+            if (!seenIds.has(id)) openTradeOverlayCardMap.delete(id);
+        });
+        openTradesOverlay.replaceChildren(fragment);
+    }
+    function tickOpenTradesOverlayTimers() {
+        if (!openTradesOverlay || openTradeOverlayCardMap.size === 0) return;
+        const nowSec = Math.floor(Date.now() / 1000);
+        openTradeOverlayCardMap.forEach((cardRef) => {
+            const left = Number(cardRef.expiryTs) - nowSec;
+            cardRef.timerEl.textContent = formatMmSs(left);
+        });
     }
     function refreshOpenTrades() {
         if (!currentInstrument) return;
@@ -1470,6 +1536,7 @@
                         },
                     });
                 });
+                historyDurationCache.clear();
                 renderOpenTradesOverlay();
                 renderChartMarkers();
                 renderEntryPriceLines();
@@ -1499,6 +1566,7 @@
                     const key = `${s.instrument}|${s.signal_at}|${expRaw || ''}`;
                     return !serverKeys.has(key);
                 });
+                historyDurationCache.clear();
                 renderChartMarkers();
                 focusTargetTradeOnChart();
                 renderTimeDebugPanel();
@@ -1692,7 +1760,6 @@
             const range = chart.timeScale().getVisibleLogicalRange();
             if (range && currentTimeframeMinutes === 1 && !loadingMore && oldestLoadedTime != null && range.from < 2) loadMoreCandles();
             redrawStructureOverlay();
-            renderTradeDurationOverlay();
             requestAnimationFrame(positionCandleTimerOverlay);
         });
     }
@@ -1853,13 +1920,14 @@
     syncSearchClearButton();
     instrumentListRefreshInterval = setInterval(refreshInstrumentSidebar, 1000);
     openTradesTickInterval = setInterval(() => {
-        renderOpenTradesOverlay();
+        tickOpenTradesOverlayTimers();
         updateSidebarActiveTradePanel();
         tickSidebarTradeTimers();
         tickCandleCloseTimer();
         renderTimeDebugPanel();
     }, 1000);
     renderOpenTradesOverlay();
+    tickOpenTradesOverlayTimers();
     tickSidebarTradeTimers();
     tickCandleCloseTimer();
     renderTimeDebugPanel();

@@ -47,8 +47,10 @@
                 <td class="px-6 py-4">{{ $i->payout_source ?? '—' }}</td>
                 <td class="px-6 py-4">
                     @if($i->last_payout_at)
-                        <span title="{{ $i->last_payout_at->format('Y-m-d H:i:s') }}">
-                            {{ $i->last_payout_at->diffForHumans() }}
+                        {{-- Показываем конкретное локальное время + ISO в title для быстрой визуальной и технической сверки timezone. --}}
+                        <span title="{{ $i->last_payout_at->timezone(config('app.timezone'))->toIso8601String() }}">
+                            {{ $i->last_payout_at->timezone(config('app.timezone'))->format('d.m.Y H:i') }}
+                            <span class="text-zinc-500">({{ $i->last_payout_at->diffForHumans() }})</span>
                         </span>
                     @else
                         <span class="text-zinc-500">—</span>

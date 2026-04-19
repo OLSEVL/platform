@@ -60,6 +60,10 @@ return [
             'engine' => null,
             'options' => extension_loaded('pdo_mysql') ? array_filter([
                 (PHP_VERSION_ID >= 80500 ? \Pdo\Mysql::ATTR_SSL_CA : \PDO::MYSQL_ATTR_SSL_CA) => env('MYSQL_ATTR_SSL_CA'),
+                // Фикс timezone drift для TIMESTAMP:
+                // принудительно держим сессию MySQL в UTC, иначе TIMESTAMP может читаться/писаться
+                // в timezone ОС хоста (например Europe/Kyiv, +03:00), что даёт ложный сдвиг в UI.
+                \PDO::MYSQL_ATTR_INIT_COMMAND => "SET time_zone='+00:00'",
             ]) : [],
         ],
 
@@ -80,6 +84,8 @@ return [
             'engine' => null,
             'options' => extension_loaded('pdo_mysql') ? array_filter([
                 (PHP_VERSION_ID >= 80500 ? \Pdo\Mysql::ATTR_SSL_CA : \PDO::MYSQL_ATTR_SSL_CA) => env('MYSQL_ATTR_SSL_CA'),
+                // Дублируем для mariadb, чтобы поведение TIMESTAMP было идентичным mysql.
+                \PDO::MYSQL_ATTR_INIT_COMMAND => "SET time_zone='+00:00'",
             ]) : [],
         ],
 

@@ -22,7 +22,8 @@
             </form>
         </div>
     </nav>
-    <main class="@yield('main_class', 'max-w-7xl mx-auto py-8 px-4 w-full flex-1 min-h-0 overflow-y-auto')">
+    {{-- Базовый контейнер контента: во всю ширину экрана, с небольшими боковыми отступами для читаемости. --}}
+    <main class="@yield('main_class', 'w-full max-w-none flex-1 min-h-0 overflow-y-auto py-8 px-3 sm:px-4')">
         @yield('content')
     </main>
 </body>
