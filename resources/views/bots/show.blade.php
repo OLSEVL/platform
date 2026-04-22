@@ -118,11 +118,12 @@
             </div>
         @if(config('app.time_debug_panel'))
             {{-- Отладочная плашка времени: помогает быстро увидеть рассинхрон между серверным временем,
-                 локальными часами браузера и временем последнего маркера на графике. --}}
+                 локальными часами браузера и "временем платформы" (последний маркер/событие на графике). --}}
             <div id="time-debug-panel" class="border-b border-zinc-800 bg-zinc-950/80 px-3 py-1.5 text-[11px] text-zinc-400">
                 <span class="font-medium text-zinc-300">Time debug:</span>
                 <span id="time-debug-server" class="ml-2">server: —</span>
                 <span id="time-debug-client" class="ml-2">client: —</span>
+                <span id="time-debug-platform" class="ml-2">platform: —</span>
                 <span id="time-debug-marker" class="ml-2">last marker: —</span>
             </div>
         @endif
@@ -148,15 +149,22 @@
     </div>
 
     <aside class="w-52 shrink-0 border-l border-zinc-800 bg-zinc-950/40 overflow-hidden min-h-0 flex flex-col">
-        <div class="px-3 py-2.5 bg-zinc-900 text-xs font-medium text-zinc-400 uppercase tracking-wide">Статистика</div>
+        <div class="border-b border-zinc-800 bg-zinc-900 px-2 py-2">
+            <div class="text-[10px] font-medium uppercase tracking-wide text-zinc-400">Статистика</div>
+            {{-- Два режима: скользящий час vs вся история; выбор хранится в localStorage на ключ бота. --}}
+            <div class="mt-1.5 flex rounded border border-zinc-700 bg-zinc-950 p-0.5 text-[10px] font-medium">
+                <button type="button" id="bot-stats-scope-hour" class="flex-1 rounded px-1 py-1 transition">Час</button>
+                <button type="button" id="bot-stats-scope-all" class="flex-1 rounded px-1 py-1 transition">Всё время</button>
+            </div>
+        </div>
         <div class="p-3 flex flex-col gap-2 overflow-y-auto min-h-0">
-            {{-- Компактная статистика: меньше отступы, 2 колонки, чтобы блок занимал меньше места. --}}
+            {{-- Компактная статистика: SSR — «всё время»; при сохранённом выборе «час» скрипт сразу подменит цифры. --}}
             <div class="grid grid-cols-2 gap-1.5">
-                <div class="rounded border border-zinc-800 bg-zinc-900/50 px-2 py-1.5"><div class="text-[10px] text-zinc-400 uppercase">Всего</div><div id="bot-stat-total" class="text-sm tabular-nums">{{ $stats['total'] }}</div></div>
-                <div class="rounded border border-zinc-800 bg-zinc-900/50 px-2 py-1.5"><div class="text-[10px] text-zinc-400 uppercase">Открыто</div><div id="bot-stat-open" class="text-sm tabular-nums">{{ $stats['open'] }}</div></div>
-                <div class="rounded border border-zinc-800 bg-zinc-900/50 px-2 py-1.5"><div class="text-[10px] text-zinc-400 uppercase">Wins</div><div id="bot-stat-wins" class="text-sm tabular-nums text-emerald-400">{{ $stats['wins'] }}</div></div>
-                <div class="rounded border border-zinc-800 bg-zinc-900/50 px-2 py-1.5"><div class="text-[10px] text-zinc-400 uppercase">Losses</div><div id="bot-stat-losses" class="text-sm tabular-nums text-rose-400">{{ $stats['losses'] }}</div></div>
-                <div class="col-span-2 rounded border border-zinc-800 bg-zinc-900/50 px-2 py-1.5"><div class="text-[10px] text-zinc-400 uppercase">Winrate</div><div id="bot-stat-winrate" class="text-sm tabular-nums">{{ $stats['winrate'] !== null ? $stats['winrate'].'%' : '—' }}</div></div>
+                <div class="rounded border border-zinc-800 bg-zinc-900/50 px-2 py-1.5"><div class="text-[10px] text-zinc-400 uppercase">Всего</div><div id="bot-stat-total" class="text-sm tabular-nums">{{ $statsAll['total'] }}</div></div>
+                <div class="rounded border border-zinc-800 bg-zinc-900/50 px-2 py-1.5"><div class="text-[10px] text-zinc-400 uppercase">Открыто</div><div id="bot-stat-open" class="text-sm tabular-nums">{{ $statsAll['open'] }}</div></div>
+                <div class="rounded border border-zinc-800 bg-zinc-900/50 px-2 py-1.5"><div class="text-[10px] text-zinc-400 uppercase">Wins</div><div id="bot-stat-wins" class="text-sm tabular-nums text-emerald-400">{{ $statsAll['wins'] }}</div></div>
+                <div class="rounded border border-zinc-800 bg-zinc-900/50 px-2 py-1.5"><div class="text-[10px] text-zinc-400 uppercase">Losses</div><div id="bot-stat-losses" class="text-sm tabular-nums text-rose-400">{{ $statsAll['losses'] }}</div></div>
+                <div class="col-span-2 rounded border border-zinc-800 bg-zinc-900/50 px-2 py-1.5"><div class="text-[10px] text-zinc-400 uppercase">Winrate</div><div id="bot-stat-winrate" class="text-sm tabular-nums">{{ $statsAll['winrate'] !== null ? $statsAll['winrate'].'%' : '—' }}</div></div>
             </div>
             {{-- Панель синхронизируется с выбранной парой через JS (updateSidebarActiveTrade); поля совпадают с openTradeSidebarRow() в BotController. --}}
             <div id="sidebar-active-trade-panel" class="rounded border border-amber-700/40 bg-amber-950/20 px-2 py-2 text-xs @unless($activeTradeSidebar) hidden @endunless">
@@ -201,6 +209,19 @@
     const TRADES_HISTORY_URL = '{{ route("bots.trades") }}';
     const BOT_ANALYSIS_URL = '{{ route("bots.analysis.data", $bot) }}';
     const BOT_STATS_URL = '{{ route("bots.stats.data", $bot) }}';
+    // Два среза для правой панели: подгружаем оба с сервера при SSR, переключатель шлёт scope= в polling.
+    const STATS_SCOPE_STORAGE_KEY = 'platform.bot.show.statsScope.v1.{{ $bot->id }}';
+    let STATS_BOOTSTRAP = { hour: @json($statsHour), all: @json($statsAll) };
+    function readStatsScopeFromStorage() {
+        try {
+            const v = localStorage.getItem(STATS_SCOPE_STORAGE_KEY);
+            if (v === 'hour' || v === 'all') {
+                return v;
+            }
+        } catch (_) {}
+        return 'all';
+    }
+    let botStatsScope = readStatsScopeFromStorage();
     // Флаг приходит из настроек бота и управляет tradingview-подобным кроссхейром на графике.
     // По умолчанию true (если ключа еще нет в config), чтобы сохранить текущее UX-поведение.
     const TV_CROSSHAIR_ENABLED = @json($tvCrosshairEnabled);
@@ -272,6 +293,7 @@
     const timeDebugPanel = document.getElementById('time-debug-panel');
     const timeDebugServer = document.getElementById('time-debug-server');
     const timeDebugClient = document.getElementById('time-debug-client');
+    const timeDebugPlatform = document.getElementById('time-debug-platform');
     const timeDebugMarker = document.getElementById('time-debug-marker');
     const LAYER_PREFS_KEY = 'platform.bot.show.chartLayers.v2';
 
@@ -305,6 +327,94 @@
     const historyDurationCache = new Map();
     // Кэш карточек open-trades в overlay (tradeId -> refs), чтобы обновлять только таймер.
     const openTradeOverlayCardMap = new Map();
+
+    // Кэш замороженных параметров экспирации: tradeId -> { expiryTime, price, frozenAt }
+    // Нужен чтобы маркер экспирации не "прыгал" при обновлении незакрытой свечи.
+    // Храним И время (bucket), И цену — оба параметра фиксируются навсегда.
+    const frozenExpiryParams = new Map();
+
+    /**
+     * Замораживает параметры экспирации для сделки после её завершения.
+     */
+    function freezeExpiryParams(tradeId, expiryTime, price) {
+        if (!Number.isFinite(Number(tradeId)) || !Number.isFinite(expiryTime)) return;
+        const key = String(tradeId);
+        // Не перезаписываем уже замороженные параметры — они зафиксированы навсегда.
+        if (frozenExpiryParams.has(key)) return;
+        frozenExpiryParams.set(key, {
+            expiryTime: Math.floor(expiryTime / 60) * 60,
+            price: Number(price),
+            frozenAt: Date.now(),
+        });
+    }
+
+    /**
+     * Возвращает замороженные параметры экспирации, если они есть.
+     */
+    function getFrozenExpiryParams(tradeId) {
+        if (!Number.isFinite(Number(tradeId))) return null;
+        return frozenExpiryParams.get(String(tradeId)) || null;
+    }
+
+    /**
+     * Обновляет кэш замороженных параметров на основе текущих данных сигналов.
+     * Замораживает, если:
+     * - сделка settled (win/loss/draw),
+     * - время экспирации уже прошло (wall clock >= bucket + 60),
+     * - бар экспирации больше не последний в серии.
+     */
+    function updateFrozenExpiryParams() {
+        const nowSec = Math.floor(Date.now() / 1000);
+        const lastBarTs = allChartData.length ? Number(allChartData[allChartData.length - 1].time) : null;
+
+        mergedSignals().forEach((s) => {
+            const tradeId = (s.trade && s.trade.id) ? Number(s.trade.id) : null;
+            if (!Number.isFinite(tradeId) || tradeId <= 0) return;
+
+            const expiryRaw = (s.trade && s.trade.expiry_time) ? s.trade.expiry_time : s.expiry_time;
+            const expiryTs = toUnixSec(expiryRaw);
+            if (!Number.isFinite(expiryTs) || expiryTs <= 0) return;
+
+            const expiryBucket = Math.floor(expiryTs / 60) * 60;
+            const result = ((s.trade && s.trade.result) || s.result || 'pending');
+            const isSettled = result === 'win' || result === 'loss' || result === 'draw';
+
+            // Цена для заморозки: основной источник — expiry_price из БД (сервер уже рассчитал).
+            // Фронтенд НЕ должен пересчитывать цену экспирации — он должен использовать то, что записал сервер.
+            let freezePrice = null;
+            let priceFromCandle = false;
+
+            // Приоритет №1: expiry_price из сделки (сервер уже рассчитал по своей логике)
+            if (s.trade && s.trade.expiry_price != null && Number.isFinite(Number(s.trade.expiry_price))) {
+                freezePrice = Number(s.trade.expiry_price);
+            }
+            // Приоритет №2: fallback — close свечи экспирации (синхронизировано с сервером)
+            if ((freezePrice == null || !Number.isFinite(freezePrice))) {
+                const expCandle = allChartData.find((c) => Number(c.time) === expiryBucket);
+                if (expCandle && Number.isFinite(Number(expCandle.close))) {
+                    freezePrice = Number(expCandle.close);
+                    priceFromCandle = true;
+                }
+            }
+
+            // Условия заморозки:
+            // 1) сделка settled — замораживаем сразу, даже если цена только из сделки
+            // 2) время прошло — замораживаем
+            // 3) бар экспирации не последний — замораживаем
+            const shouldFreeze = isSettled
+                || nowSec >= expiryBucket + 60
+                || (lastBarTs != null && expiryBucket < lastBarTs);
+
+            // Для settled-сделок разрешаем заморозку даже с ценой из сделки (без свечи).
+            // Для не-settled — только если есть цена из свечи.
+            const canFreeze = shouldFreeze && (freezePrice != null && Number.isFinite(freezePrice))
+                && (isSettled || priceFromCandle);
+
+            if (canFreeze) {
+                freezeExpiryParams(tradeId, expiryBucket, freezePrice);
+            }
+        });
+    }
 
     function saveSelectedInstrument(instrument) {
         try {
@@ -361,9 +471,22 @@
             }
             const hasTimezone = /([zZ]|[+\-]\d{2}:?\d{2})$/.test(raw);
             const isoLike = raw.includes('T');
-            const normalized = (!hasTimezone && !isoLike && raw.includes(' '))
-                ? `${raw.replace(' ', 'T')}Z`
-                : raw;
+            // Если строка имеет формат "YYYY-MM-DD HH:mm:ss" без часового пояса,
+            // это время в часовом поясе сервера (Europe/Kyiv, UTC+3).
+            // Date.parse интерпретирует такие строки как локальное время браузера,
+            // что приводит к сдвигу на 3 часа. Поэтому добавляем явно '+03:00'
+            // для соответствия серверному времени.
+            let normalized = raw;
+            if (!hasTimezone && !isoLike && raw.includes(' ')) {
+                // Проверяем, соответствует ли паттерну даты-времени MySQL
+                if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(raw)) {
+                    // Это время сервера (UTC+3), добавляем смещение
+                    normalized = raw.replace(' ', 'T') + '+03:00';
+                } else {
+                    // На всякий случай оставляем старую логику
+                    normalized = raw.replace(' ', 'T') + 'Z';
+                }
+            }
             const ms = Date.parse(normalized);
             if (Number.isFinite(ms)) return Math.floor(ms / 1000);
         }
@@ -390,7 +513,7 @@
     // Обновляет debug-плашку времени. Вызывается после обновления данных и по таймеру,
     // чтобы видеть текущее клиентское время в реальном времени.
     function renderTimeDebugPanel() {
-        if (!timeDebugPanel || !timeDebugServer || !timeDebugClient || !timeDebugMarker) return;
+        if (!timeDebugPanel || !timeDebugServer || !timeDebugClient || !timeDebugPlatform || !timeDebugMarker) return;
         const nowSec = Math.floor(Date.now() / 1000);
         const serverTsCandidates = Object.values(lastServerTimes)
             .map((x) => toUnixSec(x))
@@ -402,6 +525,7 @@
 
         timeDebugServer.textContent = `server: ${formatDebugTs(serverTs)}${drift == null ? '' : ` (drift ${drift >= 0 ? '+' : ''}${drift}s)`}`;
         timeDebugClient.textContent = `client: ${formatDebugTs(nowSec)}`;
+        timeDebugPlatform.textContent = `platform: ${formatDebugTs(lastMarkerTs)}`;
         timeDebugMarker.textContent = `last marker: ${formatDebugTs(lastMarkerTs)}`;
     }
 
@@ -465,12 +589,18 @@
             }
             const expiryRaw = (s.trade && s.trade.expiry_time) ? s.trade.expiry_time : s.expiry_time;
             if (expiryRaw) {
-                const expiryTime = toBucketTime(toUnixSec(expiryRaw));
+                // Сначала проверяем замороженные параметры — если есть, используем их.
+                const frozen = getFrozenExpiryParams(tradeId);
+                const expiryTime = frozen ? frozen.expiryTime : toBucketTime(toUnixSec(expiryRaw));
                 if (expiryTime) {
                     const result = ((s.trade && s.trade.result) || s.result || 'pending');
                     const color = result === 'win' ? '#10b981' : (result === 'loss' ? '#f43f5e' : '#a1a1aa');
                     const tradeIdSuffix = Number.isFinite(tradeId) ? ` ${tradeId}` : '';
-                    const expiryPriceSuffix = markerPriceSuffix(s.trade ? s.trade.expiry_price : null);
+
+                    // Используем замороженную цену если она есть, иначе берём из сделки.
+                    const expiryPriceRaw = frozen ? frozen.price : (s.trade ? s.trade.expiry_price : null);
+                    const expiryPriceSuffix = markerPriceSuffix(expiryPriceRaw);
+
                     let resultLabel = `EXP ${String(result || '').toUpperCase()}`.trim();
                     if (result === 'win') resultLabel = `WIN${tradeIdSuffix}${expiryPriceSuffix}`;
                     if (result === 'loss') resultLabel = `LOSE${tradeIdSuffix}${expiryPriceSuffix}`;
@@ -710,6 +840,8 @@
             tradeDurationOverlay.innerHTML = '';
             return;
         }
+        // Перед отрисовкой обновляем кэш замороженных цен.
+        updateFrozenExpiryParams();
         const activeDurations = activeTradeDurationsForInstrument(currentInstrument);
         const activeIds = new Set(
             activeDurations
@@ -732,7 +864,15 @@
         }
         const durations = [...historyDurations, ...activeDurations]
             .filter((d) => d.expiryTs >= visibleFromTs && d.entryTs <= visibleToTs)
-            .sort((a, b) => a.entryTs - b.entryTs || a.expiryTs - b.expiryTs);
+            .sort((a, b) => a.entryTs - b.entryTs || a.expiryTs - b.expiryTs)
+            .map((d) => {
+                // Для завершённых сделок используем замороженные параметры экспирации.
+                const frozen = getFrozenExpiryParams(d.tradeId);
+                if (frozen && (d.result === 'win' || d.result === 'loss' || d.result === 'draw')) {
+                    return { ...d, expiryPrice: frozen.price };
+                }
+                return d;
+            });
         // Ограничиваем количество исторических полос в кадре для плавного pan/zoom.
         const MAX_VISIBLE_DURATION_ROWS = 280;
         const activeCount = durations.filter((d) => d.source === 'active').length;
@@ -834,11 +974,11 @@
                 const isSettled = d.result === 'win' || d.result === 'loss' || d.result === 'draw';
                 const expiryPrice = Number(d.expiryPrice);
                 if (isSettled) {
-                    const expCandle = resolveCandleAtOrAfterTs(d.expiryTs);
-                    // Ставим уровень отметки на close свечи exp (чётко "на свече"),
-                    // fallback — фактическая expiry_price из сделки.
-                    const expLevel = (expCandle && Number.isFinite(Number(expCandle.candle.close)))
-                        ? Number(expCandle.candle.close)
+                    // Для завершённых сделок используем expiry_price из БД как основной источник.
+                    // Фронтенд не пересчитывает цену — он отображает то, что записал сервер.
+                    const frozen = getFrozenExpiryParams(d.tradeId);
+                    const expLevel = frozen
+                        ? frozen.price
                         : (Number.isFinite(expiryPrice) ? expiryPrice : null);
                     if (!Number.isFinite(expLevel)) return;
                     const yExp = candlestickSeries.priceToCoordinate(expLevel);
@@ -846,10 +986,17 @@
                         const expiryX = resolveCandleX(ts, d.expiryTs);
                         if (expiryX == null) return;
                         // Берём ширину ровно "одной свечи" по текущему масштабу timeScale.
-                        const bs = (typeof ts.barSpacing === 'function') ? Number(ts.barSpacing()) : 8;                        
+                        const bs = (typeof ts.barSpacing === 'function') ? Number(ts.barSpacing()) : 8;
                         const candleW = Math.max(16, Math.min(20, bs * 0.95));
                         const expLeft = Math.max(0, Math.min((chartWrapper.clientWidth || 0) - candleW, expiryX - candleW / 2));
-                        const expTop = Math.max(1, Math.min((chartWrapper.clientHeight || 0) - 3, yExp - 1.5));
+                        
+                        // Проверяем, что цена находится в видимом диапазоне графика
+                        const chartHeight = chartWrapper.clientHeight || 0;
+                        if (yExp < 0 || yExp > chartHeight) {
+                            // Цена вне видимого диапазона — не рисуем маркер
+                            return;
+                        }
+                        const expTop = Math.max(1, Math.min(chartHeight - 3, yExp - 1.5));
 
                         const expMark = document.createElement('div');
                         expMark.style.position = 'absolute';
@@ -1225,14 +1372,45 @@
         }
     }
 
+    function updateBotStatsScopeButtons() {
+        const h = document.getElementById('bot-stats-scope-hour');
+        const a = document.getElementById('bot-stats-scope-all');
+        if (!h || !a) {
+            return;
+        }
+        const active = 'flex-1 rounded px-1 py-1 bg-zinc-600 text-zinc-100 shadow-sm';
+        const idle = 'flex-1 rounded px-1 py-1 text-zinc-500 hover:bg-zinc-800/80 hover:text-zinc-300';
+        h.className = botStatsScope === 'hour' ? active : idle;
+        a.className = botStatsScope === 'all' ? active : idle;
+    }
+    function setBotStatsScope(scope) {
+        if (scope !== 'hour' && scope !== 'all') {
+            return;
+        }
+        botStatsScope = scope;
+        try {
+            localStorage.setItem(STATS_SCOPE_STORAGE_KEY, scope);
+        } catch (_) {}
+        updateBotStatsScopeButtons();
+        applyStatsToSidebar(STATS_BOOTSTRAP[scope]);
+        refreshBotStats();
+    }
     function refreshBotStats() {
-        fetch(BOT_STATS_URL, {
+        const url = `${BOT_STATS_URL}?scope=${encodeURIComponent(botStatsScope)}`;
+        fetch(url, {
             headers: { 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
         })
             .then((r) => r.json())
             .then((d) => {
                 if (d && d.server_time) lastServerTimes.stats = d.server_time;
-                applyStatsToSidebar(d.stats || null);
+                // Игнорируем ответ, если пользователь уже переключил режим, пока шёл запрос.
+                if (d && d.scope && d.scope !== botStatsScope) {
+                    return;
+                }
+                if (d && d.stats && typeof d.stats === 'object') {
+                    STATS_BOOTSTRAP[botStatsScope] = d.stats;
+                    applyStatsToSidebar(d.stats);
+                }
                 renderTimeDebugPanel();
             })
             .catch(() => {});
@@ -1520,6 +1698,9 @@
                     if (!Number.isFinite(expiryTs) || expiryTs <= 0) return;
                     const syntheticId = `closed-${t.id}-${expiryTs}`;
                     if (syntheticClosedSignals.some((s) => String(s.id) === syntheticId)) return;
+                    // Synthetic сигнал НЕ содержит expiry_price — цена придёт с сервера через /signals.
+                    // Это важно: цена экспирации рассчитывается сервером (BotSettlementService),
+                    // и фронтенд не должен придумывать свою "временную" цену.
                     syntheticClosedSignals.push({
                         id: syntheticId,
                         instrument: t.instrument,
@@ -1536,7 +1717,18 @@
                         },
                     });
                 });
+                // Таймер сделки и карточка справа опираются на /signals; без немедленного pull после исчезновения
+                // из open-list до следующего poll остаётся только synthetic — таймер «обнуляется» раньше, чем придёт итог с сервера.
+                if (disappearedTrades.length > 0) {
+                    // Сразу обновляем замороженные параметры и маркеры на основе synthetic данных,
+                    // чтобы маркер экспирации появился немедленно (не дожидаясь ответа /signals).
+                    historyDurationCache.clear();
+                    updateFrozenExpiryParams();
+                    renderChartMarkers();
+                    refreshSignalsHistory();
+                }
                 historyDurationCache.clear();
+                updateFrozenExpiryParams();
                 renderOpenTradesOverlay();
                 renderChartMarkers();
                 renderEntryPriceLines();
@@ -1567,6 +1759,7 @@
                     return !serverKeys.has(key);
                 });
                 historyDurationCache.clear();
+                updateFrozenExpiryParams();
                 renderChartMarkers();
                 focusTargetTradeOnChart();
                 renderTimeDebugPanel();
@@ -1936,6 +2129,10 @@
     signalsRefreshInterval = setInterval(refreshSignalsHistory, 5000);
     // Блок "Статистика" рядом с графиком обновляем независимо от свечей и открытых сделок:
     // так карточки Total/Open/Wins/Losses/Winrate всегда отражают актуальное состояние бота.
+    document.getElementById('bot-stats-scope-hour')?.addEventListener('click', () => setBotStatsScope('hour'));
+    document.getElementById('bot-stats-scope-all')?.addEventListener('click', () => setBotStatsScope('all'));
+    updateBotStatsScopeButtons();
+    applyStatsToSidebar(STATS_BOOTSTRAP[botStatsScope]);
     botStatsRefreshInterval = setInterval(refreshBotStats, 3000);
     refreshBotStats();
     refreshInstrumentSidebar().then(() => {

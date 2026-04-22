@@ -448,12 +448,34 @@ class BotController extends Controller
         ]);
     }
 
-    public function statsData(Bot $bot): JsonResponse
+    public function statsData(Bot $bot, Request $request): JsonResponse
     {
         $this->ensureBotOwner($bot);
 
-        // Собираем все ключевые метрики правой панели в одном запросе к таблице сделок,
-        // чтобы фронт обновлял блок "Статистика" атомарно и без рассинхрона между карточками.
+        // scope=hour — скользящий час; scope=all — как в общей аналитике бота (вся история).
+        $scope = $request->query('scope', 'all');
+        if ($scope !== 'hour' && $scope !== 'all') {
+            $scope = 'all';
+        }
+
+        $stats = $scope === 'hour'
+            ? $this->botStatisticsForLastHour($bot)
+            : $this->botStatisticsAllTime($bot);
+
+        return response()->json([
+            'stats' => $stats,
+            'scope' => $scope,
+            'server_time' => now()->toIso8601String(),
+        ]);
+    }
+
+    /**
+     * Статистика по всем сделкам бота (прежнее поведение правой панели до фильтра по часу).
+     *
+     * @return array{total: int, open: int, wins: int, losses: int, winrate: float|null}
+     */
+    private function botStatisticsAllTime(Bot $bot): array
+    {
         $raw = $bot->trades()
             ->selectRaw('
                 COUNT(*) as total,
@@ -474,16 +496,49 @@ class BotController extends Controller
         $decisiveTrades = $wins + $losses;
         $winrate = $decisiveTrades > 0 ? round(($wins * 100) / $decisiveTrades, 2) : null;
 
-        return response()->json([
-            'stats' => [
-                'total' => $total,
-                'open' => $open,
-                'wins' => $wins,
-                'losses' => $losses,
-                'winrate' => $winrate,
-            ],
-            'server_time' => now()->toIso8601String(),
-        ]);
+        return [
+            'total' => $total,
+            'open' => $open,
+            'wins' => $wins,
+            'losses' => $losses,
+            'winrate' => $winrate,
+        ];
+    }
+
+    /**
+     * Метрики блока «Статистика» на странице бота: скользящее окно 60 минут от текущего момента.
+     * Всего / открыто — по времени входа; wins/losses — по settled_at (момент фиксации итога на сервере).
+     *
+     * @return array{total: int, open: int, wins: int, losses: int, winrate: float|null}
+     */
+    private function botStatisticsForLastHour(Bot $bot): array
+    {
+        $since = now()->subHour();
+
+        $total = (int) $bot->trades()->where('entry_time', '>=', $since)->count();
+        $open = (int) $bot->trades()
+            ->where('status', BotTrade::STATUS_OPEN)
+            ->where('entry_time', '>=', $since)
+            ->count();
+        $wins = (int) $bot->trades()
+            ->where('result', BotTrade::RESULT_WIN)
+            ->where('settled_at', '>=', $since)
+            ->count();
+        $losses = (int) $bot->trades()
+            ->where('result', BotTrade::RESULT_LOSS)
+            ->where('settled_at', '>=', $since)
+            ->count();
+
+        $decisiveTrades = $wins + $losses;
+        $winrate = $decisiveTrades > 0 ? round(($wins * 100) / $decisiveTrades, 2) : null;
+
+        return [
+            'total' => $total,
+            'open' => $open,
+            'wins' => $wins,
+            'losses' => $losses,
+            'winrate' => $winrate,
+        ];
     }
 
     public function show(Bot $bot): View
@@ -519,15 +574,8 @@ class BotController extends Controller
             ['minutes' => 60, 'label' => '1ч'],
             ['minutes' => 240, 'label' => '4ч'],
         ];
-        $stats = [
-            'total' => $bot->trades()->count(),
-            'wins' => $bot->trades()->where('result', BotTrade::RESULT_WIN)->count(),
-            'losses' => $bot->trades()->where('result', BotTrade::RESULT_LOSS)->count(),
-            'open' => $bot->trades()->where('status', BotTrade::STATUS_OPEN)->count(),
-        ];
-        $stats['winrate'] = ($stats['wins'] + $stats['losses']) > 0
-            ? round(($stats['wins'] * 100) / ($stats['wins'] + $stats['losses']), 2)
-            : null;
+        $statsHour = $this->botStatisticsForLastHour($bot);
+        $statsAll = $this->botStatisticsAllTime($bot);
         // Активная сделка справа — только по паре, которая станет выбранной при загрузке (как initialInstrument в JS), иначе при переключении пары анализ «залипал» бы на другом инструменте до перезагрузки.
         $activeTrade = null;
         if ($initialInstrument !== null && $initialInstrument !== '') {
@@ -558,7 +606,8 @@ class BotController extends Controller
             'openTradeInstruments' => $openTradeInstruments,
             'nearestExpiryByInstrument' => $sidebar['nearest_expiry_ts'],
             'initialInstrument' => $initialInstrument,
-            'stats' => $stats,
+            'statsHour' => $statsHour,
+            'statsAll' => $statsAll,
             'activeTrade' => $activeTrade,
             'activeTradeSecondsLeft' => $activeTradeSecondsLeft,
             'activeTradeSidebar' => $activeTradeSidebar,

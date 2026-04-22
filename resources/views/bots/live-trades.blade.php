@@ -16,12 +16,15 @@
         <table class="min-w-full text-sm">
             <thead class="bg-zinc-900 text-zinc-400 uppercase text-xs">
                 <tr>
-                    <th class="px-4 py-3 text-left">Время</th>
+                    <th class="px-4 py-3 text-left">ID</th>
                     <th class="px-4 py-3 text-left">Бот</th>
                     <th class="px-4 py-3 text-left">Инструмент</th>
+                    <th class="px-4 py-3 text-left">Направление</th>
                     <th class="px-4 py-3 text-left">Сторона</th>
                     <th class="px-4 py-3 text-left">Цена входа</th>
+                    <th class="px-4 py-3 text-left">Время входа</th>
                     <th class="px-4 py-3 text-left">Цена завершения</th>
+                    <th class="px-4 py-3 text-left">Время окончания</th>
                     <th class="px-4 py-3 text-left">До конца</th>
                     <th class="px-4 py-3 text-left">Результат</th>
                     <th class="px-4 py-3 text-left">PnL</th>
@@ -30,7 +33,7 @@
             </thead>
             <tbody id="live-trades-body" class="divide-y divide-zinc-800 bg-zinc-950/40">
                 <tr>
-                    <td colspan="10" class="px-4 py-8 text-center text-zinc-500">Загрузка…</td>
+                    <td colspan="13" class="px-4 py-8 text-center text-zinc-500">Загрузка…</td>
                 </tr>
             </tbody>
         </table>
@@ -89,7 +92,7 @@
 
     function renderRows(trades) {
         if (!trades.length) {
-            body.innerHTML = '<tr><td colspan="10" class="px-4 py-8 text-center text-zinc-500">За последние 2 часа сделок нет.</td></tr>';
+            body.innerHTML = '<tr><td colspan="13" class="px-4 py-8 text-center text-zinc-500">За последние 2 часа сделок нет.</td></tr>';
             return;
         }
 
@@ -105,12 +108,15 @@
                 : null;
             return `
                 <tr data-trade-id="${t.id}" class="hover:bg-zinc-900/50 ${isTarget ? 'bg-amber-900/40 ring-1 ring-amber-500/50' : (isNew ? 'bg-sky-950/30' : '')}">
-                    <td class="px-4 py-3 text-zinc-300">${t.entry_time ?? '—'}</td>
+                    <td class="px-4 py-3 text-zinc-300 font-mono">${t.id ?? '—'}</td>
                     <td class="px-4 py-3 text-zinc-100">${t.bot_name ?? '—'}</td>
                     <td class="px-4 py-3 text-zinc-300">${t.instrument ?? '—'}</td>
+                    <td class="px-4 py-3 text-zinc-400 font-mono">${sideLabel(t.side)}</td>
                     <td class="px-4 py-3 text-zinc-300">${sideLabel(t.side)}</td>
                     <td class="px-4 py-3 text-zinc-300 font-mono">${t.entry_price ?? '—'}</td>
+                    <td class="px-4 py-3 text-zinc-300">${t.entry_time ?? '—'}</td>
                     <td class="px-4 py-3 text-zinc-300 font-mono">${t.expiry_price ?? '—'}</td>
+                    <td class="px-4 py-3 text-zinc-300">${t.expiry_time ?? '—'}</td>
                     <td class="px-4 py-3">${timeLeftCell(t)}</td>
                     <td class="px-4 py-3">${resultCell(t.result)}</td>
                     <td class="px-4 py-3 text-zinc-300">${t.pnl ?? '—'}</td>

@@ -71,80 +71,37 @@ class BotSettlementService
     /**
      * Возвращает цену в момент экспирации сделки.
      *
-     * Почему это важно:
-     * - старый расчёт всегда брал close последней свечи <= expiry_time;
-     * - если экспирация попадает ВНУТРЬ текущего бара, close этого бара — это уже "будущее"
-     *   относительно точки экспирации, что искажает итог (утечка пост-экспирационного движения).
-     *
-     * Новая логика:
-     * - приоритетно берем более точный timeframe (stored_timeframe_id, например 4015),
-     *   затем fallback на классический M1;
-     * - если экспирация внутри найденного бара, используем open бара (цена на старте бара,
-     *   уже известная к моменту экспирации);
-     * - если бар полностью завершился к expiry_time, используем close.
+     * Используем close M1 свечи, в которой произошла экспирация.
+     * Это соответствует тому, что пользователь видит на графике.
      */
     private function resolveSettlementPriceAtExpiry(string $instrument, int $expiryTs): ?float
     {
-        $candidateTimeframes = $this->candidateSettlementTimeframes();
+        // Находим M1 свечу, в которой произошла экспирация.
+        // Экспирация происходит в минутном бакете: floor(expiryTs / 60) * 60
+        $candleTime = (int) (floor($expiryTs / 60) * 60);
 
-        foreach ($candidateTimeframes as $timeframe) {
+        $candle = InstrumentCandle::query()
+            ->forInstrument($instrument)
+            ->forTimeframe(1) // M1
+            ->where('time', $candleTime)
+            ->first(['time', 'open', 'high', 'low', 'close']);
+
+        if (! $candle) {
+            // Fallback: ищем ближайшую свечу <= expiryTs
             $candle = InstrumentCandle::query()
                 ->forInstrument($instrument)
-                ->forTimeframe($timeframe)
+                ->forTimeframe(1)
                 ->where('time', '<=', $expiryTs)
                 ->orderByDesc('time')
-                ->first(['time', 'open', 'close']);
-
-            if (! $candle) {
-                continue;
-            }
-
-            $barStartTs = (int) $candle->time;
-            $barPeriodSec = $this->timeframePeriodSeconds($timeframe);
-            $barEndTsExclusive = $barStartTs + $barPeriodSec;
-
-            // Если экспирация попала внутрь текущего бара, close будет содержать движение после expiry.
-            // В этом случае фиксируем цену по open данного бара.
-            if ($expiryTs < $barEndTsExclusive) {
-                return (float) $candle->open;
-            }
-
-            return (float) $candle->close;
+                ->first(['time', 'open', 'high', 'low', 'close']);
         }
 
-        return null;
-    }
-
-    /**
-     * @return list<int>
-     */
-    private function candidateSettlementTimeframes(): array
-    {
-        $storedTf = (int) config('candles.stored_timeframe_id', 4015);
-
-        $candidates = array_values(array_unique(array_filter([
-            $storedTf > 0 ? $storedTf : null,
-            1,
-        ])));
-
-        return $candidates === [] ? [1] : $candidates;
-    }
-
-    private function timeframePeriodSeconds(int $timeframe): int
-    {
-        $storedTf = (int) config('candles.stored_timeframe_id', 4015);
-        if ($timeframe === $storedTf) {
-            $base = (int) config('candles.base_bar_period_seconds', 15);
-
-            return $base > 0 ? $base : 15;
+        if (! $candle) {
+            return null;
         }
 
-        // Исторический M1.
-        if ($timeframe === 1) {
-            return 60;
-        }
-
-        // Защитный fallback (если появятся другие TF-идентификаторы).
-        return 60;
+        // Всегда используем close свечи — это цена, которую видит пользователь на графике.
+        return (float) $candle->close;
     }
+
 }
