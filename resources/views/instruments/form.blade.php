@@ -36,8 +36,16 @@
                 <input type="password" name="session_token" placeholder="{{ $session_token_placeholder ?? '' }}" class="w-full px-3 py-2 rounded border border-zinc-600 bg-zinc-950 font-mono text-sm text-zinc-100 placeholder-zinc-500 focus:ring-2 focus:ring-blue-600 focus:border-transparent" autocomplete="off">
             </div>
             <div>
-                <label class="block text-sm font-medium text-zinc-300 mb-1">Proxy URL</label>
-                <input type="text" name="proxy_url" value="{{ old('proxy_url', $instrument?->proxy_url) }}" placeholder="http://user:pass@127.0.0.1:8080" class="w-full px-3 py-2 rounded border border-zinc-600 bg-zinc-950 font-mono text-sm text-zinc-100 placeholder-zinc-500 focus:ring-2 focus:ring-blue-600 focus:border-transparent" autocomplete="off">
+                <label class="block text-sm font-medium text-zinc-300 mb-1">Прокси (из пула)</label>
+                {{-- Старое поле proxy_url удалено: выбираем endpoint из общего пула proxy_endpoints. --}}
+                <select name="proxy_endpoint_id" class="w-full px-3 py-2 rounded border border-zinc-600 bg-zinc-950 text-zinc-100 focus:ring-2 focus:ring-blue-600 focus:border-transparent">
+                    <option value="">Авто/не назначен</option>
+                    @foreach(($proxyEndpoints ?? collect()) as $proxy)
+                        <option value="{{ $proxy->id }}" {{ (string) old('proxy_endpoint_id', $instrument?->proxy_endpoint_id) === (string) $proxy->id ? 'selected' : '' }}>
+                            [{{ $proxy->status }}] {{ $proxy->url }}
+                        </option>
+                    @endforeach
+                </select>
             </div>
             <div>
                 <label class="block text-sm font-medium text-zinc-300 mb-1">UID</label>

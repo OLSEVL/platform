@@ -293,6 +293,41 @@ async def post_ingest_current_candle(
         return False
 
 
+async def post_ingest_proxy_failure(
+    instrument: str,
+    error: str,
+    streak: Optional[int] = None,
+) -> bool:
+    """POST /api/ingest-proxy-failure.
+
+    Передаём в платформу факт проблем с подключением/прокси, чтобы Laravel
+    обновил health endpoint и, при включённой опции, выполнил авто-ротацию.
+    """
+    if not PLATFORM_URL:
+        return False
+    url = f"{PLATFORM_URL}/api/ingest-proxy-failure"
+    headers = {
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    }
+    payload = {
+        "instrument": instrument,
+        "error": str(error)[:1000],
+        "streak": int(streak) if streak is not None else None,
+    }
+    try:
+        session = await _ensure_ingest_http_session()
+        async with session.post(url, headers=headers, json=payload) as resp:
+            if resp.status not in (200, 201, 204):
+                body = await resp.text()
+                print(f"[INGEST] post_ingest_proxy_failure {instrument} HTTP {resp.status} body={body[:300]}")
+                return False
+            return True
+    except Exception as e:
+        print(f"[INGEST] post_ingest_proxy_failure {instrument}: {e}")
+        return False
+
+
 def candle_to_dict(candle) -> Dict[str, Any]:
     """Candle model -> dict для ingest."""
     ts = candle.timestamp
@@ -504,6 +539,11 @@ async def run_instrument_worker(
             if not ok:
                 connect_fail_streak += 1
                 delay = min(300, 5 * (2 ** min(connect_fail_streak - 1, 6)))
+                await post_ingest_proxy_failure(
+                    instrument=instrument,
+                    error="connect_failed",
+                    streak=connect_fail_streak,
+                )
                 print(
                     f"[INGEST] {instrument}: connect failed (streak={connect_fail_streak}), "
                     f"sleep {delay}s",
@@ -517,6 +557,11 @@ async def run_instrument_worker(
             if not client.is_connected:
                 connect_fail_streak += 1
                 delay = min(300, 5 * (2 ** min(connect_fail_streak - 1, 6)))
+                await post_ingest_proxy_failure(
+                    instrument=instrument,
+                    error="not_connected_after_wait",
+                    streak=connect_fail_streak,
+                )
                 print(
                     f"[INGEST] {instrument}: not connected after wait, sleep {delay}s",
                     flush=True,
@@ -739,6 +784,11 @@ async def run_instrument_worker(
         except Exception as e:
             print(f"[INGEST] {instrument} error: {e}", flush=True)
             connect_fail_streak += 1
+            await post_ingest_proxy_failure(
+                instrument=instrument,
+                error=f"worker_exception: {e}",
+                streak=connect_fail_streak,
+            )
             delay = min(300, 5 * (2 ** min(connect_fail_streak - 1, 6)))
             await asyncio.sleep(delay)
         finally:
@@ -834,6 +884,7 @@ async def run_ingest_forever() -> None:
                     print(f"[INGEST] skip {instrument}: no session_token in DB (pocket_instruments)")
                     continue
                 proxy_url = item.get("proxy_url")
+
                 task = asyncio.create_task(
                     run_instrument_worker(
                         instrument=instrument,

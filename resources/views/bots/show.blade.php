@@ -455,8 +455,8 @@
         return t > 0 ? Math.floor(t / 60) * 60 : null;
     }
     // Унифицированный парсер времени для всех источников (ISO, unix sec/ms, MySQL datetime).
-    // Важно: строки формата `YYYY-MM-DD HH:mm:ss` трактуем как UTC, иначе браузер может
-    // интерпретировать их как локальное время пользователя и сдвинуть маркеры на графике.
+    // ВАЖНО: timezone-преобразование выполняется только на ingest-слое (backend),
+    // поэтому здесь не добавляем ручные +03:00/-03:00 — просто корректно парсим вход.
     function toUnixSec(value) {
         if (value == null || value === '') return null;
         if (typeof value === 'number' && Number.isFinite(value)) {
@@ -471,22 +471,9 @@
             }
             const hasTimezone = /([zZ]|[+\-]\d{2}:?\d{2})$/.test(raw);
             const isoLike = raw.includes('T');
-            // Если строка имеет формат "YYYY-MM-DD HH:mm:ss" без часового пояса,
-            // это время в часовом поясе сервера (Europe/Kyiv, UTC+3).
-            // Date.parse интерпретирует такие строки как локальное время браузера,
-            // что приводит к сдвигу на 3 часа. Поэтому добавляем явно '+03:00'
-            // для соответствия серверному времени.
-            let normalized = raw;
-            if (!hasTimezone && !isoLike && raw.includes(' ')) {
-                // Проверяем, соответствует ли паттерну даты-времени MySQL
-                if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(raw)) {
-                    // Это время сервера (UTC+3), добавляем смещение
-                    normalized = raw.replace(' ', 'T') + '+03:00';
-                } else {
-                    // На всякий случай оставляем старую логику
-                    normalized = raw.replace(' ', 'T') + 'Z';
-                }
-            }
+            const normalized = (!hasTimezone && !isoLike && raw.includes(' '))
+                ? `${raw.replace(' ', 'T')}Z`
+                : raw;
             const ms = Date.parse(normalized);
             if (Number.isFinite(ms)) return Math.floor(ms / 1000);
         }

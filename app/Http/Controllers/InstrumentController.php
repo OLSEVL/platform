@@ -3,25 +3,44 @@
 namespace App\Http\Controllers;
 
 use App\Models\PocketInstrument;
+use App\Models\ProxyEndpoint;
+use App\Services\ProxyRotationService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
 
 class InstrumentController extends Controller
 {
     public function index()
     {
+        // Читаем порог stale для payout из app_settings.
+        // Если настройка ещё не создана миграцией/вручную, используем безопасный дефолт 5 минут.
+        $payoutStaleMinutesThreshold = (int) (
+            DB::table('app_settings')
+                ->where('key', 'payout_stale_minutes_threshold')
+                ->value('value') ?? 5
+        );
+        $payoutStaleMinutesThreshold = max(1, min(1440, $payoutStaleMinutesThreshold));
+
         return view('instruments.index', [
             'instruments' => PocketInstrument::query()
-//                ->orderByDesc('current_payout')
+                ->with('proxyEndpoint')
                 ->orderByDesc('priority')
                 ->orderBy('instrument')
-                ->get()
+                ->get(),
+            'payoutStaleMinutesThreshold' => $payoutStaleMinutesThreshold,
         ]);
     }
 
     public function create()
     {
-        return view('instruments.form', ['instrument' => null]);
+        return view('instruments.form', [
+            'instrument' => null,
+            'proxyEndpoints' => ProxyEndpoint::query()
+                ->orderBy('status')
+                ->orderBy('url')
+                ->get(['id', 'url', 'status']),
+        ]);
     }
 
     public function store(Request $request)
@@ -34,7 +53,7 @@ class InstrumentController extends Controller
             'uid' => 'nullable|string|max:63',
             'is_demo' => 'boolean',
             'is_active' => 'boolean',
-            'proxy_url' => 'nullable|string|max:255',
+            'proxy_endpoint_id' => 'nullable|integer|exists:proxy_endpoints,id',
         ];
         if ($request->filled('session_token')) {
             $rules['uid'] = 'required_with:session_token|string|max:63';
@@ -48,7 +67,7 @@ class InstrumentController extends Controller
             'uid' => $v['uid'] ?? null,
             'is_demo' => $request->boolean('is_demo'),
             'is_active' => $request->boolean('is_active', true),
-            'proxy_url' => $v['proxy_url'] ?? null,
+            'proxy_endpoint_id' => $v['proxy_endpoint_id'] ?? null,
         ]);
         return redirect()->route('instruments.index')->with('success', 'Инструмент добавлен.');
     }
@@ -58,6 +77,10 @@ class InstrumentController extends Controller
         return view('instruments.form', [
             'instrument' => $instrument,
             'session_token_placeholder' => $instrument->session_token ? 'Пусто = не менять' : '',
+            'proxyEndpoints' => ProxyEndpoint::query()
+                ->orderBy('status')
+                ->orderBy('url')
+                ->get(['id', 'url', 'status']),
         ]);
     }
 
@@ -71,7 +94,7 @@ class InstrumentController extends Controller
             'uid' => 'nullable|string|max:63',
             'is_demo' => 'boolean',
             'is_active' => 'boolean',
-            'proxy_url' => 'nullable|string|max:255',
+            'proxy_endpoint_id' => 'nullable|integer|exists:proxy_endpoints,id',
         ];
         if ($request->filled('session_token')) {
             $rules['uid'] = 'required_with:session_token|string|max:63';
@@ -83,7 +106,7 @@ class InstrumentController extends Controller
             'priority' => (int) ($v['priority'] ?? 0),
             'is_demo' => $request->boolean('is_demo'),
             'is_active' => $request->boolean('is_active'),
-            'proxy_url' => $v['proxy_url'] ?? null,
+            'proxy_endpoint_id' => $v['proxy_endpoint_id'] ?? null,
         ];
         if ($request->filled('session_token')) {
             $data['session_token'] = $v['session_token'];
@@ -97,5 +120,54 @@ class InstrumentController extends Controller
     {
         $instrument->delete();
         return redirect()->route('instruments.index')->with('success', 'Инструмент удалён.');
+    }
+
+    public function replaceProxy(PocketInstrument $instrument, ProxyRotationService $rotationService)
+    {
+        $newProxy = $rotationService->rotateInstrumentProxy($instrument, false);
+        if (! $newProxy) {
+            return back()->with('error', 'Нет доступного прокси для замены.');
+        }
+
+        return back()->with('success', 'Прокси инструмента успешно заменён.');
+    }
+
+    public function replaceProxyAndMarkDead(PocketInstrument $instrument, ProxyRotationService $rotationService)
+    {
+        $newProxy = $rotationService->rotateInstrumentProxy($instrument, true);
+        if (! $newProxy) {
+            return back()->with('error', 'Не удалось заменить прокси: в пуле нет свободных рабочих прокси.');
+        }
+
+        return back()->with('success', 'Текущий прокси помечен нерабочим и заменён.');
+    }
+
+    public function removeProxy(PocketInstrument $instrument)
+    {
+        // Явно отвязываем инструмент от proxy endpoint:
+        // ingest будет работать без прокси (direct), т.к. proxy_url в API станет null.
+        $instrument->update([
+            'proxy_endpoint_id' => null,
+        ]);
+
+        return back()->with('success', 'Прокси удалён. Инструмент переведён на работу без прокси.');
+    }
+
+    public function toggleActive(PocketInstrument $instrument)
+    {
+        // Мгновенный переключатель активности инструмента из таблицы:
+        // это позволяет оперативно выключать/включать стрим без перехода в форму редактирования.
+        // Логика предельно простая: инвертируем текущее состояние флага is_active.
+        $nextState = ! (bool) $instrument->is_active;
+        $instrument->update([
+            'is_active' => $nextState,
+        ]);
+
+        return back()->with(
+            'success',
+            $nextState
+                ? 'Инструмент включён.'
+                : 'Инструмент выключен.'
+        );
     }
 }

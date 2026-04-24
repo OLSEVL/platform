@@ -166,10 +166,10 @@ class DashboardController extends Controller
             $before,
             $limit,
         );
-        // Нормализуем временную ось свечей для графика:
-        // если источник прислал series с часовым сдвигом (например, +2/+3 часа),
-        // приводим её к серверному now, чтобы маркеры сделок не "уезжали" влево/вправо.
-        [$rows, $timeShiftSec] = $this->normalizeChartSeriesTimezoneDrift($rows, $serverUnix);
+        // Строгая UTC-политика без ручных сдвигов:
+        // сериализуем данные графика в том же unix-time, что хранится в БД.
+        // Любое локальное время (например Europe/Kyiv) должно строиться только на UI-слое
+        // при форматировании подписи, а не через модификацию timestamp в API.
 
         $data = array_map(fn (array $c) => [
             'time' => $c['time'],
@@ -185,7 +185,7 @@ class DashboardController extends Controller
             $partial = $currentCandleCache->getPartial($instrument);
             if ($partial && $currentCandleCache->isFresh($partial, 30)) {
                 $lastClosedTime = ! empty($data) ? (int) end($data)['time'] : 0;
-                $partialTime = (int) ($partial['time'] ?? 0) - $timeShiftSec;
+                $partialTime = (int) ($partial['time'] ?? 0);
                 if ($partialTime > $lastClosedTime) {
                     $data[] = [
                         'time' => $partialTime,
@@ -212,7 +212,6 @@ class DashboardController extends Controller
         return response()->json([
             'candles' => $data,
             'server_unix' => $serverUnix,
-            'time_shift_sec' => $timeShiftSec,
             'm1_seconds_to_close' => $m1SecondsToClose,
         ]);
     }
@@ -227,8 +226,9 @@ class DashboardController extends Controller
         $timeframe = (int) ($request->input('timeframe') ?? 1);
         $since = time() - 86400;
 
+        // Структуры должны использовать ту же временную ось, что и candles endpoint:
+        // без повторного timezone-преобразования.
         $rows = $candleService->seriesForDashboard($instrument, $timeframe, $since, null, null);
-        [$rows] = $this->normalizeChartSeriesTimezoneDrift($rows, time());
 
         $zones = $detector->activeZones($rows);
 
@@ -245,41 +245,5 @@ class DashboardController extends Controller
             ]);
 
         return response()->json(['payouts' => $rows->values()->all()]);
-    }
-
-    /**
-     * Для UI-графика корректирует постоянный часовой drift у свечей.
-     *
-     * @param  array<int, array{time:int, open:float, high:float, low:float, close:float, volume:float}>  $rows
-     * @return array{0: array<int, array{time:int, open:float, high:float, low:float, close:float, volume:float}>, 1: int}
-     */
-    private function normalizeChartSeriesTimezoneDrift(array $rows, int $serverUnix): array
-    {
-        if ($rows === []) {
-            return [$rows, 0];
-        }
-        $last = end($rows);
-        $lastTs = is_array($last) ? (int) ($last['time'] ?? 0) : 0;
-        if ($lastTs <= 0) {
-            return [$rows, 0];
-        }
-
-        // Если последняя свеча слишком далеко от now, считаем это timezone-drift источника.
-        $deltaSec = $lastTs - $serverUnix;
-        if (abs($deltaSec) < 90 * 60) {
-            return [$rows, 0];
-        }
-        $hours = (int) round($deltaSec / 3600);
-        if ($hours === 0 || abs($hours) > 12) {
-            return [$rows, 0];
-        }
-        $shiftSec = $hours * 3600;
-
-        $normalized = array_map(function (array $c) use ($shiftSec): array {
-            $c['time'] = max(1, (int) $c['time'] - $shiftSec);
-            return $c;
-        }, $rows);
-
-        return [$normalized, $shiftSec];
     }
 }

@@ -5,13 +5,14 @@ namespace App\Models;
 use DateTimeInterface;
 use Illuminate\Database\Eloquent\Casts\Attribute;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Support\Carbon;
 
 class PocketInstrument extends Model
 {
     protected $fillable = [
         'instrument', 'display_name', 'priority',
-        'session_token', 'uid', 'is_demo', 'is_active', 'proxy_url',
+        'session_token', 'uid', 'is_demo', 'is_active', 'proxy_endpoint_id',
         'current_payout', 'last_payout_at', 'payout_source',
     ];
 
@@ -68,5 +69,10 @@ class PocketInstrument extends Model
     public function scopeOrderByPriority($query)
     {
         return $query->orderByDesc('priority')->orderBy('instrument');
+    }
+
+    public function proxyEndpoint(): BelongsTo
+    {
+        return $this->belongsTo(ProxyEndpoint::class, 'proxy_endpoint_id');
     }
 }

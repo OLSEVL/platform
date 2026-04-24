@@ -73,12 +73,24 @@ class BotSettlementService
      *
      * Используем close M1 свечи, в которой произошла экспирация.
      * Это соответствует тому, что пользователь видит на графике.
+     *
+     * Важно: свечи в БД могут иметь дрейф времени (например, +2 часа).
+     * Поэтому мы нормализуем время экспирации с учётом дрейфа, чтобы найти
+     * правильную свечу — ту же, что отображается на графике.
      */
     private function resolveSettlementPriceAtExpiry(string $instrument, int $expiryTs): ?float
     {
+        // Определяем текущий дрейф времени свечей для данного инструмента.
+        $timeShiftSec = $this->detectCandleTimezoneDrift($instrument);
+
+        // Нормализуем время экспирации с учётом дрейфа.
+        // Если свечи сдвинуты на +2 часа, то expiryTs тоже нужно сдвинуть,
+        // чтобы найти правильную свечу в БД.
+        $normalizedExpiryTs = $expiryTs + $timeShiftSec;
+
         // Находим M1 свечу, в которой произошла экспирация.
-        // Экспирация происходит в минутном бакете: floor(expiryTs / 60) * 60
-        $candleTime = (int) (floor($expiryTs / 60) * 60);
+        // Экспирация происходит в минутном бакете: floor(normalizedExpiryTs / 60) * 60
+        $candleTime = (int) (floor($normalizedExpiryTs / 60) * 60);
 
         $candle = InstrumentCandle::query()
             ->forInstrument($instrument)
@@ -87,11 +99,11 @@ class BotSettlementService
             ->first(['time', 'open', 'high', 'low', 'close']);
 
         if (! $candle) {
-            // Fallback: ищем ближайшую свечу <= expiryTs
+            // Fallback: ищем ближайшую свечу <= normalizedExpiryTs
             $candle = InstrumentCandle::query()
                 ->forInstrument($instrument)
                 ->forTimeframe(1)
-                ->where('time', '<=', $expiryTs)
+                ->where('time', '<=', $normalizedExpiryTs)
                 ->orderByDesc('time')
                 ->first(['time', 'open', 'high', 'low', 'close']);
         }
@@ -104,4 +116,43 @@ class BotSettlementService
         return (float) $candle->close;
     }
 
+    /**
+     * Определяет дрейф времени свечей для инструмента.
+     *
+     * Сравнивает время последней свечи с текущим серверным временем.
+     * Если разница больше 90 минут и кратна целому часу, считаем это дрейфом.
+     *
+     * @return int Сдвиг в секундах (положительный, если свечи "впереди")
+     */
+    private function detectCandleTimezoneDrift(string $instrument): int
+    {
+        $latestCandle = InstrumentCandle::query()
+            ->forInstrument($instrument)
+            ->forTimeframe(1)
+            ->orderByDesc('time')
+            ->first(['time']);
+
+        if (! $latestCandle) {
+            return 0;
+        }
+
+        $serverUnix = time();
+        $lastTs = (int) $latestCandle->time;
+        $deltaSec = $lastTs - $serverUnix;
+
+        // Если дрейф меньше 90 минут, считаем его нормальным
+        if (abs($deltaSec) < 90 * 60) {
+            return 0;
+        }
+
+        // Проверяем, кратен ли дрейф целому часу
+        $hours = (int) round($deltaSec / 3600);
+        if ($hours === 0 || abs($hours) > 12) {
+            return 0;
+        }
+
+        // Возвращаем сдвиг, который нужно применить к expiryTs
+        // Если свечи "впереди" на +2 часа, то expiryTs тоже нужно сдвинуть на +2 часа
+        return $hours * 3600;
+    }
 }

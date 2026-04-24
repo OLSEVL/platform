@@ -1,5 +1,7 @@
 <?php
-
+//echoe('Y-m-d H:i:s');
+//echo phpinfo();
+//exit;
 use Illuminate\Foundation\Application;
 use Illuminate\Http\Request;
 

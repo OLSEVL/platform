@@ -30,6 +30,8 @@ class BotMarketDataController extends Controller
             ->get(['time', 'open', 'high', 'low', 'close', 'volume']);
 
         $closed = $rows->map(fn (InstrumentCandle $r) => [
+            // UTC timeline без ручных поправок:
+            // отдаём точное время свечи в том виде, в котором оно хранится в БД.
             'time' => (int) $r->time,
             'open' => (float) $r->open,
             'high' => (float) $r->high,
@@ -46,8 +48,12 @@ class BotMarketDataController extends Controller
 
         if ($partial && !empty($closed)) {
             $lastClosedTime = (int) end($closed)['time'];
-            if ($partial['time'] <= $lastClosedTime) {
+            // Для partial свечи применяем ту же UTC-политику: без корректировок timestamp.
+            $partialTime = (int) ($partial['time'] ?? 0);
+            if ($partialTime <= $lastClosedTime) {
                 $partial = null;
+            } else {
+                $partial['time'] = $partialTime;
             }
         }
 

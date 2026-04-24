@@ -37,6 +37,14 @@ Route::middleware('auth')->group(function () {
         Route::get('/{bot}', [BotController::class, 'show'])->name('show');
     });
     Route::resource('instruments', InstrumentController::class)->only(['index', 'create', 'store', 'edit', 'update', 'destroy']);
+    Route::post('/instruments/{instrument}/toggle-active', [InstrumentController::class, 'toggleActive'])->name('instruments.toggle-active');
+    Route::post('/instruments/{instrument}/proxy/replace', [InstrumentController::class, 'replaceProxy'])->name('instruments.proxy.replace');
+    Route::post('/instruments/{instrument}/proxy/replace-and-mark-dead', [InstrumentController::class, 'replaceProxyAndMarkDead'])->name('instruments.proxy.replace-mark-dead');
+    Route::post('/instruments/{instrument}/proxy/remove', [InstrumentController::class, 'removeProxy'])->name('instruments.proxy.remove');
     Route::get('/settings', [SettingsController::class, 'index'])->name('settings.index');
     Route::post('/settings/proxies/refresh', [SettingsController::class, 'refreshProxies'])->name('settings.proxies.refresh');
+    Route::post('/settings/proxies/auto-rotation', [SettingsController::class, 'updateProxyRotation'])->name('settings.proxies.auto-rotation');
+    Route::post('/settings/proxies/{proxy}/reactivate', [SettingsController::class, 'reactivateProxy'])->name('settings.proxies.reactivate');
+    Route::post('/settings/proxies/reactivate-all', [SettingsController::class, 'reactivateAllProblemProxies'])->name('settings.proxies.reactivate-all');
+    Route::post('/settings/payout/monitoring', [SettingsController::class, 'updatePayoutMonitoring'])->name('settings.payout.monitoring');
 });

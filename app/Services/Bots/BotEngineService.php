@@ -105,6 +105,9 @@ class BotEngineService
             }
 
             $entryPrice = (float) (($partial['close'] ?? null) ?? end($closed)['close']);
+            // БД-сессия MySQL работает в UTC (config/database.php: SET time_zone='+00:00').
+            // Поэтому signal_at/entry_time/expiry_time фиксируем тоже в UTC, чтобы не получать
+            // искусственный +3 часа в raw TIMESTAMP полях.
             $entryAt = now();
             $expiryAt = $entryAt->copy()->addSeconds($expirySec);
             $payoutSnapshot = $instrumentRow->current_payout !== null ? (float) $instrumentRow->current_payout : null;
