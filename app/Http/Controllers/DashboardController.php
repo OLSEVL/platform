@@ -199,6 +199,26 @@ class DashboardController extends Controller
                 }
             }
         }
+        // Feed debug метаданные:
+        // - raw_feed_time: timestamp "как пришёл" от источника;
+        // - effective_feed_time: timestamp, который реально используем в платформе;
+        // - ingest_received_at: когда backend принял partial.
+        // Эти поля помогают понять, где именно возникает рассинхрон (feed vs ingest vs UI).
+        $lastClosedCandleTime = $data !== [] ? (int) end($data)['time'] : null;
+        $feedDebug = [
+            'raw_feed_time' => null,
+            'effective_feed_time' => null,
+            'ingest_received_at' => null,
+            'last_closed_candle_time' => $lastClosedCandleTime,
+        ];
+        if (isset($partial) && is_array($partial)) {
+            $rawFeedTime = (int) ($partial['raw_feed_time'] ?? 0);
+            $effectiveFeedTime = (int) ($partial['effective_feed_time'] ?? ($partial['time'] ?? 0));
+            $ingestReceivedAt = (int) ($partial['ingest_received_at'] ?? ($partial['updated_at'] ?? 0));
+            $feedDebug['raw_feed_time'] = $rawFeedTime > 0 ? $rawFeedTime : null;
+            $feedDebug['effective_feed_time'] = $effectiveFeedTime > 0 ? $effectiveFeedTime : null;
+            $feedDebug['ingest_received_at'] = $ingestReceivedAt > 0 ? $ingestReceivedAt : null;
+        }
 
         $lastOpen = null;
         if ($timeframe === 1 && $data !== []) {
@@ -212,6 +232,7 @@ class DashboardController extends Controller
         return response()->json([
             'candles' => $data,
             'server_unix' => $serverUnix,
+            'feed_debug' => $feedDebug,
             'm1_seconds_to_close' => $m1SecondsToClose,
         ]);
     }

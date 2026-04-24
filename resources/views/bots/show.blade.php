@@ -120,11 +120,16 @@
             {{-- Отладочная плашка времени: помогает быстро увидеть рассинхрон между серверным временем,
                  локальными часами браузера и "временем платформы" (последний маркер/событие на графике). --}}
             <div id="time-debug-panel" class="border-b border-zinc-800 bg-zinc-950/80 px-3 py-1.5 text-[11px] text-zinc-400">
-                <span class="font-medium text-zinc-300">Time debug:</span>
-                <span id="time-debug-server" class="ml-2">server: —</span>
-                <span id="time-debug-client" class="ml-2">client: —</span>
-                <span id="time-debug-platform" class="ml-2">platform: —</span>
-                <span id="time-debug-marker" class="ml-2">last marker: —</span>
+                <span class="font-medium text-zinc-300">Панель отладки времени:</span>
+                <span id="time-debug-server" class="ml-2">Серверное время (по последнему ответу API): —</span>
+                <span id="time-debug-client" class="ml-2">Клиентское время (часы браузера): —</span>
+                <span id="time-debug-feed-raw" class="ml-2">Время feed (сырое, как пришло от источника): —</span>
+                <span id="time-debug-feed-effective" class="ml-2">Время feed (используемое в системе): —</span>
+                <span id="time-debug-feed-ingest" class="ml-2">Время приема feed на backend (ingest): —</span>
+                <span id="time-debug-feed-closed" class="ml-2">Время последней закрытой свечи из БД: —</span>
+                <span id="time-debug-feed-delta" class="ml-2">Смещение feed ↔ сервер (в секундах): —</span>
+                <span id="time-debug-platform" class="ml-2">Время платформы (по последнему маркеру/сигналу): —</span>
+                <span id="time-debug-marker" class="ml-2">Время последнего маркера на графике: —</span>
             </div>
         @endif
         <div id="chart-container" class="flex-1 min-h-0 relative">
@@ -293,6 +298,11 @@
     const timeDebugPanel = document.getElementById('time-debug-panel');
     const timeDebugServer = document.getElementById('time-debug-server');
     const timeDebugClient = document.getElementById('time-debug-client');
+    const timeDebugFeedRaw = document.getElementById('time-debug-feed-raw');
+    const timeDebugFeedEffective = document.getElementById('time-debug-feed-effective');
+    const timeDebugFeedIngest = document.getElementById('time-debug-feed-ingest');
+    const timeDebugFeedClosed = document.getElementById('time-debug-feed-closed');
+    const timeDebugFeedDelta = document.getElementById('time-debug-feed-delta');
     const timeDebugPlatform = document.getElementById('time-debug-platform');
     const timeDebugMarker = document.getElementById('time-debug-marker');
     const LAYER_PREFS_KEY = 'platform.bot.show.chartLayers.v2';
@@ -320,6 +330,8 @@
     // Кэш серверного времени из разных API-ответов (signals/open-trades/instruments/stats),
     // чтобы в debug-плашке видеть фактический "опорный" серверный timestamp.
     let lastServerTimes = { signals: null, openTrades: null, instruments: null, stats: null };
+    // Последний feed-debug, полученный из /candles для выбранного инструмента.
+    let lastFeedDebug = { rawFeedTime: null, effectiveFeedTime: null, ingestReceivedAt: null, lastClosedCandleTime: null };
     // Временные маркеры закрытых сделок: используем как мост между open-trades и полной историей сигналов.
     let syntheticClosedSignals = [];
     let targetTradeFocusDone = false;
@@ -509,11 +521,33 @@
         const markerTimes = markerTimesForInstrument(currentInstrument);
         const lastMarkerTs = markerTimes.length ? Math.max(...markerTimes) : null;
         const drift = (serverTs != null) ? (nowSec - serverTs) : null;
+        const rawFeedTs = toUnixSec(lastFeedDebug.rawFeedTime);
+        const effectiveFeedTs = toUnixSec(lastFeedDebug.effectiveFeedTime);
+        const ingestFeedTs = toUnixSec(lastFeedDebug.ingestReceivedAt);
+        const lastClosedCandleTs = toUnixSec(lastFeedDebug.lastClosedCandleTime);
+        const feedServerDelta = (serverTs != null && effectiveFeedTs != null)
+            ? (effectiveFeedTs - serverTs)
+            : null;
 
-        timeDebugServer.textContent = `server: ${formatDebugTs(serverTs)}${drift == null ? '' : ` (drift ${drift >= 0 ? '+' : ''}${drift}s)`}`;
-        timeDebugClient.textContent = `client: ${formatDebugTs(nowSec)}`;
-        timeDebugPlatform.textContent = `platform: ${formatDebugTs(lastMarkerTs)}`;
-        timeDebugMarker.textContent = `last marker: ${formatDebugTs(lastMarkerTs)}`;
+        timeDebugServer.textContent = `Серверное время (по последнему ответу API): ${formatDebugTs(serverTs)}${drift == null ? '' : ` (drift ${drift >= 0 ? '+' : ''}${drift}s)`}`;
+        timeDebugClient.textContent = `Клиентское время (часы браузера): ${formatDebugTs(nowSec)}`;
+        if (timeDebugFeedRaw) {
+            timeDebugFeedRaw.textContent = `Время feed (сырое, как пришло от источника): ${formatDebugTs(rawFeedTs)}`;
+        }
+        if (timeDebugFeedEffective) {
+            timeDebugFeedEffective.textContent = `Время feed (используемое в системе): ${formatDebugTs(effectiveFeedTs)}`;
+        }
+        if (timeDebugFeedIngest) {
+            timeDebugFeedIngest.textContent = `Время приема feed на backend (ingest): ${formatDebugTs(ingestFeedTs)}`;
+        }
+        if (timeDebugFeedClosed) {
+            timeDebugFeedClosed.textContent = `Время последней закрытой свечи из БД: ${formatDebugTs(lastClosedCandleTs)}`;
+        }
+        if (timeDebugFeedDelta) {
+            timeDebugFeedDelta.textContent = `Смещение feed ↔ сервер (в секундах): ${feedServerDelta == null ? '—' : `${feedServerDelta >= 0 ? '+' : ''}${feedServerDelta}s`}`;
+        }
+        timeDebugPlatform.textContent = `Время платформы (по последнему маркеру/сигналу): ${formatDebugTs(lastMarkerTs)}`;
+        timeDebugMarker.textContent = `Время последнего маркера на графике: ${formatDebugTs(lastMarkerTs)}`;
     }
 
     // Форматируем цену для подписи маркера:
@@ -1770,6 +1804,15 @@
             .then((r) => r.json())
             .then((payload) => {
                 applyM1CountdownFromPayload(payload);
+                if (payload && payload.feed_debug && typeof payload.feed_debug === 'object') {
+                    lastFeedDebug = {
+                        rawFeedTime: payload.feed_debug.raw_feed_time ?? null,
+                        effectiveFeedTime: payload.feed_debug.effective_feed_time ?? null,
+                        ingestReceivedAt: payload.feed_debug.ingest_received_at ?? null,
+                        lastClosedCandleTime: payload.feed_debug.last_closed_candle_time ?? null,
+                    };
+                }
+                renderTimeDebugPanel();
                 return payload;
             });
     }

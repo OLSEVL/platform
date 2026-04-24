@@ -75,6 +75,15 @@ INGEST_CURRENT_CANDLE_TTL_SEC = int(os.environ.get("INGEST_CURRENT_CANDLE_TTL_SE
 INGEST_CURRENT_CANDLE_POST_DEBOUNCE_SEC = float(
     os.environ.get("INGEST_CURRENT_CANDLE_POST_DEBOUNCE_SEC", "1")
 )
+# Поправка времени feed в секундах (например -7200, если источник стабильно "вперёд" на 2 часа).
+# Применяется централизованно при расчёте effective времени свечи.
+FEED_TIME_CORRECTION_SEC = int(os.environ.get("FEED_TIME_CORRECTION_SEC", "0"))
+# Логировать дельту feed↔server при отправке partial свечи (для диагностики смещений).
+FEED_TIME_DELTA_LOG_ENABLE = os.environ.get("FEED_TIME_DELTA_LOG_ENABLE", "1").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+)
 
 _ingest_http_session: Optional[aiohttp.ClientSession] = None
 _ingest_http_lock: Optional[asyncio.Lock] = None
@@ -129,6 +138,25 @@ def _to_unix_seconds(ts: Any) -> int:
     while raw > 10_000_000_000:
         raw //= 1000
     return raw
+
+
+def _to_raw_int(ts: Any) -> int:
+    """Возвращает timestamp "как прислали" (без нормализации масштаба)."""
+    try:
+        return int(float(ts))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _apply_feed_time_correction(unix_sec: int) -> int:
+    """Применяет конфигурируемую коррекцию feed-времени (сек)."""
+    return max(1, int(unix_sec) + FEED_TIME_CORRECTION_SEC)
+
+
+def _to_effective_candle_time(unix_sec: int) -> int:
+    """Возвращает effective время свечи, выровненное по минутному бакету."""
+    corrected = _apply_feed_time_correction(unix_sec)
+    return max(1, (corrected // M1_PERIOD) * M1_PERIOD)
 
 
 async def _ensure_ingest_http_session() -> aiohttp.ClientSession:
@@ -272,6 +300,10 @@ async def post_ingest_current_candle(
     payload = {
         "instrument": instrument,
         "time": int(candle.get("time", 0)),
+        # raw_feed_time — timestamp от feed до возможных преобразований/бакетизации;
+        # effective_feed_time — timestamp, который платформа фактически использует.
+        "raw_feed_time": int(candle.get("raw_feed_time", candle.get("time", 0))),
+        "effective_feed_time": int(candle.get("effective_feed_time", candle.get("time", 0))),
         "open": float(candle.get("open", 0)),
         "high": float(candle.get("high", 0)),
         "low": float(candle.get("low", 0)),
@@ -280,6 +312,17 @@ async def post_ingest_current_candle(
         "updated_at": int(time.time()),
         "ttl_sec": int(ttl_sec),
     }
+    if FEED_TIME_DELTA_LOG_ENABLE:
+        server_now = int(time.time())
+        raw_feed = _to_unix_seconds(candle.get("raw_feed_time", 0))
+        effective_feed = int(candle.get("effective_feed_time", candle.get("time", 0)) or 0)
+        raw_delta = raw_feed - server_now if raw_feed > 0 else None
+        effective_delta = effective_feed - server_now if effective_feed > 0 else None
+        print(
+            f"[INGEST][TIME] {instrument}: raw={raw_feed} effective={effective_feed} "
+            f"server={server_now} raw_vs_server={raw_delta}s "
+            f"effective_vs_server={effective_delta}s correction={FEED_TIME_CORRECTION_SEC}s"
+        )
     try:
         session = await _ensure_ingest_http_session()
         async with session.post(url, headers=headers, json=payload) as resp:
@@ -332,11 +375,14 @@ def candle_to_dict(candle) -> Dict[str, Any]:
     """Candle model -> dict для ingest."""
     ts = candle.timestamp
     if hasattr(ts, "timestamp"):
-        time_ = int(ts.timestamp())
+        raw_unix = int(ts.timestamp())
     else:
-        time_ = int(ts)
+        raw_unix = int(ts)
+    effective_unix = _to_effective_candle_time(raw_unix)
     return {
-        "time": time_,
+        "time": effective_unix,
+        "raw_feed_time": raw_unix,
+        "effective_feed_time": effective_unix,
         "open": float(candle.open),
         "high": float(candle.high),
         "low": float(candle.low),
@@ -439,13 +485,16 @@ async def run_instrument_worker(
                                     continue
                                 last_stream_activity_at = time.time()
                                 tick_ts = _to_unix_seconds(tick_data[1])
+                                tick_raw_ts = _to_raw_int(tick_data[1])
                                 tick_price = float(tick_data[2])
-                                candle_ts = (tick_ts // M1_PERIOD) * M1_PERIOD
+                                candle_ts = _to_effective_candle_time(tick_ts)
                                 dv = _tick_volume_delta(tick_data)
 
                                 if candle_ts not in current_candles:
                                     current_candles[candle_ts] = {
                                         "time": candle_ts,
+                                        "raw_feed_time": tick_raw_ts,
+                                        "effective_feed_time": candle_ts,
                                         "open": tick_price,
                                         "high": tick_price,
                                         "low": tick_price,
@@ -459,6 +508,8 @@ async def run_instrument_worker(
                                     c["high"] = max(c["high"], tick_price)
                                     c["low"] = min(c["low"], tick_price)
                                     c["close"] = tick_price
+                                    c["raw_feed_time"] = tick_raw_ts
+                                    c["effective_feed_time"] = candle_ts
                                     c["tick_count"] = c.get("tick_count", 0) + 1
                                     c["volume"] = float(c.get("volume", 0)) + float(dv)
                                     c["ohlc_source"] = "ticks"
@@ -484,15 +535,21 @@ async def run_instrument_worker(
                         if "candles" in data:
                             for cd in data.get("candles", []):
                                 if isinstance(cd, (list, tuple)) and len(cd) >= 5:
-                                    ts = _to_unix_seconds(cd[0])
+                                    raw_ts_sec = _to_unix_seconds(cd[0])
+                                    ts = _to_effective_candle_time(raw_ts_sec)
+                                    raw_ts = _to_raw_int(cd[0])
                                     vol = _volume_from_candle_array(cd)
                                     ex = current_candles.get(ts)
                                     if ex and ex.get("tick_count", 0) > 0:
                                         if vol > float(ex.get("volume", 0)):
                                             ex["volume"] = vol
+                                        ex["raw_feed_time"] = raw_ts
+                                        ex["effective_feed_time"] = ts
                                         continue
                                     current_candles[ts] = {
                                         "time": ts,
+                                        "raw_feed_time": raw_ts,
+                                        "effective_feed_time": ts,
                                         "open": float(cd[1]),
                                         "close": float(cd[2]),
                                         "high": float(cd[3]),
@@ -505,12 +562,15 @@ async def run_instrument_worker(
                             for tick in data.get("history", []):
                                 if isinstance(tick, (list, tuple)) and len(tick) >= 2:
                                     ts = _to_unix_seconds(tick[0])
-                                    candle_ts = (ts // M1_PERIOD) * M1_PERIOD
+                                    raw_ts = _to_raw_int(tick[0])
+                                    candle_ts = _to_effective_candle_time(ts)
                                     val = float(tick[1])
                                     dv = _tick_volume_delta(tick)
                                     if candle_ts not in current_candles:
                                         current_candles[candle_ts] = {
                                             "time": candle_ts,
+                                            "raw_feed_time": raw_ts,
+                                            "effective_feed_time": candle_ts,
                                             "open": val,
                                             "high": val,
                                             "low": val,
@@ -524,6 +584,8 @@ async def run_instrument_worker(
                                         c["high"] = max(c.get("high", val), val)
                                         c["low"] = min(c.get("low", val), val)
                                         c["close"] = val
+                                        c["raw_feed_time"] = raw_ts
+                                        c["effective_feed_time"] = candle_ts
                                         c["tick_count"] = c.get("tick_count", 0) + 1
                                         c["volume"] = float(c.get("volume", 0)) + float(dv)
                                         c["ohlc_source"] = "ticks"
@@ -650,9 +712,13 @@ async def run_instrument_worker(
                                     fv = float(cd.get("volume", 0))
                                     if fv > float(ex.get("volume", 0)):
                                         ex["volume"] = fv
+                                    ex["raw_feed_time"] = int(cd.get("raw_feed_time", ts))
+                                    ex["effective_feed_time"] = int(cd.get("effective_feed_time", ts))
                                     continue
                                 current_candles[ts] = {
                                     "time": ts,
+                                    "raw_feed_time": int(cd.get("raw_feed_time", ts)),
+                                    "effective_feed_time": int(cd.get("effective_feed_time", ts)),
                                     "open": cd["open"],
                                     "high": cd["high"],
                                     "low": cd["low"],

@@ -14,6 +14,10 @@ class CurrentCandleCacheService
         $payload = [
             'instrument' => $instrument,
             'time' => (int) ($candle['time'] ?? 0),
+            // Оригинальный timestamp от feed (до любых нормализаций) — нужен для time-debug.
+            'raw_feed_time' => (int) ($candle['raw_feed_time'] ?? 0),
+            // Фактически используемый timestamp в системе (для partial обычно равен `time`).
+            'effective_feed_time' => (int) ($candle['effective_feed_time'] ?? ($candle['time'] ?? 0)),
             'open' => (float) ($candle['open'] ?? 0),
             'high' => (float) ($candle['high'] ?? 0),
             'low' => (float) ($candle['low'] ?? 0),
@@ -21,6 +25,8 @@ class CurrentCandleCacheService
             'volume' => (float) ($candle['volume'] ?? 0),
             'is_partial' => true,
             'updated_at' => (int) ($candle['updated_at'] ?? time()),
+            // Явно фиксируем момент ingest на backend, чтобы видеть лаг feed -> API.
+            'ingest_received_at' => (int) ($candle['ingest_received_at'] ?? time()),
         ];
 
         try {
@@ -49,6 +55,8 @@ class CurrentCandleCacheService
         return [
             'instrument' => (string) ($decoded['instrument'] ?? $instrument),
             'time' => (int) ($decoded['time'] ?? 0),
+            'raw_feed_time' => (int) ($decoded['raw_feed_time'] ?? 0),
+            'effective_feed_time' => (int) ($decoded['effective_feed_time'] ?? ($decoded['time'] ?? 0)),
             'open' => (float) ($decoded['open'] ?? 0),
             'high' => (float) ($decoded['high'] ?? 0),
             'low' => (float) ($decoded['low'] ?? 0),
@@ -56,6 +64,7 @@ class CurrentCandleCacheService
             'volume' => (float) ($decoded['volume'] ?? 0),
             'is_partial' => true,
             'updated_at' => (int) ($decoded['updated_at'] ?? 0),
+            'ingest_received_at' => (int) ($decoded['ingest_received_at'] ?? 0),
         ];
     }
 

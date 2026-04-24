@@ -116,6 +116,10 @@ class ProxyInstrumentController extends Controller
         $data = $request->validate([
             'instrument' => 'required|string|max:63',
             'time' => 'required|integer|min:1',
+            // Сырой timestamp как пришёл от feed (для диагностики рассинхрона).
+            'raw_feed_time' => 'nullable|integer|min:1',
+            // Явный effective timestamp (если ingest применяет нормализацию на своей стороне).
+            'effective_feed_time' => 'nullable|integer|min:1',
             'open' => 'required|numeric',
             'high' => 'required|numeric',
             'low' => 'required|numeric',
@@ -129,12 +133,20 @@ class ProxyInstrumentController extends Controller
         // Частичная свеча должна попадать в тот же UTC timeline, что и закрытые свечи:
         // никаких промежуточных компенсаторов и ручных смещений не применяем.
         $data['time'] = max(1, (int) $data['time']);
+        // Для time-debug сохраняем в кэше обе точки зрения:
+        // - raw_feed_time: как прислал источник;
+        // - effective_feed_time: как этот момент используется платформой.
+        $data['raw_feed_time'] = max(0, (int) ($data['raw_feed_time'] ?? 0));
+        $data['effective_feed_time'] = max(1, (int) ($data['effective_feed_time'] ?? $data['time']));
+        $data['ingest_received_at'] = time();
         $cache->putPartial($data['instrument'], $data, $ttlSec);
 
         return response()->json([
             'ok' => true,
             'instrument' => $data['instrument'],
             'time' => (int) $data['time'],
+            'raw_feed_time' => (int) $data['raw_feed_time'],
+            'effective_feed_time' => (int) $data['effective_feed_time'],
             'is_partial' => true,
         ]);
     }
