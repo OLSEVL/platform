@@ -121,17 +121,15 @@ Artisan::command('bots:feshan-bootstrap', function () {
             'config' => [
                 'count' => 2500,
                 'expiry_sec' => 300,
-                'min_confidence' => 0.55,
+                // Базовый профиль под стратегию "liquidity sweep".
+                'min_confidence' => 0.60,
+                'min_payout' => 80.0,
                 'stale_after_sec' => 45,
-                // Дефолтные триггеры: core включены, подтверждения (absorption/imbalance) выключены.
-                'trigger_bias_240' => true,
-                'trigger_bias_60' => true,
-                'trigger_h1_candle' => true,
-                'trigger_m5_align' => true,
-                'trigger_m1_candle' => true,
-                'trigger_absorption' => false,
-                'trigger_imbalance' => false,
-                'version' => 'feshan_mtf_v1',
+                'liquidity_lookback' => 20,
+                'sweep_min_wick_ratio' => 0.35,
+                'sweep_min_reclaim_ratio' => 0.12,
+                'entry_extrema_distance' => 0.12,
+                'version' => 'feshan_liquidity_v2',
             ],
         ]
     );

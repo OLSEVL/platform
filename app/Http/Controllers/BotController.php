@@ -292,35 +292,30 @@ class BotController extends Controller
             ]);
             unset($config['streak_len'], $config['confirm_streak_len']);
         } elseif ($bot->type === 'feshan') {
-            // Feshan: MTF-стратегия; экспирация по ТЗ 1–5 мин (60–300 с), допускаем до 15 мин для ручных тестов.
+            // Feshan v2: вход только по снятию ликвидности (liquidity sweep) на M1.
             $extra = $request->validate([
                 'count' => ['required', 'integer', 'min:10', 'max:5000'],
                 'expiry_sec' => ['required', 'integer', 'min:60', 'max:900'],
                 'min_confidence' => ['required', 'numeric', 'min:0', 'max:1'],
+                // Экономический фильтр: бот торгует только пары с payout не ниже указанного порога.
+                'min_payout' => ['required', 'numeric', 'min:0', 'max:100'],
+                'liquidity_lookback' => ['required', 'integer', 'min:5', 'max:50'],
+                'sweep_min_wick_ratio' => ['required', 'numeric', 'min:0.05', 'max:0.8'],
+                'sweep_min_reclaim_ratio' => ['required', 'numeric', 'min:0.05', 'max:0.8'],
+                'entry_extrema_distance' => ['required', 'numeric', 'min:0.02', 'max:0.4'],
                 'stale_after_sec' => ['required', 'integer', 'min:5', 'max:600'],
-                // Каждый trigger_* — включатель/выключатель конкретного условия входа Feshan.
-                'trigger_bias_240' => ['sometimes', 'boolean'],
-                'trigger_bias_60' => ['sometimes', 'boolean'],
-                'trigger_h1_candle' => ['sometimes', 'boolean'],
-                'trigger_m5_align' => ['sometimes', 'boolean'],
-                'trigger_m1_candle' => ['sometimes', 'boolean'],
-                'trigger_absorption' => ['sometimes', 'boolean'],
-                'trigger_imbalance' => ['sometimes', 'boolean'],
             ]);
             $config = array_merge($bot->config ?? [], [
                 'count' => (int) $extra['count'],
                 'expiry_sec' => (int) $extra['expiry_sec'],
                 'min_confidence' => (float) $extra['min_confidence'],
+                'min_payout' => (float) $extra['min_payout'],
+                'liquidity_lookback' => (int) $extra['liquidity_lookback'],
+                'sweep_min_wick_ratio' => (float) $extra['sweep_min_wick_ratio'],
+                'sweep_min_reclaim_ratio' => (float) $extra['sweep_min_reclaim_ratio'],
+                'entry_extrema_distance' => (float) $extra['entry_extrema_distance'],
                 'stale_after_sec' => (int) $extra['stale_after_sec'],
-                // Для чекбоксов HTML отсутствие ключа = false, поэтому читаем через boolean().
-                'trigger_bias_240' => $request->boolean('trigger_bias_240'),
-                'trigger_bias_60' => $request->boolean('trigger_bias_60'),
-                'trigger_h1_candle' => $request->boolean('trigger_h1_candle'),
-                'trigger_m5_align' => $request->boolean('trigger_m5_align'),
-                'trigger_m1_candle' => $request->boolean('trigger_m1_candle'),
-                'trigger_absorption' => $request->boolean('trigger_absorption'),
-                'trigger_imbalance' => $request->boolean('trigger_imbalance'),
-                'version' => 'feshan_mtf_v1',
+                'version' => 'feshan_liquidity_v2',
             ]);
         } else {
             $json = $request->validate([
@@ -457,14 +452,21 @@ class BotController extends Controller
         if ($scope !== 'hour' && $scope !== 'all') {
             $scope = 'all';
         }
+        // Опциональная пара для отдельного winrate в блоке "Статистика".
+        // Если не передана, считаем метрику как "нет выбранного инструмента".
+        $instrument = (string) $request->query('instrument', '');
+        if ($instrument !== '' && mb_strlen($instrument) > 64) {
+            $instrument = mb_substr($instrument, 0, 64);
+        }
 
         $stats = $scope === 'hour'
-            ? $this->botStatisticsForLastHour($bot)
-            : $this->botStatisticsAllTime($bot);
+            ? $this->botStatisticsForLastHour($bot, $instrument !== '' ? $instrument : null)
+            : $this->botStatisticsAllTime($bot, $instrument !== '' ? $instrument : null);
 
         return response()->json([
             'stats' => $stats,
             'scope' => $scope,
+            'instrument' => $instrument !== '' ? $instrument : null,
             'server_time' => now()->toIso8601String(),
         ]);
     }
@@ -472,9 +474,9 @@ class BotController extends Controller
     /**
      * Статистика по всем сделкам бота (прежнее поведение правой панели до фильтра по часу).
      *
-     * @return array{total: int, open: int, wins: int, losses: int, winrate: float|null}
+     * @return array{total: int, open: int, wins: int, losses: int, winrate: float|null, instrument_winrate: float|null}
      */
-    private function botStatisticsAllTime(Bot $bot): array
+    private function botStatisticsAllTime(Bot $bot, ?string $instrument = null): array
     {
         $raw = $bot->trades()
             ->selectRaw('
@@ -495,6 +497,7 @@ class BotController extends Controller
         $losses = (int) ($raw?->losses ?? 0);
         $decisiveTrades = $wins + $losses;
         $winrate = $decisiveTrades > 0 ? round(($wins * 100) / $decisiveTrades, 2) : null;
+        $instrumentWinrate = $this->instrumentWinrateAllTime($bot, $instrument);
 
         return [
             'total' => $total,
@@ -502,6 +505,7 @@ class BotController extends Controller
             'wins' => $wins,
             'losses' => $losses,
             'winrate' => $winrate,
+            'instrument_winrate' => $instrumentWinrate,
         ];
     }
 
@@ -509,9 +513,9 @@ class BotController extends Controller
      * Метрики блока «Статистика» на странице бота: скользящее окно 60 минут от текущего момента.
      * Всего / открыто — по времени входа; wins/losses — по settled_at (момент фиксации итога на сервере).
      *
-     * @return array{total: int, open: int, wins: int, losses: int, winrate: float|null}
+     * @return array{total: int, open: int, wins: int, losses: int, winrate: float|null, instrument_winrate: float|null}
      */
-    private function botStatisticsForLastHour(Bot $bot): array
+    private function botStatisticsForLastHour(Bot $bot, ?string $instrument = null): array
     {
         $since = now()->subHour();
 
@@ -531,6 +535,7 @@ class BotController extends Controller
 
         $decisiveTrades = $wins + $losses;
         $winrate = $decisiveTrades > 0 ? round(($wins * 100) / $decisiveTrades, 2) : null;
+        $instrumentWinrate = $this->instrumentWinrateLastHour($bot, $instrument, $since);
 
         return [
             'total' => $total,
@@ -538,7 +543,59 @@ class BotController extends Controller
             'wins' => $wins,
             'losses' => $losses,
             'winrate' => $winrate,
+            'instrument_winrate' => $instrumentWinrate,
         ];
+    }
+
+    private function instrumentWinrateAllTime(Bot $bot, ?string $instrument): ?float
+    {
+        if ($instrument === null || $instrument === '') {
+            return null;
+        }
+
+        $row = $bot->trades()
+            ->where('instrument', $instrument)
+            ->whereIn('result', [BotTrade::RESULT_WIN, BotTrade::RESULT_LOSS])
+            ->selectRaw('
+                SUM(CASE WHEN result = ? THEN 1 ELSE 0 END) as wins,
+                SUM(CASE WHEN result = ? THEN 1 ELSE 0 END) as losses
+            ', [
+                BotTrade::RESULT_WIN,
+                BotTrade::RESULT_LOSS,
+            ])
+            ->first();
+
+        $wins = (int) ($row?->wins ?? 0);
+        $losses = (int) ($row?->losses ?? 0);
+        $total = $wins + $losses;
+
+        return $total > 0 ? round(($wins * 100) / $total, 2) : null;
+    }
+
+    private function instrumentWinrateLastHour(Bot $bot, ?string $instrument, Carbon $since): ?float
+    {
+        if ($instrument === null || $instrument === '') {
+            return null;
+        }
+
+        $row = $bot->trades()
+            ->where('instrument', $instrument)
+            ->where('settled_at', '>=', $since)
+            ->whereIn('result', [BotTrade::RESULT_WIN, BotTrade::RESULT_LOSS])
+            ->selectRaw('
+                SUM(CASE WHEN result = ? THEN 1 ELSE 0 END) as wins,
+                SUM(CASE WHEN result = ? THEN 1 ELSE 0 END) as losses
+            ', [
+                BotTrade::RESULT_WIN,
+                BotTrade::RESULT_LOSS,
+            ])
+            ->first();
+
+        $wins = (int) ($row?->wins ?? 0);
+        $losses = (int) ($row?->losses ?? 0);
+        $total = $wins + $losses;
+
+        return $total > 0 ? round(($wins * 100) / $total, 2) : null;
     }
 
     public function show(Bot $bot): View

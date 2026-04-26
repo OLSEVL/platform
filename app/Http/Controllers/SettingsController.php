@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\PocketInstrument;
 use App\Models\ProxyEndpoint;
 use App\Services\ProxyRotationService;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Client\RequestException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
@@ -248,5 +249,98 @@ class SettingsController extends Controller
 
         // Защищаемся от некорректных значений при ручном редактировании БД.
         return max(1, min(1440, $minutes));
+    }
+
+    public function testQuickProxyAjax(ProxyEndpoint $proxy): JsonResponse
+    {
+        return $this->runProxyHealthCheck($proxy, 1, 8);
+    }
+
+    public function testDeepProxyAjax(ProxyEndpoint $proxy): JsonResponse
+    {
+        // Deep-check без очереди: синхронно в одном AJAX-запросе с окном 45 секунд.
+        return $this->runProxyHealthCheck($proxy, 45, 8);
+    }
+
+    private function runProxyHealthCheck(ProxyEndpoint $proxy, int $durationSec, int $requestTimeoutSec): JsonResponse
+    {
+        $durationSec = max(1, $durationSec);
+        $requestTimeoutSec = max(1, $requestTimeoutSec);
+        $startedAt = microtime(true);
+        $loopStartedAt = time();
+        $successCount = 0;
+        $lastLatencyMs = null;
+        $lastStatusCode = null;
+
+        try {
+            while ((time() - $loopStartedAt) < $durationSec) {
+                $singleRequestStartedAt = microtime(true);
+
+                $response = Http::timeout($requestTimeoutSec)
+                    ->withOptions([
+                        'proxy' => $proxy->url,
+                        'verify' => false,
+                    ])
+                    ->acceptJson()
+                    ->get('https://api.ipify.org?format=json');
+
+                $lastLatencyMs = (int) round((microtime(true) - $singleRequestStartedAt) * 1000);
+                $lastStatusCode = (int) $response->status();
+
+                if ($lastStatusCode === 200) {
+                    $successCount++;
+                }
+
+                if ($durationSec === 1) {
+                    break;
+                }
+
+                usleep(800000);
+            }
+        } catch (\Throwable) {
+            return response()->json([
+                'ok' => true,
+                'status' => 'fail',
+                'details' => 'fail - timeout/conn error/auth error.',
+                'latency_ms' => $lastLatencyMs,
+                'duration_sec' => (int) round(microtime(true) - $startedAt),
+                'events_count' => $successCount,
+                'http_status' => $lastStatusCode,
+            ]);
+        }
+
+        $classification = $this->classifyProxyCheckResult($lastStatusCode, $lastLatencyMs);
+
+        return response()->json([
+            'ok' => true,
+            'status' => $classification['status'],
+            'details' => $classification['details'],
+            'latency_ms' => $lastLatencyMs,
+            'duration_sec' => (int) round(microtime(true) - $startedAt),
+            'events_count' => $successCount,
+            'http_status' => $lastStatusCode,
+        ]);
+    }
+
+    private function classifyProxyCheckResult(?int $statusCode, ?int $latencyMs): array
+    {
+        if ($statusCode !== 200) {
+            return [
+                'status' => 'fail',
+                'details' => 'fail - timeout/conn error/auth error.',
+            ];
+        }
+
+        if (($latencyMs ?? PHP_INT_MAX) < 2000) {
+            return [
+                'status' => 'ok',
+                'details' => 'ok - ответ 200 и latency в разумном диапазоне.',
+            ];
+        }
+
+        return [
+            'status' => 'warn',
+            'details' => 'warn - 200, но медленно.',
+        ];
     }
 }

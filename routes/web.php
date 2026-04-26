@@ -46,5 +46,7 @@ Route::middleware('auth')->group(function () {
     Route::post('/settings/proxies/auto-rotation', [SettingsController::class, 'updateProxyRotation'])->name('settings.proxies.auto-rotation');
     Route::post('/settings/proxies/{proxy}/reactivate', [SettingsController::class, 'reactivateProxy'])->name('settings.proxies.reactivate');
     Route::post('/settings/proxies/reactivate-all', [SettingsController::class, 'reactivateAllProblemProxies'])->name('settings.proxies.reactivate-all');
+    Route::post('/settings/proxies/{proxy}/test-quick-ajax', [SettingsController::class, 'testQuickProxyAjax'])->name('settings.proxies.test-quick-ajax');
+    Route::post('/settings/proxies/{proxy}/test-deep-ajax', [SettingsController::class, 'testDeepProxyAjax'])->name('settings.proxies.test-deep-ajax');
     Route::post('/settings/payout/monitoring', [SettingsController::class, 'updatePayoutMonitoring'])->name('settings.payout.monitoring');
 });

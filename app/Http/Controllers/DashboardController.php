@@ -137,14 +137,15 @@ class DashboardController extends Controller
         $request->validate([
             'instrument' => 'required|string|max:63',
             'timeframe' => ['nullable', 'integer', Rule::in(CandleService::DASHBOARD_TIMEFRAMES)],
-            'limit' => 'nullable|integer|min:1|max:2000',
+            // Разрешаем более длинную историю, чтобы на графике было видно больше свечей.
+            'limit' => 'nullable|integer|min:1|max:5000',
             'before' => 'nullable|integer',
             'since' => 'nullable|integer|min:0',
             'include_partial' => 'nullable|boolean',
         ]);
         $instrument = $request->input('instrument');
         $timeframe = (int) ($request->input('timeframe') ?? 1);
-        $limit = (int) ($request->input('limit') ?? 1440);
+        $limit = (int) ($request->input('limit') ?? 3000);
         $before = $request->input('before') !== null ? (int) $request->input('before') : null;
         $since = $request->input('since') !== null ? (int) $request->input('since') : null;
         $includePartial = (bool) $request->boolean('include_partial', false);

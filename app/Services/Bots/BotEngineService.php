@@ -28,9 +28,32 @@ class BotEngineService
         $count = $runtime['count'];
         $expirySec = $runtime['expiry_sec'];
         $minConfidence = $runtime['min_confidence'];
+        $minPayout = $runtime['min_payout'];
         $staleAfterSec = $runtime['stale_after_sec'];
         $minClosedBars = $runtime['min_closed_bars'];
         $dedupeBucketSec = $runtime['dedupe_bucket_sec'];
+        // Опциональный whitelist инструментов для "pro" режима:
+        // если задан в config.allowed_instruments, бот сканирует только их.
+        // Это позволяет исключить "шумные" пары и концентрироваться на стабильных инструментах.
+        $allowedInstrumentSet = [];
+        if (is_array($config['allowed_instruments'] ?? null)) {
+            foreach ($config['allowed_instruments'] as $rawInstrument) {
+                $instrumentKey = trim((string) $rawInstrument);
+                if ($instrumentKey !== '') {
+                    $allowedInstrumentSet[$instrumentKey] = true;
+                }
+            }
+        }
+        // Опциональный blacklist инструментов для отсечения слабых пар.
+        $blockedInstrumentSet = [];
+        if (is_array($config['blocked_instruments'] ?? null)) {
+            foreach ($config['blocked_instruments'] as $rawInstrument) {
+                $instrumentKey = trim((string) $rawInstrument);
+                if ($instrumentKey !== '') {
+                    $blockedInstrumentSet[$instrumentKey] = true;
+                }
+            }
+        }
 
         $strategy = $this->resolveStrategy($bot->type);
         if (! $strategy) {
@@ -46,10 +69,22 @@ class BotEngineService
         $processed = 0;
         $signals = 0;
         $trades = 0;
-
         foreach ($instruments as $instrumentRow) {
             $instrument = (string) $instrumentRow->instrument;
+            if ($allowedInstrumentSet !== [] && ! isset($allowedInstrumentSet[$instrument])) {
+                continue;
+            }
+            if (isset($blockedInstrumentSet[$instrument])) {
+                continue;
+            }
             $processed++;
+            // Профессиональный риск-фильтр по экономике сделки:
+            // если текущий payout ниже порога, математическое ожидание становится слишком слабым,
+            // поэтому такой инструмент пропускаем до любого технического анализа.
+            $currentPayout = $instrumentRow->current_payout !== null ? (float) $instrumentRow->current_payout : null;
+            if ($currentPayout === null || $currentPayout < $minPayout) {
+                continue;
+            }
 
             $series = $this->botDataService->series($instrument, $count, true, $staleAfterSec);
             $closed = $series['closed'];
@@ -61,7 +96,6 @@ class BotEngineService
             $mtf = [];
             if ($bot->type === 'feshan') {
                 $mtf = $this->botDataService->mtfSeries($instrument, [
-                    240 => 40,
                     60 => 56,
                     30 => 72,
                     15 => 96,
@@ -70,12 +104,20 @@ class BotEngineService
             }
             $decision = $strategy->analyze($closed, $partial, [
                 'instrument' => $instrument,
-                'payout' => $instrumentRow->current_payout !== null ? (float) $instrumentRow->current_payout : null,
+                'payout' => $currentPayout,
                 'config' => $config,
                 'mtf' => $mtf,
             ]);
             if (! $decision) {
                 continue;
+            }
+
+            // Базово используем expiry из runtime-настроек.
+            // Для Feshan разрешаем стратегии вернуть адаптивную экспирацию и
+            // безопасно ограничиваем её диапазоном 2..5 минут.
+            $decisionExpirySec = $expirySec;
+            if ($bot->type === 'feshan' && isset($decision['expiry_sec'])) {
+                $decisionExpirySec = max(120, min(300, (int) $decision['expiry_sec']));
             }
 
             $confidence = (float) ($decision['confidence'] ?? 0);
@@ -88,7 +130,12 @@ class BotEngineService
                 continue;
             }
 
-            $bucket = intdiv(time(), $dedupeBucketSec) * $dedupeBucketSec;
+            // Dedupe-окно привязываем к фактической экспирации конкретного сигнала,
+            // чтобы логика "один сигнал на окно" корректно работала и для 2/3/4/5 минут.
+            $signalDedupeBucketSec = $bot->type === 'feshan'
+                ? max(60, min(900, $decisionExpirySec))
+                : $dedupeBucketSec;
+            $bucket = intdiv(time(), $signalDedupeBucketSec) * $signalDedupeBucketSec;
             $dedupeKey = sprintf('%d:%s:%d:%s', $bot->id, $instrument, $bucket, $side);
 
             if (BotSignal::query()->where('dedupe_key', $dedupeKey)->exists()) {
@@ -109,7 +156,7 @@ class BotEngineService
             // Поэтому signal_at/entry_time/expiry_time фиксируем тоже в UTC, чтобы не получать
             // искусственный +3 часа в raw TIMESTAMP полях.
             $entryAt = now();
-            $expiryAt = $entryAt->copy()->addSeconds($expirySec);
+            $expiryAt = $entryAt->copy()->addSeconds($decisionExpirySec);
             $payoutSnapshot = $instrumentRow->current_payout !== null ? (float) $instrumentRow->current_payout : null;
 
             DB::transaction(function () use (
@@ -120,6 +167,7 @@ class BotEngineService
                 $payoutSnapshot,
                 $entryAt,
                 $expiryAt,
+                $decisionExpirySec,
                 $decision,
                 $dedupeKey,
                 $entryPrice,
@@ -155,6 +203,9 @@ class BotEngineService
                     'meta_json' => [
                         'confidence' => $confidence,
                         'decision_version' => $signal->decision_version,
+                        // Сохраняем примененную экспирацию, чтобы потом можно было
+                        // анализировать winrate по длине сделки (2/3/4/5 минут).
+                        'expiry_sec_used' => $decisionExpirySec,
                     ],
                 ]);
 
@@ -229,7 +280,6 @@ class BotEngineService
         if ($bot->type === 'feshan') {
             // Передаём те же MTF-агрегаты, что и в реальном scan, чтобы объяснение совпадало с боевой логикой.
             $mtf = $this->botDataService->mtfSeries($instrument, [
-                240 => 40,
                 60 => 56,
                 30 => 72,
                 15 => 96,
@@ -244,24 +294,16 @@ class BotEngineService
             'mtf' => $mtf,
         ]);
         if (! $decision) {
-            $feshanDebug = $bot->type === 'feshan'
-                ? $this->feshanTriggerDiagnostics($closed, $mtf, $runtime['config'])
-                : null;
-            $feshanUnmet = is_array($feshanDebug['unmet'] ?? null) ? $feshanDebug['unmet'] : [];
-            $feshanPassed = is_array($feshanDebug['passed'] ?? null) ? $feshanDebug['passed'] : [];
-
             return [
                 'instrument' => $instrument,
                 'can_enter' => false,
                 'summary' => 'Стратегия не видит валидного сетапа на текущем баре.',
                 'analysis_text' => $bot->type === 'feshan'
-                    ? 'Feshan: детальная проверка триггеров выполнена. Смотрите блоки "Причины / триггеры" и "Что блокирует вход".'
+                    ? 'Feshan: активный режим liquidity sweep. На текущем баре не найдено валидного снятия ликвидности с возвратом в диапазон.'
                     : '',
-                'reasons_short' => $feshanPassed,
-                'blockers' => $feshanUnmet !== []
-                    ? $feshanUnmet
-                    : ['Нет триггера входа по условиям стратегии.'],
-                'features' => is_array($feshanDebug['features'] ?? null) ? $feshanDebug['features'] : [],
+                'reasons_short' => [],
+                'blockers' => ['Нет триггера входа по условиям стратегии.'],
+                'features' => [],
             ];
         }
 
@@ -285,6 +327,14 @@ class BotEngineService
                 'Confidence %.2f ниже порога %.2f.',
                 $confidence,
                 $runtime['min_confidence']
+            );
+        }
+        $currentPayout = $instrumentRow->current_payout !== null ? (float) $instrumentRow->current_payout : null;
+        if ($currentPayout === null || $currentPayout < $runtime['min_payout']) {
+            $blockers[] = sprintf(
+                'Payout %.2f%% ниже порога %.2f%%.',
+                $currentPayout ?? 0.0,
+                $runtime['min_payout']
             );
         }
         if ($dedupeExists) {
@@ -313,6 +363,8 @@ class BotEngineService
                 'dedupe_bucket_sec' => $runtime['dedupe_bucket_sec'],
                 'dedupe_exists' => $dedupeExists,
                 'has_open_trade' => $hasOpenTrade,
+                'payout' => $currentPayout,
+                'min_payout' => $runtime['min_payout'],
                 'closed_bars' => count($closed),
                 'min_closed_bars' => $runtime['min_closed_bars'],
             ],
@@ -322,7 +374,7 @@ class BotEngineService
     /**
      * Единый расчёт runtime-параметров, чтобы scan и объяснение работали по одинаковым правилам.
      *
-     * @return array{config:array<string,mixed>,count:int,expiry_sec:int,min_confidence:float,stale_after_sec:int,min_closed_bars:int,dedupe_bucket_sec:int}
+     * @return array{config:array<string,mixed>,count:int,expiry_sec:int,min_confidence:float,min_payout:float,stale_after_sec:int,min_closed_bars:int,dedupe_bucket_sec:int}
      */
     private function runtimeSettings(Bot $bot): array
     {
@@ -334,7 +386,10 @@ class BotEngineService
             'feshan' => (int) ($config['expiry_sec'] ?? 300),
             default => (int) ($config['expiry_sec'] ?? 300),
         };
-        $minConfidence = (float) ($config['min_confidence'] ?? 0.55);
+        // Для liquidity sweep базовый дефолт confidence ниже, иначе стратегия чрезмерно "молчит".
+        $minConfidence = (float) ($config['min_confidence'] ?? ($bot->type === 'feshan' ? 0.6 : 0.55));
+        // Минимальный payout как экономический фильтр качества входа.
+        $minPayout = (float) ($config['min_payout'] ?? ($bot->type === 'feshan' ? 80.0 : 0.0));
         $staleAfterSec = (int) ($config['stale_after_sec'] ?? 30);
         $minClosedBars = match ($bot->type) {
             'feshan' => 40,
@@ -343,12 +398,12 @@ class BotEngineService
         $dedupeBucketSec = $bot->type === 'feshan'
             ? max(60, min(900, $expirySec))
             : 60;
-
         return [
             'config' => $config,
             'count' => $count,
             'expiry_sec' => $expirySec,
             'min_confidence' => $minConfidence,
+            'min_payout' => $minPayout,
             'stale_after_sec' => $staleAfterSec,
             'min_closed_bars' => $minClosedBars,
             'dedupe_bucket_sec' => $dedupeBucketSec,
@@ -374,11 +429,9 @@ class BotEngineService
         }
 
         $lastM1 = $closed[array_key_last($closed)];
-        $bars240 = $mtf['240'] ?? [];
         $bars60 = $mtf['60'] ?? [];
         $bars5 = $mtf['5'] ?? [];
 
-        $bias240 = $this->directionBiasByClose($bars240, 8);
         $bias60 = $this->directionBiasByClose($bars60, 6);
         $h1Last = $bars60 !== [] ? $bars60[array_key_last($bars60)] : null;
         $h1Bull = is_array($h1Last) ? $this->isBullCandle($h1Last) : false;
@@ -387,38 +440,43 @@ class BotEngineService
         $m5AlignDown = $this->alignedCountByDirection($bars5, 3, false);
         $m1Bull = $this->isBullCandle($lastM1);
         $m1Bear = $this->isBearCandle($lastM1);
+        $prevM1 = count($closed) >= 2 ? $closed[array_key_last($closed) - 1] : $lastM1;
         $absorbBull = $m1Bull && $this->lowerWickRatioByCandle($lastM1) >= 0.45;
         $absorbBear = $m1Bear && $this->upperWickRatioByCandle($lastM1) >= 0.45;
         $imb5Bull = $this->lastBullishImbalanceByBars($bars5);
         $imb5Bear = $this->lastBearishImbalanceByBars($bars5);
+        $m1BodyRatio = $this->bodyRatioByCandle($lastM1);
+        $m1IsDoji = $m1BodyRatio < 0.2;
+        $m1MomentumBull = $m1Bull && $this->isBullCandle($prevM1);
+        $m1MomentumBear = $m1Bear && $this->isBearCandle($prevM1);
 
         // Учитываем включатели из настроек бота, чтобы диагностика строго совпадала с рабочим входом.
-        $useBias240 = (bool) ($config['trigger_bias_240'] ?? true);
         $useBias60 = (bool) ($config['trigger_bias_60'] ?? true);
         $useH1Candle = (bool) ($config['trigger_h1_candle'] ?? true);
         $useM5Align = (bool) ($config['trigger_m5_align'] ?? true);
         $useM1Candle = (bool) ($config['trigger_m1_candle'] ?? true);
         $useAbsorb = (bool) ($config['trigger_absorption'] ?? false);
         $useImbalance = (bool) ($config['trigger_imbalance'] ?? false);
+        $strictMode = (bool) ($config['strict_mode'] ?? true);
 
         // Явно считаем оба триггера, чтобы пользователь видел, какой сценарий почти собран.
         $callChecks = [
-            '4H bias = up' => ! $useBias240 || $bias240 === 'up',
-            '1H bias != down' => ! $useBias60 || ($bias60 !== 'down' && $bias60 !== null),
+            '1H bias = up' => ! $useBias60 || $bias60 === 'up',
             'последняя 1H свеча bullish' => ! $useH1Candle || $h1Bull,
-            '5M aligned up >= 2 из 3' => ! $useM5Align || $m5AlignUp >= 2,
+            '5M aligned up >= '.($strictMode ? '3 из 3' : '2 из 3') => ! $useM5Align || $m5AlignUp >= ($strictMode ? 3 : 2),
             'последняя M1 bullish' => ! $useM1Candle || $m1Bull,
             'M1 absorption bullish' => ! $useAbsorb || $absorbBull,
             '5M imbalance bullish' => ! $useImbalance || $imb5Bull,
+            'Strict M1 quality bullish' => ! $strictMode || (! $m1IsDoji && $m1BodyRatio >= 0.55 && $m1MomentumBull),
         ];
         $putChecks = [
-            '4H bias = down' => ! $useBias240 || $bias240 === 'down',
-            '1H bias != up' => ! $useBias60 || ($bias60 !== 'up' && $bias60 !== null),
+            '1H bias = down' => ! $useBias60 || $bias60 === 'down',
             'последняя 1H свеча bearish' => ! $useH1Candle || $h1Bear,
-            '5M aligned down >= 2 из 3' => ! $useM5Align || $m5AlignDown >= 2,
+            '5M aligned down >= '.($strictMode ? '3 из 3' : '2 из 3') => ! $useM5Align || $m5AlignDown >= ($strictMode ? 3 : 2),
             'последняя M1 bearish' => ! $useM1Candle || $m1Bear,
             'M1 absorption bearish' => ! $useAbsorb || $absorbBear,
             '5M imbalance bearish' => ! $useImbalance || $imb5Bear,
+            'Strict M1 quality bearish' => ! $strictMode || (! $m1IsDoji && $m1BodyRatio >= 0.55 && $m1MomentumBear),
         ];
         $callCoreOk = ! in_array(false, $callChecks, true);
         $putCoreOk = ! in_array(false, $putChecks, true);
@@ -466,7 +524,6 @@ class BotEngineService
             'passed' => $passed,
             'unmet' => $unmet,
             'features' => [
-                'bias_240' => $bias240,
                 'bias_60' => $bias60,
                 'h1_bull' => $h1Bull,
                 'h1_bear' => $h1Bear,
@@ -478,13 +535,17 @@ class BotEngineService
                 'absorb_bear' => $absorbBear,
                 'imb5_bull' => $imb5Bull,
                 'imb5_bear' => $imb5Bear,
-                'trigger_bias_240' => $useBias240,
+                'm1_body_ratio' => $m1BodyRatio,
+                'm1_is_doji' => $m1IsDoji,
+                'm1_momentum_bull' => $m1MomentumBull,
+                'm1_momentum_bear' => $m1MomentumBear,
                 'trigger_bias_60' => $useBias60,
                 'trigger_h1_candle' => $useH1Candle,
                 'trigger_m5_align' => $useM5Align,
                 'trigger_m1_candle' => $useM1Candle,
                 'trigger_absorption' => $useAbsorb,
                 'trigger_imbalance' => $useImbalance,
+                'strict_mode' => $strictMode,
                 'call_core_ok' => $callCoreOk,
                 'put_core_ok' => $putCoreOk,
             ],
@@ -574,6 +635,20 @@ class BotEngineService
         $upper = (float) $c['high'] - $bodyBot;
 
         return min(1.0, $upper / $range);
+    }
+
+    /**
+     * Возвращает долю тела свечи в полном диапазоне (0..1).
+     * Используем для строгого фильтра импульса, чтобы отсеять "рваные" doji-бары.
+     *
+     * @param  array<string,mixed>  $c
+     */
+    private function bodyRatioByCandle(array $c): float
+    {
+        $range = max(1e-8, (float) $c['high'] - (float) $c['low']);
+        $body = abs((float) $c['close'] - (float) $c['open']);
+
+        return min(1.0, $body / $range);
     }
 
     /**

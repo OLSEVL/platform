@@ -137,6 +137,25 @@
                                             Реанимировать
                                         </button>
                                     </form>
+                                    <button
+                                        type="button"
+                                        class="ml-2 inline-flex items-center px-2.5 py-1 rounded bg-emerald-700 hover:bg-emerald-600 text-white text-xs font-medium js-proxy-test-btn"
+                                        data-url="{{ route('settings.proxies.test-quick-ajax', $proxy) }}"
+                                        data-proxy-id="{{ $proxy->id }}"
+                                        data-mode="quick"
+                                    >
+                                        Быстрый тест
+                                    </button>
+                                    <button
+                                        type="button"
+                                        class="ml-2 inline-flex items-center px-2.5 py-1 rounded bg-indigo-700 hover:bg-indigo-600 text-white text-xs font-medium js-proxy-test-btn"
+                                        data-url="{{ route('settings.proxies.test-deep-ajax', $proxy) }}"
+                                        data-proxy-id="{{ $proxy->id }}"
+                                        data-mode="deep"
+                                    >
+                                        Глубокий тест (45с)
+                                    </button>
+                                    <div id="proxy-test-result-{{ $proxy->id }}" class="mt-1 text-xs text-zinc-500"></div>
                                 </td>
                             </tr>
                         @endforeach
@@ -171,4 +190,68 @@
         </form>
     </div>
 </div>
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+    const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
+    const buttons = document.querySelectorAll('.js-proxy-test-btn');
+
+    const setResult = (proxyId, text, status) => {
+        const resultNode = document.getElementById(`proxy-test-result-${proxyId}`);
+        if (!resultNode) return;
+
+        const colorClass = status === 'ok'
+            ? 'text-emerald-400'
+            : (status === 'warn' ? 'text-amber-400' : 'text-rose-400');
+        resultNode.className = `mt-1 text-xs ${colorClass}`;
+        resultNode.textContent = text;
+    };
+
+    buttons.forEach((button) => {
+        button.addEventListener('click', async () => {
+            const proxyId = button.dataset.proxyId;
+            const mode = button.dataset.mode || 'quick';
+            const url = button.dataset.url;
+            const timeoutMs = mode === 'deep' ? 45000 : 12000;
+            const initialText = button.textContent;
+
+            if (!url || !proxyId || !csrfToken) {
+                return;
+            }
+
+            button.disabled = true;
+            button.textContent = mode === 'deep' ? 'Тестирование...' : 'Проверка...';
+            setResult(proxyId, mode === 'deep' ? 'Выполняется deep-тест (до 45с)...' : 'Выполняется быстрый тест...', 'warn');
+
+            const controller = new AbortController();
+            const abortTimer = setTimeout(() => controller.abort(), timeoutMs);
+
+            try {
+                const response = await fetch(url, {
+                    method: 'POST',
+                    headers: {
+                        'X-CSRF-TOKEN': csrfToken,
+                        'Accept': 'application/json',
+                    },
+                    signal: controller.signal,
+                });
+
+                const payload = await response.json();
+                const status = payload?.status || 'fail';
+                const details = payload?.details || 'fail - timeout/conn error/auth error.';
+                const latencyPart = payload?.latency_ms != null ? ` latency=${payload.latency_ms}ms;` : '';
+                const countPart = payload?.events_count != null ? ` успешных ответов=${payload.events_count};` : '';
+                const durationPart = payload?.duration_sec != null ? ` длительность=${payload.duration_sec}s;` : '';
+
+                setResult(proxyId, `${status} - ${details};${latencyPart}${countPart}${durationPart}`.replace(/;;+/g, ';'), status);
+            } catch (error) {
+                setResult(proxyId, 'fail - timeout/conn error/auth error.', 'fail');
+            } finally {
+                clearTimeout(abortTimer);
+                button.disabled = false;
+                button.textContent = initialText;
+            }
+        });
+    });
+});
+</script>
 @endsection

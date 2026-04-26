@@ -4,7 +4,7 @@
 @php
     $cfg = is_array($bot->config) ? $bot->config : [];
 @endphp
-<div class="max-w-2xl space-y-6">
+<div class="mx-auto w-full max-w-2xl space-y-6">
     <div class="flex flex-wrap items-baseline justify-between gap-3">
         <div>
             <h1 class="text-2xl font-semibold text-zinc-100">Настройки бота</h1>
@@ -101,7 +101,7 @@
             </div>
         @elseif ($bot->type === 'feshan')
             <div class="space-y-4 border-t border-zinc-800 pt-4">
-                <p class="text-sm text-zinc-400">Feshan: мультитаймфрейм (4H/1H/30M/15M/5M + M1), имбаланс/поглощение по эвристикам движка. Экспирация по умолчанию 300 с (5 мин). Больше M1 в выборке — стабильнее агрегаты старших ТФ.</p>
+                <p class="text-sm text-zinc-400">Feshan v2: вход только по снятию ликвидности (liquidity sweep) на M1. Сделка открывается после ложного прокола локального high/low и возврата цены в диапазон.</p>
 
                 <div class="grid gap-4 sm:grid-cols-2">
                     <div class="space-y-1">
@@ -121,9 +121,16 @@
                     <div class="space-y-1">
                         <label for="min_confidence" class="block text-xs font-medium text-zinc-400">Мин. confidence (0–1)</label>
                         <input type="number" name="min_confidence" id="min_confidence" min="0" max="1" step="0.01" required
-                            value="{{ old('min_confidence', $cfg['min_confidence'] ?? 0.55) }}"
+                            value="{{ old('min_confidence', $cfg['min_confidence'] ?? 0.60) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
                         @error('min_confidence')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                    <div class="space-y-1">
+                        <label for="min_payout" class="block text-xs font-medium text-zinc-400">Мин. payout (%)</label>
+                        <input type="number" name="min_payout" id="min_payout" min="0" max="100" step="0.1" required
+                            value="{{ old('min_payout', $cfg['min_payout'] ?? 80) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @error('min_payout')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
                         <label for="stale_after_sec" class="block text-xs font-medium text-zinc-400">Свежесть текущей свечи (сек)</label>
@@ -132,47 +139,33 @@
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
                         @error('stale_after_sec')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
-                </div>
-
-                {{-- Триггеры Feshan: можно включать/выключать отдельные условия входа прямо из UI. --}}
-                <div class="space-y-2 border-t border-zinc-800 pt-4">
-                    <div class="text-xs font-medium uppercase tracking-wide text-zinc-500">Триггеры входа Feshan</div>
-                    <div class="grid gap-2 sm:grid-cols-2">
-                        <label class="flex items-center gap-2 text-xs text-zinc-300">
-                            <input type="checkbox" name="trigger_bias_240" value="1" class="rounded border-zinc-600 bg-zinc-800 text-blue-500"
-                                @checked(old('trigger_bias_240', $cfg['trigger_bias_240'] ?? true))>
-                            4H bias (глобальный тренд)
-                        </label>
-                        <label class="flex items-center gap-2 text-xs text-zinc-300">
-                            <input type="checkbox" name="trigger_bias_60" value="1" class="rounded border-zinc-600 bg-zinc-800 text-blue-500"
-                                @checked(old('trigger_bias_60', $cfg['trigger_bias_60'] ?? true))>
-                            1H bias (фильтр направления)
-                        </label>
-                        <label class="flex items-center gap-2 text-xs text-zinc-300">
-                            <input type="checkbox" name="trigger_h1_candle" value="1" class="rounded border-zinc-600 bg-zinc-800 text-blue-500"
-                                @checked(old('trigger_h1_candle', $cfg['trigger_h1_candle'] ?? true))>
-                            Направление последней 1H свечи
-                        </label>
-                        <label class="flex items-center gap-2 text-xs text-zinc-300">
-                            <input type="checkbox" name="trigger_m5_align" value="1" class="rounded border-zinc-600 bg-zinc-800 text-blue-500"
-                                @checked(old('trigger_m5_align', $cfg['trigger_m5_align'] ?? true))>
-                            5M alignment (2 из 3)
-                        </label>
-                        <label class="flex items-center gap-2 text-xs text-zinc-300">
-                            <input type="checkbox" name="trigger_m1_candle" value="1" class="rounded border-zinc-600 bg-zinc-800 text-blue-500"
-                                @checked(old('trigger_m1_candle', $cfg['trigger_m1_candle'] ?? true))>
-                            Направление последней M1 свечи
-                        </label>
-                        <label class="flex items-center gap-2 text-xs text-zinc-300">
-                            <input type="checkbox" name="trigger_absorption" value="1" class="rounded border-zinc-600 bg-zinc-800 text-blue-500"
-                                @checked(old('trigger_absorption', $cfg['trigger_absorption'] ?? false))>
-                            Поглощение (тень M1)
-                        </label>
-                        <label class="flex items-center gap-2 text-xs text-zinc-300 sm:col-span-2">
-                            <input type="checkbox" name="trigger_imbalance" value="1" class="rounded border-zinc-600 bg-zinc-800 text-blue-500"
-                                @checked(old('trigger_imbalance', $cfg['trigger_imbalance'] ?? false))>
-                            Имбаланс 5M (FVG)
-                        </label>
+                    <div class="space-y-1">
+                        <label for="liquidity_lookback" class="block text-xs font-medium text-zinc-400">Окно liquidity sweep (M1 свечей)</label>
+                        <input type="number" name="liquidity_lookback" id="liquidity_lookback" min="5" max="50" required
+                            value="{{ old('liquidity_lookback', $cfg['liquidity_lookback'] ?? 20) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @error('liquidity_lookback')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                    <div class="space-y-1">
+                        <label for="sweep_min_wick_ratio" class="block text-xs font-medium text-zinc-400">Мин. тень sweep (0.05–0.8)</label>
+                        <input type="number" name="sweep_min_wick_ratio" id="sweep_min_wick_ratio" min="0.05" max="0.8" step="0.01" required
+                            value="{{ old('sweep_min_wick_ratio', $cfg['sweep_min_wick_ratio'] ?? 0.35) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @error('sweep_min_wick_ratio')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                    <div class="space-y-1">
+                        <label for="sweep_min_reclaim_ratio" class="block text-xs font-medium text-zinc-400">Мин. глубина возврата (0.05–0.8)</label>
+                        <input type="number" name="sweep_min_reclaim_ratio" id="sweep_min_reclaim_ratio" min="0.05" max="0.8" step="0.01" required
+                            value="{{ old('sweep_min_reclaim_ratio', $cfg['sweep_min_reclaim_ratio'] ?? 0.12) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @error('sweep_min_reclaim_ratio')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                    <div class="space-y-1">
+                        <label for="entry_extrema_distance" class="block text-xs font-medium text-zinc-400">Близость к экстремуму (0.02–0.4)</label>
+                        <input type="number" name="entry_extrema_distance" id="entry_extrema_distance" min="0.02" max="0.4" step="0.01" required
+                            value="{{ old('entry_extrema_distance', $cfg['entry_extrema_distance'] ?? 0.12) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @error('entry_extrema_distance')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                 </div>
             </div>

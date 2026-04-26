@@ -170,6 +170,10 @@
                 <div class="rounded border border-zinc-800 bg-zinc-900/50 px-2 py-1.5"><div class="text-[10px] text-zinc-400 uppercase">Wins</div><div id="bot-stat-wins" class="text-sm tabular-nums text-emerald-400">{{ $statsAll['wins'] }}</div></div>
                 <div class="rounded border border-zinc-800 bg-zinc-900/50 px-2 py-1.5"><div class="text-[10px] text-zinc-400 uppercase">Losses</div><div id="bot-stat-losses" class="text-sm tabular-nums text-rose-400">{{ $statsAll['losses'] }}</div></div>
                 <div class="col-span-2 rounded border border-zinc-800 bg-zinc-900/50 px-2 py-1.5"><div class="text-[10px] text-zinc-400 uppercase">Winrate</div><div id="bot-stat-winrate" class="text-sm tabular-nums">{{ $statsAll['winrate'] !== null ? $statsAll['winrate'].'%' : '—' }}</div></div>
+                <div class="col-span-2 rounded border border-zinc-800 bg-zinc-900/50 px-2 py-1.5">
+                    <div class="text-[10px] text-zinc-400 uppercase">Winrate инструмента</div>
+                    <div id="bot-stat-instrument-winrate" class="text-sm tabular-nums">{{ $statsAll['instrument_winrate'] !== null ? $statsAll['instrument_winrate'].'%' : '—' }}</div>
+                </div>
             </div>
             {{-- Панель синхронизируется с выбранной парой через JS (updateSidebarActiveTrade); поля совпадают с openTradeSidebarRow() в BotController. --}}
             <div id="sidebar-active-trade-panel" class="rounded border border-amber-700/40 bg-amber-950/20 px-2 py-2 text-xs @unless($activeTradeSidebar) hidden @endunless">
@@ -231,8 +235,11 @@
     // По умолчанию true (если ключа еще нет в config), чтобы сохранить текущее UX-поведение.
     const TV_CROSSHAIR_ENABLED = @json($tvCrosshairEnabled);
     const SELECTED_INSTRUMENT_KEY = 'platform.bot.show.selectedInstrument.{{ $bot->id }}';
-    const LIMIT = 1440;
-    const WINDOW_SEC = 86400;
+    // Увеличенное окно истории:
+    // - LIMIT: сколько свечей максимум запрашиваем у API за один вызов;
+    // - WINDOW_SEC: базовый диапазон времени (в секундах), который показываем даже без сигналов.
+    const LIMIT = 3000;
+    const WINDOW_SEC = 259200;
     const M1_COUNTDOWN_SECONDS = 60;
     let m1CloseCountdownAnchorSec = null;
     let m1CloseCountdownAnchorPerfMs = null;
@@ -1378,7 +1385,8 @@
         const winsEl = document.getElementById('bot-stat-wins');
         const lossesEl = document.getElementById('bot-stat-losses');
         const winrateEl = document.getElementById('bot-stat-winrate');
-        if (!totalEl || !openEl || !winsEl || !lossesEl || !winrateEl) return;
+        const instrumentWinrateEl = document.getElementById('bot-stat-instrument-winrate');
+        if (!totalEl || !openEl || !winsEl || !lossesEl || !winrateEl || !instrumentWinrateEl) return;
 
         totalEl.textContent = formatStatNumber(stats.total, '0');
         openEl.textContent = formatStatNumber(stats.open, '0');
@@ -1390,6 +1398,12 @@
             winrateEl.textContent = '—';
         } else {
             winrateEl.textContent = `${Number(winrate).toFixed(2)}%`;
+        }
+        const instrumentWinrate = stats.instrument_winrate;
+        if (instrumentWinrate == null || !Number.isFinite(Number(instrumentWinrate))) {
+            instrumentWinrateEl.textContent = '—';
+        } else {
+            instrumentWinrateEl.textContent = `${Number(instrumentWinrate).toFixed(2)}%`;
         }
     }
 
@@ -1417,7 +1431,8 @@
         refreshBotStats();
     }
     function refreshBotStats() {
-        const url = `${BOT_STATS_URL}?scope=${encodeURIComponent(botStatsScope)}`;
+        const instrumentQuery = currentInstrument ? `&instrument=${encodeURIComponent(currentInstrument)}` : '';
+        const url = `${BOT_STATS_URL}?scope=${encodeURIComponent(botStatsScope)}${instrumentQuery}`;
         fetch(url, {
             headers: { 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
         })
@@ -2065,6 +2080,7 @@
         // Сразу тянем открытые сделки по новой паре (параллельно со свечами), чтобы анализ справа не отставал от графика.
         refreshOpenTrades();
         refreshSignalsHistory();
+        refreshBotStats();
         document.querySelectorAll('.instrument-btn').forEach((b) => b.classList.toggle('bg-blue-900/40', b.dataset.instrument === instrument));
         lastZones = [];
         structureOverlay.innerHTML = '';
