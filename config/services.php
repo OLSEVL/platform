@@ -43,4 +43,14 @@ return [
         'api_key' => env('WEBSHARE_API_KEY'),
     ],
 
+    // Настройки OpenRouter для LLM-ботов.
+    // Ключ хранится только в .env, а в коде читается через config('services.openrouter.*').
+    'openrouter' => [
+        'api_key' => env('OPENROUTER_API_KEY'),
+        'base_url' => env('OPENROUTER_BASE_URL', 'https://openrouter.ai/api/v1'),
+        'referer' => env('OPENROUTER_HTTP_REFERER', ''),
+        'title' => env('OPENROUTER_APP_TITLE', 'Platform Bot'),
+        'timeout_sec' => (int) env('OPENROUTER_TIMEOUT_SEC', 25),
+    ],
+
 ];

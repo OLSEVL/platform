@@ -6,13 +6,16 @@ use App\Models\Bot;
 use App\Models\BotTrade;
 use App\Models\PocketInstrument;
 use App\Services\Bots\BotEngineService;
+use App\Services\Bots\OpenRouterClient;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\View\View;
+use Throwable;
 
 class BotController extends Controller
 {
@@ -254,12 +257,19 @@ class BotController extends Controller
         ]);
     }
 
-    public function settings(Bot $bot): View
+    public function settings(Bot $bot, OpenRouterClient $openRouterClient): View
     {
         $this->ensureBotOwner($bot);
 
+        // Для openrouter_llm пробуем загрузить актуальный список моделей от OpenRouter.
+        // Результат кэшируем, чтобы не делать внешний HTTP-запрос на каждый заход в настройки.
+        $openrouterModels = $bot->type === 'openrouter_llm'
+            ? $this->openRouterModelsForSettings($openRouterClient)
+            : [];
+
         return view('bots.settings', [
             'bot' => $bot,
+            'openrouterModels' => $openrouterModels,
         ]);
     }
 
@@ -316,6 +326,37 @@ class BotController extends Controller
                 'entry_extrema_distance' => (float) $extra['entry_extrema_distance'],
                 'stale_after_sec' => (int) $extra['stale_after_sec'],
                 'version' => 'feshan_liquidity_v2',
+            ]);
+        } elseif ($bot->type === 'openrouter_llm') {
+            // OpenRouter LLM-бот: решение по сделке формируется нейросетью по свечному контексту.
+            // Все параметры валидируем явно, чтобы конфиг оставался консистентным и безопасным.
+            $extra = $request->validate([
+                'count' => ['required', 'integer', 'min:20', 'max:5000'],
+                'expiry_sec' => ['required', 'integer', 'min:60', 'max:900'],
+                'min_confidence' => ['required', 'numeric', 'min:0', 'max:1'],
+                'min_payout' => ['required', 'numeric', 'min:0', 'max:100'],
+                'stale_after_sec' => ['required', 'integer', 'min:5', 'max:600'],
+                // Модель в формате provider/model, например openai/gpt-5.2.
+                'model' => ['required', 'string', 'min:3', 'max:128'],
+                'temperature' => ['required', 'numeric', 'min:0', 'max:2'],
+                'max_tokens' => ['required', 'integer', 'min:32', 'max:4096'],
+                // Сколько последних закрытых свечей отправлять в LLM на анализ.
+                'candles_take' => ['required', 'integer', 'min:20', 'max:500'],
+                // Системный промпт ограничиваем по длине, чтобы не раздувать latency/стоимость запроса.
+                'system_prompt' => ['required', 'string', 'min:20', 'max:12000'],
+            ]);
+            $config = array_merge($bot->config ?? [], [
+                'count' => (int) $extra['count'],
+                'expiry_sec' => (int) $extra['expiry_sec'],
+                'min_confidence' => (float) $extra['min_confidence'],
+                'min_payout' => (float) $extra['min_payout'],
+                'stale_after_sec' => (int) $extra['stale_after_sec'],
+                'model' => trim((string) $extra['model']),
+                'temperature' => (float) $extra['temperature'],
+                'max_tokens' => (int) $extra['max_tokens'],
+                'candles_take' => (int) $extra['candles_take'],
+                'system_prompt' => trim((string) $extra['system_prompt']),
+                'version' => 'openrouter_llm_v1',
             ]);
         } else {
             $json = $request->validate([
@@ -746,6 +787,29 @@ class BotController extends Controller
     private function ensureBotOwner(Bot $bot): void
     {
         abort_unless((int) $bot->user_id === (int) auth()->id(), 403);
+    }
+
+    /**
+     * Получаем модели OpenRouter для выпадающего списка в настройках LLM-бота.
+     * Если OpenRouter временно недоступен, возвращаем пустой список, а UI позволит
+     * ввести model id вручную (fallback без блокировки страницы).
+     *
+     * @return list<array{id:string,name:string}>
+     */
+    private function openRouterModelsForSettings(OpenRouterClient $openRouterClient): array
+    {
+        try {
+            /** @var list<array{id:string,name:string}> $models */
+            $models = Cache::remember(
+                'openrouter_models_for_settings_v1',
+                now()->addMinutes(15),
+                fn () => $openRouterClient->listModels()
+            );
+
+            return $models;
+        } catch (Throwable) {
+            return [];
+        }
     }
 
     /**

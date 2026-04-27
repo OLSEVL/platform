@@ -137,6 +137,40 @@ Artisan::command('bots:feshan-bootstrap', function () {
     $this->info("Feshan бот: #{$bot->id} {$bot->name} ({$bot->type}) — включите в настройках при необходимости.");
 })->purpose('Создать бота Feshan (MTF-стратегия)');
 
+Artisan::command('bots:openrouter-bootstrap', function () {
+    $user = User::query()->orderBy('id')->first();
+    if (! $user) {
+        $this->error('Нет пользователей. Сначала зарегистрируйте пользователя.');
+
+        return;
+    }
+
+    // Создаём отдельный LLM-бот, который принимает решения только через OpenRouter API.
+    // По умолчанию бот выключен: сначала задайте OPENROUTER_API_KEY и проверьте настройки.
+    $bot = Bot::query()->firstOrCreate(
+        ['user_id' => $user->id, 'name' => 'OpenRouter LLM Bot', 'type' => 'openrouter_llm'],
+        [
+            'is_active' => false,
+            'config' => [
+                'count' => 120,
+                'candles_take' => 120,
+                'expiry_sec' => 300,
+                'min_confidence' => 0.65,
+                'min_payout' => 70.0,
+                'stale_after_sec' => 45,
+                'model' => 'openai/gpt-5.2',
+                'temperature' => 0.0,
+                'max_tokens' => 350,
+                'system_prompt' => "Ты торговый AI-ассистент для бинарных опционов (M1).\nВерни только JSON без markdown.\nФормат: {\"side\":\"CALL|PUT|NONE\",\"confidence\":0.0,\"analysis_text\":\"...\",\"reasons_short\":[\"...\"],\"features\":{}}\nЕсли не уверен — side=NONE и confidence<=0.5.",
+                'version' => 'openrouter_llm_v1',
+            ],
+        ]
+    );
+
+    $this->info("OpenRouter бот: #{$bot->id} {$bot->name} ({$bot->type})");
+    $this->line('Проверьте .env: OPENROUTER_API_KEY, затем включите бота в настройках.');
+})->purpose('Создать отдельного бота OpenRouter LLM');
+
 Artisan::command('bots:scan {--bot_id=} {--active-only=1}', function (BotEngineService $engine) {
     $botId = $this->option('bot_id');
     $activeOnly = (string) $this->option('active-only') !== '0';

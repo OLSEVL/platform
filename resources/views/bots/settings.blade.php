@@ -3,6 +3,16 @@
 @section('content')
 @php
     $cfg = is_array($bot->config) ? $bot->config : [];
+    $openrouterModels = isset($openrouterModels) && is_array($openrouterModels) ? $openrouterModels : [];
+    $selectedOpenRouterModel = old('model', $cfg['model'] ?? 'openai/gpt-5.2');
+    // Отдельно выносим дефолтный prompt в переменную, чтобы не ломать Blade
+    // сложной строкой с JSON-скобками внутри inline-выражения.
+    $openrouterDefaultPrompt = <<<'PROMPT'
+Ты торговый AI-ассистент для бинарных опционов (M1).
+Верни только JSON без markdown.
+Формат: {"side":"CALL|PUT|NONE","confidence":0.0,"analysis_text":"...","reasons_short":["..."],"features":{}}
+Если не уверен — side=NONE и confidence<=0.5.
+PROMPT;
 @endphp
 <div class="mx-auto w-full max-w-2xl space-y-6">
     <div class="flex flex-wrap items-baseline justify-between gap-3">
@@ -167,6 +177,122 @@
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
                         @error('entry_extrema_distance')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
+                </div>
+            </div>
+        @elseif ($bot->type === 'openrouter_llm')
+            <div class="space-y-4 border-t border-zinc-800 pt-4">
+                <p class="text-sm text-zinc-400">
+                    OpenRouter LLM: полностью отдельный бот без алгоритмов прошлых стратегий.
+                    Движок отправляет подготовленные свечи в модель и принимает решение по строго JSON-ответу.
+                </p>
+
+                <div class="grid gap-4 sm:grid-cols-2">
+                    <div class="space-y-1">
+                        <label for="count" class="block text-xs font-medium text-zinc-400">Свечей M1 в выборке (count)</label>
+                        <input type="number" name="count" id="count" min="20" max="5000" required
+                            value="{{ old('count', $cfg['count'] ?? 120) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @error('count')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                    <div class="space-y-1">
+                        <label for="candles_take" class="block text-xs font-medium text-zinc-400">Сколько последних свечей отправлять в LLM</label>
+                        <input type="number" name="candles_take" id="candles_take" min="20" max="500" required
+                            value="{{ old('candles_take', $cfg['candles_take'] ?? 120) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @error('candles_take')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                    <div class="space-y-1">
+                        <label for="expiry_sec" class="block text-xs font-medium text-zinc-400">Экспирация (сек)</label>
+                        <input type="number" name="expiry_sec" id="expiry_sec" min="60" max="900" required
+                            value="{{ old('expiry_sec', $cfg['expiry_sec'] ?? 300) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @error('expiry_sec')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                    <div class="space-y-1">
+                        <label for="stale_after_sec" class="block text-xs font-medium text-zinc-400">Свежесть текущей свечи (сек)</label>
+                        <input type="number" name="stale_after_sec" id="stale_after_sec" min="5" max="600" required
+                            value="{{ old('stale_after_sec', $cfg['stale_after_sec'] ?? 45) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @error('stale_after_sec')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                    <div class="space-y-1">
+                        <label for="min_confidence" class="block text-xs font-medium text-zinc-400">Мин. confidence (0–1)</label>
+                        <input type="number" name="min_confidence" id="min_confidence" min="0" max="1" step="0.01" required
+                            value="{{ old('min_confidence', $cfg['min_confidence'] ?? 0.65) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @error('min_confidence')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                    <div class="space-y-1">
+                        <label for="min_payout" class="block text-xs font-medium text-zinc-400">Мин. payout (%)</label>
+                        <input type="number" name="min_payout" id="min_payout" min="0" max="100" step="0.1" required
+                            value="{{ old('min_payout', $cfg['min_payout'] ?? 70) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @error('min_payout')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                    <div class="space-y-1">
+                        <label for="model" class="block text-xs font-medium text-zinc-400">Модель OpenRouter (provider/model)</label>
+                        <select name="model" id="model"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100"
+                            required>
+                            @if ($openrouterModels === [])
+                                {{-- Fallback: если API OpenRouter недоступен, не блокируем форму и оставляем текущее значение. --}}
+                                <option value="{{ $selectedOpenRouterModel }}" selected>
+                                    {{ $selectedOpenRouterModel }} (fallback)
+                                </option>
+                            @else
+                                @php
+                                    $hasSelectedInList = false;
+                                @endphp
+                                @foreach ($openrouterModels as $m)
+                                    @php
+                                        $modelId = (string) ($m['id'] ?? '');
+                                        $modelName = (string) ($m['name'] ?? $modelId);
+                                        if ($modelId === $selectedOpenRouterModel) {
+                                            $hasSelectedInList = true;
+                                        }
+                                    @endphp
+                                    @if ($modelId !== '')
+                                        <option value="{{ $modelId }}" @selected($modelId === $selectedOpenRouterModel)>
+                                            {{ $modelName }} — {{ $modelId }}
+                                        </option>
+                                    @endif
+                                @endforeach
+                                @if (! $hasSelectedInList && $selectedOpenRouterModel !== '')
+                                    {{-- Если сохранённая модель уже исчезла из каталога, показываем её отдельным пунктом. --}}
+                                    <option value="{{ $selectedOpenRouterModel }}" selected>
+                                        {{ $selectedOpenRouterModel }} (custom)
+                                    </option>
+                                @endif
+                            @endif
+                        </select>
+                        @if ($openrouterModels === [])
+                            <p class="text-[11px] text-zinc-500">
+                                Не удалось загрузить каталог моделей OpenRouter. Сохраняется текущее значение.
+                            </p>
+                        @endif
+                        @error('model')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                    <div class="space-y-1">
+                        <label for="temperature" class="block text-xs font-medium text-zinc-400">Temperature (0–2)</label>
+                        <input type="number" name="temperature" id="temperature" min="0" max="2" step="0.01" required
+                            value="{{ old('temperature', $cfg['temperature'] ?? 0) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @error('temperature')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                    <div class="space-y-1">
+                        <label for="max_tokens" class="block text-xs font-medium text-zinc-400">Max tokens</label>
+                        <input type="number" name="max_tokens" id="max_tokens" min="32" max="4096" required
+                            value="{{ old('max_tokens', $cfg['max_tokens'] ?? 350) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @error('max_tokens')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                </div>
+
+                <div class="space-y-1">
+                    <label for="system_prompt" class="block text-xs font-medium text-zinc-400">System prompt</label>
+                    <textarea name="system_prompt" id="system_prompt" rows="10" required
+                        class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 font-mono text-xs text-zinc-100 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500">{{ old('system_prompt', $cfg['system_prompt'] ?? $openrouterDefaultPrompt) }}</textarea>
+                    @error('system_prompt')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                 </div>
             </div>
         @else

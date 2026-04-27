@@ -8,6 +8,7 @@ use App\Models\BotTrade;
 use App\Models\PocketInstrument;
 use App\Services\Bots\Strategies\BotStrategyInterface;
 use App\Services\Bots\Strategies\FeshanStrategy;
+use App\Services\Bots\Strategies\OpenRouterLlmStrategy;
 use App\Services\Bots\Strategies\ThreeCandlesInRowStrategy;
 use Illuminate\Support\Facades\DB;
 
@@ -15,6 +16,7 @@ class BotEngineService
 {
     public function __construct(
         private readonly BotDataService $botDataService,
+        private readonly OpenRouterClient $openRouterClient,
     ) {}
 
     public function scanBot(Bot $bot): array
@@ -386,16 +388,31 @@ class BotEngineService
             'feshan' => (int) ($config['expiry_sec'] ?? 300),
             default => (int) ($config['expiry_sec'] ?? 300),
         };
-        // Для liquidity sweep базовый дефолт confidence ниже, иначе стратегия чрезмерно "молчит".
-        $minConfidence = (float) ($config['min_confidence'] ?? ($bot->type === 'feshan' ? 0.6 : 0.55));
+        // Разные типы ботов имеют разные дефолтные пороги confidence:
+        // - feshan: умеренно строгий вход;
+        // - openrouter_llm: чуть выше порог по умолчанию, чтобы отсеять "неуверенные" ответы модели;
+        // - остальные: базовый порог.
+        $minConfidence = (float) ($config['min_confidence'] ?? match ($bot->type) {
+            'feshan' => 0.6,
+            'openrouter_llm' => 0.65,
+            default => 0.55,
+        });
         // Минимальный payout как экономический фильтр качества входа.
-        $minPayout = (float) ($config['min_payout'] ?? ($bot->type === 'feshan' ? 80.0 : 0.0));
+        // Для LLM-бота ставим умеренный дефолтный порог, чтобы не брать пары с совсем слабой выплатой.
+        $minPayout = (float) ($config['min_payout'] ?? match ($bot->type) {
+            'feshan' => 80.0,
+            'openrouter_llm' => 70.0,
+            default => 0.0,
+        });
         $staleAfterSec = (int) ($config['stale_after_sec'] ?? 30);
         $minClosedBars = match ($bot->type) {
             'feshan' => 40,
+            // LLM-боту нужен достаточно широкий контекст последних свечей,
+            // иначе модель чаще даёт шумные и нестабильные решения.
+            'openrouter_llm' => 20,
             default => 3,
         };
-        $dedupeBucketSec = $bot->type === 'feshan'
+        $dedupeBucketSec = in_array($bot->type, ['feshan', 'openrouter_llm'], true)
             ? max(60, min(900, $expirySec))
             : 60;
         return [
@@ -686,6 +703,9 @@ class BotEngineService
         return match ($type) {
             'three_candles_in_row' => new ThreeCandlesInRowStrategy,
             'feshan' => new FeshanStrategy,
+            // Новый бот полностью изолирован от старых эвристик:
+            // торговое решение принимает только LLM через OpenRouter.
+            'openrouter_llm' => new OpenRouterLlmStrategy($this->openRouterClient),
             default => null,
         };
     }
