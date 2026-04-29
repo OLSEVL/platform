@@ -2,7 +2,6 @@
 
 namespace App\Services\Bots;
 
-use App\Models\InstrumentCandle;
 use App\Services\CandleService;
 use App\Services\CurrentCandleCacheService;
 
@@ -18,22 +17,19 @@ class BotDataService
      */
     public function series(string $instrument, int $count = 120, bool $includePartial = true, int $staleAfterSec = 30): array
     {
-        $rows = InstrumentCandle::query()
-            ->forInstrument($instrument)
-            ->forTimeframe(1)
-            ->orderByDesc('time')
-            ->limit($count)
-            ->get(['time', 'open', 'high', 'low', 'close', 'volume']);
+        // Для ботов M1 должен быть тем же, что видит график: источник единый через CandleService.
+        // CandleService сам выберет S5->M1 агрегацию или legacy fallback.
+        $rows = $this->candleService->seriesForDashboard($instrument, 1, null, null, $count);
 
-        $closed = $rows->map(fn (InstrumentCandle $r) => [
-            'time' => (int) $r->time,
-            'open' => (float) $r->open,
-            'high' => (float) $r->high,
-            'low' => (float) $r->low,
-            'close' => (float) $r->close,
-            'volume' => (float) ($r->volume ?? 0),
+        $closed = array_map(static fn (array $r) => [
+            'time' => (int) ($r['time'] ?? 0),
+            'open' => (float) ($r['open'] ?? 0),
+            'high' => (float) ($r['high'] ?? 0),
+            'low' => (float) ($r['low'] ?? 0),
+            'close' => (float) ($r['close'] ?? 0),
+            'volume' => (float) ($r['volume'] ?? 0),
             'is_partial' => false,
-        ])->sortBy('time')->values()->all();
+        ], $rows);
 
         $partial = null;
         if ($includePartial) {

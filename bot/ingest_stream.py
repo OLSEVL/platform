@@ -28,7 +28,11 @@ from pocketoptionapi_async import AsyncPocketOptionClient
 PLATFORM_URL = os.environ.get("PLATFORM_URL", "").rstrip("/")
 MAX_CONNECTIONS = int(os.environ.get("INGEST_MAX_CONNECTIONS", "100"))
 INSTRUMENTS_REFRESH_SEC = int(os.environ.get("INSTRUMENTS_REFRESH_SEC", "300"))
-M1_PERIOD = 60  # период минутной свечи в секундах
+# Базовый период свечи в секундах.
+# Для нового секундного режима по умолчанию используем S5.
+BASE_BAR_PERIOD_SEC = int(os.environ.get("INGEST_BASE_BAR_SECONDS", "5"))
+# Внутренний timeframe ID для записи базового ряда (S5 = 4005).
+BASE_TIMEFRAME_ID = int(os.environ.get("INGEST_BASE_TIMEFRAME_ID", "4005"))
 CANDLES_REQUEST_COUNT = 100  # количество свечей для начального backfill
 # Интервал главного цикла (flush завершённых минут, POST текущей свечи, payout).
 # Раньше было 5s: при этом даже при debounce=1s текущая свеча на платформу уходила не чаще раз в 5s —
@@ -154,9 +158,9 @@ def _apply_feed_time_correction(unix_sec: int) -> int:
 
 
 def _to_effective_candle_time(unix_sec: int) -> int:
-    """Возвращает effective время свечи, выровненное по минутному бакету."""
+    """Возвращает effective время свечи, выровненное по базовому бакету."""
     corrected = _apply_feed_time_correction(unix_sec)
-    return max(1, (corrected // M1_PERIOD) * M1_PERIOD)
+    return max(1, (corrected // BASE_BAR_PERIOD_SEC) * BASE_BAR_PERIOD_SEC)
 
 
 async def _ensure_ingest_http_session() -> aiohttp.ClientSession:
@@ -224,7 +228,8 @@ async def post_ingest_candles(instrument: str, candles: List[Dict[str, Any]]) ->
     }
     payload = {
         "instrument": instrument,
-        "timeframe": 1,
+        # Пишем в БД именно базовый TF (по умолчанию S5=4005).
+        "timeframe": BASE_TIMEFRAME_ID,
         "candles": [
             {
                 "time": int(c.get("time", c.get("timestamp", 0))),
@@ -530,7 +535,7 @@ async def run_instrument_worker(
                             except (TypeError, ValueError):
                                 pass
                         period_in = data.get("period")
-                        if period_in is not None and int(period_in) != M1_PERIOD:
+                        if period_in is not None and int(period_in) != BASE_BAR_PERIOD_SEC:
                             return
                         if "candles" in data:
                             for cd in data.get("candles", []):
@@ -641,7 +646,7 @@ async def run_instrument_worker(
                 try:
                     candles = await asyncio.wait_for(
                         client._request_candles(
-                            instrument, M1_PERIOD, CANDLES_REQUEST_COUNT, None
+                            instrument, BASE_BAR_PERIOD_SEC, CANDLES_REQUEST_COUNT, None
                         ),
                         timeout=15.0,
                     )
@@ -681,7 +686,7 @@ async def run_instrument_worker(
                 await asyncio.sleep(FLUSH_CHECK_INTERVAL)
 
                 now_ts = int(datetime.now(timezone.utc).timestamp())
-                current_minute = (now_ts // M1_PERIOD) * M1_PERIOD
+                current_bucket_start = (now_ts // BASE_BAR_PERIOD_SEC) * BASE_BAR_PERIOD_SEC
 
                 # Stream-first fallback: только при "тишине" в потоке.
                 if INGEST_USE_API_CANDLES:
@@ -699,7 +704,7 @@ async def run_instrument_worker(
                 ):
                     try:
                         fresh = await asyncio.wait_for(
-                            client._request_candles(instrument, M1_PERIOD, 5, None),
+                            client._request_candles(instrument, BASE_BAR_PERIOD_SEC, 5, None),
                             timeout=10.0,
                         )
                         if fresh:
@@ -774,37 +779,36 @@ async def run_instrument_worker(
                                 last_current_candle_post_at = now_mono
                                 last_current_candle_posted_ts = latest_ts
 
-                # Flush all completed candles (timestamp < current minute)
+                # Flush all completed candles:
+                # публикуем все бары, которые уже точно закончились по системному времени.
+                # Это снимает лишнюю задержку, когда flush ждал первый тик следующего бакета.
                 completed_payload: List[Dict[str, Any]] = []
                 completed_meta: List[Dict[str, Any]] = []
-                # Не привязываемся к локальному времени: считаем "завершёнными"
-                # все минуты, которые старше самой свежей минуты из текущего буфера.
-                latest_ts = max(current_candles.keys()) if current_candles else None
-                if latest_ts is not None:
-                    for candle_ts in sorted(current_candles.keys()):
-                        if candle_ts >= latest_ts:
-                            continue
-                        c = current_candles[candle_ts]
-                        completed_payload.append(
-                            {
-                                "time": c["time"],
-                                "open": float(c["open"]),
-                                "high": float(c["high"]),
-                                "low": float(c["low"]),
-                                "close": float(c["close"]),
-                                "volume": float(c.get("volume", 0)),
-                            }
-                        )
-                        completed_meta.append(
-                            {
-                                "time": c["time"],
-                                "tick_count": int(c.get("tick_count", 0)),
-                                "ohlc_source": str(
-                                    c.get("ohlc_source", "unknown")
-                                ),
-                                "volume": float(c.get("volume", 0)),
-                            }
-                        )
+                for candle_ts in sorted(current_candles.keys()):
+                    # Текущий бакет (>= current_bucket_start) остаётся partial и не flush-ится.
+                    if candle_ts >= current_bucket_start:
+                        continue
+                    c = current_candles[candle_ts]
+                    completed_payload.append(
+                        {
+                            "time": c["time"],
+                            "open": float(c["open"]),
+                            "high": float(c["high"]),
+                            "low": float(c["low"]),
+                            "close": float(c["close"]),
+                            "volume": float(c.get("volume", 0)),
+                        }
+                    )
+                    completed_meta.append(
+                        {
+                            "time": c["time"],
+                            "tick_count": int(c.get("tick_count", 0)),
+                            "ohlc_source": str(
+                                c.get("ohlc_source", "unknown")
+                            ),
+                            "volume": float(c.get("volume", 0)),
+                        }
+                    )
 
                 if completed_payload:
                     ok = await post_ingest_candles(instrument, completed_payload)
@@ -812,14 +816,14 @@ async def run_instrument_worker(
                         ticks_total = sum(m["tick_count"] for m in completed_meta)
                         print(
                             f"[INGEST] {instrument}: flushed {len(completed_payload)} candle(s), "
-                            f"total_ticks_in_those_minutes={ticks_total}",
+                            f"total_ticks_in_those_bars={ticks_total}",
                             flush=True,
                         )
                         if INGEST_FLUSH_DETAIL:
                             for m in completed_meta:
                                 print(
                                     f"[INGEST] {instrument}: flush_detail ts={m['time']} "
-                                    f"ticks_in_minute={m['tick_count']} ohlc_source={m['ohlc_source']} "
+                                    f"ticks_in_bar={m['tick_count']} ohlc_source={m['ohlc_source']} "
                                     f"volume={m['volume']}",
                                     flush=True,
                                 )
@@ -833,11 +837,11 @@ async def run_instrument_worker(
                         for row in completed_payload:
                             current_candles.pop(row["time"], None)
 
-                # Опционально: выкинуть только давно завершённые минуты (не трогаем «хвост» при POST-ошибках).
+                # Опционально: выкинуть только давно завершённые бары (не трогаем «хвост» при POST-ошибках).
                 if INGEST_PRUNE_COMPLETED_OLDER_THAN_SEC > 0:
-                    threshold = current_minute - INGEST_PRUNE_COMPLETED_OLDER_THAN_SEC
+                    threshold = current_bucket_start - INGEST_PRUNE_COMPLETED_OLDER_THAN_SEC
                     for ts in list(current_candles.keys()):
-                        if ts < current_minute and ts < threshold:
+                        if ts < current_bucket_start and ts < threshold:
                             print(
                                 f"[INGEST] {instrument}: prune stale completed candle ts={ts} "
                                 f"(older than {INGEST_PRUNE_COMPLETED_OLDER_THAN_SEC}s)",

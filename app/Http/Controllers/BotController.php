@@ -662,6 +662,11 @@ class BotController extends Controller
             : true;
         $initialInstrument = $signalInstruments->first() ?: optional($instruments->first())->instrument;
         $timeframes = [
+            // Секундные таймфреймы используют отдельные ID (4xxx), чтобы не конфликтовать
+            // с минутными значениями 5/15/30, которые уже давно живут в UI/API.
+            ['minutes' => 4005, 'label' => 'S5'],
+            ['minutes' => 4015, 'label' => 'S15'],
+            ['minutes' => 4030, 'label' => 'S30'],
             ['minutes' => 1, 'label' => '1м'],
             ['minutes' => 2, 'label' => '2м'],
             ['minutes' => 3, 'label' => '3м'],

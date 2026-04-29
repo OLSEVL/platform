@@ -4,9 +4,14 @@ namespace App\Services\Bots;
 
 use App\Models\BotTrade;
 use App\Models\InstrumentCandle;
+use App\Services\CandleService;
 
 class BotSettlementService
 {
+    public function __construct(
+        private readonly CandleService $candleService,
+    ) {}
+
     public function settleDueTrades(?int $botId = null, int $limit = 1000): array
     {
         $q = BotTrade::query()
@@ -88,32 +93,109 @@ class BotSettlementService
         // чтобы найти правильную свечу в БД.
         $normalizedExpiryTs = $expiryTs + $timeShiftSec;
 
-        // Находим M1 свечу, в которой произошла экспирация.
-        // Экспирация происходит в минутном бакете: floor(normalizedExpiryTs / 60) * 60
-        $candleTime = (int) (floor($normalizedExpiryTs / 60) * 60);
+        // 1) Сначала пытаемся взять цену из более точного таймфрейма (например 4015 = S15).
+        // 2) Если точного ряда нет, откатываемся к классическому M1.
+        $storedTf = (int) config('candles.stored_timeframe_id', 4015);
+        $storedPeriodSec = max(1, (int) config('candles.base_bar_period_seconds', 15));
 
+        $precise = $this->resolvePriceFromTimeframeAtExpiry(
+            instrument: $instrument,
+            expiryTs: $normalizedExpiryTs,
+            timeframeId: $storedTf,
+            barPeriodSec: $storedPeriodSec
+        );
+        if ($precise !== null) {
+            return $precise;
+        }
+
+        return $this->resolvePriceFromTimeframeAtExpiry(
+            instrument: $instrument,
+            expiryTs: $normalizedExpiryTs,
+            timeframeId: 1,
+            barPeriodSec: 60
+        );
+    }
+
+    /**
+     * Вычисляет settlement-цену в рамках конкретного timeframe.
+     *
+     * Правило выбора цены:
+     * - если экспирация попала ВНУТРЬ бара (expiryTs > barStart), берём open бара;
+     * - если экспирация совпала с началом бара (expiryTs == barStart), берём close этого бара;
+     * - если свеча по точному bucket не найдена, берём ближайшую свечу <= expiryTs и также
+     *   применяем правило open/close по позиции expiry внутри этого бара.
+     */
+    private function resolvePriceFromTimeframeAtExpiry(
+        string $instrument,
+        int $expiryTs,
+        int $timeframeId,
+        int $barPeriodSec
+    ): ?float {
+        $barStartTs = (int) (floor($expiryTs / $barPeriodSec) * $barPeriodSec);
         $candle = InstrumentCandle::query()
             ->forInstrument($instrument)
-            ->forTimeframe(1) // M1
-            ->where('time', $candleTime)
-            ->first(['time', 'open', 'high', 'low', 'close']);
+            ->forTimeframe($timeframeId)
+            ->where('time', $barStartTs)
+            ->first(['time', 'open', 'close']);
 
         if (! $candle) {
-            // Fallback: ищем ближайшую свечу <= normalizedExpiryTs
             $candle = InstrumentCandle::query()
                 ->forInstrument($instrument)
-                ->forTimeframe(1)
-                ->where('time', '<=', $normalizedExpiryTs)
+                ->forTimeframe($timeframeId)
+                ->where('time', '<=', $expiryTs)
                 ->orderByDesc('time')
-                ->first(['time', 'open', 'high', 'low', 'close']);
+                ->first(['time', 'open', 'close']);
         }
 
         if (! $candle) {
+            // Для M1 поддерживаем "вариант 2": если legacy timeframe=1 пуст,
+            // достраиваем минутный бар из S5 на лету.
+            if ($timeframeId === 1) {
+                $fromS5 = $this->resolveM1PriceFromS5AtExpiry($instrument, $expiryTs);
+                if ($fromS5 !== null) {
+                    return $fromS5;
+                }
+            }
+
             return null;
         }
 
-        // Всегда используем close свечи — это цена, которую видит пользователь на графике.
-        return (float) $candle->close;
+        $candleOpenTs = (int) $candle->time;
+        $isInsideBar = $expiryTs > $candleOpenTs;
+
+        return $isInsideBar
+            ? (float) $candle->open
+            : (float) $candle->close;
+    }
+
+    /**
+     * Восстанавливает settlement-цену M1 из S5-источника.
+     *
+     * Считаем ровно тот минутный бар, в который попала экспирация:
+     * - если expiry внутри минуты -> используем open минуты;
+     * - если expiry на границе минуты -> используем close этой минуты.
+     */
+    private function resolveM1PriceFromS5AtExpiry(string $instrument, int $expiryTs): ?float
+    {
+        $minuteStart = (int) (floor($expiryTs / 60) * 60);
+        $minuteEnd = $minuteStart + 60;
+        $m1 = $this->candleService->seriesForDashboard(
+            instrument: $instrument,
+            timeframeMinutes: 1,
+            sinceUnix: $minuteStart,
+            beforeUnix: $minuteEnd,
+            maxBars: 1
+        );
+        if ($m1 === []) {
+            return null;
+        }
+        $bar = $m1[array_key_last($m1)];
+        $barOpenTs = (int) ($bar['time'] ?? $minuteStart);
+        $isInsideBar = $expiryTs > $barOpenTs;
+
+        return $isInsideBar
+            ? (float) ($bar['open'] ?? 0.0)
+            : (float) ($bar['close'] ?? 0.0);
     }
 
     /**
@@ -128,9 +210,18 @@ class BotSettlementService
     {
         $latestCandle = InstrumentCandle::query()
             ->forInstrument($instrument)
-            ->forTimeframe(1)
+            ->forTimeframe(CandleService::TF_S5)
             ->orderByDesc('time')
             ->first(['time']);
+
+        // Fallback на legacy M1, если S5 по инструменту пока отсутствует.
+        if (! $latestCandle) {
+            $latestCandle = InstrumentCandle::query()
+                ->forInstrument($instrument)
+                ->forTimeframe(1)
+                ->orderByDesc('time')
+                ->first(['time']);
+        }
 
         if (! $latestCandle) {
             return 0;

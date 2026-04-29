@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\InstrumentCandle;
 use App\Models\PocketInstrument;
+use App\Services\CandleService;
 use App\Services\ProxyRotationService;
 use App\Services\CurrentCandleCacheService;
 use Illuminate\Http\JsonResponse;
@@ -52,7 +53,9 @@ class ProxyInstrumentController extends Controller
     {
         $request->validate([
             'instrument' => 'required|string|max:63',
-            'timeframe' => 'required|integer|in:1',
+            // Разрешаем ingest как классического M1 (1), так и "точного" секундного
+            // таймфрейма S5 (4005). Остальные сек.таймфреймы (S15/S30) строятся агрегацией.
+            'timeframe' => 'required|integer|in:1,'.CandleService::TF_S5,
             'candles' => 'required|array',
             'candles.*.time' => 'required|numeric',
             'candles.*.open' => 'required|numeric',

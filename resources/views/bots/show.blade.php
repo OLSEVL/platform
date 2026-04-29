@@ -142,7 +142,7 @@
             <div id="structure-overlay" class="absolute inset-0 z-[5] pointer-events-none overflow-visible hidden"></div>
             <div id="candle-timer-overlay"
                 class="pointer-events-none absolute z-[6] hidden h-0 w-0 overflow-visible"
-                title="До закрытия текущей минутной свечи (мм:сс)">
+                title="До закрытия текущей свечи выбранного таймфрейма (мм:сс)">
                 <span id="candle-tf-label"
                     class="absolute left-1/2 z-[6] -translate-x-1/2 whitespace-nowrap text-[11px] font-medium leading-none text-zinc-400">M1</span>
                 <span id="candle-close-timer"
@@ -243,6 +243,21 @@
     const M1_COUNTDOWN_SECONDS = 60;
     let m1CloseCountdownAnchorSec = null;
     let m1CloseCountdownAnchorPerfMs = null;
+    let tfCloseCountdownAnchorSec = null;
+    let tfCloseCountdownAnchorPerfMs = null;
+    // Таймфреймы в UI: legacy минуты (1,2,3...), и секундные ID (S5/S15/S30 на 4xxx).
+    function timeframeSeconds(tf) {
+        if (tf === 4005) return 5;
+        if (tf === 4015) return 15;
+        if (tf === 4030) return 30;
+        return Math.max(1, Number(tf) || 1) * 60;
+    }
+    function timeframeLabel(tf) {
+        if (tf === 4005) return 'S5';
+        if (tf === 4015) return 'S15';
+        if (tf === 4030) return 'S30';
+        return 'M' + String(tf);
+    }
 
     function applyM1CountdownFromPayload(payload) {
         if (!payload || typeof payload.m1_seconds_to_close !== 'number' || !Number.isFinite(payload.m1_seconds_to_close)) {
@@ -258,6 +273,40 @@
         if (m1CloseCountdownAnchorSec === null || m1CloseCountdownAnchorPerfMs === null) return null;
         const elapsed = (performance.now() - m1CloseCountdownAnchorPerfMs) / 1000;
         return Math.max(0, Math.min(M1_COUNTDOWN_SECONDS, m1CloseCountdownAnchorSec - elapsed));
+    }
+    function applyGenericCountdownFromPayload(payload, tf) {
+        const periodSec = timeframeSeconds(tf);
+        if (
+            !payload ||
+            !Array.isArray(payload.candles) ||
+            payload.candles.length === 0 ||
+            typeof payload.server_unix !== 'number' ||
+            !Number.isFinite(payload.server_unix)
+        ) {
+            tfCloseCountdownAnchorSec = null;
+            tfCloseCountdownAnchorPerfMs = null;
+            return;
+        }
+        const last = payload.candles[payload.candles.length - 1];
+        const lastOpen = Number(last && last.time);
+        if (!Number.isFinite(lastOpen)) {
+            tfCloseCountdownAnchorSec = null;
+            tfCloseCountdownAnchorPerfMs = null;
+            return;
+        }
+        const closeTs = lastOpen + periodSec;
+        const left = Math.max(0, Math.min(periodSec, closeTs - Number(payload.server_unix)));
+        tfCloseCountdownAnchorSec = left;
+        tfCloseCountdownAnchorPerfMs = performance.now();
+    }
+
+    function genericCountdownLeftNow(tf) {
+        const periodSec = timeframeSeconds(tf);
+        if (tfCloseCountdownAnchorSec === null || tfCloseCountdownAnchorPerfMs === null) {
+            return null;
+        }
+        const elapsed = (performance.now() - tfCloseCountdownAnchorPerfMs) / 1000;
+        return Math.max(0, Math.min(periodSec, tfCloseCountdownAnchorSec - elapsed));
     }
 
     const CANDLE_TIMER_GAP_T = 3;
@@ -1573,10 +1622,6 @@
     }
 
     function positionCandleTimerOverlay() {
-        if (currentTimeframeMinutes !== 1) {
-            if (candleTimerOverlay) candleTimerOverlay.classList.add('hidden');
-            return;
-        }
         if (!candleTimerOverlay || !chart || !candlestickSeries || !allChartData.length) {
             if (candleTimerOverlay) candleTimerOverlay.classList.add('hidden');
             return;
@@ -1631,24 +1676,26 @@
             candleCloseTimerEl.textContent = '';
             return;
         }
-        if (currentTimeframeMinutes !== 1) {
-            if (candleTimerOverlay) candleTimerOverlay.classList.add('hidden');
-            candleCloseTimerEl.textContent = '';
-            return;
-        }
         const lastT = Number(allChartData[allChartData.length - 1].time);
         if (!Number.isFinite(lastT)) {
             if (candleTimerOverlay) candleTimerOverlay.classList.add('hidden');
             candleCloseTimerEl.textContent = '';
             return;
         }
-        const left = m1CountdownLeftNow();
+        let left = null;
+        if (currentTimeframeMinutes === 1) {
+            // Для M1 используем серверный якорь m1_seconds_to_close (он учитывает потенциальный дрейф).
+            left = m1CountdownLeftNow();
+        } else {
+            // Для остальных TF (включая S5/S15/S30) считаем по времени открытия последней свечи.
+            left = genericCountdownLeftNow(currentTimeframeMinutes);
+        }
         if (left === null) {
             if (candleTimerOverlay) candleTimerOverlay.classList.add('hidden');
             candleCloseTimerEl.textContent = '';
             return;
         }
-        if (candleTfLabelEl) candleTfLabelEl.textContent = 'M' + String(currentTimeframeMinutes);
+        if (candleTfLabelEl) candleTfLabelEl.textContent = timeframeLabel(currentTimeframeMinutes);
         candleCloseTimerEl.textContent = formatMmSs(left);
         requestAnimationFrame(positionCandleTimerOverlay);
     }
@@ -1814,11 +1861,21 @@
             : candlesSince();
         const params = new URLSearchParams({ instrument, timeframe: String(currentTimeframeMinutes), limit: LIMIT, since: String(dynamicSince) });
         if (before != null) params.set('before', before);
-        if (currentTimeframeMinutes === 1 && before == null) params.set('include_partial', '1');
+        // Просим partial для всех TF (кроме пагинации before),
+        // а backend сам преобразует S5-partial в live-bar выбранного timeframe.
+        if (before == null) {
+            params.set('include_partial', '1');
+        }
         return fetch(`${CANDLES_URL}?${params.toString()}`, { headers: { 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' } })
             .then((r) => r.json())
             .then((payload) => {
                 applyM1CountdownFromPayload(payload);
+                if (currentTimeframeMinutes !== 1) {
+                    applyGenericCountdownFromPayload(payload, currentTimeframeMinutes);
+                } else {
+                    tfCloseCountdownAnchorSec = null;
+                    tfCloseCountdownAnchorPerfMs = null;
+                }
                 if (payload && payload.feed_debug && typeof payload.feed_debug === 'object') {
                     lastFeedDebug = {
                         rawFeedTime: payload.feed_debug.raw_feed_time ?? null,
@@ -2029,6 +2086,9 @@
     }
     function startAutoRefresh() {
         if (refreshInterval) clearInterval(refreshInterval);
+        // Для секундных TF обновляем график чаще (1s), чтобы визуально сократить лаг до платформы.
+        // Для минутных TF оставляем 2s, чтобы не создавать лишнюю нагрузку.
+        const refreshMs = currentTimeframeMinutes >= 4000 ? 1000 : 2000;
         refreshInterval = setInterval(() => {
             if (!currentInstrument || loadingMore || !candlestickSeries) return;
             const stick = isViewNearRightEdge();
@@ -2042,7 +2102,7 @@
                 redrawStructureOverlay();
                 fetchStructures();
             }).catch(() => {});
-        }, 2000);
+        }, refreshMs);
     }
     function reloadChartData() {
         if (!currentInstrument || !candlestickSeries) return;

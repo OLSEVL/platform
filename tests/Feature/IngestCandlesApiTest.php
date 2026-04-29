@@ -70,4 +70,32 @@ class IngestCandlesApiTest extends TestCase
             'volume' => 0,
         ]);
     }
+
+    public function test_ingest_candles_accepts_s5_timeframe_payload(): void
+    {
+        $payload = [
+            'instrument' => 'GBPUSD_otc',
+            // 4005 = S5. Храним его как базовый точный ряд, из которого далее строятся S15/S30.
+            'timeframe' => 4005,
+            'candles' => [
+                [
+                    'time' => 1_700_000_005,
+                    'open' => 1.24501,
+                    'high' => 1.24520,
+                    'low' => 1.24495,
+                    'close' => 1.24510,
+                    'volume' => 9.0,
+                ],
+            ],
+        ];
+
+        $response = $this->postJson('/api/ingest-candles', $payload);
+        $response->assertOk()->assertJson(['ok' => true, 'count' => 1]);
+
+        $this->assertDatabaseHas('candles', [
+            'instrument' => 'GBPUSD_otc',
+            'timeframe' => 4005,
+            'time' => 1_700_000_005,
+        ]);
+    }
 }

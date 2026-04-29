@@ -22,6 +22,11 @@ class DashboardController extends Controller
         $instruments = $sidebar['instruments'];
         $openTradeInstruments = collect(array_keys($sidebar['open_trade_set']))->values();
         $timeframes = [
+            // Секундные таймфреймы держим на выделенных ID, чтобы избежать конфликта
+            // с историческими минутными TF (5/15/30 минут).
+            ['minutes' => 4005, 'label' => 'S5'],
+            ['minutes' => 4015, 'label' => 'S15'],
+            ['minutes' => 4030, 'label' => 'S30'],
             ['minutes' => 1, 'label' => '1м'],
             ['minutes' => 2, 'label' => '2м'],
             ['minutes' => 3, 'label' => '3м'],
@@ -182,21 +187,27 @@ class DashboardController extends Controller
             'is_partial' => false,
         ], $rows);
 
-        if ($includePartial && $timeframe === 1 && $before === null) {
+        // Partial-свечу поддерживаем для ВСЕХ таймфреймов графика.
+        // Подход единый:
+        // 1) базовый live-source всегда S5 partial из current-candle cache;
+        // 2) для выбранного TF вычисляем bucket_start;
+        // 3) если последний бар уже тот же bucket -> replace (живое обновление без "новой свечи");
+        // 4) если bucket новый -> append.
+        //
+        // Это устраняет одинаковую проблему на всех TF, когда "живая" свеча фактически
+        // обновлялась только шагом закрытых S5-баров (каждые 5 сек).
+        if ($includePartial && $before === null) {
             $partial = $currentCandleCache->getPartial($instrument);
             if ($partial && $currentCandleCache->isFresh($partial, 30)) {
                 $lastClosedTime = ! empty($data) ? (int) end($data)['time'] : 0;
-                $partialTime = (int) ($partial['time'] ?? 0);
-                if ($partialTime > $lastClosedTime) {
-                    $data[] = [
-                        'time' => $partialTime,
-                        'open' => round((float) ($partial['open'] ?? 0), 5),
-                        'high' => round((float) ($partial['high'] ?? 0), 5),
-                        'low' => round((float) ($partial['low'] ?? 0), 5),
-                        'close' => round((float) ($partial['close'] ?? 0), 5),
-                        'volume' => round((float) ($partial['volume'] ?? 0), 2),
-                        'is_partial' => true,
-                    ];
+                $livePartial = $this->buildLivePartialFromS5($timeframe, $partial, $data);
+                if ($livePartial !== null) {
+                    $liveTime = (int) $livePartial['time'];
+                    if ($liveTime > $lastClosedTime) {
+                        $data[] = $livePartial;
+                    } elseif ($liveTime === $lastClosedTime && $data !== []) {
+                        $data[array_key_last($data)] = $livePartial;
+                    }
                 }
             }
         }
@@ -267,5 +278,78 @@ class DashboardController extends Controller
             ]);
 
         return response()->json(['payouts' => $rows->values()->all()]);
+    }
+
+    /**
+     * Строит live-partial для любого таймфрейма на основе S5 partial.
+     *
+     * Важная идея:
+     * - не сканируем БД "по всему bucket", а берём уже рассчитанный последний бар из $currentData;
+     * - если последний бар в том же bucket, обновляем его high/low/close/volume;
+     * - если bucket новый, создаём новый partial-бар из текущего S5 partial.
+     *
+     * Так мы получаем "живую" свечу для всех TF без тяжёлых запросов к БД на каждый polling.
+     *
+     * @param  list<array{time:int,open:float,high:float,low:float,close:float,volume:float,is_partial:bool}>  $currentData
+     * @param  array<string,mixed>  $partial
+     * @return array{time:int,open:float,high:float,low:float,close:float,volume:float,is_partial:bool}|null
+     */
+    private function buildLivePartialFromS5(int $timeframe, array $partial, array $currentData): ?array
+    {
+        $partialRawTime = (int) ($partial['time'] ?? 0);
+        if ($partialRawTime <= 0) {
+            return null;
+        }
+        $bucketSeconds = $this->timeframeToSeconds($timeframe);
+        if ($bucketSeconds <= 0) {
+            return null;
+        }
+        $bucketStart = (int) (floor($partialRawTime / $bucketSeconds) * $bucketSeconds);
+        $pOpen = (float) ($partial['open'] ?? 0);
+        $pHigh = (float) ($partial['high'] ?? $pOpen);
+        $pLow = (float) ($partial['low'] ?? $pOpen);
+        $pClose = (float) ($partial['close'] ?? $pOpen);
+        $pVolume = (float) ($partial['volume'] ?? 0);
+
+        $last = $currentData !== [] ? $currentData[array_key_last($currentData)] : null;
+        if (is_array($last) && (int) ($last['time'] ?? 0) === $bucketStart) {
+            // Replace-режим: обновляем текущий бар в его же bucket.
+            $open = (float) ($last['open'] ?? $pOpen);
+            $high = max((float) ($last['high'] ?? $pHigh), $pHigh);
+            $low = min((float) ($last['low'] ?? $pLow), $pLow);
+            $close = $pClose;
+            // Если partial уже "дочерняя" свеча этого bucket, её volume добавляем поверх текущего.
+            $volume = (float) ($last['volume'] ?? 0) + $pVolume;
+        } else {
+            // Append-режим: новый bucket ещё не присутствует в текущем ряду.
+            $open = $pOpen;
+            $high = $pHigh;
+            $low = $pLow;
+            $close = $pClose;
+            $volume = $pVolume;
+        }
+
+        return [
+            'time' => $bucketStart,
+            'open' => round($open, 5),
+            'high' => round($high, 5),
+            'low' => round($low, 5),
+            'close' => round($close, 5),
+            'volume' => round((float) $volume, 2),
+            'is_partial' => true,
+        ];
+    }
+
+    /**
+     * Преобразует UI timeframe в секунды bucket-а.
+     */
+    private function timeframeToSeconds(int $timeframe): int
+    {
+        return match ($timeframe) {
+            CandleService::TF_S5 => 5,
+            CandleService::TF_S15 => 15,
+            CandleService::TF_S30 => 30,
+            default => max(1, $timeframe) * 60,
+        };
     }
 }
