@@ -106,6 +106,48 @@ Artisan::command('bots:bootstrap', function () {
     $this->info("Бот готов: #{$bot->id} {$bot->name} ({$bot->type})");
 })->purpose('Создать базового бота "3 свечи в ряд"');
 
+Artisan::command('bots:akim-bootstrap', function () {
+    $user = User::query()->orderBy('id')->first();
+    if (! $user) {
+        $this->error('Нет пользователей. Сначала зарегистрируйте пользователя.');
+
+        return;
+    }
+
+    // Бот 1: версия "из первого видео" — M1, тренд + откат.
+    $bot1 = Bot::query()->firstOrCreate(
+        ['user_id' => $user->id, 'name' => 'AKIM TRADE 1M', 'type' => 'akim_trade_1m'],
+        [
+            'is_active' => false,
+            'config' => [
+                'count' => 180,
+                'expiry_sec' => 60,
+                'min_confidence' => 0.58,
+                'stale_after_sec' => 45,
+                'version' => 'akim_trade_1m_v1',
+            ],
+        ]
+    );
+
+    // Бот 2: версия "из второго видео" — быстрый поток S5 и короткая экспирация.
+    $bot2 = Bot::query()->firstOrCreate(
+        ['user_id' => $user->id, 'name' => 'AKIM TRADE 5S', 'type' => 'akim_trade_5s'],
+        [
+            'is_active' => false,
+            'config' => [
+                'count' => 500,
+                'expiry_sec' => 5,
+                'min_confidence' => 0.60,
+                'stale_after_sec' => 10,
+                'version' => 'akim_trade_5s_v1',
+            ],
+        ]
+    );
+
+    $this->info("Готово: #{$bot1->id} {$bot1->name} ({$bot1->type})");
+    $this->info("Готово: #{$bot2->id} {$bot2->name} ({$bot2->type})");
+})->purpose('Создать ботов AKIM TRADE 1M и AKIM TRADE 5S');
+
 Artisan::command('bots:feshan-bootstrap', function () {
     $user = User::query()->orderBy('id')->first();
     if (! $user) {
@@ -161,7 +203,7 @@ Artisan::command('bots:openrouter-bootstrap', function () {
                 'model' => 'openai/gpt-5.2',
                 'temperature' => 0.0,
                 'max_tokens' => 350,
-                'system_prompt' => "Ты торговый AI-ассистент для бинарных опционов (M1).\nВерни только JSON без markdown.\nФормат: {\"side\":\"CALL|PUT|NONE\",\"confidence\":0.0,\"analysis_text\":\"...\",\"reasons_short\":[\"...\"],\"features\":{}}\nЕсли не уверен — side=NONE и confidence<=0.5.",
+                'system_prompt' => "Ты торговый AI-ассистент для бинарных опционов.\nРаботаешь по MTF-логике: H1 -> M15 -> M5 -> M1.\n\nВерни только JSON без markdown.\nФормат:\n{\"side\":\"CALL|PUT|NONE\",\"confidence\":0.0,\"analysis_text\":\"...\",\"reasons_short\":[\"...\"],\"features\":{}}\n\nДанные в запросе:\n- closed_candles: M1\n- mtf.h1_closed: H1\n- mtf.m15_closed: M15\n- mtf.m5_closed: M5\n\nОбязательный алгоритм:\n1) H1: определи bias = up | down | flat.\n2) M15: определи структуру у уровня: support/resistance, retest/breakout/false_breakout/range.\n3) M5: ищи подтверждение: rejection candle, breakout confirmation, возврат под/над уровень после ложного пробоя.\n4) M1: только точка входа (тайминг), не источник основного bias.\n\nПравила входа:\n- CALL только если H1 bias up, M15 поддерживает long-сценарий и M5 дал подтверждение.\n- PUT только если H1 bias down, M15 поддерживает short-сценарий и M5 дал подтверждение.\n- Иначе side = \"NONE\".\n\nФильтры качества:\n- Если H1 = flat и M15 = range без четкого края уровня -> NONE.\n- Если M1 сигнал против H1+M15 -> NONE.\n- Если подтверждений меньше 2 (на M15/M5) -> NONE.\n- Если не уверен -> NONE и confidence <= 0.5.\n\nConfidence:\n- NONE: 0.0..0.5\n- CALL/PUT: 0.55..1.0 только при подтвержденном MTF-согласовании.\n\nСтрогий формат explanation:\n- analysis_text обязательно в виде:\n  \"H1: ...; M15: ...; M5: ...; M1: ...; setup: ...\"\n- reasons_short: 3-5 коротких пунктов, желательно в порядке H1 -> M15 -> M5 -> M1.\n\nfeatures (обязательно заполняй):\n{\n  \"h1_bias\":\"up|down|flat\",\n  \"m15_structure\":\"support|resistance|range|breakout|retest|false_breakout\",\n  \"m5_trigger\":\"rejection|breakout_confirm|none\",\n  \"entry_tf\":\"M1\",\n  \"setup_type\":\"rejection|breakout_retest|false_breakout|none\",\n  \"mtf_alignment_score\": 0.0,\n  \"level_price\": 0.0\n}",
                 'version' => 'openrouter_llm_v1',
             ],
         ]
@@ -191,6 +233,9 @@ Artisan::command('bots:scan {--bot_id=} {--active-only=1}', function (BotEngineS
 
     $summary = ['processed' => 0, 'signals' => 0, 'trades' => 0];
     foreach ($bots as $bot) {
+        if (! $bot instanceof Bot) {
+            continue;
+        }
         $r = $engine->scanBot($bot);
         $summary['processed'] += (int) $r['processed'];
         $summary['signals'] += (int) $r['signals'];

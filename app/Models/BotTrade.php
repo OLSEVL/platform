@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class BotTrade extends Model
 {
@@ -58,5 +59,10 @@ class BotTrade extends Model
     public function signal(): BelongsTo
     {
         return $this->belongsTo(BotSignal::class, 'bot_signal_id');
+    }
+
+    public function llmLogs(): HasMany
+    {
+        return $this->hasMany(BotLlmLog::class, 'bot_trade_id');
     }
 }

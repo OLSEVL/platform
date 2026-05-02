@@ -15,11 +15,19 @@ class BotDataService
     /**
      * @return array{closed:list<array<string,mixed>>,partial:array<string,mixed>|null,series:list<array<string,mixed>>}
      */
-    public function series(string $instrument, int $count = 120, bool $includePartial = true, int $staleAfterSec = 30): array
+    public function series(
+        string $instrument,
+        int $count = 120,
+        bool $includePartial = true,
+        int $staleAfterSec = 30,
+        int $timeframe = 1
+    ): array
     {
-        // Для ботов M1 должен быть тем же, что видит график: источник единый через CandleService.
-        // CandleService сам выберет S5->M1 агрегацию или legacy fallback.
-        $rows = $this->candleService->seriesForDashboard($instrument, 1, null, null, $count);
+        // Таймфрейм задается ботом через runtime-настройку:
+        // - 1    => классический M1 поток,
+        // - 4005 => секундный S5 поток для быстрых стратегий.
+        // Источник единый через CandleService, чтобы график и бот видели одинаковые свечи.
+        $rows = $this->candleService->seriesForDashboard($instrument, $timeframe, null, null, $count);
 
         $closed = array_map(static fn (array $r) => [
             'time' => (int) ($r['time'] ?? 0),

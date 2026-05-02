@@ -69,7 +69,15 @@ class CandleService
             if ($beforeUnix !== null) {
                 $s5Rows->where('time', '<', $beforeUnix);
             }
-            $rows = $s5Rows->orderBy('time')->limit(15000)->get(['time', 'open', 'high', 'low', 'close', 'volume']);
+            // Критично: для построения "живого" графика нужны ПОСЛЕДНИЕ S5 свечи,
+            // а не самые ранние в таблице. Поэтому берём desc + limit и затем
+            // разворачиваем в возрастающий порядок времени перед агрегацией.
+            $rows = $s5Rows
+                ->orderByDesc('time')
+                ->limit(15000)
+                ->get(['time', 'open', 'high', 'low', 'close', 'volume'])
+                ->reverse()
+                ->values();
             $agg = $this->aggregateBySecondsCollection($rows, $periodSeconds);
             if ($maxBars !== null && count($agg) > $maxBars) {
                 $agg = array_slice($agg, -$maxBars);
@@ -146,7 +154,13 @@ class CandleService
         if ($beforeUnix !== null) {
             $s5Rows->where('time', '<', $beforeUnix);
         }
-        $s5Rows = $s5Rows->orderBy('time')->limit(15000)->get(['time', 'open', 'high', 'low', 'close', 'volume']);
+        // Аналогично: M1 собираем из самых новых S5, чтобы серия совпадала с площадкой.
+        $s5Rows = $s5Rows
+            ->orderByDesc('time')
+            ->limit(15000)
+            ->get(['time', 'open', 'high', 'low', 'close', 'volume'])
+            ->reverse()
+            ->values();
         if ($s5Rows->isNotEmpty()) {
             $m1 = $this->aggregateBySecondsCollection($s5Rows, self::M1_SECONDS);
             if ($maxBars !== null && count($m1) > $maxBars) {

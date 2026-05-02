@@ -3,6 +3,8 @@
 namespace App\Http\Controllers;
 
 use App\Models\Bot;
+use App\Models\BotAnalysisRun;
+use App\Models\BotLlmLog;
 use App\Models\BotTrade;
 use App\Models\PocketInstrument;
 use App\Services\Bots\BotEngineService;
@@ -10,10 +12,12 @@ use App\Services\Bots\OpenRouterClient;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
+use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\View\View;
 use Throwable;
 
@@ -301,6 +305,36 @@ class BotController extends Controller
                 'stale_after_sec' => (int) $extra['stale_after_sec'],
             ]);
             unset($config['streak_len'], $config['confirm_streak_len']);
+        } elseif ($bot->type === 'akim_trade_1m') {
+            // Самостоятельный профиль AKIM 1M: отдельная ветка, чтобы не смешивать с legacy three_candles.
+            $extra = $request->validate([
+                'count' => ['required', 'integer', 'min:10', 'max:5000'],
+                'expiry_sec' => ['required', 'integer', 'min:30', 'max:86400'],
+                'min_confidence' => ['required', 'numeric', 'min:0', 'max:1'],
+                'stale_after_sec' => ['required', 'integer', 'min:5', 'max:600'],
+            ]);
+            $config = array_merge($bot->config ?? [], [
+                'count' => (int) $extra['count'],
+                'expiry_sec' => (int) $extra['expiry_sec'],
+                'min_confidence' => (float) $extra['min_confidence'],
+                'stale_after_sec' => (int) $extra['stale_after_sec'],
+                'version' => 'akim_trade_1m_v1',
+            ]);
+        } elseif ($bot->type === 'akim_trade_5s') {
+            // Самостоятельный профиль AKIM 5S: короткая экспирация и отдельные ограничения.
+            $extra = $request->validate([
+                'count' => ['required', 'integer', 'min:50', 'max:5000'],
+                'expiry_sec' => ['required', 'integer', 'min:5', 'max:120'],
+                'min_confidence' => ['required', 'numeric', 'min:0', 'max:1'],
+                'stale_after_sec' => ['required', 'integer', 'min:2', 'max:120'],
+            ]);
+            $config = array_merge($bot->config ?? [], [
+                'count' => (int) $extra['count'],
+                'expiry_sec' => (int) $extra['expiry_sec'],
+                'min_confidence' => (float) $extra['min_confidence'],
+                'stale_after_sec' => (int) $extra['stale_after_sec'],
+                'version' => 'akim_trade_5s_v1',
+            ]);
         } elseif ($bot->type === 'feshan') {
             // Feshan v2: вход только по снятию ликвидности (liquidity sweep) на M1.
             $extra = $request->validate([
@@ -344,6 +378,12 @@ class BotController extends Controller
                 'candles_take' => ['required', 'integer', 'min:20', 'max:500'],
                 // Системный промпт ограничиваем по длине, чтобы не раздувать latency/стоимость запроса.
                 'system_prompt' => ['required', 'string', 'min:20', 'max:12000'],
+                // Флаг и лимиты MTF-контекста для LLM (M5/M15/H1).
+                // Храним как настройки бота, чтобы можно было гибко тюнить стратегию без деплоя.
+                'mtf_enabled' => ['sometimes', 'boolean'],
+                'm5_take' => ['required', 'integer', 'min:20', 'max:300'],
+                'm15_take' => ['required', 'integer', 'min:20', 'max:300'],
+                'h1_take' => ['required', 'integer', 'min:10', 'max:200'],
             ]);
             $config = array_merge($bot->config ?? [], [
                 'count' => (int) $extra['count'],
@@ -356,6 +396,10 @@ class BotController extends Controller
                 'max_tokens' => (int) $extra['max_tokens'],
                 'candles_take' => (int) $extra['candles_take'],
                 'system_prompt' => trim((string) $extra['system_prompt']),
+                'mtf_enabled' => $request->boolean('mtf_enabled'),
+                'm5_take' => (int) $extra['m5_take'],
+                'm15_take' => (int) $extra['m15_take'],
+                'h1_take' => (int) $extra['h1_take'],
                 'version' => 'openrouter_llm_v1',
             ]);
         } else {
@@ -384,6 +428,63 @@ class BotController extends Controller
         return redirect()->route('bots.settings', $bot)->with('status', 'Настройки сохранены.');
     }
 
+    public function cleanupRecent(Bot $bot): RedirectResponse
+    {
+        $this->ensureBotOwner($bot);
+
+        // Очищаем всё, что старше 24 часов:
+        // берём скользящую границу now()-24h и удаляем записи с временем < cutoff.
+        // Так сохраняются только последние 24 часа, а "исторический хвост" удаляется.
+        $cutoff = now()->subHours(24);
+
+        $deletedLogs = 0;
+        $deletedTrades = 0;
+        $deletedSignals = 0;
+        $deletedAnalysisRuns = 0;
+
+        DB::transaction(function () use ($bot, $cutoff, &$deletedLogs, &$deletedTrades, &$deletedSignals, &$deletedAnalysisRuns): void {
+            // Таблица LLM-логов может отсутствовать на старых инсталляциях.
+            // Перед raw SQL удалением проверяем её существование, чтобы кнопка не падала с SQL-ошибкой.
+            if (Schema::hasTable('bot_llm_logs')) {
+                $deletedLogs = DB::delete(
+                    'DELETE FROM bot_llm_logs WHERE bot_id = ? AND created_at < ?',
+                    [$bot->id, $cutoff]
+                );
+            }
+            if (Schema::hasTable('bot_analysis_runs')) {
+                $deletedAnalysisRuns = DB::delete(
+                    'DELETE FROM bot_analysis_runs WHERE bot_id = ? AND started_at < ?',
+                    [$bot->id, $cutoff]
+                );
+            }
+
+            // Удаляем старые сделки этого бота по времени входа.
+            // Используем raw SQL по требованию: прямой SQL DELETE вместо Eloquent query builder.
+            $deletedTrades = DB::delete(
+                'DELETE FROM bot_trades WHERE bot_id = ? AND entry_time < ?',
+                [$bot->id, $cutoff]
+            );
+
+            // Удаляем старые сигналы этого бота, чтобы данные сигналов/сделок оставались согласованы.
+            $deletedSignals = DB::delete(
+                'DELETE FROM bot_signals WHERE bot_id = ? AND signal_at < ?',
+                [$bot->id, $cutoff]
+            );
+        });
+
+        return redirect()
+            ->route('bots.settings', $bot)
+            ->with(
+                'status',
+                sprintf(
+                    'Очистка выполнена (удалено старше 24 часов): logs=%d, trades=%d, signals=%d.',
+                    $deletedLogs + $deletedAnalysisRuns,
+                    $deletedTrades,
+                    $deletedSignals
+                )
+            );
+    }
+
     public function activity(Bot $bot): View
     {
         $this->ensureBotOwner($bot);
@@ -408,6 +509,128 @@ class BotController extends Controller
             'bot' => $bot,
             'signalsWithTrades' => $signalsWithTrades,
             'targetTradeId' => $targetTradeId > 0 ? $targetTradeId : null,
+        ]);
+    }
+
+    public function logs(Bot $bot, Request $request): View
+    {
+        $this->ensureBotOwner($bot);
+
+        $status = (string) $request->query('status', '');
+        $instrument = trim((string) $request->query('instrument', ''));
+        $skipReason = trim((string) $request->query('skip_reason', ''));
+
+        // Если миграции логирования ещё не применены, не падаем 500-ошибкой:
+        // возвращаем пустой экран с меткой disabled.
+        if (! Schema::hasTable('bot_analysis_runs')) {
+            /** @var LengthAwarePaginator<int, mixed> $emptyRuns */
+            $emptyRuns = new LengthAwarePaginator(
+                items: collect(),
+                total: 0,
+                perPage: 50,
+                currentPage: 1,
+                options: ['path' => request()->url(), 'query' => request()->query()]
+            );
+
+            return view('bots.logs', [
+                'bot' => $bot,
+                'runs' => $emptyRuns,
+                'llmLogsByRun' => [],
+                'analysisMetrics' => ['enabled' => false],
+                'statusOptions' => [
+                    BotAnalysisRun::STATUS_OK,
+                    BotAnalysisRun::STATUS_SKIPPED,
+                    BotAnalysisRun::STATUS_ERROR,
+                    BotAnalysisRun::STATUS_RUNNING,
+                ],
+                'skipReasonOptions' => [],
+                'instrumentOptions' => [],
+                'selectedStatus' => $status,
+                'selectedInstrument' => $instrument,
+                'selectedSkipReason' => $skipReason,
+            ]);
+        }
+
+        $runsQuery = BotAnalysisRun::query()
+            ->where('bot_id', $bot->id)
+            ->latest('started_at');
+
+        if (in_array($status, [BotAnalysisRun::STATUS_OK, BotAnalysisRun::STATUS_SKIPPED, BotAnalysisRun::STATUS_ERROR, BotAnalysisRun::STATUS_RUNNING], true)) {
+            $runsQuery->where('status', $status);
+        }
+        if ($instrument !== '') {
+            $runsQuery->where('instrument', $instrument);
+        }
+        if ($skipReason !== '') {
+            $runsQuery->where('skip_reason', $skipReason);
+        }
+
+        $runs = $runsQuery->paginate(50)->withQueryString();
+        $runIds = $runs->getCollection()->pluck('id')->map(fn ($v) => (int) $v)->all();
+
+        $llmLogsByRun = [];
+        if ($runIds !== [] && Schema::hasTable('bot_llm_logs')) {
+            $llmLogs = BotLlmLog::query()
+                ->where('bot_id', $bot->id)
+                ->whereIn('bot_analysis_run_id', $runIds)
+                ->orderByDesc('id')
+                ->get([
+                    'id',
+                    'bot_analysis_run_id',
+                    'instrument',
+                    'model',
+                    'status',
+                    'latency_ms',
+                    'request_text',
+                    'response_text',
+                    'error_message',
+                    'created_at',
+                ]);
+            $llmLogsByRun = $llmLogs->groupBy('bot_analysis_run_id')->all();
+        }
+
+        $analysisMetrics = $this->analysisMetricsAllTime($bot);
+        $statusOptions = [
+            BotAnalysisRun::STATUS_OK,
+            BotAnalysisRun::STATUS_SKIPPED,
+            BotAnalysisRun::STATUS_ERROR,
+            BotAnalysisRun::STATUS_RUNNING,
+        ];
+        $skipReasonOptions = Schema::hasTable('bot_analysis_runs')
+            ? DB::table('bot_analysis_runs')
+                ->where('bot_id', $bot->id)
+                ->whereNotNull('skip_reason')
+                ->where('skip_reason', '!=', '')
+                ->distinct()
+                ->orderBy('skip_reason')
+                ->pluck('skip_reason')
+                ->map(fn ($v) => (string) $v)
+                ->values()
+                ->all()
+            : [];
+
+        $instrumentOptions = Schema::hasTable('bot_analysis_runs')
+            ? DB::table('bot_analysis_runs')
+                ->where('bot_id', $bot->id)
+                ->distinct()
+                ->orderBy('instrument')
+                ->pluck('instrument')
+                ->map(fn ($v) => (string) $v)
+                ->values()
+                ->all()
+            : [];
+
+        return view('bots.logs', [
+            'bot' => $bot,
+            'runs' => $runs,
+            'llmLogsByRun' => $llmLogsByRun,
+            'analysisMetrics' => $analysisMetrics,
+            'statusOptions' => $statusOptions,
+            'skipReasonOptions' => $skipReasonOptions,
+            'instrumentOptions' => $instrumentOptions,
+            'selectedStatus' => $status,
+            'selectedInstrument' => $instrument,
+            'selectedSkipReason' => $skipReason,
         ]);
     }
 
@@ -506,6 +729,9 @@ class BotController extends Controller
 
         return response()->json([
             'stats' => $stats,
+            'analysis_metrics' => $scope === 'hour'
+                ? $this->analysisMetricsLastHour($bot)
+                : $this->analysisMetricsAllTime($bot),
             'scope' => $scope,
             'instrument' => $instrument !== '' ? $instrument : null,
             'server_time' => now()->toIso8601String(),
@@ -637,6 +863,109 @@ class BotController extends Controller
         $total = $wins + $losses;
 
         return $total > 0 ? round(($wins * 100) / $total, 2) : null;
+    }
+
+    /**
+     * @return array<string,mixed>
+     */
+    private function analysisMetricsAllTime(Bot $bot): array
+    {
+        if (! Schema::hasTable('bot_analysis_runs')) {
+            return ['enabled' => false];
+        }
+
+        $row = DB::table('bot_analysis_runs')
+            ->where('bot_id', $bot->id)
+            ->selectRaw("
+                COUNT(*) as analysis_count,
+                SUM(CASE WHEN status = 'ok' THEN 1 ELSE 0 END) as ok_count,
+                SUM(CASE WHEN status = 'skipped' THEN 1 ELSE 0 END) as skipped_count,
+                SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END) as error_count,
+                AVG(latency_ms) as avg_latency_ms
+            ")
+            ->first();
+        $analysisCount = (int) ($row->analysis_count ?? 0);
+        $okCount = (int) ($row->ok_count ?? 0);
+        $skippedCount = (int) ($row->skipped_count ?? 0);
+        $errorCount = (int) ($row->error_count ?? 0);
+        $signalCount = (int) $bot->signals()->count();
+        $tradeCount = (int) $bot->trades()->count();
+
+        $skipBreakdown = DB::table('bot_analysis_runs')
+            ->where('bot_id', $bot->id)
+            ->where('status', 'skipped')
+            ->selectRaw('skip_reason, COUNT(*) as c')
+            ->groupBy('skip_reason')
+            ->orderByDesc('c')
+            ->get()
+            ->mapWithKeys(fn ($r) => [(string) ($r->skip_reason ?? 'unknown') => (int) $r->c])
+            ->all();
+
+        return [
+            'enabled' => true,
+            'analysis_count' => $analysisCount,
+            'ok_count' => $okCount,
+            'skipped_count' => $skippedCount,
+            'error_count' => $errorCount,
+            'avg_latency_ms' => $row?->avg_latency_ms !== null ? round((float) $row->avg_latency_ms, 2) : null,
+            'signal_count' => $signalCount,
+            'trade_count' => $tradeCount,
+            'conversion_analysis_to_signal' => $analysisCount > 0 ? round($signalCount / $analysisCount, 4) : null,
+            'conversion_signal_to_trade' => $signalCount > 0 ? round($tradeCount / $signalCount, 4) : null,
+            'conversion_analysis_to_trade' => $analysisCount > 0 ? round($tradeCount / $analysisCount, 4) : null,
+            'skip_breakdown' => $skipBreakdown,
+        ];
+    }
+
+    /**
+     * @return array<string,mixed>
+     */
+    private function analysisMetricsLastHour(Bot $bot): array
+    {
+        if (! Schema::hasTable('bot_analysis_runs')) {
+            return ['enabled' => false];
+        }
+        $since = now()->subHour();
+        $row = DB::table('bot_analysis_runs')
+            ->where('bot_id', $bot->id)
+            ->where('started_at', '>=', $since)
+            ->selectRaw("
+                COUNT(*) as analysis_count,
+                SUM(CASE WHEN status = 'ok' THEN 1 ELSE 0 END) as ok_count,
+                SUM(CASE WHEN status = 'skipped' THEN 1 ELSE 0 END) as skipped_count,
+                SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END) as error_count,
+                AVG(latency_ms) as avg_latency_ms
+            ")
+            ->first();
+        $analysisCount = (int) ($row->analysis_count ?? 0);
+        $signalCount = (int) $bot->signals()->where('signal_at', '>=', $since)->count();
+        $tradeCount = (int) $bot->trades()->where('entry_time', '>=', $since)->count();
+
+        $skipBreakdown = DB::table('bot_analysis_runs')
+            ->where('bot_id', $bot->id)
+            ->where('started_at', '>=', $since)
+            ->where('status', 'skipped')
+            ->selectRaw('skip_reason, COUNT(*) as c')
+            ->groupBy('skip_reason')
+            ->orderByDesc('c')
+            ->get()
+            ->mapWithKeys(fn ($r) => [(string) ($r->skip_reason ?? 'unknown') => (int) $r->c])
+            ->all();
+
+        return [
+            'enabled' => true,
+            'analysis_count' => $analysisCount,
+            'ok_count' => (int) ($row->ok_count ?? 0),
+            'skipped_count' => (int) ($row->skipped_count ?? 0),
+            'error_count' => (int) ($row->error_count ?? 0),
+            'avg_latency_ms' => $row?->avg_latency_ms !== null ? round((float) $row->avg_latency_ms, 2) : null,
+            'signal_count' => $signalCount,
+            'trade_count' => $tradeCount,
+            'conversion_analysis_to_signal' => $analysisCount > 0 ? round($signalCount / $analysisCount, 4) : null,
+            'conversion_signal_to_trade' => $signalCount > 0 ? round($tradeCount / $signalCount, 4) : null,
+            'conversion_analysis_to_trade' => $analysisCount > 0 ? round($tradeCount / $analysisCount, 4) : null,
+            'skip_breakdown' => $skipBreakdown,
+        ];
     }
 
     public function show(Bot $bot): View

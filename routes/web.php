@@ -32,8 +32,10 @@ Route::middleware('auth')->group(function () {
         Route::get('/{bot}/stats/data', [BotController::class, 'statsData'])->name('stats.data');
         Route::get('/{bot}/instruments/data', [BotController::class, 'instrumentsSidebarData'])->name('instruments.sidebar-data');
         Route::get('/{bot}/activity', [BotController::class, 'activity'])->name('activity');
+        Route::get('/{bot}/logs', [BotController::class, 'logs'])->name('logs');
         Route::get('/{bot}/settings', [BotController::class, 'settings'])->name('settings');
         Route::put('/{bot}/settings', [BotController::class, 'updateSettings'])->name('settings.update');
+        Route::post('/{bot}/cleanup-recent', [BotController::class, 'cleanupRecent'])->name('cleanup-recent');
         Route::get('/{bot}', [BotController::class, 'show'])->name('show');
     });
     Route::resource('instruments', InstrumentController::class)->only(['index', 'create', 'store', 'edit', 'update', 'destroy']);

@@ -8,10 +8,55 @@
     // Отдельно выносим дефолтный prompt в переменную, чтобы не ломать Blade
     // сложной строкой с JSON-скобками внутри inline-выражения.
     $openrouterDefaultPrompt = <<<'PROMPT'
-Ты торговый AI-ассистент для бинарных опционов (M1).
+Ты торговый AI-ассистент для бинарных опционов.
+Работаешь по MTF-логике: H1 -> M15 -> M5 -> M1.
+
 Верни только JSON без markdown.
-Формат: {"side":"CALL|PUT|NONE","confidence":0.0,"analysis_text":"...","reasons_short":["..."],"features":{}}
-Если не уверен — side=NONE и confidence<=0.5.
+Формат:
+{"side":"CALL|PUT|NONE","confidence":0.0,"analysis_text":"...","reasons_short":["..."],"features":{}}
+
+Данные в запросе:
+- closed_candles: M1
+- mtf.h1_closed: H1
+- mtf.m15_closed: M15
+- mtf.m5_closed: M5
+
+Обязательный алгоритм:
+1) H1: определи bias = up | down | flat.
+2) M15: определи структуру у уровня: support/resistance, retest/breakout/false_breakout/range.
+3) M5: ищи подтверждение: rejection candle, breakout confirmation, возврат под/над уровень после ложного пробоя.
+4) M1: только точка входа (тайминг), не источник основного bias.
+
+Правила входа:
+- CALL только если H1 bias up, M15 поддерживает long-сценарий и M5 дал подтверждение.
+- PUT только если H1 bias down, M15 поддерживает short-сценарий и M5 дал подтверждение.
+- Иначе side = "NONE".
+
+Фильтры качества:
+- Если H1 = flat и M15 = range без четкого края уровня -> NONE.
+- Если M1 сигнал против H1+M15 -> NONE.
+- Если подтверждений меньше 2 (на M15/M5) -> NONE.
+- Если не уверен -> NONE и confidence <= 0.5.
+
+Confidence:
+- NONE: 0.0..0.5
+- CALL/PUT: 0.55..1.0 только при подтвержденном MTF-согласовании.
+
+Строгий формат explanation:
+- analysis_text обязательно в виде:
+  "H1: ...; M15: ...; M5: ...; M1: ...; setup: ..."
+- reasons_short: 3-5 коротких пунктов, желательно в порядке H1 -> M15 -> M5 -> M1.
+
+features (обязательно заполняй):
+{
+  "h1_bias":"up|down|flat",
+  "m15_structure":"support|resistance|range|breakout|retest|false_breakout",
+  "m5_trigger":"rejection|breakout_confirm|none",
+  "entry_tf":"M1",
+  "setup_type":"rejection|breakout_retest|false_breakout|none",
+  "mtf_alignment_score": 0.0,
+  "level_price": 0.0
+}
 PROMPT;
 @endphp
 <div class="mx-auto w-full max-w-2xl space-y-6">
@@ -25,6 +70,8 @@ PROMPT;
                 class="inline-flex items-center rounded border border-zinc-600 bg-zinc-800 px-2.5 py-1 text-xs font-medium text-zinc-200 shadow-sm transition-colors hover:bg-zinc-700 hover:border-zinc-500 hover:text-zinc-50 focus:outline-none focus:ring-2 focus:ring-blue-500/50">График</a>
             <a href="{{ route('bots.activity', $bot) }}"
                 class="inline-flex items-center rounded border border-zinc-600 bg-zinc-800 px-2.5 py-1 text-xs font-medium text-zinc-200 shadow-sm transition-colors hover:bg-zinc-700 hover:border-zinc-500 hover:text-zinc-50 focus:outline-none focus:ring-2 focus:ring-blue-500/50">Сигналы и сделки</a>
+            <a href="{{ route('bots.logs', $bot) }}"
+                class="inline-flex items-center rounded border border-zinc-600 bg-zinc-800 px-2.5 py-1 text-xs font-medium text-zinc-200 shadow-sm transition-colors hover:bg-zinc-700 hover:border-zinc-500 hover:text-zinc-50 focus:outline-none focus:ring-2 focus:ring-blue-500/50">Логи и метрики</a>
             <a href="{{ route('bots.index') }}"
                 class="inline-flex items-center rounded border border-zinc-600 bg-zinc-800 px-2.5 py-1 text-xs font-medium text-zinc-200 shadow-sm transition-colors hover:bg-zinc-700 hover:border-zinc-500 hover:text-zinc-50 focus:outline-none focus:ring-2 focus:ring-blue-500/50">К списку</a>
         </div>
@@ -86,7 +133,7 @@ PROMPT;
                         @error('count')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
-                        <label for="expiry_sec" class="block text-xs font-medium text-zinc-400">Экспирация сделки (сек), для минутной свечи обычно 60</label>
+                        <label for="expiry_sec" class="block text-xs font-medium text-zinc-400">Экспирация сделки (сек)</label>
                         <input type="number" name="expiry_sec" id="expiry_sec" min="30" max="86400" required
                             value="{{ old('expiry_sec', $cfg['expiry_sec'] ?? 60) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
@@ -108,6 +155,76 @@ PROMPT;
                     </div>
                 </div>
 
+            </div>
+        @elseif ($bot->type === 'akim_trade_1m')
+            <div class="space-y-4 border-t border-zinc-800 pt-4">
+                <p class="text-sm text-zinc-400">AKIM TRADE 1M: самостоятельная стратегия с фильтром направления дня и входом от отката по M1, с пропуском мини-боковиков.</p>
+
+                <div class="grid gap-4 sm:grid-cols-2">
+                    <div class="space-y-1">
+                        <label for="count" class="block text-xs font-medium text-zinc-400">Свечей в выборке (count)</label>
+                        <input type="number" name="count" id="count" min="10" max="5000" required
+                            value="{{ old('count', $cfg['count'] ?? 180) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @error('count')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                    <div class="space-y-1">
+                        <label for="expiry_sec" class="block text-xs font-medium text-zinc-400">Экспирация сделки (сек), обычно 60</label>
+                        <input type="number" name="expiry_sec" id="expiry_sec" min="30" max="86400" required
+                            value="{{ old('expiry_sec', $cfg['expiry_sec'] ?? 60) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @error('expiry_sec')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                    <div class="space-y-1">
+                        <label for="min_confidence" class="block text-xs font-medium text-zinc-400">Мин. confidence (0–1)</label>
+                        <input type="number" name="min_confidence" id="min_confidence" min="0" max="1" step="0.01" required
+                            value="{{ old('min_confidence', $cfg['min_confidence'] ?? 0.58) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @error('min_confidence')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                    <div class="space-y-1">
+                        <label for="stale_after_sec" class="block text-xs font-medium text-zinc-400">Свежесть текущей свечи (сек)</label>
+                        <input type="number" name="stale_after_sec" id="stale_after_sec" min="5" max="600" required
+                            value="{{ old('stale_after_sec', $cfg['stale_after_sec'] ?? 45) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @error('stale_after_sec')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                </div>
+            </div>
+        @elseif ($bot->type === 'akim_trade_5s')
+            <div class="space-y-4 border-t border-zinc-800 pt-4">
+                <p class="text-sm text-zinc-400">AKIM TRADE 5S: самостоятельная секундная стратегия (S5) с быстрыми входами по локальному микро-тренду.</p>
+
+                <div class="grid gap-4 sm:grid-cols-2">
+                    <div class="space-y-1">
+                        <label for="count" class="block text-xs font-medium text-zinc-400">Свечей в выборке (count)</label>
+                        <input type="number" name="count" id="count" min="50" max="5000" required
+                            value="{{ old('count', $cfg['count'] ?? 500) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @error('count')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                    <div class="space-y-1">
+                        <label for="expiry_sec" class="block text-xs font-medium text-zinc-400">Экспирация сделки (сек), обычно 5</label>
+                        <input type="number" name="expiry_sec" id="expiry_sec" min="5" max="120" required
+                            value="{{ old('expiry_sec', $cfg['expiry_sec'] ?? 5) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @error('expiry_sec')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                    <div class="space-y-1">
+                        <label for="min_confidence" class="block text-xs font-medium text-zinc-400">Мин. confidence (0–1)</label>
+                        <input type="number" name="min_confidence" id="min_confidence" min="0" max="1" step="0.01" required
+                            value="{{ old('min_confidence', $cfg['min_confidence'] ?? 0.60) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @error('min_confidence')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                    <div class="space-y-1">
+                        <label for="stale_after_sec" class="block text-xs font-medium text-zinc-400">Свежесть текущей свечи (сек)</label>
+                        <input type="number" name="stale_after_sec" id="stale_after_sec" min="2" max="120" required
+                            value="{{ old('stale_after_sec', $cfg['stale_after_sec'] ?? 10) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @error('stale_after_sec')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                </div>
             </div>
         @elseif ($bot->type === 'feshan')
             <div class="space-y-4 border-t border-zinc-800 pt-4">
@@ -200,6 +317,43 @@ PROMPT;
                             value="{{ old('candles_take', $cfg['candles_take'] ?? 120) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
                         @error('candles_take')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                    <div class="space-y-1 sm:col-span-2">
+                        <div class="flex items-center gap-2">
+                            {{-- Включает/выключает передачу старших ТФ в LLM:
+                                 при включении модель получает M5/M15/H1 для фильтрации шума M1. --}}
+                            <input type="checkbox"
+                                   name="mtf_enabled"
+                                   id="mtf_enabled"
+                                   value="1"
+                                   class="rounded border-zinc-600 bg-zinc-800 text-blue-500"
+                                   @checked(old('mtf_enabled', $cfg['mtf_enabled'] ?? true))>
+                            <label for="mtf_enabled" class="text-xs font-medium text-zinc-300">
+                                Использовать MTF-контекст (M5/M15/H1) для принятия решения
+                    <div class="space-y-1">
+                        <label for="h1_take" class="block text-xs font-medium text-zinc-400">H1 баров для LLM</label>
+                        <input type="number" name="h1_take" id="h1_take" min="10" max="200" required
+                            value="{{ old('h1_take', $cfg['h1_take'] ?? 24) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @error('h1_take')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                            </label>
+                        </div>
+                        @error('mtf_enabled')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                    <div class="space-y-1">
+                        <label for="m5_take" class="block text-xs font-medium text-zinc-400">M5 баров для LLM</label>
+                        <input type="number" name="m5_take" id="m5_take" min="20" max="300" required
+                            value="{{ old('m5_take', $cfg['m5_take'] ?? 96) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @error('m5_take')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                    <div class="space-y-1">
+                        <label for="m15_take" class="block text-xs font-medium text-zinc-400">M15 баров для LLM</label>
+                        <input type="number" name="m15_take" id="m15_take" min="20" max="300" required
+                            value="{{ old('m15_take', $cfg['m15_take'] ?? 64) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @error('m15_take')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
                         <label for="expiry_sec" class="block text-xs font-medium text-zinc-400">Экспирация (сек)</label>
@@ -312,6 +466,19 @@ PROMPT;
             </button>
             <a href="{{ route('bots.show', $bot) }}" class="text-sm text-zinc-500 hover:text-zinc-300">Отмена</a>
         </div>
+    </form>
+
+    <form method="post"
+          action="{{ route('bots.cleanup-recent', $bot) }}"
+          class="inline-flex"
+          onsubmit="return confirm('Удалить у этого бота все записи, которые старше 24 часов? Действие необратимо.');">
+        @csrf
+        {{-- Отдельная форма нужна, чтобы не конфликтовать с PUT-формой сохранения настроек.
+             Кнопка запускает именно POST-очистку старых записей (trade/signal/llm logs). --}}
+        <button type="submit"
+                class="rounded bg-rose-700 px-4 py-2 text-sm font-medium text-white hover:bg-rose-600 focus:outline-none focus:ring-2 focus:ring-rose-400">
+            Очистить всё старше 24 часов
+        </button>
     </form>
 </div>
 @endsection

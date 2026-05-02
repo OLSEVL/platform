@@ -3,14 +3,20 @@
 namespace App\Services\Bots;
 
 use App\Models\Bot;
+use App\Models\BotAnalysisRun;
+use App\Models\BotLlmLog;
 use App\Models\BotSignal;
 use App\Models\BotTrade;
 use App\Models\PocketInstrument;
+use App\Services\Bots\Strategies\AkimTrade1MStrategy;
+use App\Services\Bots\Strategies\AkimTrade5SStrategy;
 use App\Services\Bots\Strategies\BotStrategyInterface;
 use App\Services\Bots\Strategies\FeshanStrategy;
 use App\Services\Bots\Strategies\OpenRouterLlmStrategy;
 use App\Services\Bots\Strategies\ThreeCandlesInRowStrategy;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 
 class BotEngineService
 {
@@ -71,6 +77,7 @@ class BotEngineService
         $processed = 0;
         $signals = 0;
         $trades = 0;
+        $analysisLogsEnabled = Schema::hasTable('bot_analysis_runs');
         foreach ($instruments as $instrumentRow) {
             $instrument = (string) $instrumentRow->instrument;
             if ($allowedInstrumentSet !== [] && ! isset($allowedInstrumentSet[$instrument])) {
@@ -80,17 +87,42 @@ class BotEngineService
                 continue;
             }
             $processed++;
+            $analysisRun = $analysisLogsEnabled ? BotAnalysisRun::query()->create([
+                'bot_id' => $bot->id,
+                'instrument' => $instrument,
+                'status' => BotAnalysisRun::STATUS_RUNNING,
+                'started_at' => now(),
+                'runtime_json' => [
+                    'bot_type' => $bot->type,
+                    'count' => $count,
+                    'expiry_sec' => $expirySec,
+                    'min_confidence' => $minConfidence,
+                    'min_payout' => $minPayout,
+                    'stale_after_sec' => $staleAfterSec,
+                    'min_closed_bars' => $minClosedBars,
+                    'dedupe_bucket_sec' => $dedupeBucketSec,
+                ],
+            ]) : null;
             // Профессиональный риск-фильтр по экономике сделки:
             // если текущий payout ниже порога, математическое ожидание становится слишком слабым,
             // поэтому такой инструмент пропускаем до любого технического анализа.
             $currentPayout = $instrumentRow->current_payout !== null ? (float) $instrumentRow->current_payout : null;
             if ($currentPayout === null || $currentPayout < $minPayout) {
+                $this->finishAnalysisRun($analysisRun, BotAnalysisRun::STATUS_SKIPPED, 'low_payout', [
+                    'payout' => $currentPayout,
+                    'min_payout' => $minPayout,
+                ]);
                 continue;
             }
 
-            $series = $this->botDataService->series($instrument, $count, true, $staleAfterSec);
+            $seriesTimeframe = (int) ($runtime['series_timeframe'] ?? 1);
+            $series = $this->botDataService->series($instrument, $count, true, $staleAfterSec, $seriesTimeframe);
             $closed = $series['closed'];
             if (count($closed) < $minClosedBars) {
+                $this->finishAnalysisRun($analysisRun, BotAnalysisRun::STATUS_SKIPPED, 'not_enough_bars', [
+                    'closed_bars' => count($closed),
+                    'min_closed_bars' => $minClosedBars,
+                ]);
                 continue;
             }
             $partial = $series['partial'];
@@ -103,14 +135,26 @@ class BotEngineService
                     15 => 96,
                     5 => 160,
                 ]);
+            } elseif ($bot->type === 'openrouter_llm') {
+                // Для OpenRouter-бота подмешиваем старшие ТФ (M5/M15/H1), чтобы модель видела
+                // не только локальный шум M1, но и структуру/направление старшего контекста.
+                $mtf = $this->openRouterMtfSeries($instrument, $config);
             }
             $decision = $strategy->analyze($closed, $partial, [
+                'bot_id' => $bot->id,
+                'analysis_run_id' => $analysisRun?->id,
                 'instrument' => $instrument,
                 'payout' => $currentPayout,
                 'config' => $config,
                 'mtf' => $mtf,
             ]);
             if (! $decision) {
+                $this->finishAnalysisRun($analysisRun, BotAnalysisRun::STATUS_SKIPPED, 'strategy_no_signal', [
+                    'market' => [
+                        'payout' => $currentPayout,
+                        'closed_bars' => count($closed),
+                    ],
+                ]);
                 continue;
             }
 
@@ -124,11 +168,20 @@ class BotEngineService
 
             $confidence = (float) ($decision['confidence'] ?? 0);
             if ($confidence < $minConfidence) {
+                $this->finishAnalysisRun($analysisRun, BotAnalysisRun::STATUS_SKIPPED, 'confidence_below_threshold', [
+                    'decision' => $decision,
+                    'confidence' => $confidence,
+                    'min_confidence' => $minConfidence,
+                ]);
                 continue;
             }
 
             $side = (string) ($decision['side'] ?? '');
             if (! in_array($side, ['CALL', 'PUT'], true)) {
+                $this->finishAnalysisRun($analysisRun, BotAnalysisRun::STATUS_SKIPPED, 'invalid_side', [
+                    'decision' => $decision,
+                    'side' => $side,
+                ]);
                 continue;
             }
 
@@ -141,6 +194,10 @@ class BotEngineService
             $dedupeKey = sprintf('%d:%s:%d:%s', $bot->id, $instrument, $bucket, $side);
 
             if (BotSignal::query()->where('dedupe_key', $dedupeKey)->exists()) {
+                $this->finishAnalysisRun($analysisRun, BotAnalysisRun::STATUS_SKIPPED, 'dedupe', [
+                    'dedupe_key' => $dedupeKey,
+                    'decision' => $decision,
+                ]);
                 continue;
             }
 
@@ -150,6 +207,9 @@ class BotEngineService
                 ->where('status', BotTrade::STATUS_OPEN)
                 ->exists();
             if ($hasOpenTrade) {
+                $this->finishAnalysisRun($analysisRun, BotAnalysisRun::STATUS_SKIPPED, 'open_trade_exists', [
+                    'decision' => $decision,
+                ]);
                 continue;
             }
 
@@ -174,7 +234,8 @@ class BotEngineService
                 $dedupeKey,
                 $entryPrice,
                 &$signals,
-                &$trades
+                &$trades,
+                $analysisRun
             ): void {
                 $signal = BotSignal::query()->create([
                     'bot_id' => $bot->id,
@@ -191,7 +252,7 @@ class BotEngineService
                     'dedupe_key' => $dedupeKey,
                 ]);
 
-                BotTrade::query()->create([
+                $trade = BotTrade::query()->create([
                     'bot_id' => $bot->id,
                     'bot_signal_id' => $signal->id,
                     'instrument' => $instrument,
@@ -211,9 +272,27 @@ class BotEngineService
                     ],
                 ]);
 
+                // Если стратегия вернула id LLM-лога, привязываем лог к созданным signal/trade.
+                // Это соединяет "сырые request/response модели" с реальной сделкой.
+                if (Schema::hasTable('bot_llm_logs') && isset($decision['llm_log_id']) && is_numeric($decision['llm_log_id'])) {
+                    BotLlmLog::query()
+                        ->whereKey((int) $decision['llm_log_id'])
+                        ->where('bot_id', $bot->id)
+                        ->update([
+                            'bot_signal_id' => $signal->id,
+                            'bot_trade_id' => $trade->id,
+                        ]);
+                }
+
                 $signals++;
                 $trades++;
             });
+            $this->finishAnalysisRun($analysisRun, BotAnalysisRun::STATUS_OK, null, [
+                'decision' => $decision,
+                'entry_price' => $entryPrice,
+                'entry_time' => $entryAt->toIso8601String(),
+                'expiry_time' => $expiryAt->toIso8601String(),
+            ]);
         }
 
         return [
@@ -287,6 +366,10 @@ class BotEngineService
                 15 => 96,
                 5 => 160,
             ]);
+        } elseif ($bot->type === 'openrouter_llm') {
+            // Для OpenRouter-бота диагностика должна использовать те же MTF-данные, что и боевой scan.
+            // Это исключает ситуацию, когда "на графике одно объяснение", а в проде модель видит другой контекст.
+            $mtf = $this->openRouterMtfSeries($instrument, $runtime['config']);
         }
 
         $decision = $strategy->analyze($closed, $series['partial'], [
@@ -376,15 +459,20 @@ class BotEngineService
     /**
      * Единый расчёт runtime-параметров, чтобы scan и объяснение работали по одинаковым правилам.
      *
-     * @return array{config:array<string,mixed>,count:int,expiry_sec:int,min_confidence:float,min_payout:float,stale_after_sec:int,min_closed_bars:int,dedupe_bucket_sec:int}
+    * @return array{config:array<string,mixed>,count:int,expiry_sec:int,min_confidence:float,min_payout:float,stale_after_sec:int,min_closed_bars:int,dedupe_bucket_sec:int,series_timeframe:int}
      */
     private function runtimeSettings(Bot $bot): array
     {
         $config = is_array($bot->config) ? $bot->config : [];
         $defaultCount = $bot->type === 'feshan' ? 2500 : 120;
+        if ($bot->type === 'akim_trade_5s') {
+            $defaultCount = 500;
+        }
         $count = max(10, min(5000, (int) ($config['count'] ?? $defaultCount)));
         $expirySec = match ($bot->type) {
             'three_candles_in_row' => (int) ($config['expiry_sec'] ?? 60),
+            'akim_trade_1m' => (int) ($config['expiry_sec'] ?? 60),
+            'akim_trade_5s' => (int) ($config['expiry_sec'] ?? 5),
             'feshan' => (int) ($config['expiry_sec'] ?? 300),
             default => (int) ($config['expiry_sec'] ?? 300),
         };
@@ -395,6 +483,8 @@ class BotEngineService
         $minConfidence = (float) ($config['min_confidence'] ?? match ($bot->type) {
             'feshan' => 0.6,
             'openrouter_llm' => 0.65,
+            'akim_trade_1m' => 0.58,
+            'akim_trade_5s' => 0.60,
             default => 0.55,
         });
         // Минимальный payout как экономический фильтр качества входа.
@@ -407,14 +497,27 @@ class BotEngineService
         $staleAfterSec = (int) ($config['stale_after_sec'] ?? 30);
         $minClosedBars = match ($bot->type) {
             'feshan' => 40,
+            'akim_trade_1m' => 90,
+            'akim_trade_5s' => 120,
             // LLM-боту нужен достаточно широкий контекст последних свечей,
             // иначе модель чаще даёт шумные и нестабильные решения.
             'openrouter_llm' => 20,
             default => 3,
         };
-        $dedupeBucketSec = in_array($bot->type, ['feshan', 'openrouter_llm'], true)
-            ? max(60, min(900, $expirySec))
-            : 60;
+        // Указываем таймфрейм входного потока для стратегии:
+        // 1    -> M1 (AKIM 1M),
+        // 4005 -> S5 (AKIM 5S).
+        $seriesTimeframe = match ($bot->type) {
+            'akim_trade_5s' => 4005,
+            default => 1,
+        };
+        $dedupeBucketSec = match ($bot->type) {
+            'feshan', 'openrouter_llm' => max(60, min(900, $expirySec)),
+            // Для ультракороткой версии dedupe равен экспирации, чтобы не блокировать
+            // рабочую частоту входов искусственным минутным окном.
+            'akim_trade_5s' => max(5, min(30, $expirySec)),
+            default => 60,
+        };
         return [
             'config' => $config,
             'count' => $count,
@@ -424,7 +527,36 @@ class BotEngineService
             'stale_after_sec' => $staleAfterSec,
             'min_closed_bars' => $minClosedBars,
             'dedupe_bucket_sec' => $dedupeBucketSec,
+            'series_timeframe' => $seriesTimeframe,
         ];
+    }
+
+    /**
+     * Собирает MTF-ряд для OpenRouter LLM-бота из настроек бота.
+     * Возвращает пустой массив, если MTF отключен в конфиге.
+     *
+     * @param  array<string,mixed>  $config
+     * @return array<string, list<array{time:int,open:float,high:float,low:float,close:float,volume:float}>>
+     */
+    private function openRouterMtfSeries(string $instrument, array $config): array
+    {
+        // Флаг позволяет быстро отключить MTF без правок кода — удобно для A/B сравнения качества сигналов.
+        $mtfEnabled = (bool) ($config['mtf_enabled'] ?? true);
+        if (! $mtfEnabled) {
+            return [];
+        }
+
+        // Кол-во баров ограничиваем диапазонами, чтобы не перегружать БД и payload LLM.
+        $m5Take = max(20, min(300, (int) ($config['m5_take'] ?? 96)));
+        $m15Take = max(20, min(300, (int) ($config['m15_take'] ?? 64)));
+
+        $h1Take = max(10, min(200, (int) ($config['h1_take'] ?? 24)));
+
+        return $this->botDataService->mtfSeries($instrument, [
+            5 => $m5Take,
+            15 => $m15Take,
+            60 => $h1Take,
+        ]);
     }
 
     /**
@@ -702,11 +834,34 @@ class BotEngineService
     {
         return match ($type) {
             'three_candles_in_row' => new ThreeCandlesInRowStrategy,
+            'akim_trade_1m' => new AkimTrade1MStrategy,
+            'akim_trade_5s' => new AkimTrade5SStrategy,
             'feshan' => new FeshanStrategy,
             // Новый бот полностью изолирован от старых эвристик:
             // торговое решение принимает только LLM через OpenRouter.
             'openrouter_llm' => new OpenRouterLlmStrategy($this->openRouterClient),
             default => null,
         };
+    }
+
+    /**
+     * Фиксирует итог анализа инструмента (успех/пропуск/ошибка) для метрик воронки.
+     *
+     * @param array<string,mixed>|null $decisionJson
+     */
+    private function finishAnalysisRun(?BotAnalysisRun $run, string $status, ?string $skipReason, ?array $decisionJson = null): void
+    {
+        if (! $run) {
+            return;
+        }
+        $startedMs = $run->started_at ? $run->started_at->getTimestampMs() : (int) round(microtime(true) * 1000);
+        $run->status = $status;
+        $run->skip_reason = $skipReason;
+        $run->finished_at = Carbon::now();
+        $run->latency_ms = max(0, (int) round(microtime(true) * 1000 - $startedMs));
+        if ($decisionJson !== null) {
+            $run->decision_json = $decisionJson;
+        }
+        $run->save();
     }
 }
