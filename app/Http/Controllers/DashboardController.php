@@ -2,11 +2,14 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\Bot;
 use App\Models\BotTrade;
+use App\Models\IndicatorSetting;
 use App\Models\PocketInstrument;
 use App\Services\CandleService;
 use App\Services\CandleStructureZoneDetector;
 use App\Services\CurrentCandleCacheService;
+use App\Services\Indicators\PriceActionDgtIndicatorService;
 use App\Support\M1CandleCountdown;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -43,7 +46,18 @@ class DashboardController extends Controller
             'openTradeInstruments' => $openTradeInstruments,
             'nearestExpiryByInstrument' => $sidebar['nearest_expiry_ts'],
             'timeframes' => $timeframes,
+            // Первый бот пользователя — якорь для шестерёнок «Индикаторы» (те же страницы, что у графика бота).
+            'chartIndicatorBot' => $this->chartIndicatorBotForUser(),
         ]);
+    }
+
+    /** Бот для ссылок настройки оверлеев главного графика (если ботов нет — в шаблоне ведём на список ботов). */
+    private function chartIndicatorBotForUser(): ?Bot
+    {
+        return Bot::query()
+            ->where('user_id', (int) auth()->id())
+            ->orderBy('id')
+            ->first();
     }
 
     public function instrumentsSidebarData(): JsonResponse
@@ -266,6 +280,38 @@ class DashboardController extends Controller
         $zones = $detector->activeZones($rows);
 
         return response()->json(['zones' => $zones]);
+    }
+
+    /**
+     * Price Action (DGT) для главного графика: те же свечи, что у /structures.
+     * Параметры — как у первого бота пользователя (шестерёнка ведёт на ту же страницу сохранения), иначе дефолты сервиса.
+     */
+    public function priceActionDgtIndicatorData(
+        Request $request,
+        CandleService $candleService,
+        PriceActionDgtIndicatorService $pa,
+    ): JsonResponse {
+        $request->validate([
+            'instrument' => ['required', 'string', 'max:64'],
+            'timeframe' => ['nullable', 'integer', Rule::in(CandleService::DASHBOARD_TIMEFRAMES)],
+        ]);
+        $instrument = (string) $request->input('instrument');
+        $timeframe = (int) ($request->input('timeframe') ?? 1);
+        $since = time() - 86400;
+        $rows = $candleService->seriesForDashboard($instrument, $timeframe, $since, null, 5000);
+        $anchorBot = $this->chartIndicatorBotForUser();
+        $params = $anchorBot !== null
+            ? IndicatorSetting::mergedPriceActionDgtParams($anchorBot)
+            : PriceActionDgtIndicatorService::defaultParams();
+        $barSeconds = PriceActionDgtIndicatorService::barSecondsForTimeframe($timeframe);
+        $payload = $pa->compute($rows, $params, $barSeconds);
+
+        return response()->json([
+            'indicator' => $payload,
+            'instrument' => $instrument,
+            'timeframe' => $timeframe,
+            'server_time' => now()->toIso8601String(),
+        ]);
     }
 
     public function payouts(): JsonResponse

@@ -44,4 +44,10 @@ class Bot extends Model
     {
         return $this->hasMany(BotLlmLog::class);
     }
+
+    /** Параметры оверлей-индикаторов графика (отдельная таблица, не смешиваем с торговым config). */
+    public function indicatorSettings(): HasMany
+    {
+        return $this->hasMany(IndicatorSetting::class);
+    }
 }

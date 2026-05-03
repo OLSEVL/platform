@@ -106,16 +106,90 @@
                         class="text-sm px-2 py-1 rounded border border-zinc-600 bg-zinc-800 text-zinc-200 hover:bg-zinc-700">
                         Индикаторы ▾
                     </button>
+                    {{-- Как на странице бота: у каждого слоя своя шестерёнка → те же маршруты настроек (бот-якорь из контроллера). --}}
                     <div id="layers-dropdown-panel"
-                        class="hidden absolute left-0 top-full mt-1 z-20 bg-zinc-900 border border-zinc-700 rounded shadow-lg shadow-black/40 py-2 px-3 min-w-[11rem] space-y-2">
-                        <label class="flex items-center gap-2 text-sm text-zinc-300 cursor-pointer whitespace-nowrap">
-                            <input type="checkbox" id="layer-ob" class="rounded border-zinc-600 bg-zinc-800 text-blue-500" checked>
-                            Ордерблоки
-                        </label>
-                        <label class="flex items-center gap-2 text-sm text-zinc-300 cursor-pointer whitespace-nowrap">
-                            <input type="checkbox" id="layer-fvg" class="rounded border-zinc-600 bg-zinc-800 text-blue-500" checked>
-                            Имбалансы
-                        </label>
+                        class="hidden absolute left-0 top-full mt-1 z-20 bg-zinc-900 border border-zinc-700 rounded shadow-lg shadow-black/40 py-2 pl-3 pr-2 min-w-[14.5rem] space-y-1">
+                        <div class="flex items-center justify-between gap-1">
+                            <label for="layer-ob" class="flex min-w-0 flex-1 items-center gap-2 text-sm text-zinc-300 cursor-pointer">
+                                <input type="checkbox" id="layer-ob" class="rounded border-zinc-600 bg-zinc-800 text-blue-500 shrink-0" checked>
+                                <span class="truncate">Ордерблоки</span>
+                            </label>
+                            @if($chartIndicatorBot)
+                                <a href="{{ route('bots.indicators.order-blocks.edit', $chartIndicatorBot) }}"
+                                    class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-zinc-700 bg-zinc-800/80 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500/50 pointer-events-auto"
+                                    title="Настройки: ордерблоки"
+                                    aria-label="Настройки ордерблоков на графике">
+                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="h-3.5 w-3.5" aria-hidden="true">
+                                        <path stroke-linecap="round" stroke-linejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.325.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.241-.438.613-.43.992a7.723 7.723 0 0 1 0 .255c-.008.378.137.75.43.991l1.004.827c.424.35.534.955.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.47 6.47 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.281c-.09.543-.56.94-1.11.94h-2.594c-.55 0-1.019-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.991a6.932 6.932 0 0 1 0-.255c.007-.38-.138-.751-.43-.992l-1.004-.827a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.086.22-.128.332-.183.582-.495.644-.869l.214-1.281Z" />
+                                        <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
+                                    </svg>
+                                </a>
+                            @else
+                                <a href="{{ route('bots.index') }}"
+                                    class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-zinc-700 bg-zinc-800/40 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300 focus:outline-none focus:ring-2 focus:ring-blue-500/50 pointer-events-auto"
+                                    title="Создайте бота — страницы настроек индикаторов привязаны к боту"
+                                    aria-label="Перейти к списку ботов">
+                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="h-3.5 w-3.5" aria-hidden="true">
+                                        <path stroke-linecap="round" stroke-linejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.325.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.241-.438.613-.43.992a7.723 7.723 0 0 1 0 .255c-.008.378.137.75.43.991l1.004.827c.424.35.534.955.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.47 6.47 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.281c-.09.543-.56.94-1.11.94h-2.594c-.55 0-1.019-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.991a6.932 6.932 0 0 1 0-.255c.007-.38-.138-.751-.43-.992l-1.004-.827a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.086.22-.128.332-.183.582-.495.644-.869l.214-1.281Z" />
+                                        <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
+                                    </svg>
+                                </a>
+                            @endif
+                        </div>
+                        <div class="flex items-center justify-between gap-1">
+                            <label for="layer-fvg" class="flex min-w-0 flex-1 items-center gap-2 text-sm text-zinc-300 cursor-pointer">
+                                <input type="checkbox" id="layer-fvg" class="rounded border-zinc-600 bg-zinc-800 text-blue-500 shrink-0" checked>
+                                <span class="truncate">Имбалансы</span>
+                            </label>
+                            @if($chartIndicatorBot)
+                                <a href="{{ route('bots.indicators.fvg.edit', $chartIndicatorBot) }}"
+                                    class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-zinc-700 bg-zinc-800/80 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500/50 pointer-events-auto"
+                                    title="Настройки: имбалансы (FVG)"
+                                    aria-label="Настройки имбалансов на графике">
+                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="h-3.5 w-3.5" aria-hidden="true">
+                                        <path stroke-linecap="round" stroke-linejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.325.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.241-.438.613-.43.992a7.723 7.723 0 0 1 0 .255c-.008.378.137.75.43.991l1.004.827c.424.35.534.955.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.47 6.47 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.281c-.09.543-.56.94-1.11.94h-2.594c-.55 0-1.019-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.991a6.932 6.932 0 0 1 0-.255c.007-.38-.138-.751-.43-.992l-1.004-.827a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.086.22-.128.332-.183.582-.495.644-.869l.214-1.281Z" />
+                                        <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
+                                    </svg>
+                                </a>
+                            @else
+                                <a href="{{ route('bots.index') }}"
+                                    class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-zinc-700 bg-zinc-800/40 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300 focus:outline-none focus:ring-2 focus:ring-blue-500/50 pointer-events-auto"
+                                    title="Создайте бота — страницы настроек индикаторов привязаны к боту"
+                                    aria-label="Перейти к списку ботов">
+                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="h-3.5 w-3.5" aria-hidden="true">
+                                        <path stroke-linecap="round" stroke-linejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.325.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.241-.438.613-.43.992a7.723 7.723 0 0 1 0 .255c-.008.378.137.75.43.991l1.004.827c.424.35.534.955.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.47 6.47 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.281c-.09.543-.56.94-1.11.94h-2.594c-.55 0-1.019-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.991a6.932 6.932 0 0 1 0-.255c.007-.38-.138-.751-.43-.992l-1.004-.827a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.086.22-.128.332-.183.582-.495.644-.869l.214-1.281Z" />
+                                        <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
+                                    </svg>
+                                </a>
+                            @endif
+                        </div>
+                        <div class="flex items-center justify-between gap-1">
+                            <label for="layer-pa-dgt" class="flex min-w-0 flex-1 items-center gap-2 text-sm text-zinc-300 cursor-pointer">
+                                <input type="checkbox" id="layer-pa-dgt" class="rounded border-zinc-600 bg-zinc-800 text-blue-500 shrink-0" checked>
+                                <span class="truncate">Price Action (DGT)</span>
+                            </label>
+                            @if($chartIndicatorBot)
+                                <a href="{{ route('bots.indicators.price-action-dgt.edit', $chartIndicatorBot) }}"
+                                    class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-zinc-700 bg-zinc-800/80 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500/50 pointer-events-auto"
+                                    title="Настройки: Price Action (DGT)"
+                                    aria-label="Настройки индикатора Price Action DGT">
+                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="h-3.5 w-3.5" aria-hidden="true">
+                                        <path stroke-linecap="round" stroke-linejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.325.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.241-.438.613-.43.992a7.723 7.723 0 0 1 0 .255c-.008.378.137.75.43.991l1.004.827c.424.35.534.955.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.47 6.47 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.281c-.09.543-.56.94-1.11.94h-2.594c-.55 0-1.019-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.991a6.932 6.932 0 0 1 0-.255c.007-.38-.138-.751-.43-.992l-1.004-.827a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.086.22-.128.332-.183.582-.495.644-.869l.214-1.281Z" />
+                                        <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
+                                    </svg>
+                                </a>
+                            @else
+                                <a href="{{ route('bots.index') }}"
+                                    class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-zinc-700 bg-zinc-800/40 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300 focus:outline-none focus:ring-2 focus:ring-blue-500/50 pointer-events-auto"
+                                    title="Создайте бота — страницы настроек индикаторов привязаны к боту"
+                                    aria-label="Перейти к списку ботов">
+                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="h-3.5 w-3.5" aria-hidden="true">
+                                        <path stroke-linecap="round" stroke-linejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.325.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.241-.438.613-.43.992a7.723 7.723 0 0 1 0 .255c-.008.378.137.75.43.991l1.004.827c.424.35.534.955.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.47 6.47 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.281c-.09.543-.56.94-1.11.94h-2.594c-.55 0-1.019-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.991a6.932 6.932 0 0 1 0-.255c.007-.38-.138-.751-.43-.992l-1.004-.827a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.086.22-.128.332-.183.582-.495.644-.869l.214-1.281Z" />
+                                        <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
+                                    </svg>
+                                </a>
+                            @endif
+                        </div>
                     </div>
                 </div>
             </div>
@@ -127,6 +201,8 @@
             </div>
             <div id="chart-wrapper" class="absolute inset-0 hidden z-[1]"></div>
             <div id="structure-overlay" class="absolute inset-0 z-[5] pointer-events-none overflow-visible hidden"></div>
+            {{-- Оверлей индикатора DGT выше зон OB/FVG (как на странице бота). --}}
+            <div id="price-action-overlay" class="absolute inset-0 z-[7] pointer-events-none overflow-visible hidden"></div>
             <div id="candle-timer-overlay"
                 class="pointer-events-none absolute z-[6] hidden h-0 w-0 overflow-visible"
                 title="До закрытия текущей минутной свечи (по времени открытия бара с графика, мм:сс)">
@@ -145,6 +221,7 @@
 (function() {
     const CANDLES_URL = '{{ route("candles.data") }}';
     const STRUCTURES_URL = '{{ route("structures.data") }}';
+    const PA_INDICATOR_URL = '{{ route("dashboard.indicators.price-action-dgt") }}';
     const INSTRUMENTS_SIDEBAR_URL = '{{ route("dashboard.instruments.data") }}';
     const LIMIT = 1440;
     const WINDOW_SEC = 86400;
@@ -194,19 +271,31 @@
     const layersPanel = document.getElementById('layers-dropdown-panel');
     const layerOb = document.getElementById('layer-ob');
     const layerFvg = document.getElementById('layer-fvg');
+    const layerPa = document.getElementById('layer-pa-dgt');
+    const priceActionOverlay = document.getElementById('price-action-overlay');
     const instrumentSearchInput = document.getElementById('instrument-search');
     const instrumentSearchClearBtn = document.getElementById('instrument-search-clear');
     const instrumentListEl = document.getElementById('instrument-list');
 
-    const LAYER_PREFS_KEY = 'platform.dashboard.chartLayers';
+    const LAYER_PREFS_KEY = 'platform.dashboard.chartLayers.v2';
 
     function loadLayerPrefs() {
         try {
             const raw = localStorage.getItem(LAYER_PREFS_KEY);
-            if (raw == null) return;
+            if (raw == null) {
+                try {
+                    const legacy = localStorage.getItem('platform.dashboard.chartLayers');
+                    if (legacy == null) return;
+                    const o = JSON.parse(legacy);
+                    if (typeof o.orderBlocks === 'boolean') layerOb.checked = o.orderBlocks;
+                    if (typeof o.imbalances === 'boolean') layerFvg.checked = o.imbalances;
+                } catch (_) { /* ignore */ }
+                return;
+            }
             const o = JSON.parse(raw);
             if (typeof o.orderBlocks === 'boolean') layerOb.checked = o.orderBlocks;
             if (typeof o.imbalances === 'boolean') layerFvg.checked = o.imbalances;
+            if (layerPa && typeof o.paDgt === 'boolean') layerPa.checked = o.paDgt;
         } catch (_) { /* ignore */ }
     }
 
@@ -215,6 +304,7 @@
             localStorage.setItem(LAYER_PREFS_KEY, JSON.stringify({
                 orderBlocks: layerOb.checked,
                 imbalances: layerFvg.checked,
+                paDgt: layerPa ? layerPa.checked : false,
             }));
         } catch (_) { /* ignore */ }
     }
@@ -233,6 +323,7 @@
     let instrumentListRefreshInterval = null;
     let sidebarTimerInterval = null;
     let lastZones = [];
+    let lastPaPayload = null;
 
     function payoutClassByValue(value) {
         if (value == null || Number.isNaN(value)) return 'text-zinc-500';
@@ -472,24 +563,30 @@
         });
     }
 
-    /** true, если видимый диапазон у правого края данных (смотрим «живой» хвост) */
+    /**
+     * Пользователь смотрит «живой» хвост: правая граница логического диапазона не левее последнего бара.
+     * Раньше было lastIdx−3 — при отступе всего на пару баров от края всё равно вызывали scrollToRealTime(),
+     * и график резко перескакивал к правому краю при закрытии новой свечи.
+     */
     function isViewNearRightEdge() {
         if (!chart || allChartData.length === 0) return true;
         const range = chart.timeScale().getVisibleLogicalRange();
         if (!range) return true;
         const lastIdx = allChartData.length - 1;
-        const barsTolerance = 3;
-        return range.to >= lastIdx - barsTolerance;
+        const edgeEps = 1e-3;
+        return range.to >= lastIdx - edgeEps;
     }
 
     function redrawStructureOverlay() {
         if (!chart || !candlestickSeries || !structureOverlay) return;
         if (!allChartData.length) {
             structureOverlay.innerHTML = '';
+            requestAnimationFrame(redrawPriceActionOverlay);
             return;
         }
         if (lastZones.length === 0) {
             structureOverlay.innerHTML = '';
+            requestAnimationFrame(redrawPriceActionOverlay);
             return;
         }
         const lastBarTime = allChartData[allChartData.length - 1].time;
@@ -542,6 +639,219 @@
             div.style.border = paint.border;
             structureOverlay.appendChild(div);
         });
+        requestAnimationFrame(redrawPriceActionOverlay);
+    }
+
+    function paCssColor(c) {
+        if (c == null || c === '') return 'rgba(148,163,184,0.5)';
+        const s = String(c);
+        if (s.startsWith('#') && s.length === 9) return s;
+        return s;
+    }
+
+    function fetchPriceActionIndicator() {
+        if (!currentInstrument || !layerPa || !layerPa.checked) {
+            lastPaPayload = null;
+            redrawPriceActionOverlay();
+            applyPaBarColors();
+            return;
+        }
+        const params = new URLSearchParams({ instrument: currentInstrument, timeframe: String(currentTimeframeMinutes) });
+        fetch(PA_INDICATOR_URL + '?' + params.toString(), { headers: { 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' } })
+            .then((r) => r.json())
+            .then((d) => {
+                try {
+                    lastPaPayload = d && d.indicator ? d.indicator : null;
+                    redrawPriceActionOverlay();
+                    applyPaBarColors();
+                } catch (e) {
+                    console.error('[PriceAction DGT] dashboard apply', e);
+                    lastPaPayload = null;
+                    try {
+                        redrawPriceActionOverlay();
+                        applyPaBarColors();
+                    } catch (_) {}
+                }
+            })
+            .catch(() => {});
+    }
+
+    function redrawPriceActionOverlay() {
+        if (!priceActionOverlay || !chart || !candlestickSeries) return;
+        priceActionOverlay.innerHTML = '';
+        if (!layerPa || !layerPa.checked || !lastPaPayload || !allChartData.length) return;
+        const ts = chart.timeScale();
+        const vpRightAxisReservePx = 78;
+        const vpPanelMaxHistPx = 100;
+        const vpPanelMaxDomPx = 26;
+        const vpPanelGapPx = 2;
+        const computeVpAnchorRight = () => {
+            const cw = chartWrapper.clientWidth || 0;
+            if (!Number.isFinite(cw) || cw < 40) return null;
+            return cw - vpRightAxisReservePx;
+        };
+        const appendVpLevelBar = (leftPx, topPx, widthPx, heightPx, background, opacity) => {
+            if (!Number.isFinite(leftPx) || !Number.isFinite(topPx) || !Number.isFinite(widthPx) || !Number.isFinite(heightPx)) return;
+            const div = document.createElement('div');
+            div.style.position = 'absolute';
+            div.style.left = leftPx + 'px';
+            div.style.top = topPx + 'px';
+            div.style.width = Math.max(1, widthPx) + 'px';
+            div.style.height = Math.max(1, heightPx) + 'px';
+            div.style.background = paCssColor(background);
+            div.style.opacity = opacity;
+            div.style.pointerEvents = 'none';
+            priceActionOverlay.appendChild(div);
+        };
+        try {
+            const lines = lastPaPayload.lines || [];
+            lines.forEach((ln) => {
+                if (!ln || typeof ln !== 'object') return;
+                const x1 = ts.timeToCoordinate(Number(ln.time_start));
+                const x2 = ts.timeToCoordinate(Number(ln.time_end));
+                const y = candlestickSeries.priceToCoordinate(Number(ln.price));
+                if (x1 == null || x2 == null || y == null || Number.isNaN(x1) || Number.isNaN(x2) || Number.isNaN(y)) return;
+                const left = Math.min(x1, x2);
+                const w = Math.max(1, Math.abs(x2 - x1));
+                const st = (ln.style || 'Solid').toLowerCase();
+                const col = paCssColor(ln.color);
+                const lw = Math.max(1, Number(ln.width) || 1);
+                const div = document.createElement('div');
+                div.style.position = 'absolute';
+                div.style.left = left + 'px';
+                div.style.top = (y - lw / 2) + 'px';
+                div.style.width = w + 'px';
+                div.style.height = lw + 'px';
+                div.style.pointerEvents = 'none';
+                if (st === 'dotted' || st === 'dashed') {
+                    div.style.background = 'transparent';
+                    div.style.height = '0';
+                    div.style.borderTop = (st === 'dotted' ? `${lw}px dotted ` : `${lw}px dashed `) + col;
+                } else {
+                    div.style.background = col;
+                }
+                priceActionOverlay.appendChild(div);
+            });
+            const vp = lastPaPayload.volume_profile || {};
+            const boxes = Array.isArray(vp.boxes) ? vp.boxes : [];
+            let boxCount = 0;
+            const anchorRight = computeVpAnchorRight();
+            let vpDividerY1 = null;
+            let vpDividerY2 = null;
+            for (let i = 0; i < boxes.length; i++) {
+                if (boxCount > 400) break;
+                const b = boxes[i];
+                if (!b || typeof b !== 'object') continue;
+                if (b.kind === 'vp_hist' && boxes[i + 1] && boxes[i + 1].kind === 'vp_dom') {
+                    const domBox = boxes[i + 1];
+                    const y1 = candlestickSeries.priceToCoordinate(Number(b.price_high));
+                    const y2 = candlestickSeries.priceToCoordinate(Number(b.price_low));
+                    if (y1 == null || y2 == null || anchorRight == null || !Number.isFinite(anchorRight)) {
+                        i += 1;
+                        continue;
+                    }
+                    const wrH = typeof b.width_ratio === 'number' ? b.width_ratio : 0.5;
+                    const spanHist = Math.max(8, Math.min(vpPanelMaxHistPx, wrH * (vpPanelMaxHistPx + 8)));
+                    const sr = typeof domBox.strength_ratio === 'number' ? domBox.strength_ratio : 0;
+                    const spanDom = Math.max(4, Math.min(vpPanelMaxDomPx, 5 + sr * (vpPanelMaxDomPx - 2)));
+                    const top = Math.min(y1, y2);
+                    const h = Math.max(1, Math.abs(y2 - y1));
+                    const leftDom = anchorRight - spanDom;
+                    const leftHist = leftDom - vpPanelGapPx - spanHist;
+                    appendVpLevelBar(leftHist, top, spanHist, h, b.background, '0.78');
+                    appendVpLevelBar(leftDom, top, spanDom, h, domBox.background, '0.88');
+                    if (vpDividerY1 == null) { vpDividerY1 = top; vpDividerY2 = top + h; }
+                    else { vpDividerY1 = Math.min(vpDividerY1, top); vpDividerY2 = Math.max(vpDividerY2, top + h); }
+                    boxCount += 2;
+                    i += 1;
+                    continue;
+                }
+                if (b.kind === 'vp_hist' || b.kind === 'vp_dom') {
+                    const y1 = candlestickSeries.priceToCoordinate(Number(b.price_high));
+                    const y2 = candlestickSeries.priceToCoordinate(Number(b.price_low));
+                    if (y1 == null || y2 == null || anchorRight == null || !Number.isFinite(anchorRight)) continue;
+                    const wr = typeof b.width_ratio === 'number' ? b.width_ratio : 0.5;
+                    const spanMax = b.kind === 'vp_dom' ? vpPanelMaxDomPx : vpPanelMaxHistPx;
+                    const span = Math.max(6, Math.min(spanMax, wr * (spanMax + 6)));
+                    const top = Math.min(y1, y2);
+                    const h = Math.max(1, Math.abs(y2 - y1));
+                    appendVpLevelBar(anchorRight - span, top, span, h, b.background, b.kind === 'vp_dom' ? '0.88' : '0.78');
+                    boxCount += 1;
+                    continue;
+                }
+                const x1 = ts.timeToCoordinate(Number(b.time_start));
+                const x2 = ts.timeToCoordinate(Number(b.time_end));
+                const yTop = candlestickSeries.priceToCoordinate(Number(b.price_high));
+                const yBot = candlestickSeries.priceToCoordinate(Number(b.price_low));
+                if (x1 == null || x2 == null || yTop == null || yBot == null) continue;
+                const div = document.createElement('div');
+                div.style.position = 'absolute';
+                div.style.boxSizing = 'border-box';
+                div.style.pointerEvents = 'none';
+                if (b.kind === 'vp_frame' && anchorRight != null && Number.isFinite(anchorRight)) {
+                    const panelW = vpPanelMaxHistPx + vpPanelGapPx + vpPanelMaxDomPx + 4;
+                    const yA = Math.min(yTop, yBot);
+                    const yB = Math.max(yTop, yBot);
+                    div.style.left = (anchorRight - panelW) + 'px';
+                    div.style.top = yA + 'px';
+                    div.style.width = Math.max(8, panelW) + 'px';
+                    div.style.height = Math.max(4, Math.abs(yB - yA)) + 'px';
+                    div.style.border = '1px dashed ' + (b.border || 'rgba(156,163,175,0.35)');
+                    div.style.background = 'transparent';
+                } else {
+                    div.style.left = Math.min(x1, x2) + 'px';
+                    div.style.top = Math.min(yTop, yBot) + 'px';
+                    div.style.width = Math.max(1, Math.abs(x2 - x1)) + 'px';
+                    div.style.height = Math.max(1, Math.abs(yBot - yTop)) + 'px';
+                    if (b.kind === 'vp_frame') {
+                        div.style.border = '1px dashed ' + (b.border || 'rgba(156,163,175,0.35)');
+                        div.style.background = 'transparent';
+                    } else {
+                        div.style.background = paCssColor(b.background);
+                        div.style.border = '1px solid rgba(255,255,255,0.08)';
+                    }
+                }
+                priceActionOverlay.appendChild(div);
+                boxCount++;
+            }
+            if (anchorRight != null && vpDividerY1 != null && vpDividerY2 != null && vpDividerY2 > vpDividerY1) {
+                const splitX = anchorRight - vpPanelMaxDomPx - vpPanelGapPx * 0.5;
+                const line = document.createElement('div');
+                line.style.position = 'absolute';
+                line.style.left = splitX + 'px';
+                line.style.top = vpDividerY1 + 'px';
+                line.style.width = '1px';
+                line.style.height = Math.max(2, vpDividerY2 - vpDividerY1) + 'px';
+                line.style.background = 'rgba(226,232,240,0.4)';
+                line.style.pointerEvents = 'none';
+                priceActionOverlay.appendChild(line);
+            }
+        } catch (e) {
+            console.error('[PriceAction DGT] dashboard redraw', e);
+        }
+    }
+
+    function applyPaBarColors() {
+        if (!candlestickSeries || !allChartData.length) return;
+        const plain = allChartData.map((c) => ({ time: c.time, open: c.open, high: c.high, low: c.low, close: c.close }));
+        const bc = lastPaPayload && lastPaPayload.bar_colors ? lastPaPayload.bar_colors : null;
+        if (!layerPa || !layerPa.checked || !bc || Object.keys(bc).length === 0) {
+            try { candlestickSeries.setData(plain); } catch (e) { console.error('[PA] setData', e); }
+            return;
+        }
+        const painted = allChartData.map((c) => {
+            const o = bc[String(c.time)];
+            if (!o) return { time: c.time, open: c.open, high: c.high, low: c.low, close: c.close };
+            return {
+                time: c.time, open: c.open, high: c.high, low: c.low, close: c.close,
+                color: o.color, borderColor: o.borderColor || o.color, wickColor: o.wickColor || o.color,
+            };
+        });
+        try {
+            candlestickSeries.setData(painted);
+        } catch (e) {
+            try { candlestickSeries.setData(plain); } catch (e2) { console.error('[PA] fallback', e2); }
+        }
     }
 
     function updateTfOptionStyles() {
@@ -621,21 +931,32 @@
         if (refreshInterval) clearInterval(refreshInterval);
         refreshInterval = setInterval(() => {
             if (!currentInstrument || loadingMore || !candlestickSeries) return;
-            const stickToLatest = isViewNearRightEdge();
-            const prevLastT = allChartData.length ? allChartData[allChartData.length - 1].time : null;
             fetchCandles(currentInstrument)
                 .then(data => {
                     const candles = data.candles || [];
                     if (candles.length === 0) return;
                     const newData = buildChartData(candles);
                     const newLastT = newData[newData.length - 1].time;
+                    const prevLastT = allChartData.length ? allChartData[allChartData.length - 1].time : null;
+                    // Снимаем диапазон сразу перед setData/update, чтобы не ловить рассинхрон после await fetch.
+                    const followTail = isViewNearRightEdge();
+                    const rangeBefore = followTail && chart ? chart.timeScale().getVisibleLogicalRange() : null;
                     applyIncrementalChartUpdate(newData);
                     tickCandleCloseTimer();
-                    if (stickToLatest && chart && prevLastT !== null && newLastT > prevLastT) {
-                        chart.timeScale().scrollToRealTime();
+                    // Вместо scrollToRealTime(): он пересобирает отступ справа по правилам библиотеки и «прыгает».
+                    // Сдвигаем тот же логический viewport на число новых баров — картинка для «режима следования» остаётся плавной.
+                    if (followTail && rangeBefore && chart && prevLastT !== null && newLastT > prevLastT) {
+                        const addedBars = newData.filter(c => c.time > prevLastT).length;
+                        if (addedBars > 0 && Number.isFinite(rangeBefore.from) && Number.isFinite(rangeBefore.to)) {
+                            chart.timeScale().setVisibleLogicalRange({
+                                from: rangeBefore.from + addedBars,
+                                to: rangeBefore.to + addedBars,
+                            });
+                        }
                     }
                     requestAnimationFrame(redrawStructureOverlay);
                     fetchStructures();
+                    if (layerPa && layerPa.checked) fetchPriceActionIndicator();
                 })
                 .catch(console.error);
         }, 1000);
@@ -684,6 +1005,8 @@
             oldestLoadedTime = Math.min(...allChartData.map(c => c.time));
             candlestickSeries.setData(allChartData);
             tickCandleCloseTimer();
+            applyPaBarColors();
+            requestAnimationFrame(redrawPriceActionOverlay);
             return;
         }
 
@@ -694,6 +1017,8 @@
             oldestLoadedTime = Math.min(...allChartData.map(c => c.time));
             candlestickSeries.setData(allChartData);
             tickCandleCloseTimer();
+            applyPaBarColors();
+            requestAnimationFrame(redrawPriceActionOverlay);
             return;
         }
 
@@ -706,6 +1031,8 @@
         allChartData = newData;
         oldestLoadedTime = Math.min(...allChartData.map(c => c.time));
         tickCandleCloseTimer();
+        applyPaBarColors();
+        requestAnimationFrame(redrawPriceActionOverlay);
     }
 
     function createChart() {
@@ -713,6 +1040,7 @@
         chartWrapper.innerHTML = '';
         chartWrapper.classList.remove('hidden');
         structureOverlay.classList.remove('hidden');
+        if (priceActionOverlay) priceActionOverlay.classList.remove('hidden');
         chartPlaceholder.classList.add('hidden');
 
         chart = LightweightCharts.createChart(chartWrapper, {
@@ -749,6 +1077,7 @@
                 loadMoreCandles();
             }
             redrawStructureOverlay();
+            requestAnimationFrame(redrawPriceActionOverlay);
             requestAnimationFrame(positionCandleTimerOverlay);
         });
     }
@@ -775,8 +1104,10 @@
                 loadingMore = false;
                 setLoading(false);
                 tickCandleCloseTimer();
+                applyPaBarColors();
                 requestAnimationFrame(redrawStructureOverlay);
                 fetchStructures();
+                if (layerPa && layerPa.checked) fetchPriceActionIndicator();
             })
             .catch(() => { loadingMore = false; setLoading(false); });
     }
@@ -793,10 +1124,13 @@
                     candlestickSeries.setData(allChartData);
                     applyDefaultChartViewport();
                     fetchStructures();
+                    fetchPriceActionIndicator();
                 } else {
                     candlestickSeries.setData([]);
                     lastZones = [];
                     structureOverlay.innerHTML = '';
+                    lastPaPayload = null;
+                    if (priceActionOverlay) priceActionOverlay.innerHTML = '';
                 }
                 updateChartTitle();
                 tickCandleCloseTimer();
@@ -816,6 +1150,8 @@
         document.querySelectorAll('.instrument-btn').forEach((b) => b.classList.toggle('bg-blue-900/40', b.dataset.instrument === instrument));
         lastZones = [];
         structureOverlay.innerHTML = '';
+        lastPaPayload = null;
+        if (priceActionOverlay) priceActionOverlay.innerHTML = '';
         updateChartTitle();
         updateTfOptionStyles();
         tickCandleCloseTimer();
@@ -834,6 +1170,7 @@
                     requestAnimationFrame(() => {
                         redrawStructureOverlay();
                         fetchStructures();
+                        fetchPriceActionIndicator();
                     });
                 } else {
                     if (refreshInterval) clearInterval(refreshInterval);
@@ -891,12 +1228,21 @@
         saveLayerPrefs();
         requestAnimationFrame(redrawStructureOverlay);
     });
+    if (layerPa) {
+        layerPa.addEventListener('change', () => {
+            saveLayerPrefs();
+            if (!layerPa.checked) lastPaPayload = null;
+            fetchPriceActionIndicator();
+            requestAnimationFrame(redrawStructureOverlay);
+        });
+    }
 
     new ResizeObserver(() => {
         if (!chart || !chartWrapper.clientWidth) return;
         chart.resize(chartWrapper.clientWidth, chartWrapper.clientHeight);
         requestAnimationFrame(() => {
             redrawStructureOverlay();
+            redrawPriceActionOverlay();
             positionCandleTimerOverlay();
         });
     }).observe(chartWrapper);

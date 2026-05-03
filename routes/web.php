@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\Auth\LoginController;
 use App\Http\Controllers\Auth\RegisterController;
+use App\Http\Controllers\BotChartIndicatorController;
 use App\Http\Controllers\BotController;
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\InstrumentController;
@@ -18,6 +19,7 @@ Route::middleware('auth')->group(function () {
     Route::get('/', [DashboardController::class, 'index'])->name('dashboard');
     Route::get('/candles', [DashboardController::class, 'candles'])->name('candles.data');
     Route::get('/structures', [DashboardController::class, 'structures'])->name('structures.data');
+    Route::get('/indicators/price-action-dgt', [DashboardController::class, 'priceActionDgtIndicatorData'])->name('dashboard.indicators.price-action-dgt');
     Route::get('/payouts', [DashboardController::class, 'payouts'])->name('payouts.data');
     Route::get('/instruments/data', [DashboardController::class, 'instrumentsSidebarData'])->name('dashboard.instruments.data');
     Route::prefix('bots')->name('bots.')->group(function () {
@@ -31,6 +33,11 @@ Route::middleware('auth')->group(function () {
         Route::get('/{bot}/analysis/data', [BotController::class, 'analysisData'])->name('analysis.data');
         Route::get('/{bot}/stats/data', [BotController::class, 'statsData'])->name('stats.data');
         Route::get('/{bot}/instruments/data', [BotController::class, 'instrumentsSidebarData'])->name('instruments.sidebar-data');
+        Route::get('/{bot}/indicators/data', [BotController::class, 'indicatorsData'])->name('indicators.data');
+        Route::get('/{bot}/indicators/price-action-dgt', [BotChartIndicatorController::class, 'editPriceActionDgt'])->name('indicators.price-action-dgt.edit');
+        Route::put('/{bot}/indicators/price-action-dgt', [BotChartIndicatorController::class, 'updatePriceActionDgt'])->name('indicators.price-action-dgt.update');
+        Route::get('/{bot}/indicators/order-blocks', [BotChartIndicatorController::class, 'editOrderBlocks'])->name('indicators.order-blocks.edit');
+        Route::get('/{bot}/indicators/fvg', [BotChartIndicatorController::class, 'editFvg'])->name('indicators.fvg.edit');
         Route::get('/{bot}/activity', [BotController::class, 'activity'])->name('activity');
         Route::get('/{bot}/logs', [BotController::class, 'logs'])->name('logs');
         Route::get('/{bot}/settings', [BotController::class, 'settings'])->name('settings');

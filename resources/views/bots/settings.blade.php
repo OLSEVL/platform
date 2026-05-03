@@ -3,6 +3,9 @@
 @section('content')
 @php
     $cfg = is_array($bot->config) ? $bot->config : [];
+    // price_action_dgt задаётся на отдельной странице индикатора (indicator_settings), в общий JSON не включаем.
+    $configForJsonField = $cfg;
+    unset($configForJsonField['price_action_dgt']);
     $openrouterModels = isset($openrouterModels) && is_array($openrouterModels) ? $openrouterModels : [];
     $selectedOpenRouterModel = old('model', $cfg['model'] ?? 'openai/gpt-5.2');
     // Отдельно выносим дефолтный prompt в переменную, чтобы не ломать Blade
@@ -68,6 +71,12 @@ PROMPT;
         <div class="flex flex-wrap items-center gap-2 text-sm">
             <a href="{{ route('bots.show', $bot) }}"
                 class="inline-flex items-center rounded border border-zinc-600 bg-zinc-800 px-2.5 py-1 text-xs font-medium text-zinc-200 shadow-sm transition-colors hover:bg-zinc-700 hover:border-zinc-500 hover:text-zinc-50 focus:outline-none focus:ring-2 focus:ring-blue-500/50">График</a>
+            <a href="{{ route('bots.indicators.order-blocks.edit', $bot) }}"
+                class="inline-flex items-center rounded border border-zinc-600 bg-zinc-800 px-2.5 py-1 text-xs font-medium text-zinc-200 shadow-sm transition-colors hover:bg-zinc-700 hover:border-zinc-500 hover:text-zinc-50 focus:outline-none focus:ring-2 focus:ring-blue-500/50">Ордерблоки</a>
+            <a href="{{ route('bots.indicators.fvg.edit', $bot) }}"
+                class="inline-flex items-center rounded border border-zinc-600 bg-zinc-800 px-2.5 py-1 text-xs font-medium text-zinc-200 shadow-sm transition-colors hover:bg-zinc-700 hover:border-zinc-500 hover:text-zinc-50 focus:outline-none focus:ring-2 focus:ring-blue-500/50">Имбалансы</a>
+            <a href="{{ route('bots.indicators.price-action-dgt.edit', $bot) }}"
+                class="inline-flex items-center rounded border border-zinc-600 bg-zinc-800 px-2.5 py-1 text-xs font-medium text-zinc-200 shadow-sm transition-colors hover:bg-zinc-700 hover:border-zinc-500 hover:text-zinc-50 focus:outline-none focus:ring-2 focus:ring-blue-500/50">Price Action</a>
             <a href="{{ route('bots.activity', $bot) }}"
                 class="inline-flex items-center rounded border border-zinc-600 bg-zinc-800 px-2.5 py-1 text-xs font-medium text-zinc-200 shadow-sm transition-colors hover:bg-zinc-700 hover:border-zinc-500 hover:text-zinc-50 focus:outline-none focus:ring-2 focus:ring-blue-500/50">Сигналы и сделки</a>
             <a href="{{ route('bots.logs', $bot) }}"
@@ -453,7 +462,8 @@ PROMPT;
             <div class="space-y-2 border-t border-zinc-800 pt-4">
                 <label for="config_json" class="block text-sm font-medium text-zinc-300">Конфигурация (JSON)</label>
                 <textarea name="config_json" id="config_json" rows="14" required
-                    class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 font-mono text-xs text-zinc-100 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500">{{ old('config_json', json_encode($cfg, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE) ?: '{}') }}</textarea>
+                    class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 font-mono text-xs text-zinc-100 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500">{{ old('config_json', json_encode($configForJsonField, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE) ?: '{}') }}</textarea>
+                <p class="text-xs text-zinc-500">Ключ <code class="text-zinc-400">price_action_dgt</code> задан выше отдельным полем и в этот JSON не входит.</p>
                 @error('config_json')
                     <p class="text-sm text-rose-400">{{ $message }}</p>
                 @enderror

@@ -6,18 +6,22 @@ use App\Models\Bot;
 use App\Models\BotAnalysisRun;
 use App\Models\BotLlmLog;
 use App\Models\BotTrade;
+use App\Models\IndicatorSetting;
 use App\Models\PocketInstrument;
 use App\Services\Bots\BotEngineService;
 use App\Services\Bots\OpenRouterClient;
+use App\Services\CandleService;
+use App\Services\Indicators\PriceActionDgtIndicatorService;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
-use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Http\Request;
+use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Validation\Rule;
 use Illuminate\View\View;
 use Throwable;
 
@@ -410,6 +414,8 @@ class BotController extends Controller
             if (! is_array($decoded)) {
                 return back()->withInput()->withErrors(['config_json' => 'Некорректный JSON в поле конфигурации.']);
             }
+            // price_action_dgt вынесен в таблицу indicator_settings (отдельное поле формы).
+            unset($decoded[IndicatorSetting::KEY_PRICE_ACTION_DGT]);
             $config = $decoded;
         }
 
@@ -418,6 +424,9 @@ class BotController extends Controller
         // false -> более простой режим без TV-поведения.
         // Всегда записываем явное boolean-значение, чтобы поведение не зависело от отсутствия ключа.
         $config['tv_crosshair_enabled'] = $request->boolean('tv_crosshair_enabled');
+
+        // price_action_dgt хранится только в indicator_settings (страница индикатора), из config убираем при любом сохранении общих настроек.
+        unset($config[IndicatorSetting::KEY_PRICE_ACTION_DGT]);
 
         $bot->update([
             'name' => $base['name'],
@@ -1051,6 +1060,39 @@ class BotController extends Controller
      * История сигналов для графика (entry + итог на экспирации).
      * Нужен отдельный endpoint, чтобы UI подхватывал закрытие сделок без перезагрузки страницы.
      */
+    /**
+     * Индикатор Price Action (DGT): расчёт на сервере по тем же свечам, что и график.
+     * Параметры: таблица indicator_settings (ключ price_action_dgt), иначе legacy из config бота, иначе дефолты сервиса.
+     */
+    public function indicatorsData(Request $request, Bot $bot, CandleService $candleService, PriceActionDgtIndicatorService $pa): JsonResponse
+    {
+        $this->ensureBotOwner($bot);
+
+        $validated = $request->validate([
+            'instrument' => ['required', 'string', 'max:64'],
+            'timeframe' => ['nullable', 'integer', Rule::in(CandleService::DASHBOARD_TIMEFRAMES)],
+        ]);
+
+        $instrument = (string) $validated['instrument'];
+        $timeframe = (int) ($validated['timeframe'] ?? 1);
+
+        // Тот же горизонт, что у /structures: последние сутки + до 5000 баров (как max_bars_back в Pine).
+        $since = time() - 86400;
+        $rows = $candleService->seriesForDashboard($instrument, $timeframe, $since, null, 5000);
+
+        $params = IndicatorSetting::mergedPriceActionDgtParams($bot);
+
+        $barSeconds = PriceActionDgtIndicatorService::barSecondsForTimeframe($timeframe);
+        $payload = $pa->compute($rows, $params, $barSeconds);
+
+        return response()->json([
+            'indicator' => $payload,
+            'instrument' => $instrument,
+            'timeframe' => $timeframe,
+            'server_time' => now()->toIso8601String(),
+        ]);
+    }
+
     public function signalsData(Bot $bot): JsonResponse
     {
         $this->ensureBotOwner($bot);
