@@ -11,6 +11,7 @@ use App\Models\PocketInstrument;
 use App\Services\Bots\BotEngineService;
 use App\Services\Bots\OpenRouterClient;
 use App\Services\CandleService;
+use App\Services\Indicators\LiquiditySwingsIndicatorService;
 use App\Services\Indicators\PriceActionDgtIndicatorService;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
@@ -291,6 +292,9 @@ class BotController extends Controller
             // UI-настройка графика: включает/выключает tradingview-подобный кроссхейр (линии X/Y + подписи цены/времени).
             // Поле опциональное, потому что HTML-checkbox не отправляется в payload, когда выключен.
             'tv_crosshair_enabled' => ['sometimes', 'boolean'],
+            // Включает запись технических логов прохода движка в bot_analysis_runs.
+            // Поле опциональное, т.к. выключенный checkbox отсутствует в HTTP payload.
+            'analysis_runs_logging_enabled' => ['sometimes', 'boolean'],
         ]);
 
         $isActive = $request->boolean('is_active');
@@ -324,20 +328,37 @@ class BotController extends Controller
                 'stale_after_sec' => (int) $extra['stale_after_sec'],
                 'version' => 'akim_trade_1m_v1',
             ]);
-        } elseif ($bot->type === 'akim_trade_5s') {
-            // Самостоятельный профиль AKIM 5S: короткая экспирация и отдельные ограничения.
+        } elseif ($bot->type === 'candle_reversal_confirm') {
+            // MTF-разворот:
+            // 1) сторона определяется на M5 по 3 закрытым свечам (impulse->reversal->confirm),
+            // 2) вход подтверждается на M1 по 3 закрытым свечам в ту же сторону и по теням.
             $extra = $request->validate([
-                'count' => ['required', 'integer', 'min:50', 'max:5000'],
-                'expiry_sec' => ['required', 'integer', 'min:5', 'max:120'],
+                'count' => ['required', 'integer', 'min:10', 'max:5000'],
                 'min_confidence' => ['required', 'numeric', 'min:0', 'max:1'],
-                'stale_after_sec' => ['required', 'integer', 'min:2', 'max:120'],
+                'stale_after_sec' => ['required', 'integer', 'min:5', 'max:600'],
+                // M5-блок (разворотная свеча + confirm).
+                'm5_reversal_min_wick_ratio' => ['required', 'numeric', 'min:0.12', 'max:0.75'],
+                'm5_reversal_max_body_ratio' => ['required', 'numeric', 'min:0.15', 'max:0.9'],
+                // M1-блок (3 закрытых свечи подтверждения в сторону M5).
+                'm1_min_wick_ratio' => ['required', 'numeric', 'min:0.10', 'max:0.70'],
+                'm1_min_body_ratio' => ['required', 'numeric', 'min:0.05', 'max:0.80'],
+                // last = тени только у последней из 3 M1 (рекомендуется); all = у всех трёх (очень редкие сигналы).
+                'm1_wick_requirement_scope' => ['required', 'string', Rule::in(['all', 'last'])],
             ]);
             $config = array_merge($bot->config ?? [], [
                 'count' => (int) $extra['count'],
-                'expiry_sec' => (int) $extra['expiry_sec'],
+                // По ТЗ фиксируем вход на 5 минут.
+                'expiry_sec' => 300,
                 'min_confidence' => (float) $extra['min_confidence'],
                 'stale_after_sec' => (int) $extra['stale_after_sec'],
-                'version' => 'akim_trade_5s_v1',
+                'm5_reversal_min_wick_ratio' => (float) $extra['m5_reversal_min_wick_ratio'],
+                'm5_reversal_max_body_ratio' => (float) $extra['m5_reversal_max_body_ratio'],
+                'm5_require_break_rev_extreme' => $request->boolean('m5_require_break_rev_extreme'),
+                'm1_min_wick_ratio' => (float) $extra['m1_min_wick_ratio'],
+                'm1_min_body_ratio' => (float) $extra['m1_min_body_ratio'],
+                'm1_require_wick_dominance' => $request->boolean('m1_require_wick_dominance'),
+                'm1_wick_requirement_scope' => (string) $extra['m1_wick_requirement_scope'],
+                'version' => 'candle_reversal_confirm_v2_mtf',
             ]);
         } elseif ($bot->type === 'feshan') {
             // Feshan v2: вход только по снятию ликвидности (liquidity sweep) на M1.
@@ -415,7 +436,7 @@ class BotController extends Controller
                 return back()->withInput()->withErrors(['config_json' => 'Некорректный JSON в поле конфигурации.']);
             }
             // price_action_dgt вынесен в таблицу indicator_settings (отдельное поле формы).
-            unset($decoded[IndicatorSetting::KEY_PRICE_ACTION_DGT]);
+            unset($decoded[IndicatorSetting::KEY_PRICE_ACTION_DGT], $decoded[IndicatorSetting::KEY_LIQUIDITY_SWINGS]);
             $config = $decoded;
         }
 
@@ -424,9 +445,15 @@ class BotController extends Controller
         // false -> более простой режим без TV-поведения.
         // Всегда записываем явное boolean-значение, чтобы поведение не зависело от отсутствия ключа.
         $config['tv_crosshair_enabled'] = $request->boolean('tv_crosshair_enabled');
+        // Логика логирования analysis-runs:
+        // true  -> для каждого инструмента сохраняем run (status/skip_reason/decision/...),
+        // false -> движок не пишет bot_analysis_runs, чтобы уменьшить шум/нагрузку на БД у конкретного бота.
+        // Всегда сохраняем явное boolean-значение, чтобы поведение было детерминированным
+        // и не зависело от "отсутствующего ключа" в старых конфигах.
+        $config['analysis_runs_logging_enabled'] = $request->boolean('analysis_runs_logging_enabled');
 
         // price_action_dgt хранится только в indicator_settings (страница индикатора), из config убираем при любом сохранении общих настроек.
-        unset($config[IndicatorSetting::KEY_PRICE_ACTION_DGT]);
+        unset($config[IndicatorSetting::KEY_PRICE_ACTION_DGT], $config[IndicatorSetting::KEY_LIQUIDITY_SWINGS]);
 
         $bot->update([
             'name' => $base['name'],
@@ -1064,8 +1091,13 @@ class BotController extends Controller
      * Индикатор Price Action (DGT): расчёт на сервере по тем же свечам, что и график.
      * Параметры: таблица indicator_settings (ключ price_action_dgt), иначе legacy из config бота, иначе дефолты сервиса.
      */
-    public function indicatorsData(Request $request, Bot $bot, CandleService $candleService, PriceActionDgtIndicatorService $pa): JsonResponse
-    {
+    public function indicatorsData(
+        Request $request,
+        Bot $bot,
+        CandleService $candleService,
+        PriceActionDgtIndicatorService $pa,
+        LiquiditySwingsIndicatorService $liquiditySwings,
+    ): JsonResponse {
         $this->ensureBotOwner($bot);
 
         $validated = $request->validate([
@@ -1084,9 +1116,13 @@ class BotController extends Controller
 
         $barSeconds = PriceActionDgtIndicatorService::barSecondsForTimeframe($timeframe);
         $payload = $pa->compute($rows, $params, $barSeconds);
+        // Один проход по свечам: Liquidity Swings лёгкий относительно DGT, отдаём в том же JSON (слой на графике включается отдельно).
+        $lsParams = IndicatorSetting::mergedLiquiditySwingsParams($bot);
+        $liquidityPayload = $liquiditySwings->compute($rows, $lsParams);
 
         return response()->json([
             'indicator' => $payload,
+            'liquidity_swings' => $liquidityPayload,
             'instrument' => $instrument,
             'timeframe' => $timeframe,
             'server_time' => now()->toIso8601String(),

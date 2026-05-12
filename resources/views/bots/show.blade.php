@@ -121,6 +121,21 @@
                                 </svg>
                             </a>
                         </div>
+                        <div class="flex items-center justify-between gap-1">
+                            <label for="layer-liquidity-swings" class="flex min-w-0 flex-1 items-center gap-2 text-sm text-zinc-300 cursor-pointer">
+                                <input type="checkbox" id="layer-liquidity-swings" class="rounded border-zinc-600 bg-zinc-800 text-blue-500 shrink-0" checked>
+                                <span class="truncate">Liquidity Swings</span>
+                            </label>
+                            <a href="{{ route('bots.indicators.liquidity-swings.edit', $bot) }}"
+                                class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-zinc-700 bg-zinc-800/80 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500/50 pointer-events-auto"
+                                title="Настройки: Liquidity Swings"
+                                aria-label="Настройки индикатора Liquidity Swings">
+                                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="h-3.5 w-3.5" aria-hidden="true">
+                                    <path stroke-linecap="round" stroke-linejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.325.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.241-.438.613-.43.992a7.723 7.723 0 0 1 0 .255c-.008.378.137.75.43.991l1.004.827c.424.35.534.955.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.47 6.47 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.281c-.09.543-.56.94-1.11.94h-2.594c-.55 0-1.019-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.991a6.932 6.932 0 0 1 0-.255c.007-.38-.138-.751-.43-.992l-1.004-.827a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.086.22-.128.332-.183.582-.495.644-.869l.214-1.281Z" />
+                                    <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
+                                </svg>
+                            </a>
+                        </div>
                     </div>
                 </div>
                 <div class="flex flex-wrap items-center gap-1.5 shrink-0">
@@ -182,6 +197,7 @@
             {{-- Полосы длительности сделок (entry -> expiry) поверх графика. --}}
             <div id="trade-duration-overlay" class="absolute inset-0 z-[4] pointer-events-none overflow-hidden hidden"></div>
             <div id="structure-overlay" class="absolute inset-0 z-[5] pointer-events-none overflow-visible hidden"></div>
+            <div id="liquidity-swings-overlay" class="absolute inset-0 z-[6] pointer-events-none overflow-visible hidden"></div>
             {{-- Индикатор Price Action DGT: z выше structure-overlay, чтобы боковой VP не перекрывался зонами OB/FVG. --}}
             <div id="price-action-overlay" class="absolute inset-0 z-[7] pointer-events-none overflow-visible hidden"></div>
             <div id="candle-timer-overlay"
@@ -371,6 +387,7 @@
     const chartWrapper = document.getElementById('chart-wrapper');
     const tradeDurationOverlay = document.getElementById('trade-duration-overlay');
     const structureOverlay = document.getElementById('structure-overlay');
+    const liquiditySwingsOverlay = document.getElementById('liquidity-swings-overlay');
     const priceActionOverlay = document.getElementById('price-action-overlay');
     const candleTimerOverlay = document.getElementById('candle-timer-overlay');
     const candleCloseTimerEl = document.getElementById('candle-close-timer');
@@ -386,6 +403,7 @@
     const layerOb = document.getElementById('layer-ob');
     const layerFvg = document.getElementById('layer-fvg');
     const layerPa = document.getElementById('layer-pa-dgt');
+    const layerLiquidity = document.getElementById('layer-liquidity-swings');
     const instrumentSearchInput = document.getElementById('instrument-search');
     const instrumentSearchClearBtn = document.getElementById('instrument-search-clear');
     const botAnalysisBtn = document.getElementById('bot-analysis-btn');
@@ -408,8 +426,9 @@
     const timeDebugFeedDelta = document.getElementById('time-debug-feed-delta');
     const timeDebugPlatform = document.getElementById('time-debug-platform');
     const timeDebugMarker = document.getElementById('time-debug-marker');
-    const LAYER_PREFS_KEY = 'platform.bot.show.chartLayers.v3';
+    const LAYER_PREFS_KEY = 'platform.bot.show.chartLayers.v4';
     let lastPaPayload = null;
+    let lastLsPayload = null;
 
     let chart = null;
     let candlestickSeries = null;
@@ -555,6 +574,7 @@
             if (typeof obj.orderBlocks === 'boolean') layerOb.checked = obj.orderBlocks;
             if (typeof obj.imbalances === 'boolean') layerFvg.checked = obj.imbalances;
             if (layerPa && typeof obj.paDgt === 'boolean') layerPa.checked = obj.paDgt;
+            if (layerLiquidity && typeof obj.liquiditySwings === 'boolean') layerLiquidity.checked = obj.liquiditySwings;
         } catch (_) {}
     }
 
@@ -564,6 +584,7 @@
                 orderBlocks: layerOb.checked,
                 imbalances: layerFvg.checked,
                 paDgt: layerPa ? layerPa.checked : false,
+                liquiditySwings: layerLiquidity ? layerLiquidity.checked : false,
             }));
         } catch (_) {}
     }
@@ -576,10 +597,17 @@
         return s;
     }
 
-    /** Подтягивает расчёт Price Action DGT с сервера и обновляет оверлей, маркеры и окраску свечей (VWCB). */
+    /**
+     * Подтягивает расчёты индикаторов с /bots/{id}/indicators/data (DGT + Liquidity Swings в одном JSON).
+     * Запрос выполняем, если включен хотя бы один из слоёв — иначе экономим БД и сеть.
+     */
     function fetchPriceActionIndicator() {
-        if (!currentInstrument || !layerPa || !layerPa.checked) {
+        if (!currentInstrument) return;
+        const wantPa = layerPa && layerPa.checked;
+        const wantLs = layerLiquidity && layerLiquidity.checked;
+        if (!wantPa && !wantLs) {
             lastPaPayload = null;
+            lastLsPayload = null;
             redrawPriceActionOverlay();
             applyPaBarColors();
             renderChartMarkers();
@@ -589,15 +617,16 @@
         fetch(`${PA_INDICATOR_URL}?${params.toString()}`, { headers: { 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' } })
             .then((r) => r.json())
             .then((d) => {
-                // Любая ошибка в отрисовке PA не должна «ронять» график и polling: ловим и сбрасываем payload.
                 try {
-                    lastPaPayload = d && d.indicator ? d.indicator : null;
+                    lastPaPayload = wantPa && d && d.indicator ? d.indicator : null;
+                    lastLsPayload = wantLs && d && d.liquidity_swings ? d.liquidity_swings : null;
                     redrawPriceActionOverlay();
                     applyPaBarColors();
                     renderChartMarkers();
                 } catch (e) {
-                    console.error('[PriceAction DGT] apply indicator', e);
+                    console.error('[indicators] apply', e);
                     lastPaPayload = null;
+                    lastLsPayload = null;
                     try {
                         redrawPriceActionOverlay();
                         applyPaBarColors();
@@ -608,25 +637,128 @@
             .catch(() => {});
     }
 
+    /** Размер подписей объёма (Labels Size): tiny / small / normal → px для DOM-оверлея. */
+    function lsLabelFontPx(sz) {
+        const s = (sz || 'tiny').toString().toLowerCase();
+        if (s === 'small') return '11px';
+        if (s === 'normal') return '13px';
+        return '9px';
+    }
+
+    /** Оверлей Liquidity Swings (зоны, пунктиры, подписи объёма). */
+    function redrawLiquiditySwingsOverlay() {
+        if (!liquiditySwingsOverlay || !chart || !candlestickSeries) return;
+        liquiditySwingsOverlay.innerHTML = '';
+        if (!layerLiquidity || !layerLiquidity.checked || !lastLsPayload || !allChartData.length) return;
+        const ts = chart.timeScale();
+        const lastBarTime = allChartData[allChartData.length - 1].time;
+        try {
+            const boxes = Array.isArray(lastLsPayload.boxes) ? lastLsPayload.boxes : [];
+            boxes.forEach((z) => {
+                if (!z || lastBarTime < z.time_start) return;
+                const tEnd = Math.min(lastBarTime, z.time_end);
+                const x1 = ts.timeToCoordinate(z.time_start);
+                const x2 = ts.timeToCoordinate(tEnd);
+                const y1 = candlestickSeries.priceToCoordinate(z.price_high);
+                const y2 = candlestickSeries.priceToCoordinate(z.price_low);
+                if (x1 == null || x2 == null || y1 == null || y2 == null) return;
+                const div = document.createElement('div');
+                div.style.position = 'absolute';
+                div.style.boxSizing = 'border-box';
+                div.style.pointerEvents = 'none';
+                div.style.left = Math.min(x1, x2) + 'px';
+                div.style.top = Math.min(y1, y2) + 'px';
+                div.style.width = Math.max(1, Math.abs(x2 - x1)) + 'px';
+                div.style.height = Math.max(1, Math.abs(y2 - y1)) + 'px';
+                div.style.background = z.fill || 'rgba(239,68,68,0.25)';
+                div.style.border = z.border && z.border !== 'none' ? z.border : 'none';
+                liquiditySwingsOverlay.appendChild(div);
+            });
+            const lines = Array.isArray(lastLsPayload.lines) ? lastLsPayload.lines : [];
+            lines.forEach((ln) => {
+                if (!ln || typeof ln !== 'object') return;
+                const x1 = ts.timeToCoordinate(Number(ln.time_start));
+                const x2 = ts.timeToCoordinate(Number(ln.time_end));
+                const y = candlestickSeries.priceToCoordinate(Number(ln.price));
+                if (x1 == null || x2 == null || y == null || Number.isNaN(x1) || Number.isNaN(x2) || Number.isNaN(y)) return;
+                const left = Math.min(x1, x2);
+                const w = Math.max(1, Math.abs(x2 - x1));
+                const st = (ln.style || 'Solid').toLowerCase();
+                const col = paCssColor(ln.color);
+                const lw = Math.max(1, Number(ln.width) || 1);
+                const div = document.createElement('div');
+                div.style.position = 'absolute';
+                div.style.left = left + 'px';
+                div.style.top = (y - lw / 2) + 'px';
+                div.style.width = w + 'px';
+                div.style.height = lw + 'px';
+                div.style.pointerEvents = 'none';
+                if (st === 'dotted' || st === 'dashed') {
+                    div.style.background = 'transparent';
+                    div.style.height = '0';
+                    div.style.borderTop = (st === 'dotted' ? `${lw}px dotted ` : `${lw}px dashed `) + col;
+                } else {
+                    div.style.background = col;
+                }
+                liquiditySwingsOverlay.appendChild(div);
+            });
+            const labels = Array.isArray(lastLsPayload.labels) ? lastLsPayload.labels : [];
+            labels.forEach((lb) => {
+                if (!lb || typeof lb !== 'object') return;
+                const x = ts.timeToCoordinate(Number(lb.time));
+                const y = candlestickSeries.priceToCoordinate(Number(lb.price));
+                if (x == null || y == null || Number.isNaN(x) || Number.isNaN(y)) return;
+                const span = document.createElement('span');
+                span.textContent = String(lb.text || '');
+                span.style.position = 'absolute';
+                span.style.left = x + 'px';
+                span.style.top = y + 'px';
+                span.style.transform = (lb.position === 'below')
+                    ? 'translate(-50%, 6px)'
+                    : 'translate(-50%, calc(-100% - 4px))';
+                span.style.fontSize = lsLabelFontPx(lastLsPayload.label_size);
+                span.style.fontWeight = '600';
+                span.style.lineHeight = '1';
+                span.style.color = paCssColor(lb.color);
+                span.style.pointerEvents = 'none';
+                span.style.whiteSpace = 'nowrap';
+                liquiditySwingsOverlay.appendChild(span);
+            });
+        } catch (e) {
+            console.error('[Liquidity Swings] bot redraw', e);
+        }
+    }
+
     /** Рисует линии и зоны индикатора поверх графика (HTML-оверлей, как ордерблоки). */
     function redrawPriceActionOverlay() {
+        redrawLiquiditySwingsOverlay();
         if (!priceActionOverlay || !chart || !candlestickSeries) return;
         priceActionOverlay.innerHTML = '';
         if (!layerPa || !layerPa.checked || !lastPaPayload || !allChartData.length) return;
         const ts = chart.timeScale();
         /**
-         * Боковой VP (как на скрине TradingView): не привязываем полоски к time_end в координатах времени —
-         * иначе они уезжают под canvas/шкалу. Рисуем гистограмму в фиксированной полосе у правого края
-         * контейнера графика, слева от зарезервированной области правой ценовой шкалы (~78px).
+         * Боковой VP: колонка у правого края панели, вплотную к ценовой шкале.
+         * Ширина шкалы берётся из API (меняется при зуме и длине подписей), а не фиксированные ~78px.
          */
-        const vpRightAxisReservePx = 78;
         const vpPanelMaxHistPx = 100;
         const vpPanelMaxDomPx = 26;
         const vpPanelGapPx = 2;
         const computeVpAnchorRight = () => {
             const cw = chartWrapper.clientWidth || 0;
             if (!Number.isFinite(cw) || cw < 40) return null;
-            return cw - vpRightAxisReservePx;
+            let scaleW = 0;
+            try {
+                if (candlestickSeries && typeof candlestickSeries.priceScale === 'function') {
+                    scaleW = Number(candlestickSeries.priceScale().width());
+                }
+            } catch (_) {
+                scaleW = 0;
+            }
+            if (!Number.isFinite(scaleW) || scaleW < 0) scaleW = 0;
+            const effectiveScale = scaleW > 0 ? scaleW : 78;
+            const borderGapPx = 1;
+            const anchor = cw - effectiveScale - borderGapPx;
+            return anchor > 8 ? anchor : null;
         };
         const appendVpLevelBar = (leftPx, topPx, widthPx, heightPx, background, opacity) => {
             if (!Number.isFinite(leftPx) || !Number.isFinite(topPx) || !Number.isFinite(widthPx) || !Number.isFinite(heightPx)) return;
@@ -676,7 +808,7 @@
         const anchorRight = computeVpAnchorRight();
         let vpDividerY1 = null;
         let vpDividerY2 = null;
-        // VP: фиксированная колонка у правого края (слева от шкалы цен); по Y — как у свечей (priceToCoordinate).
+        // VP: колонка слева от шкалы цен (anchor по priceScale().width()); по Y — как у свечей (priceToCoordinate).
         for (let i = 0; i < boxes.length; i++) {
             if (boxCount > 400) break;
             const b = boxes[i];
@@ -2254,11 +2386,60 @@
         tickCandleCloseTimer();
         applyPaBarColors();
     }
+
+    /**
+     * Подтягиваем HTML-оверлеи (сделки, OB/FVG, DGT) к canvas при зуме/панораме по цене.
+     *
+     * subscribeVisibleLogicalRangeChange не вызывается, если меняется только вертикальный масштаб;
+     * без доп. хука priceToCoordinate устаревает. Series primitive: updateAllViews() дергается
+     * библиотекой при любом изменении viewport основной панели — планируем одну перерисовку на кадр.
+     */
+    let botChartDomOverlaySyncRaf = null;
+    function scheduleBotChartDomOverlaySync() {
+        if (botChartDomOverlaySyncRaf !== null) return;
+        botChartDomOverlaySyncRaf = requestAnimationFrame(() => {
+            botChartDomOverlaySyncRaf = null;
+            try {
+                redrawStructureOverlay();
+            } catch (e) {
+                console.error('[bot chart] dom overlay sync', e);
+            }
+            requestAnimationFrame(() => {
+                try {
+                    positionCandleTimerOverlay();
+                } catch (e2) {
+                    console.error('[bot chart] candle timer overlay sync', e2);
+                }
+            });
+        });
+    }
+    function createBotChartDomOverlaySyncPrimitive() {
+        const paneView = {
+            renderer() {
+                return {
+                    draw() {
+                        /* Рисование только в DOM; canvas не трогаем. */
+                    },
+                };
+            },
+        };
+        const paneViewsStable = [paneView];
+        return {
+            updateAllViews() {
+                scheduleBotChartDomOverlaySync();
+            },
+            paneViews() {
+                return paneViewsStable;
+            },
+        };
+    }
+
     function createChart() {
         entryPriceLineHandles = [];
         if (chart) chart.remove();
         chartWrapper.classList.remove('hidden');
         structureOverlay.classList.remove('hidden');
+        if (liquiditySwingsOverlay) liquiditySwingsOverlay.classList.remove('hidden');
         if (priceActionOverlay) priceActionOverlay.classList.remove('hidden');
         chartPlaceholder.classList.add('hidden');
         // Собираем конфиг кроссхейра в зависимости от настройки из "Настройки бота":
@@ -2334,6 +2515,11 @@
             upColor: '#26a69a', downColor: '#ef5350', borderVisible: false,
             priceFormat: { type: 'price', precision: 5, minMove: 0.00001 }
         });
+        try {
+            candlestickSeries.attachPrimitive(createBotChartDomOverlaySyncPrimitive());
+        } catch (e) {
+            console.error('[bot chart] attachPrimitive(dom overlay sync)', e);
+        }
         chart.subscribeClick((param) => {
             if (!param || param.time == null) return;
             const clickedBucketTs = toBucketTime(toUnixSec(param.time));
@@ -2372,7 +2558,7 @@
             renderEntryPriceLines();
             redrawStructureOverlay();
             fetchStructures();
-            if (layerPa && layerPa.checked) fetchPriceActionIndicator();
+            if ((layerPa && layerPa.checked) || (layerLiquidity && layerLiquidity.checked)) fetchPriceActionIndicator();
         }).finally(() => {
             loadingMore = false;
             setLoading(false);
@@ -2381,9 +2567,10 @@
     }
     function startAutoRefresh() {
         if (refreshInterval) clearInterval(refreshInterval);
-        // Для секундных TF обновляем график чаще (1s), чтобы визуально сократить лаг до платформы.
-        // Для минутных TF оставляем 2s, чтобы не создавать лишнюю нагрузку.
-        const refreshMs = currentTimeframeMinutes >= 4000 ? 1000 : 2000;
+        // Интервал опроса свечей для всех таймфреймов: 500ms (как было ранее на платформе).
+        // Частые запросы держат частичную (формирующуюся) свечу и оверлеи ближе к реальному потоку цены.
+        // Нагрузка на сервер выше, чем при 1–2s — при множестве вкладок при необходимости поднимите значение.
+        const refreshMs = 500;
         refreshInterval = setInterval(() => {
             if (!currentInstrument || loadingMore || !candlestickSeries) return;
             fetchCandles(currentInstrument).then((data) => {
@@ -2405,7 +2592,7 @@
                 }
                 redrawStructureOverlay();
                 fetchStructures();
-                if (layerPa && layerPa.checked) fetchPriceActionIndicator();
+                if ((layerPa && layerPa.checked) || (layerLiquidity && layerLiquidity.checked)) fetchPriceActionIndicator();
             }).catch(() => {});
         }, refreshMs);
     }
@@ -2427,7 +2614,9 @@
                 lastZones = [];
                 structureOverlay.innerHTML = '';
                 lastPaPayload = null;
+                lastLsPayload = null;
                 if (priceActionOverlay) priceActionOverlay.innerHTML = '';
+                if (liquiditySwingsOverlay) liquiditySwingsOverlay.innerHTML = '';
             }
             updateChartTitle();
             redrawStructureOverlay();
@@ -2453,7 +2642,9 @@
         lastZones = [];
         structureOverlay.innerHTML = '';
         lastPaPayload = null;
+        lastLsPayload = null;
         if (priceActionOverlay) priceActionOverlay.innerHTML = '';
+        if (liquiditySwingsOverlay) liquiditySwingsOverlay.innerHTML = '';
         updateChartTitle();
         updateTfOptionStyles();
         setLoading(true);
@@ -2499,13 +2690,16 @@
     if (layerPa) {
         layerPa.addEventListener('change', () => {
             saveLayerPrefs();
-            if (layerPa.checked) fetchPriceActionIndicator();
-            else {
-                lastPaPayload = null;
-                redrawPriceActionOverlay();
-                applyPaBarColors();
-                renderChartMarkers();
-            }
+            if (!layerPa.checked) lastPaPayload = null;
+            fetchPriceActionIndicator();
+        });
+    }
+    if (layerLiquidity) {
+        layerLiquidity.addEventListener('change', () => {
+            saveLayerPrefs();
+            if (!layerLiquidity.checked) lastLsPayload = null;
+            fetchPriceActionIndicator();
+            redrawStructureOverlay();
         });
     }
     new ResizeObserver(() => {

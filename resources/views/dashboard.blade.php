@@ -190,6 +190,33 @@
                                 </a>
                             @endif
                         </div>
+                        <div class="flex items-center justify-between gap-1">
+                            <label for="layer-liquidity-swings" class="flex min-w-0 flex-1 items-center gap-2 text-sm text-zinc-300 cursor-pointer">
+                                <input type="checkbox" id="layer-liquidity-swings" class="rounded border-zinc-600 bg-zinc-800 text-blue-500 shrink-0" checked>
+                                <span class="truncate">Liquidity Swings</span>
+                            </label>
+                            @if($chartIndicatorBot)
+                                <a href="{{ route('bots.indicators.liquidity-swings.edit', $chartIndicatorBot) }}"
+                                    class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-zinc-700 bg-zinc-800/80 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500/50 pointer-events-auto"
+                                    title="Настройки: Liquidity Swings"
+                                    aria-label="Настройки индикатора Liquidity Swings">
+                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="h-3.5 w-3.5" aria-hidden="true">
+                                        <path stroke-linecap="round" stroke-linejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.325.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.241-.438.613-.43.992a7.723 7.723 0 0 1 0 .255c-.008.378.137.75.43.991l1.004.827c.424.35.534.955.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.47 6.47 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.281c-.09.543-.56.94-1.11.94h-2.594c-.55 0-1.019-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.991a6.932 6.932 0 0 1 0-.255c.007-.38-.138-.751-.43-.992l-1.004-.827a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.086.22-.128.332-.183.582-.495.644-.869l.214-1.281Z" />
+                                        <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
+                                    </svg>
+                                </a>
+                            @else
+                                <a href="{{ route('bots.index') }}"
+                                    class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-zinc-700 bg-zinc-800/40 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300 focus:outline-none focus:ring-2 focus:ring-blue-500/50 pointer-events-auto"
+                                    title="Создайте бота — страницы настроек индикаторов привязаны к боту"
+                                    aria-label="Перейти к списку ботов">
+                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="h-3.5 w-3.5" aria-hidden="true">
+                                        <path stroke-linecap="round" stroke-linejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.325.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.241-.438.613-.43.992a7.723 7.723 0 0 1 0 .255c-.008.378.137.75.43.991l1.004.827c.424.35.534.955.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.47 6.47 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.281c-.09.543-.56.94-1.11.94h-2.594c-.55 0-1.019-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.991a6.932 6.932 0 0 1 0-.255c.007-.38-.138-.751-.43-.992l-1.004-.827a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.086.22-.128.332-.183.582-.495.644-.869l.214-1.281Z" />
+                                        <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
+                                    </svg>
+                                </a>
+                            @endif
+                        </div>
                     </div>
                 </div>
             </div>
@@ -201,6 +228,8 @@
             </div>
             <div id="chart-wrapper" class="absolute inset-0 hidden z-[1]"></div>
             <div id="structure-overlay" class="absolute inset-0 z-[5] pointer-events-none overflow-visible hidden"></div>
+            {{-- Liquidity Swings: между OB/FVG и DGT (как на референсе TradingView / Screenshot_4). --}}
+            <div id="liquidity-swings-overlay" class="absolute inset-0 z-[6] pointer-events-none overflow-visible hidden"></div>
             {{-- Оверлей индикатора DGT выше зон OB/FVG (как на странице бота). --}}
             <div id="price-action-overlay" class="absolute inset-0 z-[7] pointer-events-none overflow-visible hidden"></div>
             <div id="candle-timer-overlay"
@@ -222,9 +251,34 @@
     const CANDLES_URL = '{{ route("candles.data") }}';
     const STRUCTURES_URL = '{{ route("structures.data") }}';
     const PA_INDICATOR_URL = '{{ route("dashboard.indicators.price-action-dgt") }}';
+    const LS_INDICATOR_URL = '{{ route("dashboard.indicators.liquidity-swings") }}';
     const INSTRUMENTS_SIDEBAR_URL = '{{ route("dashboard.instruments.data") }}';
-    const LIMIT = 1440;
-    const WINDOW_SEC = 86400;
+
+    // Окна загрузки разделены на три режима, чтобы переключение между инструментами
+    // было быстрым, но при этом сохранялись lazy-догрузка истории и live-обновление.
+    //
+    // 1) INITIAL — что грузим при первом показе инструмента (selectInstrument / reloadChartData).
+    //    Два часа достаточно, чтобы заполнить дефолтный viewport (~110 баров), а сервер при
+    //    этом считывает из БД в разы меньше S5-строк (раньше всегда тянули до 15000 рядов
+    //    под окно 24 часа на каждый клик).
+    // 2) MAX — максимальная глубина истории, до которой можно догружать через loadMoreCandles
+    //    при скролле графика влево. Сохраняем прежние 24 часа как «потолок».
+    // 3) POLL — узкое окно для регулярного auto-refresh: достаточно последних минут, чтобы
+    //    стабильно получить последний закрытый бар + текущую partial. Поллингу не нужна
+    //    вся история — наоборот, при широком окне он перетирает уже догруженные пользователем
+    //    бары слева в applyIncrementalChartUpdate.
+    const INITIAL_WINDOW_SEC = 2 * 3600;
+    const MAX_WINDOW_SEC = 24 * 3600;
+    const POLL_WINDOW_SEC = 5 * 60;
+
+    // Лимиты баров в одном ответе:
+    // - INITIAL_LIMIT держим достаточным для секундных TF (S5 за 2ч = 1440 баров).
+    // - LOAD_MORE_LIMIT используется при ленивой подгрузке старшей истории.
+    // - POLL_LIMIT мал и нужен только для апдейта хвоста.
+    const INITIAL_LIMIT = 1500;
+    const LOAD_MORE_LIMIT = 1440;
+    const POLL_LIMIT = 32;
+
     const M1_COUNTDOWN_SECONDS = 60;
     /**
      * Таймер M1: сервер в каждом ответе /candles отдаёт m1_seconds_to_close (учёт смещения шкалы time свечей vs PHP time).
@@ -272,7 +326,9 @@
     const layerOb = document.getElementById('layer-ob');
     const layerFvg = document.getElementById('layer-fvg');
     const layerPa = document.getElementById('layer-pa-dgt');
+    const layerLiquidity = document.getElementById('layer-liquidity-swings');
     const priceActionOverlay = document.getElementById('price-action-overlay');
+    const liquiditySwingsOverlay = document.getElementById('liquidity-swings-overlay');
     const instrumentSearchInput = document.getElementById('instrument-search');
     const instrumentSearchClearBtn = document.getElementById('instrument-search-clear');
     const instrumentListEl = document.getElementById('instrument-list');
@@ -296,6 +352,7 @@
             if (typeof o.orderBlocks === 'boolean') layerOb.checked = o.orderBlocks;
             if (typeof o.imbalances === 'boolean') layerFvg.checked = o.imbalances;
             if (layerPa && typeof o.paDgt === 'boolean') layerPa.checked = o.paDgt;
+            if (layerLiquidity && typeof o.liquiditySwings === 'boolean') layerLiquidity.checked = o.liquiditySwings;
         } catch (_) { /* ignore */ }
     }
 
@@ -305,6 +362,7 @@
                 orderBlocks: layerOb.checked,
                 imbalances: layerFvg.checked,
                 paDgt: layerPa ? layerPa.checked : false,
+                liquiditySwings: layerLiquidity ? layerLiquidity.checked : false,
             }));
         } catch (_) { /* ignore */ }
     }
@@ -320,10 +378,23 @@
     let allChartData = [];
     let loadingMore = false;
     let refreshInterval = null;
+    // Отдельный таймер для тяжёлых оверлеев (структуры и Price Action DGT).
+    // Они меняются редко, но каждый запрос /structures и /indicators/price-action-dgt
+    // заметно нагружает сервер (последний при дефолтных параметрах тянет до 5000 свечей
+    // и ~46 KB ответа). Если опрашивать их в общем 500-мс цикле, fetch-pool браузера
+    // быстро переполняется (net::ERR_INSUFFICIENT_RESOURCES), запросы /candles стоят
+    // в очереди и при переключении инструмента график «висит» на «Загрузка…», даже
+    // если бэкенд готов отдать данные мгновенно.
+    let overlaysRefreshInterval = null;
+    // Базовый шаг обновления оверлеев — 15 сек. Зоны/индикатор за такое время
+    // успевают сменить статус, а нагрузка на БД и сеть кратно ниже.
+    const OVERLAYS_REFRESH_MS = 15000;
     let instrumentListRefreshInterval = null;
     let sidebarTimerInterval = null;
     let lastZones = [];
     let lastPaPayload = null;
+    /** JSON с сервера: boxes / lines / labels для Liquidity Swings. */
+    let lastLsPayload = null;
 
     function payoutClassByValue(value) {
         if (value == null || Number.isNaN(value)) return 'text-zinc-500';
@@ -542,8 +613,14 @@
         instrumentSearchClearBtn.classList.toggle('hidden', !hasValue);
     }
 
+    /**
+     * Нижняя граница «потолка» доступной истории графика.
+     * Используется в loadMoreCandles как стоп для ленивой подгрузки влево
+     * (`oldestLoadedTime <= candlesSince()` => дальше не идём).
+     * Это НЕ окно первичной загрузки: первичный показ ограничен INITIAL_WINDOW_SEC.
+     */
     function candlesSince() {
-        return Math.floor(Date.now() / 1000) - WINDOW_SEC;
+        return Math.floor(Date.now() / 1000) - MAX_WINDOW_SEC;
     }
 
     /** ~кол-во свечей по горизонтали и «воздух» справа (в долях бара), как на референсе */
@@ -676,19 +753,153 @@
             .catch(() => {});
     }
 
+    /**
+     * Тянем Liquidity Swings с отдельного эндпоинта (как DGT), чтобы не смешивать тяжёлые ответы.
+     * Отрисовка — в redrawLiquiditySwingsOverlay(), вызывается перед PA-оверлеем.
+     */
+    function fetchLiquiditySwingsIndicator() {
+        if (!currentInstrument || !layerLiquidity || !layerLiquidity.checked) {
+            lastLsPayload = null;
+            redrawLiquiditySwingsOverlay();
+            return;
+        }
+        const params = new URLSearchParams({ instrument: currentInstrument, timeframe: String(currentTimeframeMinutes) });
+        fetch(LS_INDICATOR_URL + '?' + params.toString(), { headers: { 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' } })
+            .then((r) => r.json())
+            .then((d) => {
+                try {
+                    lastLsPayload = d && d.liquidity_swings ? d.liquidity_swings : null;
+                    redrawLiquiditySwingsOverlay();
+                } catch (e) {
+                    console.error('[Liquidity Swings] dashboard apply', e);
+                    lastLsPayload = null;
+                    try { redrawLiquiditySwingsOverlay(); } catch (_) {}
+                }
+            })
+            .catch(() => {});
+    }
+
+    /** Размер подписей объёма: как Labels Size в LuxAlgo (tiny / small / normal). */
+    function lsLabelFontPx(sz) {
+        const s = (sz || 'tiny').toString().toLowerCase();
+        if (s === 'small') return '11px';
+        if (s === 'normal') return '13px';
+        return '9px';
+    }
+
+    /**
+     * DOM-оверлей зон / линий / подписей объёма (аналог отображения в TradingView).
+     */
+    function redrawLiquiditySwingsOverlay() {
+        if (!liquiditySwingsOverlay || !chart || !candlestickSeries) return;
+        liquiditySwingsOverlay.innerHTML = '';
+        if (!layerLiquidity || !layerLiquidity.checked || !lastLsPayload || !allChartData.length) return;
+        const ts = chart.timeScale();
+        const lastBarTime = allChartData[allChartData.length - 1].time;
+        try {
+            const boxes = Array.isArray(lastLsPayload.boxes) ? lastLsPayload.boxes : [];
+            boxes.forEach((z) => {
+                if (!z || lastBarTime < z.time_start) return;
+                const tEnd = Math.min(lastBarTime, z.time_end);
+                const x1 = ts.timeToCoordinate(z.time_start);
+                const x2 = ts.timeToCoordinate(tEnd);
+                const y1 = candlestickSeries.priceToCoordinate(z.price_high);
+                const y2 = candlestickSeries.priceToCoordinate(z.price_low);
+                if (x1 == null || x2 == null || y1 == null || y2 == null) return;
+                const div = document.createElement('div');
+                div.style.position = 'absolute';
+                div.style.boxSizing = 'border-box';
+                div.style.pointerEvents = 'none';
+                div.style.left = Math.min(x1, x2) + 'px';
+                div.style.top = Math.min(y1, y2) + 'px';
+                div.style.width = Math.max(1, Math.abs(x2 - x1)) + 'px';
+                div.style.height = Math.max(1, Math.abs(y2 - y1)) + 'px';
+                div.style.background = z.fill || 'rgba(239,68,68,0.25)';
+                div.style.border = z.border && z.border !== 'none' ? z.border : 'none';
+                liquiditySwingsOverlay.appendChild(div);
+            });
+            const lines = Array.isArray(lastLsPayload.lines) ? lastLsPayload.lines : [];
+            lines.forEach((ln) => {
+                if (!ln || typeof ln !== 'object') return;
+                const x1 = ts.timeToCoordinate(Number(ln.time_start));
+                const x2 = ts.timeToCoordinate(Number(ln.time_end));
+                const y = candlestickSeries.priceToCoordinate(Number(ln.price));
+                if (x1 == null || x2 == null || y == null || Number.isNaN(x1) || Number.isNaN(x2) || Number.isNaN(y)) return;
+                const left = Math.min(x1, x2);
+                const w = Math.max(1, Math.abs(x2 - x1));
+                const st = (ln.style || 'Solid').toLowerCase();
+                const col = paCssColor(ln.color);
+                const lw = Math.max(1, Number(ln.width) || 1);
+                const div = document.createElement('div');
+                div.style.position = 'absolute';
+                div.style.left = left + 'px';
+                div.style.top = (y - lw / 2) + 'px';
+                div.style.width = w + 'px';
+                div.style.height = lw + 'px';
+                div.style.pointerEvents = 'none';
+                if (st === 'dotted' || st === 'dashed') {
+                    div.style.background = 'transparent';
+                    div.style.height = '0';
+                    div.style.borderTop = (st === 'dotted' ? `${lw}px dotted ` : `${lw}px dashed `) + col;
+                } else {
+                    div.style.background = col;
+                }
+                liquiditySwingsOverlay.appendChild(div);
+            });
+            const labels = Array.isArray(lastLsPayload.labels) ? lastLsPayload.labels : [];
+            labels.forEach((lb) => {
+                if (!lb || typeof lb !== 'object') return;
+                const x = ts.timeToCoordinate(Number(lb.time));
+                const y = candlestickSeries.priceToCoordinate(Number(lb.price));
+                if (x == null || y == null || Number.isNaN(x) || Number.isNaN(y)) return;
+                const span = document.createElement('span');
+                span.textContent = String(lb.text || '');
+                span.style.position = 'absolute';
+                span.style.left = x + 'px';
+                span.style.top = y + 'px';
+                span.style.transform = (lb.position === 'below')
+                    ? 'translate(-50%, 6px)'
+                    : 'translate(-50%, calc(-100% - 4px))';
+                span.style.fontSize = lsLabelFontPx(lastLsPayload.label_size);
+                span.style.fontWeight = '600';
+                span.style.lineHeight = '1';
+                span.style.color = paCssColor(lb.color);
+                span.style.pointerEvents = 'none';
+                span.style.whiteSpace = 'nowrap';
+                liquiditySwingsOverlay.appendChild(span);
+            });
+        } catch (e) {
+            console.error('[Liquidity Swings] dashboard redraw', e);
+        }
+    }
+
     function redrawPriceActionOverlay() {
+        redrawLiquiditySwingsOverlay();
         if (!priceActionOverlay || !chart || !candlestickSeries) return;
         priceActionOverlay.innerHTML = '';
         if (!layerPa || !layerPa.checked || !lastPaPayload || !allChartData.length) return;
         const ts = chart.timeScale();
-        const vpRightAxisReservePx = 78;
         const vpPanelMaxHistPx = 100;
         const vpPanelMaxDomPx = 26;
         const vpPanelGapPx = 2;
+        /** Правый край колонки VP = левый край области подписей цен (ширина шкалы меняется при зуме и формате чисел). */
         const computeVpAnchorRight = () => {
             const cw = chartWrapper.clientWidth || 0;
             if (!Number.isFinite(cw) || cw < 40) return null;
-            return cw - vpRightAxisReservePx;
+            let scaleW = 0;
+            try {
+                if (candlestickSeries && typeof candlestickSeries.priceScale === 'function') {
+                    scaleW = Number(candlestickSeries.priceScale().width());
+                }
+            } catch (_) {
+                scaleW = 0;
+            }
+            if (!Number.isFinite(scaleW) || scaleW < 0) scaleW = 0;
+            // На первом кадре width() иногда 0 — не даём VP уехать вправо за холст (старый запас ~78px).
+            const effectiveScale = scaleW > 0 ? scaleW : 78;
+            const borderGapPx = 1;
+            const anchor = cw - effectiveScale - borderGapPx;
+            return anchor > 8 ? anchor : null;
         };
         const appendVpLevelBar = (leftPx, topPx, widthPx, heightPx, background, opacity) => {
             if (!Number.isFinite(leftPx) || !Number.isFinite(topPx) || !Number.isFinite(widthPx) || !Number.isFinite(heightPx)) return;
@@ -929,9 +1140,13 @@
 
     function startAutoRefresh() {
         if (refreshInterval) clearInterval(refreshInterval);
+        // Тот же шаг, что и на странице бота: 500ms для всех TF — максимально частое обновление свечного графика через REST.
         refreshInterval = setInterval(() => {
             if (!currentInstrument || loadingMore || !candlestickSeries) return;
-            fetchCandles(currentInstrument)
+            // Поллингу важен только хвост: запрашиваем узкое окно последних минут.
+            // Это и снимает нагрузку с БД, и предохраняет от перетирания истории,
+            // догруженной пользователем влево через loadMoreCandles.
+            fetchCandles(currentInstrument, { kind: 'poll' })
                 .then(data => {
                     const candles = data.candles || [];
                     if (candles.length === 0) return;
@@ -954,24 +1169,95 @@
                             });
                         }
                     }
+                    // Перерисовываем DOM-оверлей структуры на основании уже имеющихся
+                    // в памяти зон (lastZones). Сами зоны при этом НЕ перезапрашиваем —
+                    // это делает отдельный медленный таймер ниже. Раньше этот блок
+                    // на каждом тике посылал тяжёлые fetchStructures() и
+                    // fetchPriceActionIndicator() (~46 KB) каждые 500мс, переполнял
+                    // браузерный fetch-pool и блокировал клик-инициированные
+                    // initial-запросы /candles при выборе инструмента.
                     requestAnimationFrame(redrawStructureOverlay);
-                    fetchStructures();
-                    if (layerPa && layerPa.checked) fetchPriceActionIndicator();
                 })
                 .catch(console.error);
-        }, 1000);
+        }, 500);
+
+        startOverlaysRefresh();
+    }
+
+    /**
+     * Раз в OVERLAYS_REFRESH_MS подтягиваем тяжёлые оверлеи: зоны структуры и
+     * Price Action DGT. Дополнительно один раз сразу запускаем (ниже),
+     * чтобы при выборе инструмента оверлеи появились без 15-секундной задержки.
+     */
+    function startOverlaysRefresh() {
+        if (overlaysRefreshInterval) clearInterval(overlaysRefreshInterval);
+        overlaysRefreshInterval = setInterval(() => {
+            if (!currentInstrument || loadingMore || !candlestickSeries) return;
+            // Структуры обновляем всегда (легче по объёму ответа), DGT — только если слой включён.
+            fetchStructures();
+            if (layerPa && layerPa.checked) fetchPriceActionIndicator();
+            if (layerLiquidity && layerLiquidity.checked) fetchLiquiditySwingsIndicator();
+        }, OVERLAYS_REFRESH_MS);
+    }
+
+    function stopOverlaysRefresh() {
+        if (overlaysRefreshInterval) {
+            clearInterval(overlaysRefreshInterval);
+            overlaysRefreshInterval = null;
+        }
     }
 
     function setLoading(show) {
         chartLoading.classList.toggle('hidden', !show);
     }
 
-    function fetchCandles(instrument, before) {
+    /**
+     * Загрузка свечей для графика с учётом режима запроса.
+     *
+     * Раньше каждый клик по инструменту тянул сразу 24 часа M1 (limit=1440, since=now-86400),
+     * из-за чего сервер на каждый запрос сканировал из БД до 15000 S5-строк. Теперь окно
+     * выбирается под конкретный сценарий:
+     *   - 'initial' (выбор инструмента / смена TF): малое окно для мгновенного отклика;
+     *   - 'more'    (ленивая догрузка влево при скролле): расширяется до MAX_WINDOW_SEC;
+     *   - 'poll'    (auto-refresh каждые 500мс): узкое окно — только последние минуты,
+     *               чтобы поллинг не перезатирал уже догруженную историю.
+     *
+     * Параметры:
+     *   instrument — символ инструмента;
+     *   opts.before — нижняя граница диапазона (для догрузки влево);
+     *   opts.kind   — режим запроса: initial | more | poll (см. выше).
+     */
+    function fetchCandles(instrument, opts = {}) {
+        const before = opts.before != null ? opts.before : null;
+        // По умолчанию ведём себя как первичная загрузка — это безопасный fallback
+        // для случаев, когда вызывающий код не указал режим явно.
+        const kind = opts.kind || 'initial';
+
+        let since;
+        let limit;
+        if (kind === 'more') {
+            // Догрузка влево опирается на «потолок» истории (24ч), чтобы пользователь
+            // мог пролистать на максимально возможную глубину.
+            since = Math.floor(Date.now() / 1000) - MAX_WINDOW_SEC;
+            limit = LOAD_MORE_LIMIT;
+        } else if (kind === 'poll') {
+            // Авто-обновление: достаточно ровно «хвоста» последних минут.
+            // Минимизирует чтение из БД и payload.
+            since = Math.floor(Date.now() / 1000) - POLL_WINDOW_SEC;
+            limit = POLL_LIMIT;
+        } else {
+            // Первичный показ: 2 часа дают комфортное заполнение viewport
+            // (CHART_DEFAULT_VISIBLE_BARS = 110 ~= 110 минут),
+            // а сервер читает в БД в разы меньше строк.
+            since = Math.floor(Date.now() / 1000) - INITIAL_WINDOW_SEC;
+            limit = INITIAL_LIMIT;
+        }
+
         const params = new URLSearchParams({
             instrument,
             timeframe: String(currentTimeframeMinutes),
-            limit: LIMIT,
-            since: String(candlesSince())
+            limit: String(limit),
+            since: String(since),
         });
         if (before != null) params.set('before', before);
         if (currentTimeframeMinutes === 1 && before == null) {
@@ -1000,6 +1286,7 @@
     function applyIncrementalChartUpdate(newData) {
         if (!candlestickSeries || !Array.isArray(newData) || newData.length === 0) return;
 
+        // Пустой график: первый набор данных кладём целиком.
         if (allChartData.length === 0) {
             allChartData = newData;
             oldestLoadedTime = Math.min(...allChartData.map(c => c.time));
@@ -1010,9 +1297,42 @@
             return;
         }
 
-        const oldFirstTime = allChartData[0]?.time ?? null;
-        const newFirstTime = newData[0]?.time ?? null;
-        if (oldFirstTime == null || newFirstTime == null || oldFirstTime !== newFirstTime) {
+        const oldFirstTime = allChartData[0].time;
+        const newFirstTime = newData[0].time;
+
+        // Поллинг с узким окном (newFirstTime > oldFirstTime): newData — это только хвост,
+        // а слева у нас уже может лежать вся 24-часовая история, догруженная пользователем
+        // через loadMoreCandles. Нельзя делать setData(newData) — это уничтожит ту историю
+        // и график «прыгнет», а оверлеи структур станут неактуальными. Поэтому мерджим
+        // upsert'ом по time и тригерим update() только для хвоста (бар тот же / новый).
+        if (newFirstTime > oldFirstTime) {
+            const byTime = new Map();
+            for (const c of allChartData) byTime.set(c.time, c);
+            for (const c of newData) byTime.set(c.time, c);
+            const merged = Array.from(byTime.values()).sort((a, b) => a.time - b.time);
+
+            // LightweightCharts.update() безопасен только для последнего/нового бара.
+            // Применяем его к тем new-барам, которые не «в середине» уже отрисованного ряда.
+            const lastKnownTime = allChartData[allChartData.length - 1].time;
+            for (const c of newData) {
+                if (c.time >= lastKnownTime) {
+                    candlestickSeries.update(c);
+                }
+            }
+
+            allChartData = merged;
+            oldestLoadedTime = oldestLoadedTime == null
+                ? merged[0].time
+                : Math.min(oldestLoadedTime, merged[0].time);
+            tickCandleCloseTimer();
+            applyPaBarColors();
+            requestAnimationFrame(redrawPriceActionOverlay);
+            return;
+        }
+
+        // Сдвиг окна влево / иной первый бар (например, после смены TF или догрузки):
+        // полностью переустанавливаем серию.
+        if (oldFirstTime !== newFirstTime) {
             allChartData = newData;
             oldestLoadedTime = Math.min(...allChartData.map(c => c.time));
             candlestickSeries.setData(allChartData);
@@ -1022,8 +1342,9 @@
             return;
         }
 
-        // LightweightCharts.update() умеет менять только последний бар или добавлять новый.
-        // Поэтому обновляем только безопасный "хвост": последний и, при смене минуты, следующий за ним.
+        // Совпадает первый бар (тот же диапазон): обновляем только безопасный хвост,
+        // как и раньше. LightweightCharts.update() поддерживает либо последний,
+        // либо следующий по времени бар.
         const lastKnownTime = allChartData[allChartData.length - 1]?.time ?? 0;
         const tailCandles = newData.slice(-2).filter(c => c.time >= lastKnownTime);
         tailCandles.forEach(c => candlestickSeries.update(c));
@@ -1035,11 +1356,66 @@
         requestAnimationFrame(redrawPriceActionOverlay);
     }
 
+    /**
+     * Синхронизация HTML-оверлеев с canvas при любом изменении viewport.
+     *
+     * Проблема: subscribeVisibleLogicalRangeChange срабатывает только когда меняется горизонтальный
+     * логический диапазон. Зум/сдвиг только по цене (правая шкала, колёсико на области цены)
+     * не вызывает этот колбэк, а timeToCoordinate/priceToCoordinate при этом меняются — оверлей
+     * остаётся со старыми пикселями и «отлипает» от свечей.
+     *
+     * Решение: attachPrimitive с пустым paneView. У примитива updateAllViews() вызывается
+     * библиотекой при любом пересчёте вида (время + цена + размеры). Здесь только планируем
+     * перерисовку DOM; на canvas ничего не рисуем.
+     *
+     * rAF: за кадр сливаем много вызовов updateAllViews в одну перерисовку оверлеев.
+     */
+    let chartDomOverlaySyncRaf = null;
+    function scheduleChartDomOverlaySync() {
+        if (chartDomOverlaySyncRaf !== null) return;
+        chartDomOverlaySyncRaf = requestAnimationFrame(() => {
+            chartDomOverlaySyncRaf = null;
+            try {
+                redrawStructureOverlay();
+            } catch (e) {
+                console.error('[chart] dom overlay sync', e);
+            }
+            requestAnimationFrame(() => {
+                try {
+                    positionCandleTimerOverlay();
+                } catch (e2) {
+                    console.error('[chart] candle timer overlay sync', e2);
+                }
+            });
+        });
+    }
+    function createChartDomOverlaySyncPrimitive() {
+        const paneView = {
+            renderer() {
+                return {
+                    draw() {
+                        /* Нам нужен только updateAllViews; draw оставляем пустым. */
+                    },
+                };
+            },
+        };
+        const paneViewsStable = [paneView];
+        return {
+            updateAllViews() {
+                scheduleChartDomOverlaySync();
+            },
+            paneViews() {
+                return paneViewsStable;
+            },
+        };
+    }
+
     function createChart() {
         if (chart) chart.remove();
         chartWrapper.innerHTML = '';
         chartWrapper.classList.remove('hidden');
         structureOverlay.classList.remove('hidden');
+        if (liquiditySwingsOverlay) liquiditySwingsOverlay.classList.remove('hidden');
         if (priceActionOverlay) priceActionOverlay.classList.remove('hidden');
         chartPlaceholder.classList.add('hidden');
 
@@ -1071,6 +1447,12 @@
             }
         });
 
+        try {
+            candlestickSeries.attachPrimitive(createChartDomOverlaySyncPrimitive());
+        } catch (e) {
+            console.error('[chart] attachPrimitive(dom overlay sync)', e);
+        }
+
         chart.timeScale().subscribeVisibleLogicalRangeChange(() => {
             const range = chart.timeScale().getVisibleLogicalRange();
             if (range && currentTimeframeMinutes === 1 && !loadingMore && oldestLoadedTime != null && range.from < 2) {
@@ -1090,7 +1472,9 @@
 
         loadingMore = true;
         setLoading(true);
-        fetchCandles(currentInstrument, oldestLoadedTime)
+        // Догрузка более старой истории: расширяем окно до MAX_WINDOW_SEC и используем
+        // увеличенный лимит баров, чтобы за один запрос покрыть пролистывание влево.
+        fetchCandles(currentInstrument, { before: oldestLoadedTime, kind: 'more' })
             .then(data => {
                 const candles = data.candles || [];
                 if (candles.length === 0) { loadingMore = false; setLoading(false); return; }
@@ -1108,6 +1492,7 @@
                 requestAnimationFrame(redrawStructureOverlay);
                 fetchStructures();
                 if (layerPa && layerPa.checked) fetchPriceActionIndicator();
+                if (layerLiquidity && layerLiquidity.checked) fetchLiquiditySwingsIndicator();
             })
             .catch(() => { loadingMore = false; setLoading(false); });
     }
@@ -1115,7 +1500,9 @@
     function reloadChartData() {
         if (!currentInstrument || !candlestickSeries) return;
         setLoading(true);
-        fetchCandles(currentInstrument)
+        // Смена таймфрейма / явный reload — это «как заново выбрали инструмент»:
+        // тянем только initial-окно, остальное пользователь догрузит скроллом.
+        fetchCandles(currentInstrument, { kind: 'initial' })
             .then(data => {
                 const candles = data.candles || [];
                 allChartData = buildChartData(candles);
@@ -1125,12 +1512,15 @@
                     applyDefaultChartViewport();
                     fetchStructures();
                     fetchPriceActionIndicator();
+                    fetchLiquiditySwingsIndicator();
                 } else {
                     candlestickSeries.setData([]);
                     lastZones = [];
                     structureOverlay.innerHTML = '';
                     lastPaPayload = null;
+                    lastLsPayload = null;
                     if (priceActionOverlay) priceActionOverlay.innerHTML = '';
+                    if (liquiditySwingsOverlay) liquiditySwingsOverlay.innerHTML = '';
                 }
                 updateChartTitle();
                 tickCandleCloseTimer();
@@ -1151,14 +1541,19 @@
         lastZones = [];
         structureOverlay.innerHTML = '';
         lastPaPayload = null;
+        lastLsPayload = null;
         if (priceActionOverlay) priceActionOverlay.innerHTML = '';
+        if (liquiditySwingsOverlay) liquiditySwingsOverlay.innerHTML = '';
         updateChartTitle();
         updateTfOptionStyles();
         tickCandleCloseTimer();
         setLoading(true);
         createChart();
 
-        fetchCandles(instrument)
+        // Первичная загрузка свечей при выборе инструмента: только initial-окно,
+        // чтобы переключение между парами происходило быстро. Остальное
+        // (старая история) подтянется по требованию через loadMoreCandles.
+        fetchCandles(instrument, { kind: 'initial' })
             .then(data => {
                 const candles = data.candles || [];
                 allChartData = buildChartData(candles);
@@ -1166,14 +1561,19 @@
                     oldestLoadedTime = Math.min(...allChartData.map(c => c.time));
                     candlestickSeries.setData(allChartData);
                     applyDefaultChartViewport();
+                    // startAutoRefresh внутри уже стартует и медленный таймер оверлеев.
                     startAutoRefresh();
                     requestAnimationFrame(() => {
                         redrawStructureOverlay();
+                        // Один раз дёргаем «тяжёлые» эндпоинты сразу при выборе инструмента,
+                        // чтобы оверлеи появились без 15-секундной задержки таймера.
                         fetchStructures();
                         fetchPriceActionIndicator();
+                        fetchLiquiditySwingsIndicator();
                     });
                 } else {
                     if (refreshInterval) clearInterval(refreshInterval);
+                    stopOverlaysRefresh();
                 }
                 updateChartTitle();
                 tickCandleCloseTimer();
@@ -1182,6 +1582,7 @@
             .catch(() => {
                 setLoading(false);
                 if (refreshInterval) clearInterval(refreshInterval);
+                stopOverlaysRefresh();
                 tickCandleCloseTimer();
             });
     }
@@ -1233,6 +1634,14 @@
             saveLayerPrefs();
             if (!layerPa.checked) lastPaPayload = null;
             fetchPriceActionIndicator();
+            requestAnimationFrame(redrawStructureOverlay);
+        });
+    }
+    if (layerLiquidity) {
+        layerLiquidity.addEventListener('change', () => {
+            saveLayerPrefs();
+            if (!layerLiquidity.checked) lastLsPayload = null;
+            fetchLiquiditySwingsIndicator();
             requestAnimationFrame(redrawStructureOverlay);
         });
     }

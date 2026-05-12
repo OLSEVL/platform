@@ -77,6 +77,8 @@ PROMPT;
                 class="inline-flex items-center rounded border border-zinc-600 bg-zinc-800 px-2.5 py-1 text-xs font-medium text-zinc-200 shadow-sm transition-colors hover:bg-zinc-700 hover:border-zinc-500 hover:text-zinc-50 focus:outline-none focus:ring-2 focus:ring-blue-500/50">Имбалансы</a>
             <a href="{{ route('bots.indicators.price-action-dgt.edit', $bot) }}"
                 class="inline-flex items-center rounded border border-zinc-600 bg-zinc-800 px-2.5 py-1 text-xs font-medium text-zinc-200 shadow-sm transition-colors hover:bg-zinc-700 hover:border-zinc-500 hover:text-zinc-50 focus:outline-none focus:ring-2 focus:ring-blue-500/50">Price Action</a>
+            <a href="{{ route('bots.indicators.liquidity-swings.edit', $bot) }}"
+                class="inline-flex items-center rounded border border-zinc-600 bg-zinc-800 px-2.5 py-1 text-xs font-medium text-zinc-200 shadow-sm transition-colors hover:bg-zinc-700 hover:border-zinc-500 hover:text-zinc-50 focus:outline-none focus:ring-2 focus:ring-blue-500/50">Liquidity Swings</a>
             <a href="{{ route('bots.activity', $bot) }}"
                 class="inline-flex items-center rounded border border-zinc-600 bg-zinc-800 px-2.5 py-1 text-xs font-medium text-zinc-200 shadow-sm transition-colors hover:bg-zinc-700 hover:border-zinc-500 hover:text-zinc-50 focus:outline-none focus:ring-2 focus:ring-blue-500/50">Сигналы и сделки</a>
             <a href="{{ route('bots.logs', $bot) }}"
@@ -121,6 +123,19 @@ PROMPT;
                 @checked(old('tv_crosshair_enabled', $cfg['tv_crosshair_enabled'] ?? true))>
             <label for="tv_crosshair_enabled" class="text-sm text-zinc-300">
                 Кроссхейр как в TradingView (линии X/Y и подсказки цены/времени)
+            </label>
+        </div>
+
+        <div class="flex items-start gap-2">
+            {{-- Персональный флаг логирования для этого конкретного бота:
+                 когда включен — движок пишет детальные bot_analysis_runs (status/skip_reason/decision/latency),
+                 когда выключен — проходы не попадают в таблицу bot_analysis_runs.
+                 Дефолт = true для обратной совместимости со старыми конфигами, где ключа ещё нет. --}}
+            <input type="checkbox" name="analysis_runs_logging_enabled" id="analysis_runs_logging_enabled" value="1"
+                class="mt-0.5 rounded border-zinc-600 bg-zinc-800 text-blue-500"
+                @checked(old('analysis_runs_logging_enabled', $cfg['analysis_runs_logging_enabled'] ?? true))>
+            <label for="analysis_runs_logging_enabled" class="text-sm text-zinc-300">
+                Записывать диагностические логи в bot_analysis_runs (для страницы «Логи и метрики»)
             </label>
         </div>
 
@@ -200,38 +215,107 @@ PROMPT;
                     </div>
                 </div>
             </div>
-        @elseif ($bot->type === 'akim_trade_5s')
+        @elseif ($bot->type === 'candle_reversal_confirm')
+            {{-- MTF-логика:
+                 1) M5 (3 закрытые свечи) определяет сторону разворота,
+                 2) M1 (3 закрытые свечи) подтверждает ту же сторону по телам и теням,
+                 3) вход только на 5 минут (expiry фиксирован). --}}
             <div class="space-y-4 border-t border-zinc-800 pt-4">
-                <p class="text-sm text-zinc-400">AKIM TRADE 5S: самостоятельная секундная стратегия (S5) с быстрыми входами по локальному микро-тренду.</p>
+                <p class="text-sm text-zinc-400">
+                    MTF-подтверждение: сначала разворот на M5 по трём закрытым свечам, затем подтверждение той же стороны
+                    на трёх закрытых M1 свечах (включая проверку теней). Экспирация фиксированная: 300 сек (5 минут).
+                </p>
 
                 <div class="grid gap-4 sm:grid-cols-2">
                     <div class="space-y-1">
                         <label for="count" class="block text-xs font-medium text-zinc-400">Свечей в выборке (count)</label>
-                        <input type="number" name="count" id="count" min="50" max="5000" required
-                            value="{{ old('count', $cfg['count'] ?? 500) }}"
+                        <input type="number" name="count" id="count" min="10" max="5000" required
+                            value="{{ old('count', $cfg['count'] ?? 180) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
                         @error('count')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
-                        <label for="expiry_sec" class="block text-xs font-medium text-zinc-400">Экспирация сделки (сек), обычно 5</label>
-                        <input type="number" name="expiry_sec" id="expiry_sec" min="5" max="120" required
-                            value="{{ old('expiry_sec', $cfg['expiry_sec'] ?? 5) }}"
+                        <label for="expiry_sec" class="block text-xs font-medium text-zinc-400">Экспирация сделки (сек, фикс)</label>
+                        <input type="number" name="expiry_sec" id="expiry_sec" min="300" max="300" readonly
+                            value="300"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
                         @error('expiry_sec')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
                         <label for="min_confidence" class="block text-xs font-medium text-zinc-400">Мин. confidence (0–1)</label>
                         <input type="number" name="min_confidence" id="min_confidence" min="0" max="1" step="0.01" required
-                            value="{{ old('min_confidence', $cfg['min_confidence'] ?? 0.60) }}"
+                            value="{{ old('min_confidence', $cfg['min_confidence'] ?? 0.56) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
                         @error('min_confidence')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
                         <label for="stale_after_sec" class="block text-xs font-medium text-zinc-400">Свежесть текущей свечи (сек)</label>
-                        <input type="number" name="stale_after_sec" id="stale_after_sec" min="2" max="120" required
-                            value="{{ old('stale_after_sec', $cfg['stale_after_sec'] ?? 10) }}"
+                        <input type="number" name="stale_after_sec" id="stale_after_sec" min="5" max="600" required
+                            value="{{ old('stale_after_sec', $cfg['stale_after_sec'] ?? 45) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
                         @error('stale_after_sec')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                    <div class="space-y-1">
+                        <label for="m5_reversal_min_wick_ratio" class="block text-xs font-medium text-zinc-400">M5: мин. доля тени разворота (0.12–0.75)</label>
+                        <input type="number" name="m5_reversal_min_wick_ratio" id="m5_reversal_min_wick_ratio" min="0.12" max="0.75" step="0.01" required
+                            value="{{ old('m5_reversal_min_wick_ratio', $cfg['m5_reversal_min_wick_ratio'] ?? 0.30) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @error('m5_reversal_min_wick_ratio')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                    <div class="space-y-1">
+                        <label for="m5_reversal_max_body_ratio" class="block text-xs font-medium text-zinc-400">M5: макс. доля тела разворота (0.15–0.90)</label>
+                        <input type="number" name="m5_reversal_max_body_ratio" id="m5_reversal_max_body_ratio" min="0.15" max="0.90" step="0.01" required
+                            value="{{ old('m5_reversal_max_body_ratio', $cfg['m5_reversal_max_body_ratio'] ?? 0.70) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @error('m5_reversal_max_body_ratio')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                    <div class="space-y-1">
+                        <label for="m1_min_wick_ratio" class="block text-xs font-medium text-zinc-400">M1: мин. доля подтверждающей тени (0.10–0.70)</label>
+                        <input type="number" name="m1_min_wick_ratio" id="m1_min_wick_ratio" min="0.10" max="0.70" step="0.01" required
+                            value="{{ old('m1_min_wick_ratio', $cfg['m1_min_wick_ratio'] ?? 0.22) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @error('m1_min_wick_ratio')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                    <div class="space-y-1">
+                        <label for="m1_min_body_ratio" class="block text-xs font-medium text-zinc-400">M1: мин. доля тела свечи (0.05–0.80)</label>
+                        <input type="number" name="m1_min_body_ratio" id="m1_min_body_ratio" min="0.05" max="0.80" step="0.01" required
+                            value="{{ old('m1_min_body_ratio', $cfg['m1_min_body_ratio'] ?? 0.25) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @error('m1_min_body_ratio')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                </div>
+
+                <div class="flex flex-col gap-3 border-t border-zinc-800 pt-4">
+                    <input type="hidden" name="m5_require_break_rev_extreme" value="0">
+                    <div class="flex items-start gap-2">
+                        <input type="checkbox" name="m5_require_break_rev_extreme" id="m5_require_break_rev_extreme" value="1"
+                            class="mt-0.5 rounded border-zinc-600 bg-zinc-800 text-blue-500"
+                            @checked((bool) old('m5_require_break_rev_extreme', ($cfg['m5_require_break_rev_extreme'] ?? true)))>
+                        <label for="m5_require_break_rev_extreme" class="text-sm text-zinc-300">
+                            M5: требовать пробой экстремума разворотной свечи подтверждающей свечой
+                        </label>
+                    </div>
+                    <div class="space-y-1 pt-1">
+                        <label for="m1_wick_requirement_scope" class="block text-xs font-medium text-zinc-400">M1: на каких из 3 свечей проверять тени и пороги</label>
+                        <select name="m1_wick_requirement_scope" id="m1_wick_requirement_scope" required
+                            class="w-full max-w-xl rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                            <option value="last" @selected(old('m1_wick_requirement_scope', $cfg['m1_wick_requirement_scope'] ?? 'last') === 'last')>
+                                Только последняя закрытая (рекомендуется — иначе сигналов почти нет)
+                            </option>
+                            <option value="all" @selected(old('m1_wick_requirement_scope', $cfg['m1_wick_requirement_scope'] ?? 'last') === 'all')>
+                                Все три свечи (максимально строго)
+                            </option>
+                        </select>
+                        @error('m1_wick_requirement_scope')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                    <input type="hidden" name="m1_require_wick_dominance" value="0">
+                    <div class="flex items-start gap-2">
+                        <input type="checkbox" name="m1_require_wick_dominance" id="m1_require_wick_dominance" value="1"
+                            class="mt-0.5 rounded border-zinc-600 bg-zinc-800 text-blue-500"
+                            @checked((bool) old('m1_require_wick_dominance', ($cfg['m1_require_wick_dominance'] ?? true)))>
+                        <label for="m1_require_wick_dominance" class="text-sm text-zinc-300">
+                            M1: на выбранных свечах «своя» тень длиннее противоположной (доминирование)
+                        </label>
                     </div>
                 </div>
             </div>

@@ -5,6 +5,8 @@ namespace App\Http\Controllers;
 use App\Models\Bot;
 use App\Models\IndicatorSetting;
 use App\Services\Indicators\PriceActionDgtIndicatorService;
+use App\Services\Indicators\LiquiditySwingsIndicatorService;
+use App\Support\LiquiditySwingsSettingsForm;
 use App\Support\PriceActionDgtSettingsForm;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -66,6 +68,45 @@ class BotChartIndicatorController extends Controller
         $this->ensureBotOwner($bot);
 
         return view('bots.indicators.fvg', ['bot' => $bot]);
+    }
+
+    public function editLiquiditySwings(Bot $bot): View
+    {
+        $this->ensureBotOwner($bot);
+        $ls = IndicatorSetting::mergedLiquiditySwingsParams($bot);
+
+        return view('bots.indicators.liquidity-swings', [
+            'bot' => $bot,
+            'ls' => $ls,
+        ]);
+    }
+
+    public function updateLiquiditySwings(Request $request, Bot $bot): RedirectResponse
+    {
+        $this->ensureBotOwner($bot);
+        if ($request->boolean('use_expert_json')) {
+            $request->validate([
+                'expert_settings_json' => ['required', 'string', 'max:65535'],
+            ]);
+            $raw = trim((string) $request->input('expert_settings_json', ''));
+            $decoded = json_decode($raw, true);
+            if (! is_array($decoded)) {
+                return back()->withInput()->withErrors(['expert_settings_json' => 'Некорректный JSON.']);
+            }
+            $params = array_replace(LiquiditySwingsIndicatorService::defaultParams(), $decoded);
+        } else {
+            $params = LiquiditySwingsSettingsForm::buildFromRequest($request);
+        }
+        IndicatorSetting::updateOrCreate(
+            ['bot_id' => $bot->id, 'indicator_key' => IndicatorSetting::KEY_LIQUIDITY_SWINGS],
+            ['settings' => $params]
+        );
+        $config = is_array($bot->config) ? $bot->config : [];
+        unset($config[IndicatorSetting::KEY_LIQUIDITY_SWINGS]);
+        $bot->update(['config' => $config]);
+
+        return redirect()->route('bots.indicators.liquidity-swings.edit', $bot)
+            ->with('status', 'Настройки Liquidity Swings сохранены.');
     }
 
     private function ensureBotOwner(Bot $bot): void

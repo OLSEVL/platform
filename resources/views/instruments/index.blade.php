@@ -15,6 +15,8 @@
     <table class="min-w-full divide-y divide-zinc-800">
         <thead class="bg-zinc-800/80">
             <tr>
+                {{-- Порядковый номер строки в списке (как в таблице оператора): удобно ссылаться на «3-й инструмент» без поиска по коду. --}}
+                <th class="w-14 px-3 py-3 text-center text-xs font-medium text-zinc-400 uppercase">№</th>
                 <th class="px-6 py-3 text-left text-xs font-medium text-zinc-400 uppercase">Инструмент</th>
                 <th class="px-6 py-3 text-left text-xs font-medium text-zinc-400 uppercase">Название</th>
                 <th class="px-6 py-3 text-left text-xs font-medium text-zinc-400 uppercase">Приоритет</th>
@@ -30,6 +32,7 @@
         <tbody class="divide-y divide-zinc-800 text-zinc-200">
             @forelse($instruments as $i)
             <tr class="hover:bg-zinc-800/50">
+                <td class="px-3 py-4 text-center text-sm tabular-nums text-zinc-500">{{ $loop->iteration }}</td>
                 <td class="px-6 py-4 font-mono text-zinc-300">{{ $i->instrument }}</td>
                 <td class="px-6 py-4">{{ $i->display_name ?? '—' }}</td>
                 <td class="px-6 py-4">{{ $i->priority }}</td>
@@ -151,7 +154,7 @@
                 </td>
             </tr>
             @empty
-            <tr><td colspan="10" class="px-6 py-8 text-center text-zinc-500">Нет инструментов. <a href="{{ route('instruments.create') }}" class="text-blue-400 hover:underline">Добавить</a></td></tr>
+            <tr><td colspan="11" class="px-6 py-8 text-center text-zinc-500">Нет инструментов. <a href="{{ route('instruments.create') }}" class="text-blue-400 hover:underline">Добавить</a></td></tr>
             @endforelse
         </tbody>
     </table>

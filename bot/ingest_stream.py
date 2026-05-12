@@ -900,6 +900,11 @@ async def run_ingest_forever() -> None:
 
     stop = asyncio.Event()
     workers: Dict[str, asyncio.Task] = {}
+    # Храним "конфигурационный отпечаток" каждого активного воркера.
+    # Это нужно, чтобы reliably детектировать runtime-изменения конфигурации инструмента
+    # (proxy_url/session_token/uid/is_demo) и перезапускать конкретный воркер.
+    # Без этого процесс продолжает использовать старый proxy_url до случайного reconnect.
+    worker_specs: Dict[str, tuple[str, str, bool, Optional[str]]] = {}
     global instruments_cache
 
     startup_logged = False
@@ -936,16 +941,19 @@ async def run_ingest_forever() -> None:
 
             for key in list(workers.keys()):
                 if key not in current_keys:
+                    # Инструмент удалён из выдачи API: корректно останавливаем его воркер,
+                    # чтобы не держать лишние WebSocket/ресурсы.
                     workers[key].cancel()
                     try:
                         await workers[key]
                     except asyncio.CancelledError:
                         pass
                     del workers[key]
+                    worker_specs.pop(key, None)
 
             for item in to_run:
                 instrument = item.get("instrument") or item.get("symbol")
-                if not instrument or instrument in workers:
+                if not instrument:
                     continue
                 session_token = item.get("session_token")
                 uid = str(item.get("uid") or "0")
@@ -953,7 +961,33 @@ async def run_ingest_forever() -> None:
                 if not session_token:
                     print(f"[INGEST] skip {instrument}: no session_token in DB (pocket_instruments)")
                     continue
-                proxy_url = item.get("proxy_url")
+                proxy_url_raw = item.get("proxy_url")
+                # Нормализуем пустые строки к None, чтобы сравнение spec было стабильным
+                # и не давало ложные перезапуски на '' vs None.
+                proxy_url = str(proxy_url_raw).strip() if proxy_url_raw else None
+                spec = (str(session_token), uid, bool(is_demo), proxy_url)
+
+                if instrument in workers:
+                    prev_spec = worker_specs.get(instrument)
+                    if prev_spec == spec:
+                        # Спек не изменился: воркер уже работает на актуальной конфигурации.
+                        continue
+
+                    # Критично: при смене proxy_url/session_token/uid/is_demo принудительно
+                    # перезапускаем воркер, иначе он останется на старом WebSocket-клиенте
+                    # и будет фактически игнорировать новую прокси-конфигурацию.
+                    workers[instrument].cancel()
+                    try:
+                        await workers[instrument]
+                    except asyncio.CancelledError:
+                        pass
+                    del workers[instrument]
+                    worker_specs.pop(instrument, None)
+                    print(
+                        f"[INGEST] restarted worker for {instrument}: detected config change "
+                        f"(proxy/session/uid/is_demo)",
+                        flush=True,
+                    )
 
                 task = asyncio.create_task(
                     run_instrument_worker(
@@ -967,6 +1001,7 @@ async def run_ingest_forever() -> None:
                     )
                 )
                 workers[instrument] = task
+                worker_specs[instrument] = spec
                 print(f"[INGEST] started worker for {instrument}")
                 await asyncio.sleep(1)
 
@@ -980,6 +1015,7 @@ async def run_ingest_forever() -> None:
                 await t
             except asyncio.CancelledError:
                 pass
+        worker_specs.clear()
     finally:
         await close_ingest_http_session()
 

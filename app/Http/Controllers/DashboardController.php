@@ -9,6 +9,7 @@ use App\Models\PocketInstrument;
 use App\Services\CandleService;
 use App\Services\CandleStructureZoneDetector;
 use App\Services\CurrentCandleCacheService;
+use App\Services\Indicators\LiquiditySwingsIndicatorService;
 use App\Services\Indicators\PriceActionDgtIndicatorService;
 use App\Support\M1CandleCountdown;
 use Illuminate\Http\JsonResponse;
@@ -308,6 +309,36 @@ class DashboardController extends Controller
 
         return response()->json([
             'indicator' => $payload,
+            'instrument' => $instrument,
+            'timeframe' => $timeframe,
+            'server_time' => now()->toIso8601String(),
+        ]);
+    }
+
+    /**
+     * Оверлей Liquidity Swings (по мотивам LuxAlgo / indicator2.txt): те же свечи и горизонт, что у /structures.
+     */
+    public function liquiditySwingsIndicatorData(
+        Request $request,
+        CandleService $candleService,
+        LiquiditySwingsIndicatorService $liquiditySwings,
+    ): JsonResponse {
+        $request->validate([
+            'instrument' => ['required', 'string', 'max:64'],
+            'timeframe' => ['nullable', 'integer', Rule::in(CandleService::DASHBOARD_TIMEFRAMES)],
+        ]);
+        $instrument = (string) $request->input('instrument');
+        $timeframe = (int) ($request->input('timeframe') ?? 1);
+        $since = time() - 86400;
+        $rows = $candleService->seriesForDashboard($instrument, $timeframe, $since, null, 5000);
+        $anchorBot = $this->chartIndicatorBotForUser();
+        $lsParams = $anchorBot !== null
+            ? IndicatorSetting::mergedLiquiditySwingsParams($anchorBot)
+            : LiquiditySwingsIndicatorService::defaultParams();
+        $payload = $liquiditySwings->compute($rows, $lsParams);
+
+        return response()->json([
+            'liquidity_swings' => $payload,
             'instrument' => $instrument,
             'timeframe' => $timeframe,
             'server_time' => now()->toIso8601String(),

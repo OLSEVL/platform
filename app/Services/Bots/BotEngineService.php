@@ -9,8 +9,8 @@ use App\Models\BotSignal;
 use App\Models\BotTrade;
 use App\Models\PocketInstrument;
 use App\Services\Bots\Strategies\AkimTrade1MStrategy;
-use App\Services\Bots\Strategies\AkimTrade5SStrategy;
 use App\Services\Bots\Strategies\BotStrategyInterface;
+use App\Services\Bots\Strategies\CandleReversalMtfConfirmStrategy;
 use App\Services\Bots\Strategies\FeshanStrategy;
 use App\Services\Bots\Strategies\OpenRouterLlmStrategy;
 use App\Services\Bots\Strategies\ThreeCandlesInRowStrategy;
@@ -77,7 +77,11 @@ class BotEngineService
         $processed = 0;
         $signals = 0;
         $trades = 0;
-        $analysisLogsEnabled = Schema::hasTable('bot_analysis_runs');
+        // Логи analysis-runs включаются только при одновременном выполнении двух условий:
+        // 1) таблица bot_analysis_runs существует (миграции применены),
+        // 2) у конкретного бота флаг analysis_runs_logging_enabled не выключен в config.
+        // Такой подход даёт персональную настройку шумности/нагрузки по каждому боту.
+        $analysisLogsEnabled = Schema::hasTable('bot_analysis_runs') && (bool) ($config['analysis_runs_logging_enabled'] ?? true);
         foreach ($instruments as $instrumentRow) {
             $instrument = (string) $instrumentRow->instrument;
             if ($allowedInstrumentSet !== [] && ! isset($allowedInstrumentSet[$instrument])) {
@@ -134,6 +138,12 @@ class BotEngineService
                     30 => 72,
                     15 => 96,
                     5 => 160,
+                ]);
+            } elseif ($bot->type === 'candle_reversal_confirm') {
+                // Для MTF-разворота обязательно подмешиваем M5: направление определяется сначала на M5,
+                // а вход подтверждается блоком из 3 закрытых M1 свечей в ту же сторону.
+                $mtf = $this->botDataService->mtfSeries($instrument, [
+                    5 => 60,
                 ]);
             } elseif ($bot->type === 'openrouter_llm') {
                 // Для OpenRouter-бота подмешиваем старшие ТФ (M5/M15/H1), чтобы модель видела
@@ -213,12 +223,57 @@ class BotEngineService
                 continue;
             }
 
+            // Базовое поведение: entry_time = момент scan'а (now), entry_price = текущая цена.
+            // Подходит для стратегий, у которых длина сделки больше одной свечи (например, Feshan 2–5 мин).
             $entryPrice = (float) (($partial['close'] ?? null) ?? end($closed)['close']);
             // БД-сессия MySQL работает в UTC (config/database.php: SET time_zone='+00:00').
             // Поэтому signal_at/entry_time/expiry_time фиксируем тоже в UTC, чтобы не получать
             // искусственный +3 часа в raw TIMESTAMP полях.
             $entryAt = now();
             $expiryAt = $entryAt->copy()->addSeconds($decisionExpirySec);
+            $alignedToBar = false;
+
+            // Выравнивание входа на границу бара: M1 (60 с) или M5 (300 с) при expiry_sec=300 у MTF-разворота.
+            $seriesTimeframeMinutes = max(1, (int) ($runtime['series_timeframe'] ?? 1));
+            $alignToBar = $this->shouldAlignEntryToBar($bot, $config);
+            $alignBarPeriodSec = $this->resolveAlignBarPeriodSec($bot, $decisionExpirySec, $seriesTimeframeMinutes);
+            if ($alignToBar
+                && $alignBarPeriodSec !== null
+                && is_array($partial)
+                && isset($partial['time'], $partial['open'])
+                && (int) $partial['time'] > 0
+            ) {
+                $partialStart = (int) $partial['time'];
+                $barStart = (int) (floor($partialStart / $alignBarPeriodSec) * $alignBarPeriodSec);
+                $candidateEntryAt = Carbon::createFromTimestamp($barStart, 'UTC');
+                $candidateExpiryAt = $candidateEntryAt->copy()->addSeconds($alignBarPeriodSec);
+
+                if ($candidateExpiryAt->lessThanOrEqualTo(now())) {
+                    $this->finishAnalysisRun(
+                        $analysisRun,
+                        BotAnalysisRun::STATUS_SKIPPED,
+                        'partial_bar_already_closed',
+                        [
+                            'decision' => $decision,
+                            'partial_bar_start' => $barStart,
+                            'partial_bar_end' => $candidateExpiryAt->timestamp,
+                            'align_bar_period_sec' => $alignBarPeriodSec,
+                            'now' => now()->timestamp,
+                        ]
+                    );
+                    continue;
+                }
+
+                $barOpen = $this->resolveBarOpenPrice($closed, $partial, $barStart, $alignBarPeriodSec);
+                if ($barOpen === null) {
+                    $barOpen = (float) $partial['open'];
+                }
+
+                $entryAt = $candidateEntryAt;
+                $expiryAt = $candidateExpiryAt;
+                $entryPrice = $barOpen;
+                $alignedToBar = true;
+            }
             $payoutSnapshot = $instrumentRow->current_payout !== null ? (float) $instrumentRow->current_payout : null;
 
             DB::transaction(function () use (
@@ -233,6 +288,7 @@ class BotEngineService
                 $decision,
                 $dedupeKey,
                 $entryPrice,
+                $alignedToBar,
                 &$signals,
                 &$trades,
                 $analysisRun
@@ -269,6 +325,13 @@ class BotEngineService
                         // Сохраняем примененную экспирацию, чтобы потом можно было
                         // анализировать winrate по длине сделки (2/3/4/5 минут).
                         'expiry_sec_used' => $decisionExpirySec,
+                        // Флаг «вход выровнен на начало свечи»: критичен для свечных стратегий
+                        // (Three Candles / Akim 1M), где одна сделка должна занимать РОВНО одну свечу.
+                        // Помогает в постфактум-аналитике отделить корректные «свечные» сделки
+                        // от случаев, когда выравнивание не сработало (нет свежего partial и т.п.).
+                        'aligned_to_bar' => $alignedToBar,
+                        // Начало выровненной свечи в UTC (unix). Удобно сопоставлять с барами на графике.
+                        'partial_bar_start' => $alignedToBar ? (int) $entryAt->timestamp : null,
                     ],
                 ]);
 
@@ -292,6 +355,8 @@ class BotEngineService
                 'entry_price' => $entryPrice,
                 'entry_time' => $entryAt->toIso8601String(),
                 'expiry_time' => $expiryAt->toIso8601String(),
+                // Видимый в логах флаг «сделка стартовала ровно с новой свечи».
+                'aligned_to_bar' => $alignedToBar,
             ]);
         }
 
@@ -365,6 +430,11 @@ class BotEngineService
                 30 => 72,
                 15 => 96,
                 5 => 160,
+            ]);
+        } elseif ($bot->type === 'candle_reversal_confirm') {
+            // В explain используем тот же M5-контекст, что и в scan, иначе диагностика не совпадет с боевым входом.
+            $mtf = $this->botDataService->mtfSeries($instrument, [
+                5 => 60,
             ]);
         } elseif ($bot->type === 'openrouter_llm') {
             // Для OpenRouter-бота диагностика должна использовать те же MTF-данные, что и боевой scan.
@@ -464,15 +534,17 @@ class BotEngineService
     private function runtimeSettings(Bot $bot): array
     {
         $config = is_array($bot->config) ? $bot->config : [];
-        $defaultCount = $bot->type === 'feshan' ? 2500 : 120;
-        if ($bot->type === 'akim_trade_5s') {
-            $defaultCount = 500;
-        }
+        $defaultCount = match ($bot->type) {
+            'feshan' => 2500,
+            'candle_reversal_confirm' => 180,
+            default => 120,
+        };
         $count = max(10, min(5000, (int) ($config['count'] ?? $defaultCount)));
         $expirySec = match ($bot->type) {
             'three_candles_in_row' => (int) ($config['expiry_sec'] ?? 60),
             'akim_trade_1m' => (int) ($config['expiry_sec'] ?? 60),
-            'akim_trade_5s' => (int) ($config['expiry_sec'] ?? 5),
+            // По ТЗ для MTF-разворота вход идёт на 5 минут независимо от рыночной фазы.
+            'candle_reversal_confirm' => (int) ($config['expiry_sec'] ?? 300),
             'feshan' => (int) ($config['expiry_sec'] ?? 300),
             default => (int) ($config['expiry_sec'] ?? 300),
         };
@@ -484,7 +556,7 @@ class BotEngineService
             'feshan' => 0.6,
             'openrouter_llm' => 0.65,
             'akim_trade_1m' => 0.58,
-            'akim_trade_5s' => 0.60,
+            'candle_reversal_confirm' => 0.56,
             default => 0.55,
         });
         // Минимальный payout как экономический фильтр качества входа.
@@ -498,24 +570,20 @@ class BotEngineService
         $minClosedBars = match ($bot->type) {
             'feshan' => 40,
             'akim_trade_1m' => 90,
-            'akim_trade_5s' => 120,
+            // Для MTF-разворота нужен запас истории M1 и стабильная M5-агрегация.
+            'candle_reversal_confirm' => 60,
             // LLM-боту нужен достаточно широкий контекст последних свечей,
             // иначе модель чаще даёт шумные и нестабильные решения.
             'openrouter_llm' => 20,
             default => 3,
         };
-        // Указываем таймфрейм входного потока для стратегии:
-        // 1    -> M1 (AKIM 1M),
-        // 4005 -> S5 (AKIM 5S).
+        // Указываем таймфрейм входного потока для стратегии.
+        // Сейчас все поддерживаемые типы работают на M1 (timeframe=1).
         $seriesTimeframe = match ($bot->type) {
-            'akim_trade_5s' => 4005,
             default => 1,
         };
         $dedupeBucketSec = match ($bot->type) {
-            'feshan', 'openrouter_llm' => max(60, min(900, $expirySec)),
-            // Для ультракороткой версии dedupe равен экспирации, чтобы не блокировать
-            // рабочую частоту входов искусственным минутным окном.
-            'akim_trade_5s' => max(5, min(30, $expirySec)),
+            'feshan', 'openrouter_llm', 'candle_reversal_confirm' => max(60, min(900, $expirySec)),
             default => 60,
         };
         return [
@@ -830,12 +898,82 @@ class BotEngineService
         return (float) $c['high'] < (float) $a['low'];
     }
 
+    /**
+     * Длина бара (сек), на open которого выравниваем entry/expiry, если экспирация совпадает с этим окном.
+     *
+     * @return int|null null — выравнивание не применяется (expiry не совпадает с M1/M5 окном).
+     */
+    private function resolveAlignBarPeriodSec(Bot $bot, int $decisionExpirySec, int $seriesTimeframeMinutes): ?int
+    {
+        $seriesPeriodSec = max(60, $seriesTimeframeMinutes * 60);
+
+        // MTF-разворот по ТЗ: 5 минут экспирации → один M5-бар (300 с), не M1.
+        if ($bot->type === 'candle_reversal_confirm' && $decisionExpirySec === 300) {
+            return 300;
+        }
+
+        if ($decisionExpirySec === $seriesPeriodSec) {
+            return $seriesPeriodSec;
+        }
+
+        return null;
+    }
+
+    /**
+     * Open агрегированного бара: первая M1 в бакете [barStart, barStart + periodSec).
+     *
+     * @param  list<array<string,mixed>>  $closed
+     */
+    private function resolveBarOpenPrice(array $closed, ?array $partial, int $barStart, int $periodSec): ?float
+    {
+        $barEndExclusive = $barStart + $periodSec;
+        $firstTime = null;
+        $open = null;
+
+        foreach ($closed as $bar) {
+            $t = (int) ($bar['time'] ?? 0);
+            if ($t < $barStart || $t >= $barEndExclusive) {
+                continue;
+            }
+            if ($firstTime === null || $t < $firstTime) {
+                $firstTime = $t;
+                $open = (float) ($bar['open'] ?? 0);
+            }
+        }
+
+        if (is_array($partial)) {
+            $t = (int) ($partial['time'] ?? 0);
+            if ($t >= $barStart && $t < $barEndExclusive && ($firstTime === null || $t < $firstTime)) {
+                $open = (float) ($partial['open'] ?? 0);
+            }
+        }
+
+        return $open;
+    }
+
+    /**
+     * Решает, нужно ли выравнивать вход на границу бара (M1 или M5).
+     *
+     * По умолчанию включено для three_candles_in_row, akim_trade_1m, candle_reversal_confirm.
+     * Отключение: config `align_entry_to_partial_bar` = false.
+     *
+     * @param  array<string,mixed>  $config
+     */
+    private function shouldAlignEntryToBar(Bot $bot, array $config): bool
+    {
+        if (array_key_exists('align_entry_to_partial_bar', $config)) {
+            return (bool) $config['align_entry_to_partial_bar'];
+        }
+
+        return in_array($bot->type, ['three_candles_in_row', 'akim_trade_1m', 'candle_reversal_confirm'], true);
+    }
+
     private function resolveStrategy(string $type): ?BotStrategyInterface
     {
         return match ($type) {
             'three_candles_in_row' => new ThreeCandlesInRowStrategy,
             'akim_trade_1m' => new AkimTrade1MStrategy,
-            'akim_trade_5s' => new AkimTrade5SStrategy,
+            'candle_reversal_confirm' => new CandleReversalMtfConfirmStrategy,
             'feshan' => new FeshanStrategy,
             // Новый бот полностью изолирован от старых эвристик:
             // торговое решение принимает только LLM через OpenRouter.

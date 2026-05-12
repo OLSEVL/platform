@@ -129,24 +129,40 @@ Artisan::command('bots:akim-bootstrap', function () {
         ]
     );
 
-    // Бот 2: версия "из второго видео" — быстрый поток S5 и короткая экспирация.
-    $bot2 = Bot::query()->firstOrCreate(
-        ['user_id' => $user->id, 'name' => 'AKIM TRADE 5S', 'type' => 'akim_trade_5s'],
+    $this->info("Готово: #{$bot1->id} {$bot1->name} ({$bot1->type})");
+})->purpose('Создать бота AKIM TRADE 1M');
+
+Artisan::command('bots:reversal-confirm-bootstrap', function () {
+    $user = User::query()->orderBy('id')->first();
+    if (! $user) {
+        $this->error('Нет пользователей. Сначала зарегистрируйте пользователя.');
+
+        return;
+    }
+
+    $bot = Bot::query()->firstOrCreate(
+        ['user_id' => $user->id, 'name' => 'Candle Reversal + Confirm', 'type' => 'candle_reversal_confirm'],
         [
             'is_active' => false,
             'config' => [
-                'count' => 500,
-                'expiry_sec' => 5,
-                'min_confidence' => 0.60,
-                'stale_after_sec' => 10,
-                'version' => 'akim_trade_5s_v1',
+                'count' => 180,
+                'expiry_sec' => 300,
+                'min_confidence' => 0.56,
+                'stale_after_sec' => 45,
+                'm5_reversal_min_wick_ratio' => 0.30,
+                'm5_reversal_max_body_ratio' => 0.70,
+                'm5_require_break_rev_extreme' => true,
+                'm1_min_wick_ratio' => 0.22,
+                'm1_min_body_ratio' => 0.25,
+                'm1_require_wick_dominance' => true,
+                'm1_wick_requirement_scope' => 'last',
+                'version' => 'candle_reversal_confirm_v2_mtf',
             ],
         ]
     );
 
-    $this->info("Готово: #{$bot1->id} {$bot1->name} ({$bot1->type})");
-    $this->info("Готово: #{$bot2->id} {$bot2->name} ({$bot2->type})");
-})->purpose('Создать ботов AKIM TRADE 1M и AKIM TRADE 5S');
+    $this->info("Бот разворота: #{$bot->id} {$bot->name} ({$bot->type}) — при необходимости включите в настройках.");
+})->purpose('Создать бота «M5 разворот + 3 свечи M1»');
 
 Artisan::command('bots:feshan-bootstrap', function () {
     $user = User::query()->orderBy('id')->first();

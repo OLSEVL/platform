@@ -20,6 +20,7 @@ Route::middleware('auth')->group(function () {
     Route::get('/candles', [DashboardController::class, 'candles'])->name('candles.data');
     Route::get('/structures', [DashboardController::class, 'structures'])->name('structures.data');
     Route::get('/indicators/price-action-dgt', [DashboardController::class, 'priceActionDgtIndicatorData'])->name('dashboard.indicators.price-action-dgt');
+    Route::get('/indicators/liquidity-swings', [DashboardController::class, 'liquiditySwingsIndicatorData'])->name('dashboard.indicators.liquidity-swings');
     Route::get('/payouts', [DashboardController::class, 'payouts'])->name('payouts.data');
     Route::get('/instruments/data', [DashboardController::class, 'instrumentsSidebarData'])->name('dashboard.instruments.data');
     Route::prefix('bots')->name('bots.')->group(function () {
@@ -38,6 +39,8 @@ Route::middleware('auth')->group(function () {
         Route::put('/{bot}/indicators/price-action-dgt', [BotChartIndicatorController::class, 'updatePriceActionDgt'])->name('indicators.price-action-dgt.update');
         Route::get('/{bot}/indicators/order-blocks', [BotChartIndicatorController::class, 'editOrderBlocks'])->name('indicators.order-blocks.edit');
         Route::get('/{bot}/indicators/fvg', [BotChartIndicatorController::class, 'editFvg'])->name('indicators.fvg.edit');
+        Route::get('/{bot}/indicators/liquidity-swings', [BotChartIndicatorController::class, 'editLiquiditySwings'])->name('indicators.liquidity-swings.edit');
+        Route::put('/{bot}/indicators/liquidity-swings', [BotChartIndicatorController::class, 'updateLiquiditySwings'])->name('indicators.liquidity-swings.update');
         Route::get('/{bot}/activity', [BotController::class, 'activity'])->name('activity');
         Route::get('/{bot}/logs', [BotController::class, 'logs'])->name('logs');
         Route::get('/{bot}/settings', [BotController::class, 'settings'])->name('settings');
