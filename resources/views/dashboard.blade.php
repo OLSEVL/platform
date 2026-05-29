@@ -111,7 +111,7 @@
                         class="hidden absolute left-0 top-full mt-1 z-20 bg-zinc-900 border border-zinc-700 rounded shadow-lg shadow-black/40 py-2 pl-3 pr-2 min-w-[14.5rem] space-y-1">
                         <div class="flex items-center justify-between gap-1">
                             <label for="layer-ob" class="flex min-w-0 flex-1 items-center gap-2 text-sm text-zinc-300 cursor-pointer">
-                                <input type="checkbox" id="layer-ob" class="rounded border-zinc-600 bg-zinc-800 text-blue-500 shrink-0" checked>
+                                <input type="checkbox" id="layer-ob" class="rounded border-zinc-600 bg-zinc-800 text-blue-500 shrink-0">
                                 <span class="truncate">Ордерблоки</span>
                             </label>
                             @if($chartIndicatorBot)
@@ -138,7 +138,7 @@
                         </div>
                         <div class="flex items-center justify-between gap-1">
                             <label for="layer-fvg" class="flex min-w-0 flex-1 items-center gap-2 text-sm text-zinc-300 cursor-pointer">
-                                <input type="checkbox" id="layer-fvg" class="rounded border-zinc-600 bg-zinc-800 text-blue-500 shrink-0" checked>
+                                <input type="checkbox" id="layer-fvg" class="rounded border-zinc-600 bg-zinc-800 text-blue-500 shrink-0">
                                 <span class="truncate">Имбалансы</span>
                             </label>
                             @if($chartIndicatorBot)
@@ -165,7 +165,7 @@
                         </div>
                         <div class="flex items-center justify-between gap-1">
                             <label for="layer-pa-dgt" class="flex min-w-0 flex-1 items-center gap-2 text-sm text-zinc-300 cursor-pointer">
-                                <input type="checkbox" id="layer-pa-dgt" class="rounded border-zinc-600 bg-zinc-800 text-blue-500 shrink-0" checked>
+                                <input type="checkbox" id="layer-pa-dgt" class="rounded border-zinc-600 bg-zinc-800 text-blue-500 shrink-0">
                                 <span class="truncate">Price Action (DGT)</span>
                             </label>
                             @if($chartIndicatorBot)
@@ -192,7 +192,7 @@
                         </div>
                         <div class="flex items-center justify-between gap-1">
                             <label for="layer-liquidity-swings" class="flex min-w-0 flex-1 items-center gap-2 text-sm text-zinc-300 cursor-pointer">
-                                <input type="checkbox" id="layer-liquidity-swings" class="rounded border-zinc-600 bg-zinc-800 text-blue-500 shrink-0" checked>
+                                <input type="checkbox" id="layer-liquidity-swings" class="rounded border-zinc-600 bg-zinc-800 text-blue-500 shrink-0">
                                 <span class="truncate">Liquidity Swings</span>
                             </label>
                             @if($chartIndicatorBot)
@@ -200,6 +200,33 @@
                                     class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-zinc-700 bg-zinc-800/80 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500/50 pointer-events-auto"
                                     title="Настройки: Liquidity Swings"
                                     aria-label="Настройки индикатора Liquidity Swings">
+                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="h-3.5 w-3.5" aria-hidden="true">
+                                        <path stroke-linecap="round" stroke-linejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.325.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.241-.438.613-.43.992a7.723 7.723 0 0 1 0 .255c-.008.378.137.75.43.991l1.004.827c.424.35.534.955.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.47 6.47 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.281c-.09.543-.56.94-1.11.94h-2.594c-.55 0-1.019-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.991a6.932 6.932 0 0 1 0-.255c.007-.38-.138-.751-.43-.992l-1.004-.827a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.086.22-.128.332-.183.582-.495.644-.869l.214-1.281Z" />
+                                        <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
+                                    </svg>
+                                </a>
+                            @else
+                                <a href="{{ route('bots.index') }}"
+                                    class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-zinc-700 bg-zinc-800/40 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300 focus:outline-none focus:ring-2 focus:ring-blue-500/50 pointer-events-auto"
+                                    title="Создайте бота — страницы настроек индикаторов привязаны к боту"
+                                    aria-label="Перейти к списку ботов">
+                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="h-3.5 w-3.5" aria-hidden="true">
+                                        <path stroke-linecap="round" stroke-linejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.325.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.241-.438.613-.43.992a7.723 7.723 0 0 1 0 .255c-.008.378.137.75.43.991l1.004.827c.424.35.534.955.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.47 6.47 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.281c-.09.543-.56.94-1.11.94h-2.594c-.55 0-1.019-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.991a6.932 6.932 0 0 1 0-.255c.007-.38-.138-.751-.43-.992l-1.004-.827a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.086.22-.128.332-.183.582-.495.644-.869l.214-1.281Z" />
+                                        <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
+                                    </svg>
+                                </a>
+                            @endif
+                        </div>
+                        <div class="flex items-center justify-between gap-1">
+                            <label for="layer-smc-flow" class="flex min-w-0 flex-1 items-center gap-2 text-sm text-zinc-300 cursor-pointer">
+                                <input type="checkbox" id="layer-smc-flow" class="rounded border-zinc-600 bg-zinc-800 text-blue-500 shrink-0">
+                                <span class="truncate">SMC Flow (UT Bot)</span>
+                            </label>
+                            @if($chartIndicatorBot)
+                                <a href="{{ route('bots.indicators.smc-flow.edit', $chartIndicatorBot) }}"
+                                    class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-zinc-700 bg-zinc-800/80 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500/50 pointer-events-auto"
+                                    title="Настройки: SMC Flow"
+                                    aria-label="Настройки индикатора SMC Flow">
                                     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="h-3.5 w-3.5" aria-hidden="true">
                                         <path stroke-linecap="round" stroke-linejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.325.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.241-.438.613-.43.992a7.723 7.723 0 0 1 0 .255c-.008.378.137.75.43.991l1.004.827c.424.35.534.955.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.47 6.47 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.281c-.09.543-.56.94-1.11.94h-2.594c-.55 0-1.019-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.991a6.932 6.932 0 0 1 0-.255c.007-.38-.138-.751-.43-.992l-1.004-.827a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.086.22-.128.332-.183.582-.495.644-.869l.214-1.281Z" />
                                         <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
@@ -232,6 +259,8 @@
             <div id="liquidity-swings-overlay" class="absolute inset-0 z-[6] pointer-events-none overflow-visible hidden"></div>
             {{-- Оверлей индикатора DGT выше зон OB/FVG (как на странице бота). --}}
             <div id="price-action-overlay" class="absolute inset-0 z-[7] pointer-events-none overflow-visible hidden"></div>
+            {{-- SMC Flow (UT Bot): поверх DGT, отдельный слой — не смешиваем с Price Action. --}}
+            <div id="smc-flow-overlay" class="absolute inset-0 z-[8] pointer-events-none overflow-visible hidden"></div>
             <div id="candle-timer-overlay"
                 class="pointer-events-none absolute z-[6] hidden h-0 w-0 overflow-visible"
                 title="До закрытия текущей минутной свечи (по времени открытия бара с графика, мм:сс)">
@@ -252,6 +281,7 @@
     const STRUCTURES_URL = '{{ route("structures.data") }}';
     const PA_INDICATOR_URL = '{{ route("dashboard.indicators.price-action-dgt") }}';
     const LS_INDICATOR_URL = '{{ route("dashboard.indicators.liquidity-swings") }}';
+    const SMC_INDICATOR_URL = '{{ route("dashboard.indicators.smc-flow") }}';
     const INSTRUMENTS_SIDEBAR_URL = '{{ route("dashboard.instruments.data") }}';
 
     // Окна загрузки разделены на три режима, чтобы переключение между инструментами
@@ -327,17 +357,25 @@
     const layerFvg = document.getElementById('layer-fvg');
     const layerPa = document.getElementById('layer-pa-dgt');
     const layerLiquidity = document.getElementById('layer-liquidity-swings');
+    const layerSmc = document.getElementById('layer-smc-flow');
     const priceActionOverlay = document.getElementById('price-action-overlay');
     const liquiditySwingsOverlay = document.getElementById('liquidity-swings-overlay');
+    const smcFlowOverlay = document.getElementById('smc-flow-overlay');
     const instrumentSearchInput = document.getElementById('instrument-search');
     const instrumentSearchClearBtn = document.getElementById('instrument-search-clear');
     const instrumentListEl = document.getElementById('instrument-list');
 
-    const LAYER_PREFS_KEY = 'platform.dashboard.chartLayers.v2';
+    // Ключ localStorage для видимости слоёв. Без сохранённых prefs чекбоксы остаются
+    // снятыми (HTML по умолчанию) — при первом входе график без индикаторов.
+    const LAYER_PREFS_KEY = 'platform.dashboard.chartLayers.v3';
 
     function loadLayerPrefs() {
         try {
-            const raw = localStorage.getItem(LAYER_PREFS_KEY);
+            let raw = localStorage.getItem(LAYER_PREFS_KEY);
+            // v3 добавляет smcFlow; при отсутствии ключа подтягиваем v2 без потери OB/FVG/PA/LS.
+            if (raw == null) {
+                raw = localStorage.getItem('platform.dashboard.chartLayers.v2');
+            }
             if (raw == null) {
                 try {
                     const legacy = localStorage.getItem('platform.dashboard.chartLayers');
@@ -353,6 +391,7 @@
             if (typeof o.imbalances === 'boolean') layerFvg.checked = o.imbalances;
             if (layerPa && typeof o.paDgt === 'boolean') layerPa.checked = o.paDgt;
             if (layerLiquidity && typeof o.liquiditySwings === 'boolean') layerLiquidity.checked = o.liquiditySwings;
+            if (layerSmc && typeof o.smcFlow === 'boolean') layerSmc.checked = o.smcFlow;
         } catch (_) { /* ignore */ }
     }
 
@@ -363,6 +402,7 @@
                 imbalances: layerFvg.checked,
                 paDgt: layerPa ? layerPa.checked : false,
                 liquiditySwings: layerLiquidity ? layerLiquidity.checked : false,
+                smcFlow: layerSmc ? layerSmc.checked : false,
             }));
         } catch (_) { /* ignore */ }
     }
@@ -395,6 +435,7 @@
     let lastPaPayload = null;
     /** JSON с сервера: boxes / lines / labels для Liquidity Swings. */
     let lastLsPayload = null;
+    let lastSmcPayload = null;
 
     function payoutClassByValue(value) {
         if (value == null || Number.isNaN(value)) return 'text-zinc-500';
@@ -726,6 +767,26 @@
         return s;
     }
 
+    /** Отрезок оверлея между двумя координатами (ломаная UT-трейла SMC Flow). */
+    function appendOverlaySegment(parent, x1, y1, x2, y2, color, lineWidth) {
+        if (!parent || ![x1, y1, x2, y2].every(Number.isFinite)) return;
+        const dx = x2 - x1;
+        const dy = y2 - y1;
+        const length = Math.hypot(dx, dy);
+        if (length < 0.5) return;
+        const div = document.createElement('div');
+        div.style.position = 'absolute';
+        div.style.left = x1 + 'px';
+        div.style.top = y1 + 'px';
+        div.style.width = length + 'px';
+        div.style.height = Math.max(1, lineWidth) + 'px';
+        div.style.background = color;
+        div.style.pointerEvents = 'none';
+        div.style.transformOrigin = '0 50%';
+        div.style.transform = 'rotate(' + Math.atan2(dy, dx) + 'rad)';
+        parent.appendChild(div);
+    }
+
     function fetchPriceActionIndicator() {
         if (!currentInstrument || !layerPa || !layerPa.checked) {
             lastPaPayload = null;
@@ -774,6 +835,32 @@
                     console.error('[Liquidity Swings] dashboard apply', e);
                     lastLsPayload = null;
                     try { redrawLiquiditySwingsOverlay(); } catch (_) {}
+                }
+            })
+            .catch(() => {});
+    }
+
+    /**
+     * SMC Flow — отдельный эндпоинт (как Liquidity Swings), чтобы не раздувать ответ DGT.
+     * Отрисовка в redrawSmcFlowOverlay(); вызывается из redrawPriceActionOverlay().
+     */
+    function fetchSmcFlowIndicator() {
+        if (!currentInstrument || !layerSmc || !layerSmc.checked) {
+            lastSmcPayload = null;
+            redrawSmcFlowOverlay();
+            return;
+        }
+        const params = new URLSearchParams({ instrument: currentInstrument, timeframe: String(currentTimeframeMinutes) });
+        fetch(SMC_INDICATOR_URL + '?' + params.toString(), { headers: { 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' } })
+            .then((r) => r.json())
+            .then((d) => {
+                try {
+                    lastSmcPayload = d && d.smc_flow ? d.smc_flow : null;
+                    redrawSmcFlowOverlay();
+                } catch (e) {
+                    console.error('[SMC Flow] dashboard apply', e);
+                    lastSmcPayload = null;
+                    try { redrawSmcFlowOverlay(); } catch (_) {}
                 }
             })
             .catch(() => {});
@@ -873,8 +960,101 @@
         }
     }
 
+    /** Зоны, линии и лейблы SMC Flow (UT Bot) — отдельный DOM-слой поверх DGT. */
+    function redrawSmcFlowOverlay() {
+        if (!smcFlowOverlay || !chart || !candlestickSeries) return;
+        smcFlowOverlay.innerHTML = '';
+        if (!layerSmc || !layerSmc.checked || !lastSmcPayload || !allChartData.length) return;
+        const ts = chart.timeScale();
+        try {
+            const areas = Array.isArray(lastSmcPayload.areas) ? lastSmcPayload.areas : [];
+            const lines = Array.isArray(lastSmcPayload.lines) ? lastSmcPayload.lines : [];
+            const fragment = document.createDocumentFragment();
+            const viewportW = Math.max(1, chartWrapper?.clientWidth || 0);
+            const maxRenderable = Math.max(250, Math.min(900, Math.floor(viewportW * 0.9)));
+            let rendered = 0;
+            areas.forEach((ar) => {
+                if (rendered >= maxRenderable) return;
+                if (!ar || typeof ar !== 'object') return;
+                const x1 = ts.timeToCoordinate(Number(ar.time_start));
+                const x2 = ts.timeToCoordinate(Number(ar.time_end));
+                const y1 = candlestickSeries.priceToCoordinate(Number(ar.price_high));
+                const y2 = candlestickSeries.priceToCoordinate(Number(ar.price_low));
+                if (x1 == null || x2 == null || y1 == null || y2 == null) return;
+                if ([x1, x2, y1, y2].some((v) => Number.isNaN(v))) return;
+                if (Math.max(x1, x2) < -80 || Math.min(x1, x2) > viewportW + 80) return;
+                const div = document.createElement('div');
+                div.style.position = 'absolute';
+                div.style.pointerEvents = 'none';
+                div.style.boxSizing = 'border-box';
+                div.style.left = Math.min(x1, x2) + 'px';
+                div.style.top = Math.min(y1, y2) + 'px';
+                div.style.width = Math.max(1, Math.abs(x2 - x1)) + 'px';
+                div.style.height = Math.max(1, Math.abs(y2 - y1)) + 'px';
+                div.style.background = paCssColor(ar.fill || 'rgba(41,98,255,0.24)');
+                div.style.border = (ar.border && ar.border !== 'none') ? String(ar.border) : 'none';
+                fragment.appendChild(div);
+                rendered++;
+            });
+            lines.forEach((ln) => {
+                if (rendered >= maxRenderable) return;
+                if (!ln || typeof ln !== 'object') return;
+                const x1 = ts.timeToCoordinate(Number(ln.time_start));
+                const x2 = ts.timeToCoordinate(Number(ln.time_end));
+                const priceStart = Number(ln.price_start ?? ln.price);
+                const priceEnd = Number(ln.price_end ?? ln.price);
+                const y1 = candlestickSeries.priceToCoordinate(priceStart);
+                const y2 = candlestickSeries.priceToCoordinate(priceEnd);
+                if (x1 == null || x2 == null || y1 == null || y2 == null) return;
+                if ([x1, x2, y1, y2].some((v) => Number.isNaN(v))) return;
+                if (Math.max(x1, x2) < -60 || Math.min(x1, x2) > viewportW + 60) return;
+                appendOverlaySegment(
+                    fragment,
+                    x1,
+                    y1,
+                    x2,
+                    y2,
+                    paCssColor(ln.color),
+                    Math.max(1, Number(ln.width) || 2)
+                );
+                rendered++;
+            });
+            const labels = Array.isArray(lastSmcPayload.labels) ? lastSmcPayload.labels : [];
+            labels.forEach((lb) => {
+                if (!lb || typeof lb !== 'object') return;
+                const x = ts.timeToCoordinate(Number(lb.time));
+                const y = candlestickSeries.priceToCoordinate(Number(lb.price));
+                if (x == null || y == null || Number.isNaN(x) || Number.isNaN(y)) return;
+                if (x < -80 || x > viewportW + 80) return;
+                const span = document.createElement('span');
+                span.textContent = String(lb.text || '');
+                span.style.position = 'absolute';
+                span.style.left = x + 'px';
+                span.style.top = y + 'px';
+                span.style.transform = (lb.position === 'below')
+                    ? 'translate(-50%, 6px)'
+                    : 'translate(-50%, calc(-100% - 4px))';
+                span.style.fontSize = lsLabelFontPx(lastSmcPayload.label_size);
+                span.style.fontWeight = '600';
+                span.style.lineHeight = '1';
+                span.style.color = paCssColor(lb.color || '#ffffff');
+                span.style.background = paCssColor(lb.background || '#22c55e');
+                span.style.padding = '2px 5px';
+                span.style.borderRadius = '3px';
+                span.style.pointerEvents = 'none';
+                span.style.whiteSpace = 'nowrap';
+                fragment.appendChild(span);
+            });
+            smcFlowOverlay.appendChild(fragment);
+        } catch (e) {
+            console.error('[SMC Flow] dashboard redraw', e);
+        }
+    }
+
     function redrawPriceActionOverlay() {
         redrawLiquiditySwingsOverlay();
+        // SMC Flow не зависит от слоя DGT — перерисовываем всегда при sync оверлеев.
+        redrawSmcFlowOverlay();
         if (!priceActionOverlay || !chart || !candlestickSeries) return;
         priceActionOverlay.innerHTML = '';
         if (!layerPa || !layerPa.checked || !lastPaPayload || !allChartData.length) return;
@@ -1197,6 +1377,7 @@
             fetchStructures();
             if (layerPa && layerPa.checked) fetchPriceActionIndicator();
             if (layerLiquidity && layerLiquidity.checked) fetchLiquiditySwingsIndicator();
+            if (layerSmc && layerSmc.checked) fetchSmcFlowIndicator();
         }, OVERLAYS_REFRESH_MS);
     }
 
@@ -1417,6 +1598,7 @@
         structureOverlay.classList.remove('hidden');
         if (liquiditySwingsOverlay) liquiditySwingsOverlay.classList.remove('hidden');
         if (priceActionOverlay) priceActionOverlay.classList.remove('hidden');
+        if (smcFlowOverlay) smcFlowOverlay.classList.remove('hidden');
         chartPlaceholder.classList.add('hidden');
 
         chart = LightweightCharts.createChart(chartWrapper, {
@@ -1513,14 +1695,17 @@
                     fetchStructures();
                     fetchPriceActionIndicator();
                     fetchLiquiditySwingsIndicator();
+                    fetchSmcFlowIndicator();
                 } else {
                     candlestickSeries.setData([]);
                     lastZones = [];
                     structureOverlay.innerHTML = '';
                     lastPaPayload = null;
                     lastLsPayload = null;
+                    lastSmcPayload = null;
                     if (priceActionOverlay) priceActionOverlay.innerHTML = '';
                     if (liquiditySwingsOverlay) liquiditySwingsOverlay.innerHTML = '';
+                    if (smcFlowOverlay) smcFlowOverlay.innerHTML = '';
                 }
                 updateChartTitle();
                 tickCandleCloseTimer();
@@ -1542,8 +1727,10 @@
         structureOverlay.innerHTML = '';
         lastPaPayload = null;
         lastLsPayload = null;
+        lastSmcPayload = null;
         if (priceActionOverlay) priceActionOverlay.innerHTML = '';
         if (liquiditySwingsOverlay) liquiditySwingsOverlay.innerHTML = '';
+        if (smcFlowOverlay) smcFlowOverlay.innerHTML = '';
         updateChartTitle();
         updateTfOptionStyles();
         tickCandleCloseTimer();
@@ -1570,6 +1757,7 @@
                         fetchStructures();
                         fetchPriceActionIndicator();
                         fetchLiquiditySwingsIndicator();
+                        fetchSmcFlowIndicator();
                     });
                 } else {
                     if (refreshInterval) clearInterval(refreshInterval);
@@ -1643,6 +1831,14 @@
             if (!layerLiquidity.checked) lastLsPayload = null;
             fetchLiquiditySwingsIndicator();
             requestAnimationFrame(redrawStructureOverlay);
+        });
+    }
+    if (layerSmc) {
+        layerSmc.addEventListener('change', () => {
+            saveLayerPrefs();
+            if (!layerSmc.checked) lastSmcPayload = null;
+            fetchSmcFlowIndicator();
+            requestAnimationFrame(redrawPriceActionOverlay);
         });
     }
 
