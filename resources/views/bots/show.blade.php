@@ -317,6 +317,9 @@
     // - WINDOW_SEC: базовый диапазон времени (в секундах), который показываем даже без сигналов.
     const LIMIT = 3000;
     const WINDOW_SEC = 259200;
+    // Poll — узкое окно хвоста (как на dashboard), чтобы не перетирать историю и не гонять 3000 баров каждые 500ms.
+    const POLL_WINDOW_SEC = 5 * 60;
+    const POLL_LIMIT = 32;
     const M1_COUNTDOWN_SECONDS = 60;
     let m1CloseCountdownAnchorSec = null;
     let m1CloseCountdownAnchorPerfMs = null;
@@ -460,6 +463,9 @@
     let loadingMore = false;
     let refreshInterval = null;
     let instrumentListRefreshInterval = null;
+    // Счётчики отменяют устаревшие ответы /candles при быстрой смене инструмента и при наложении poll-запросов.
+    let chartLoadSeq = 0;
+    let pollSeq = 0;
     let openTradesFetchInterval = null;
     let openTradesTickInterval = null;
     let signalsRefreshInterval = null;
@@ -653,7 +659,7 @@
             lastLsPayload = null;
             lastSmcPayload = null;
             redrawPriceActionOverlay();
-            applyPaBarColors();
+            applyPaBarColors({ fullResync: true });
             renderChartMarkers();
             return;
         }
@@ -666,7 +672,7 @@
                     lastLsPayload = wantLs && d && d.liquidity_swings ? d.liquidity_swings : null;
                     lastSmcPayload = wantSmc && d && d.smc_flow ? d.smc_flow : null;
                     redrawPriceActionOverlay();
-                    applyPaBarColors();
+                    applyPaBarColors({ fullResync: wantPa });
                     renderChartMarkers();
                 } catch (e) {
                     console.error('[indicators] apply', e);
@@ -675,7 +681,7 @@
                     lastSmcPayload = null;
                     try {
                         redrawPriceActionOverlay();
-                        applyPaBarColors();
+                        applyPaBarColors({ fullResync: true });
                         renderChartMarkers();
                     } catch (_) {}
                 }
@@ -1042,28 +1048,43 @@
         }
     }
 
-    /** Окраска свечей по объёму (Volume Weighted Colored Bars), если включено на сервере. */
-    function applyPaBarColors() {
+    /** Окраска свечей DGT; на poll — только update хвоста (см. applyIncrementalChartUpdate). */
+    function applyPaBarColors(opts = {}) {
+        const fullResync = opts && opts.fullResync === true;
         if (!candlestickSeries || !allChartData.length) return;
-        const plain = allChartData.map((c) => ({ time: c.time, open: c.open, high: c.high, low: c.low, close: c.close }));
+        const plainBar = (c) => ({ time: c.time, open: c.open, high: c.high, low: c.low, close: c.close });
+        const plain = allChartData.map(plainBar);
         const bc = lastPaPayload && lastPaPayload.bar_colors ? lastPaPayload.bar_colors : null;
-        if (!layerPa || !layerPa.checked || !bc || Object.keys(bc).length === 0) {
-            try { candlestickSeries.setData(plain); } catch (e) { console.error('[PA] setData plain', e); }
+        const paOn = layerPa && layerPa.checked && bc && Object.keys(bc).length > 0;
+        if (!paOn) {
+            if (fullResync) {
+                try { candlestickSeries.setData(plain); } catch (e) { console.error('[PA] setData plain', e); }
+            }
             return;
         }
-        const painted = allChartData.map((c) => {
+        const paintBar = (c) => {
             const o = bc[String(c.time)];
-            if (!o) return { time: c.time, open: c.open, high: c.high, low: c.low, close: c.close };
+            if (!o) return plainBar(c);
             return {
                 time: c.time, open: c.open, high: c.high, low: c.low, close: c.close,
                 color: o.color, borderColor: o.borderColor || o.color, wickColor: o.wickColor || o.color,
             };
-        });
-        try {
-            candlestickSeries.setData(painted);
-        } catch (e) {
-            console.error('[PA] setData painted', e);
-            try { candlestickSeries.setData(plain); } catch (e2) { console.error('[PA] setData fallback', e2); }
+        };
+        if (fullResync) {
+            try {
+                candlestickSeries.setData(allChartData.map(paintBar));
+            } catch (e) {
+                console.error('[PA] setData painted', e);
+                try { candlestickSeries.setData(plain); } catch (e2) { console.error('[PA] setData fallback', e2); }
+            }
+            return;
+        }
+        const barSec = Math.max(60, currentTimeframeMinutes * 60);
+        const tailFrom = allChartData[allChartData.length - 1].time - barSec * 2;
+        for (const c of allChartData) {
+            if (c.time >= tailFrom) {
+                try { candlestickSeries.update(paintBar(c)); } catch (e) { console.error('[PA] update', e); }
+            }
         }
     }
 
@@ -2409,16 +2430,36 @@
             .sort((a, b) => a.time - b.time);
     }
 
-    function fetchCandles(instrument, before) {
-        // Для полного обзора используем динамический since: от самого раннего сигнала по выбранной паре (с часовым запасом).
+    function fetchCandles(instrument, optsOrBefore = null) {
+        // Обратная совместимость: fetchCandles(inst, oldestLoadedTime) для loadMoreCandles.
+        const opts = typeof optsOrBefore === 'number'
+            ? { before: optsOrBefore, kind: 'more' }
+            : (optsOrBefore && typeof optsOrBefore === 'object' ? optsOrBefore : { kind: 'initial' });
+        const before = opts.before ?? null;
+        const kind = opts.kind || (before != null ? 'more' : 'initial');
+
         const earliestSignalTs = earliestSignalTsForInstrument(instrument);
-        const dynamicSince = (earliestSignalTs && Number.isFinite(earliestSignalTs))
-            ? Math.min(candlesSince(), Math.max(0, earliestSignalTs - 3600))
-            : candlesSince();
-        const params = new URLSearchParams({ instrument, timeframe: String(currentTimeframeMinutes), limit: LIMIT, since: String(dynamicSince) });
+        let since;
+        let limit;
+        if (kind === 'poll') {
+            since = Math.floor(Date.now() / 1000) - POLL_WINDOW_SEC;
+            limit = POLL_LIMIT;
+        } else {
+            const dynamicSince = (earliestSignalTs && Number.isFinite(earliestSignalTs))
+                ? Math.min(candlesSince(), Math.max(0, earliestSignalTs - 3600))
+                : candlesSince();
+            since = dynamicSince;
+            limit = LIMIT;
+        }
+
+        const params = new URLSearchParams({
+            instrument,
+            timeframe: String(currentTimeframeMinutes),
+            limit: String(limit),
+            since: String(since),
+        });
         if (before != null) params.set('before', before);
-        // Просим partial для всех TF (кроме пагинации before),
-        // а backend сам преобразует S5-partial в live-bar выбранного timeframe.
+        // Partial нужен для live-бара при initial/poll; при догрузке влево (before) — только закрытые бары.
         if (before == null) {
             params.set('include_partial', '1');
         }
@@ -2493,6 +2534,7 @@
         renderTradeDurationOverlay();
         redrawPriceActionOverlay();
     }
+    /** Upsert poll-свечей в allChartData; не заменять весь ряд узким окном ответа. */
     function applyIncrementalChartUpdate(newData) {
         if (!candlestickSeries || !newData.length) return;
         if (!allChartData.length) {
@@ -2502,29 +2544,46 @@
             renderChartMarkers();
             renderEntryPriceLines();
             tickCandleCloseTimer();
-            applyPaBarColors();
+            applyPaBarColors({ fullResync: true });
             return;
         }
-        const oldFirst = allChartData[0]?.time;
-        const newFirst = newData[0]?.time;
-        if (oldFirst !== newFirst) {
-            allChartData = newData;
-            oldestLoadedTime = Math.min(...allChartData.map(c => c.time));
+
+        const prevOldest = allChartData[0].time;
+        const prevLast = allChartData[allChartData.length - 1].time;
+
+        const byTime = new Map();
+        for (const c of allChartData) byTime.set(c.time, c);
+        for (const c of newData) byTime.set(c.time, c);
+        const merged = Array.from(byTime.values()).sort((a, b) => a.time - b.time);
+        const prependedOlder = merged.length > 0 && merged[0].time < prevOldest;
+
+        let updateFailed = false;
+        for (const c of newData) {
+            if (c.time >= prevLast) {
+                try {
+                    candlestickSeries.update(c);
+                } catch (e) {
+                    updateFailed = true;
+                    console.error('[bot chart] candle update', e);
+                }
+            }
+        }
+
+        allChartData = merged;
+        oldestLoadedTime = oldestLoadedTime == null
+            ? merged[0].time
+            : Math.min(oldestLoadedTime, merged[0].time);
+
+        if (prependedOlder || updateFailed) {
             candlestickSeries.setData(allChartData);
-            renderChartMarkers();
-            renderEntryPriceLines();
-            tickCandleCloseTimer();
+            applyPaBarColors({ fullResync: true });
+        } else {
             applyPaBarColors();
-            return;
         }
-        const lastKnown = allChartData[allChartData.length - 1]?.time ?? 0;
-        newData.slice(-2).filter(c => c.time >= lastKnown).forEach(c => candlestickSeries.update(c));
-        allChartData = newData;
-        oldestLoadedTime = Math.min(...allChartData.map(c => c.time));
+
         renderChartMarkers();
         renderEntryPriceLines();
         tickCandleCloseTimer();
-        applyPaBarColors();
     }
 
     /**
@@ -2687,8 +2746,12 @@
             ? Math.min(candlesSince(), Math.max(0, earliestSignalTs - 3600))
             : candlesSince();
         if (oldestLoadedTime <= dynamicSince) return;
-        loadingMore = true; setLoading(true);
-        fetchCandles(currentInstrument, oldestLoadedTime).then((data) => {
+        loadingMore = true;
+        setLoading(true);
+        const inst = currentInstrument;
+        const loadSeq = ++chartLoadSeq;
+        fetchCandles(inst, { before: oldestLoadedTime, kind: 'more' }).then((data) => {
+            if (loadSeq !== chartLoadSeq || inst !== currentInstrument) return;
             const newBars = buildChartData(data.candles || []);
             const existingTimes = new Set(allChartData.map(c => c.time));
             const toAdd = newBars.filter(c => !existingTimes.has(c.time));
@@ -2702,6 +2765,7 @@
             fetchStructures();
             if ((layerPa && layerPa.checked) || (layerLiquidity && layerLiquidity.checked) || (layerSmc && layerSmc.checked)) fetchPriceActionIndicator();
         }).finally(() => {
+            if (loadSeq !== chartLoadSeq) return;
             loadingMore = false;
             setLoading(false);
             tickCandleCloseTimer();
@@ -2709,13 +2773,13 @@
     }
     function startAutoRefresh() {
         if (refreshInterval) clearInterval(refreshInterval);
-        // Интервал опроса свечей для всех таймфреймов: 500ms (как было ранее на платформе).
-        // Частые запросы держат частичную (формирующуюся) свечу и оверлеи ближе к реальному потоку цены.
-        // Нагрузка на сервер выше, чем при 1–2s — при множестве вкладок при необходимости поднимите значение.
         const refreshMs = 500;
         refreshInterval = setInterval(() => {
             if (!currentInstrument || loadingMore || !candlestickSeries) return;
-            fetchCandles(currentInstrument).then((data) => {
+            const inst = currentInstrument;
+            const seq = ++pollSeq;
+            fetchCandles(inst, { kind: 'poll' }).then((data) => {
+                if (seq !== pollSeq || inst !== currentInstrument) return;
                 const newData = buildChartData(data.candles || []);
                 if (!newData.length) return;
                 const newLast = newData[newData.length - 1].time;
@@ -2741,7 +2805,11 @@
     function reloadChartData() {
         if (!currentInstrument || !candlestickSeries) return;
         setLoading(true);
-        fetchCandles(currentInstrument).then((data) => {
+        const inst = currentInstrument;
+        const loadSeq = ++chartLoadSeq;
+        pollSeq++;
+        fetchCandles(inst, { kind: 'initial' }).then((data) => {
+            if (loadSeq !== chartLoadSeq || inst !== currentInstrument) return;
             allChartData = buildChartData(data.candles || []);
             if (allChartData.length) {
                 oldestLoadedTime = Math.min(...allChartData.map(c => c.time));
@@ -2766,10 +2834,19 @@
             redrawStructureOverlay();
             renderEntryPriceLines();
             tickCandleCloseTimer();
-        }).finally(() => setLoading(false));
+        }).finally(() => {
+            if (loadSeq !== chartLoadSeq) return;
+            setLoading(false);
+        });
     }
     function selectInstrument(instrument, displayName) {
         if (currentInstrument === instrument) return;
+        if (refreshInterval) {
+            clearInterval(refreshInterval);
+            refreshInterval = null;
+        }
+        pollSeq++;
+        const loadSeq = ++chartLoadSeq;
         const hadPriorInstrument = currentInstrument !== null;
         currentInstrument = instrument;
         currentDisplayName = displayName;
@@ -2795,7 +2872,8 @@
         updateTfOptionStyles();
         setLoading(true);
         createChart();
-        fetchCandles(instrument).then((data) => {
+        fetchCandles(instrument, { kind: 'initial' }).then((data) => {
+            if (loadSeq !== chartLoadSeq || currentInstrument !== instrument) return;
             allChartData = buildChartData(data.candles || []);
             if (allChartData.length) {
                 oldestLoadedTime = Math.min(...allChartData.map(c => c.time));
@@ -2803,18 +2881,25 @@
                 renderChartMarkers();
                 renderEntryPriceLines();
                 applyDefaultChartViewport();
-                // После дефолтного viewport прицельно фокусируемся на целевой сделке (если есть trade_id).
                 focusTargetTradeOnChart();
                 startAutoRefresh();
                 redrawStructureOverlay();
                 fetchStructures();
                 fetchPriceActionIndicator();
-            } else if (refreshInterval) {
-                clearInterval(refreshInterval);
+            } else {
+                allChartData = [];
+                candlestickSeries.setData([]);
+                if (refreshInterval) {
+                    clearInterval(refreshInterval);
+                    refreshInterval = null;
+                }
             }
             updateChartTitle();
             tickCandleCloseTimer();
-        }).finally(() => setLoading(false));
+        }).finally(() => {
+            if (loadSeq !== chartLoadSeq) return;
+            setLoading(false);
+        });
     }
 
     tfBtn.addEventListener('click', (e) => { e.stopPropagation(); layersPanel.classList.add('hidden'); tfPanel.classList.toggle('hidden'); });
@@ -2838,6 +2923,7 @@
             saveLayerPrefs();
             if (!layerPa.checked) lastPaPayload = null;
             fetchPriceActionIndicator();
+            applyPaBarColors({ fullResync: true });
         });
     }
     if (layerLiquidity) {

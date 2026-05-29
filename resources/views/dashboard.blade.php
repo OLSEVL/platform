@@ -791,7 +791,7 @@
         if (!currentInstrument || !layerPa || !layerPa.checked) {
             lastPaPayload = null;
             redrawPriceActionOverlay();
-            applyPaBarColors();
+            applyPaBarColors({ fullResync: true });
             return;
         }
         const params = new URLSearchParams({ instrument: currentInstrument, timeframe: String(currentTimeframeMinutes) });
@@ -801,13 +801,13 @@
                 try {
                     lastPaPayload = d && d.indicator ? d.indicator : null;
                     redrawPriceActionOverlay();
-                    applyPaBarColors();
+                    applyPaBarColors({ fullResync: true });
                 } catch (e) {
                     console.error('[PriceAction DGT] dashboard apply', e);
                     lastPaPayload = null;
                     try {
                         redrawPriceActionOverlay();
-                        applyPaBarColors();
+                        applyPaBarColors({ fullResync: true });
                     } catch (_) {}
                 }
             })
@@ -1222,26 +1222,46 @@
         }
     }
 
-    function applyPaBarColors() {
+    /**
+     * Окраска свечей DGT. На poll НЕ делаем setData всего ряда — только update хвоста;
+     * иначе каждые 500ms LightweightCharts пересобирает серию и появляются «ломаные» бары.
+     * fullResync: true — при первой загрузке, смене TF и выключении слоя PA.
+     */
+    function applyPaBarColors(opts = {}) {
+        const fullResync = opts && opts.fullResync === true;
         if (!candlestickSeries || !allChartData.length) return;
-        const plain = allChartData.map((c) => ({ time: c.time, open: c.open, high: c.high, low: c.low, close: c.close }));
+        const plainBar = (c) => ({ time: c.time, open: c.open, high: c.high, low: c.low, close: c.close });
+        const plain = allChartData.map(plainBar);
         const bc = lastPaPayload && lastPaPayload.bar_colors ? lastPaPayload.bar_colors : null;
-        if (!layerPa || !layerPa.checked || !bc || Object.keys(bc).length === 0) {
-            try { candlestickSeries.setData(plain); } catch (e) { console.error('[PA] setData', e); }
+        const paOn = layerPa && layerPa.checked && bc && Object.keys(bc).length > 0;
+        if (!paOn) {
+            if (fullResync) {
+                try { candlestickSeries.setData(plain); } catch (e) { console.error('[PA] setData plain', e); }
+            }
             return;
         }
-        const painted = allChartData.map((c) => {
+        const paintBar = (c) => {
             const o = bc[String(c.time)];
-            if (!o) return { time: c.time, open: c.open, high: c.high, low: c.low, close: c.close };
+            if (!o) return plainBar(c);
             return {
                 time: c.time, open: c.open, high: c.high, low: c.low, close: c.close,
                 color: o.color, borderColor: o.borderColor || o.color, wickColor: o.wickColor || o.color,
             };
-        });
-        try {
-            candlestickSeries.setData(painted);
-        } catch (e) {
-            try { candlestickSeries.setData(plain); } catch (e2) { console.error('[PA] fallback', e2); }
+        };
+        if (fullResync) {
+            try {
+                candlestickSeries.setData(allChartData.map(paintBar));
+            } catch (e) {
+                try { candlestickSeries.setData(plain); } catch (e2) { console.error('[PA] fallback', e2); }
+            }
+            return;
+        }
+        const barSec = Math.max(60, currentTimeframeMinutes * 60);
+        const tailFrom = allChartData[allChartData.length - 1].time - barSec * 2;
+        for (const c of allChartData) {
+            if (c.time >= tailFrom) {
+                try { candlestickSeries.update(paintBar(c)); } catch (e) { console.error('[PA] update', e); }
+            }
         }
     }
 
@@ -1464,76 +1484,61 @@
         })).sort((a, b) => a.time - b.time);
     }
 
+    /**
+     * Подмешивает свечи из poll/initial в allChartData, не затирая историю слева.
+     * Poll (POLL_WINDOW_SEC ≈ 5 мин) раньше при совпадении первого бара с oldest делал
+     * allChartData = newData и через applyPaBarColors() setData() — график «схлопывался»
+     * и ломался примерно через 5–10 минут простоя на одном инструменте.
+     */
     function applyIncrementalChartUpdate(newData) {
         if (!candlestickSeries || !Array.isArray(newData) || newData.length === 0) return;
 
-        // Пустой график: первый набор данных кладём целиком.
         if (allChartData.length === 0) {
             allChartData = newData;
             oldestLoadedTime = Math.min(...allChartData.map(c => c.time));
             candlestickSeries.setData(allChartData);
             tickCandleCloseTimer();
-            applyPaBarColors();
+            applyPaBarColors({ fullResync: true });
             requestAnimationFrame(redrawPriceActionOverlay);
             return;
         }
 
-        const oldFirstTime = allChartData[0].time;
-        const newFirstTime = newData[0].time;
+        const prevOldest = allChartData[0].time;
+        const prevLast = allChartData[allChartData.length - 1].time;
 
-        // Поллинг с узким окном (newFirstTime > oldFirstTime): newData — это только хвост,
-        // а слева у нас уже может лежать вся 24-часовая история, догруженная пользователем
-        // через loadMoreCandles. Нельзя делать setData(newData) — это уничтожит ту историю
-        // и график «прыгнет», а оверлеи структур станут неактуальными. Поэтому мерджим
-        // upsert'ом по time и тригерим update() только для хвоста (бар тот же / новый).
-        if (newFirstTime > oldFirstTime) {
-            const byTime = new Map();
-            for (const c of allChartData) byTime.set(c.time, c);
-            for (const c of newData) byTime.set(c.time, c);
-            const merged = Array.from(byTime.values()).sort((a, b) => a.time - b.time);
+        const byTime = new Map();
+        for (const c of allChartData) byTime.set(c.time, c);
+        for (const c of newData) byTime.set(c.time, c);
+        const merged = Array.from(byTime.values()).sort((a, b) => a.time - b.time);
 
-            // LightweightCharts.update() безопасен только для последнего/нового бара.
-            // Применяем его к тем new-барам, которые не «в середине» уже отрисованного ряда.
-            const lastKnownTime = allChartData[allChartData.length - 1].time;
-            for (const c of newData) {
-                if (c.time >= lastKnownTime) {
+        const prependedOlder = merged.length > 0 && merged[0].time < prevOldest;
+        // LightweightCharts.update() допускает только последний бар или новый бар после него.
+        // Нельзя update() «середину» ряда — иначе Cannot update oldest data и артефакты на графике.
+        let updateFailed = false;
+        for (const c of newData) {
+            if (c.time >= prevLast) {
+                try {
                     candlestickSeries.update(c);
+                } catch (e) {
+                    updateFailed = true;
+                    console.error('[chart] candle update', e);
                 }
             }
-
-            allChartData = merged;
-            oldestLoadedTime = oldestLoadedTime == null
-                ? merged[0].time
-                : Math.min(oldestLoadedTime, merged[0].time);
-            tickCandleCloseTimer();
-            applyPaBarColors();
-            requestAnimationFrame(redrawPriceActionOverlay);
-            return;
         }
 
-        // Сдвиг окна влево / иной первый бар (например, после смены TF или догрузки):
-        // полностью переустанавливаем серию.
-        if (oldFirstTime !== newFirstTime) {
-            allChartData = newData;
-            oldestLoadedTime = Math.min(...allChartData.map(c => c.time));
+        allChartData = merged;
+        oldestLoadedTime = oldestLoadedTime == null
+            ? merged[0].time
+            : Math.min(oldestLoadedTime, merged[0].time);
+
+        if (prependedOlder || updateFailed) {
             candlestickSeries.setData(allChartData);
-            tickCandleCloseTimer();
+            applyPaBarColors({ fullResync: true });
+        } else {
             applyPaBarColors();
-            requestAnimationFrame(redrawPriceActionOverlay);
-            return;
         }
 
-        // Совпадает первый бар (тот же диапазон): обновляем только безопасный хвост,
-        // как и раньше. LightweightCharts.update() поддерживает либо последний,
-        // либо следующий по времени бар.
-        const lastKnownTime = allChartData[allChartData.length - 1]?.time ?? 0;
-        const tailCandles = newData.slice(-2).filter(c => c.time >= lastKnownTime);
-        tailCandles.forEach(c => candlestickSeries.update(c));
-
-        allChartData = newData;
-        oldestLoadedTime = Math.min(...allChartData.map(c => c.time));
         tickCandleCloseTimer();
-        applyPaBarColors();
         requestAnimationFrame(redrawPriceActionOverlay);
     }
 
@@ -1670,7 +1675,7 @@
                 loadingMore = false;
                 setLoading(false);
                 tickCandleCloseTimer();
-                applyPaBarColors();
+                applyPaBarColors({ fullResync: true });
                 requestAnimationFrame(redrawStructureOverlay);
                 fetchStructures();
                 if (layerPa && layerPa.checked) fetchPriceActionIndicator();
@@ -1822,6 +1827,7 @@
             saveLayerPrefs();
             if (!layerPa.checked) lastPaPayload = null;
             fetchPriceActionIndicator();
+            applyPaBarColors({ fullResync: true });
             requestAnimationFrame(redrawStructureOverlay);
         });
     }
