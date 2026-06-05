@@ -6,12 +6,15 @@ use App\Models\Bot;
 use App\Models\BotAnalysisRun;
 use App\Models\BotLlmLog;
 use App\Models\BotSignal;
+use App\Services\Mirror\MirrorTradeDispatcher;
 use App\Models\BotTrade;
 use App\Models\PocketInstrument;
+use App\Support\BotScanProgress;
 use App\Services\Bots\Strategies\AkimTrade1MStrategy;
 use App\Services\Bots\Strategies\BotStrategyInterface;
 use App\Services\Bots\Strategies\CandleReversalMtfConfirmStrategy;
 use App\Services\Bots\Strategies\FeshanStrategy;
+use App\Services\Bots\Strategies\OpenRouterLlmAnalystStrategy;
 use App\Services\Bots\Strategies\OpenRouterLlmStrategy;
 use App\Services\Bots\Strategies\ThreeCandlesInRowStrategy;
 use Illuminate\Support\Carbon;
@@ -27,6 +30,11 @@ class BotEngineService
 
     public function scanBot(Bot $bot): array
     {
+        // Бот-аналитик: только ручной запрос с графика, плановый scan не выполняем никогда.
+        if ($bot->type === 'openrouter_llm_analyst') {
+            return ['processed' => 0, 'signals' => 0, 'trades' => 0];
+        }
+
         if (! $bot->is_active) {
             return ['processed' => 0, 'signals' => 0, 'trades' => 0];
         }
@@ -82,6 +90,25 @@ class BotEngineService
         // 2) у конкретного бота флаг analysis_runs_logging_enabled не выключен в config.
         // Такой подход даёт персональную настройку шумности/нагрузки по каждому боту.
         $analysisLogsEnabled = Schema::hasTable('bot_analysis_runs') && (bool) ($config['analysis_runs_logging_enabled'] ?? true);
+        // Считаем пары для sidebar-счётчика: whitelist/blacklist + payout не ниже min_payout.
+        $scanInstrumentTotal = 0;
+        foreach ($instruments as $instrumentRow) {
+            $instrumentKey = (string) $instrumentRow->instrument;
+            if ($allowedInstrumentSet !== [] && ! isset($allowedInstrumentSet[$instrumentKey])) {
+                continue;
+            }
+            if (isset($blockedInstrumentSet[$instrumentKey])) {
+                continue;
+            }
+            $rowPayout = $instrumentRow->current_payout !== null ? (float) $instrumentRow->current_payout : null;
+            if ($rowPayout === null || $rowPayout < $minPayout) {
+                continue;
+            }
+            $scanInstrumentTotal++;
+        }
+        // Sidebar: серые точки → red на текущей паре → green после проверки; между scan снова все серые.
+        $scanRunId = BotScanProgress::beginScan($bot->id, $scanInstrumentTotal);
+        try {
         foreach ($instruments as $instrumentRow) {
             $instrument = (string) $instrumentRow->instrument;
             if ($allowedInstrumentSet !== [] && ! isset($allowedInstrumentSet[$instrument])) {
@@ -90,7 +117,15 @@ class BotEngineService
             if (isset($blockedInstrumentSet[$instrument])) {
                 continue;
             }
+            // Низкий payout: не участвует в scan — без серой/красной/зелёной точки и без счётчика.
+            $currentPayout = $instrumentRow->current_payout !== null ? (float) $instrumentRow->current_payout : null;
+            if ($currentPayout === null || $currentPayout < $minPayout) {
+                continue;
+            }
             $processed++;
+            // Пишем в cache текущую пару — sidebar бота показывает красный индикатор «идёт анализ».
+            BotScanProgress::setCurrentInstrument($bot->id, $instrument);
+            try {
             $analysisRun = $analysisLogsEnabled ? BotAnalysisRun::query()->create([
                 'bot_id' => $bot->id,
                 'instrument' => $instrument,
@@ -107,18 +142,6 @@ class BotEngineService
                     'dedupe_bucket_sec' => $dedupeBucketSec,
                 ],
             ]) : null;
-            // Профессиональный риск-фильтр по экономике сделки:
-            // если текущий payout ниже порога, математическое ожидание становится слишком слабым,
-            // поэтому такой инструмент пропускаем до любого технического анализа.
-            $currentPayout = $instrumentRow->current_payout !== null ? (float) $instrumentRow->current_payout : null;
-            if ($currentPayout === null || $currentPayout < $minPayout) {
-                $this->finishAnalysisRun($analysisRun, BotAnalysisRun::STATUS_SKIPPED, 'low_payout', [
-                    'payout' => $currentPayout,
-                    'min_payout' => $minPayout,
-                ]);
-                continue;
-            }
-
             $seriesTimeframe = (int) ($runtime['series_timeframe'] ?? 1);
             $series = $this->botDataService->series($instrument, $count, true, $staleAfterSec, $seriesTimeframe);
             $closed = $series['closed'];
@@ -145,10 +168,9 @@ class BotEngineService
                 $mtf = $this->botDataService->mtfSeries($instrument, [
                     5 => 60,
                 ]);
-            } elseif ($bot->type === 'openrouter_llm') {
-                // Для OpenRouter-бота подмешиваем старшие ТФ (M5/M15/H1), чтобы модель видела
-                // не только локальный шум M1, но и структуру/направление старшего контекста.
-                $mtf = $this->openRouterMtfSeries($instrument, $config);
+            } elseif ($bot->type === 'openrouter_llm' || $bot->type === 'openrouter_llm_analyst') {
+                // OpenRouter: MTF-контекст из настроек (для analyst — M1/M5/M15/H1).
+                $mtf = $this->openRouterMtfSeries($instrument, $config, $bot->type === 'openrouter_llm_analyst');
             }
             $decision = $strategy->analyze($closed, $partial, [
                 'bot_id' => $bot->id,
@@ -223,59 +245,14 @@ class BotEngineService
                 continue;
             }
 
-            // Базовое поведение: entry_time = момент scan'а (now), entry_price = текущая цена.
-            // Подходит для стратегий, у которых длина сделки больше одной свечи (например, Feshan 2–5 мин).
+            // Вход = момент принятия решения (scan), не open бара: paper/график/PO с одной длительностью expiry_sec.
             $entryPrice = (float) (($partial['close'] ?? null) ?? end($closed)['close']);
-            // БД-сессия MySQL работает в UTC (config/database.php: SET time_zone='+00:00').
-            // Поэтому signal_at/entry_time/expiry_time фиксируем тоже в UTC, чтобы не получать
-            // искусственный +3 часа в raw TIMESTAMP полях.
+            // БД-сессия MySQL в UTC — signal_at/entry_time/expiry_time тоже в UTC.
             $entryAt = now();
             $expiryAt = $entryAt->copy()->addSeconds($decisionExpirySec);
-            $alignedToBar = false;
-
-            // Выравнивание входа на границу бара: M1 (60 с) или M5 (300 с) при expiry_sec=300 у MTF-разворота.
-            $seriesTimeframeMinutes = max(1, (int) ($runtime['series_timeframe'] ?? 1));
-            $alignToBar = $this->shouldAlignEntryToBar($bot, $config);
-            $alignBarPeriodSec = $this->resolveAlignBarPeriodSec($bot, $decisionExpirySec, $seriesTimeframeMinutes);
-            if ($alignToBar
-                && $alignBarPeriodSec !== null
-                && is_array($partial)
-                && isset($partial['time'], $partial['open'])
-                && (int) $partial['time'] > 0
-            ) {
-                $partialStart = (int) $partial['time'];
-                $barStart = (int) (floor($partialStart / $alignBarPeriodSec) * $alignBarPeriodSec);
-                $candidateEntryAt = Carbon::createFromTimestamp($barStart, 'UTC');
-                $candidateExpiryAt = $candidateEntryAt->copy()->addSeconds($alignBarPeriodSec);
-
-                if ($candidateExpiryAt->lessThanOrEqualTo(now())) {
-                    $this->finishAnalysisRun(
-                        $analysisRun,
-                        BotAnalysisRun::STATUS_SKIPPED,
-                        'partial_bar_already_closed',
-                        [
-                            'decision' => $decision,
-                            'partial_bar_start' => $barStart,
-                            'partial_bar_end' => $candidateExpiryAt->timestamp,
-                            'align_bar_period_sec' => $alignBarPeriodSec,
-                            'now' => now()->timestamp,
-                        ]
-                    );
-                    continue;
-                }
-
-                $barOpen = $this->resolveBarOpenPrice($closed, $partial, $barStart, $alignBarPeriodSec);
-                if ($barOpen === null) {
-                    $barOpen = (float) $partial['open'];
-                }
-
-                $entryAt = $candidateEntryAt;
-                $expiryAt = $candidateExpiryAt;
-                $entryPrice = $barOpen;
-                $alignedToBar = true;
-            }
             $payoutSnapshot = $instrumentRow->current_payout !== null ? (float) $instrumentRow->current_payout : null;
 
+            $mirrorTradeIds = [];
             DB::transaction(function () use (
                 $bot,
                 $instrument,
@@ -288,10 +265,10 @@ class BotEngineService
                 $decision,
                 $dedupeKey,
                 $entryPrice,
-                $alignedToBar,
                 &$signals,
                 &$trades,
-                $analysisRun
+                $analysisRun,
+                &$mirrorTradeIds
             ): void {
                 $signal = BotSignal::query()->create([
                     'bot_id' => $bot->id,
@@ -322,16 +299,8 @@ class BotEngineService
                     'meta_json' => [
                         'confidence' => $confidence,
                         'decision_version' => $signal->decision_version,
-                        // Сохраняем примененную экспирацию, чтобы потом можно было
-                        // анализировать winrate по длине сделки (2/3/4/5 минут).
+                        // Полная длительность на PO = expiry_sec_used (см. BotTradeMirrorService::resolveDurationSec).
                         'expiry_sec_used' => $decisionExpirySec,
-                        // Флаг «вход выровнен на начало свечи»: критичен для свечных стратегий
-                        // (Three Candles / Akim 1M), где одна сделка должна занимать РОВНО одну свечу.
-                        // Помогает в постфактум-аналитике отделить корректные «свечные» сделки
-                        // от случаев, когда выравнивание не сработало (нет свежего partial и т.п.).
-                        'aligned_to_bar' => $alignedToBar,
-                        // Начало выровненной свечи в UTC (unix). Удобно сопоставлять с барами на графике.
-                        'partial_bar_start' => $alignedToBar ? (int) $entryAt->timestamp : null,
                     ],
                 ]);
 
@@ -349,15 +318,26 @@ class BotEngineService
 
                 $signals++;
                 $trades++;
+                $mirrorTradeIds[] = $trade->id;
+
+                // Зеркало PO — сразу после commit (sync), без очереди Laravel.
+                foreach ($mirrorTradeIds as $mirrorTradeId) {
+                    DB::afterCommit(function () use ($mirrorTradeId): void {
+                        app(MirrorTradeDispatcher::class)->dispatch($mirrorTradeId);
+                    });
+                }
+                $mirrorTradeIds = [];
             });
             $this->finishAnalysisRun($analysisRun, BotAnalysisRun::STATUS_OK, null, [
                 'decision' => $decision,
                 'entry_price' => $entryPrice,
                 'entry_time' => $entryAt->toIso8601String(),
                 'expiry_time' => $expiryAt->toIso8601String(),
-                // Видимый в логах флаг «сделка стартовала ровно с новой свечи».
-                'aligned_to_bar' => $alignedToBar,
             ]);
+            } finally {
+                // Пара проверена: red → green в sidebar текущего scan.
+                BotScanProgress::finishInstrument($bot->id, $instrument);
+            }
         }
 
         return [
@@ -365,6 +345,9 @@ class BotEngineService
             'signals' => $signals,
             'trades' => $trades,
         ];
+        } finally {
+            BotScanProgress::endScan($bot->id, $scanRunId);
+        }
     }
 
     /**
@@ -373,8 +356,184 @@ class BotEngineService
      *
      * @return array<string,mixed>
      */
+    /**
+     * Ручной анализ графика для бота openrouter_llm_analyst: без фильтров payout/confidence/stale,
+     * свечи отправляются в LLM в любом объёме, который удалось загрузить.
+     *
+     * @return array{
+     *   instrument:string,
+     *   summary:string,
+     *   analysis_text:string,
+     *   user_question:string,
+     *   model:?string,
+     *   llm_log_id:?int,
+     *   error:?string
+     * }
+     */
+    public function runManualChartAnalysis(Bot $bot, string $instrument, string $userQuestion = ''): array
+    {
+        if ($bot->type !== 'openrouter_llm_analyst') {
+            return [
+                'instrument' => $instrument,
+                'summary' => 'Ручной анализ доступен только для бота-аналитика.',
+                'analysis_text' => '',
+                'user_question' => $userQuestion,
+                'model' => null,
+                'llm_log_id' => null,
+                'error' => 'unsupported_bot_type',
+            ];
+        }
+
+        $strategy = $this->resolveStrategy($bot->type);
+        if (! $strategy) {
+            return [
+                'instrument' => $instrument,
+                'summary' => 'Стратегия аналитика не зарегистрирована.',
+                'analysis_text' => '',
+                'user_question' => $userQuestion,
+                'model' => null,
+                'llm_log_id' => null,
+                'error' => 'strategy_missing',
+            ];
+        }
+
+        $instrumentRow = PocketInstrument::query()
+            ->where('instrument', $instrument)
+            ->first(['instrument', 'current_payout']);
+        if (! $instrumentRow) {
+            return [
+                'instrument' => $instrument,
+                'summary' => 'Инструмент не найден.',
+                'analysis_text' => '',
+                'user_question' => $userQuestion,
+                'model' => null,
+                'llm_log_id' => null,
+                'error' => 'instrument_not_found',
+            ];
+        }
+
+        $config = is_array($bot->config) ? $bot->config : [];
+        $count = \App\Support\OpenRouterLlmConfig::m1BarCount($config);
+        $s5Count = \App\Support\OpenRouterLlmConfig::s5BarCount($config);
+        // stale_after_sec не проверяем: передаём очень большой порог «свежести».
+        $series = $this->botDataService->series($instrument, $count, true, 31536000, 1);
+        $closed = $series['closed'];
+        $partial = $series['partial'];
+        // S5 — сырой секундный поток ingest (4005), для тайминга внутри текущей M1.
+        $s5Series = $this->botDataService->s5Series($instrument, $s5Count, true, 31536000);
+        $mtf = $this->openRouterMtfSeries($instrument, $config, true);
+
+        $decision = $strategy->analyze($closed, $partial, [
+            'bot_id' => $bot->id,
+            'instrument' => $instrument,
+            'payout' => $instrumentRow->current_payout !== null ? (float) $instrumentRow->current_payout : null,
+            'config' => $config,
+            'mtf' => $mtf,
+            's5_closed' => $s5Series['closed'],
+            's5_partial' => $s5Series['partial'],
+            'user_question' => mb_substr(trim($userQuestion), 0, 2000),
+        ]);
+
+        $billing = $this->buildOpenRouterBillingPayload($decision);
+
+        if (! is_array($decision) || trim((string) ($decision['analysis_text'] ?? '')) === '') {
+            $llmLogId = isset($decision['llm_log_id']) ? (int) $decision['llm_log_id'] : null;
+            $errorDetail = $this->lastLlmLogErrorMessage($bot->id, $llmLogId);
+
+            return [
+                'instrument' => $instrument,
+                'summary' => $this->manualAnalysisFailureSummary($errorDetail, (string) ($config['model'] ?? '')),
+                'analysis_text' => '',
+                'user_question' => $userQuestion,
+                'model' => (string) ($config['model'] ?? null),
+                'llm_log_id' => $llmLogId,
+                'error' => 'llm_empty_or_failed',
+                'error_detail' => $errorDetail,
+                'billing' => $billing,
+                'billing_label' => OpenRouterClient::formatBillingLabel($billing),
+            ];
+        }
+
+        $features = is_array($decision['features'] ?? null) ? $decision['features'] : [];
+
+        return [
+            'instrument' => $instrument,
+            'summary' => 'Анализ готов.',
+            'analysis_text' => (string) $decision['analysis_text'],
+            'chart_levels' => is_array($decision['chart_levels'] ?? null) ? $decision['chart_levels'] : [
+                'levels' => [],
+                'zones' => [],
+                'entry' => null,
+            ],
+            'chart_levels_ok' => (bool) ($decision['chart_levels_ok'] ?? false),
+            'chart_levels_message' => isset($decision['chart_levels_message']) ? (string) $decision['chart_levels_message'] : null,
+            'user_question' => $userQuestion,
+            'model' => (string) ($features['model'] ?? ($config['model'] ?? '')),
+            'llm_log_id' => isset($decision['llm_log_id']) ? (int) $decision['llm_log_id'] : null,
+            'error' => null,
+            'billing' => $billing,
+            'billing_label' => OpenRouterClient::formatBillingLabel($billing),
+        ];
+    }
+
+    /**
+     * Собирает блок billing для ответа аналитика: стоимость запроса + остаток на счёте OpenRouter.
+     *
+     * @param  array<string,mixed>|null  $decision
+     * @return array{
+     *   request_cost_usd:float|null,
+     *   balance_remaining_usd:float|null,
+     *   total_credits_usd:float|null,
+     *   total_usage_usd:float|null,
+     *   prompt_tokens:int|null,
+     *   completion_tokens:int|null,
+     *   total_tokens:int|null
+     * }
+     */
+    private function buildOpenRouterBillingPayload(?array $decision): array
+    {
+        $billing = [
+            'request_cost_usd' => null,
+            'balance_remaining_usd' => null,
+            'total_credits_usd' => null,
+            'total_usage_usd' => null,
+            'prompt_tokens' => null,
+            'completion_tokens' => null,
+            'total_tokens' => null,
+        ];
+
+        if (is_array($decision)) {
+            if (isset($decision['request_cost_usd']) && is_numeric($decision['request_cost_usd'])) {
+                $billing['request_cost_usd'] = (float) $decision['request_cost_usd'];
+            }
+            if (is_array($decision['usage'] ?? null)) {
+                $usage = $decision['usage'];
+                if ($billing['request_cost_usd'] === null) {
+                    $billing['request_cost_usd'] = OpenRouterClient::parseRequestCostUsd($usage);
+                }
+                $tokens = OpenRouterClient::parseRequestTokens($usage);
+                $billing['prompt_tokens'] = $tokens['prompt_tokens'];
+                $billing['completion_tokens'] = $tokens['completion_tokens'];
+                $billing['total_tokens'] = $tokens['total_tokens'];
+            }
+        }
+
+        $credits = $this->openRouterClient->fetchAccountCredits();
+        if (is_array($credits)) {
+            $billing['total_credits_usd'] = $credits['total_credits_usd'];
+            $billing['total_usage_usd'] = $credits['total_usage_usd'];
+            $billing['balance_remaining_usd'] = $credits['balance_remaining_usd'];
+        }
+
+        return $billing;
+    }
+
     public function explainInstrumentDecision(Bot $bot, string $instrument): array
     {
+        if ($bot->type === 'openrouter_llm_analyst') {
+            return $this->runManualChartAnalysis($bot, $instrument, '');
+        }
+
         $runtime = $this->runtimeSettings($bot);
         $strategy = $this->resolveStrategy($bot->type);
         if (! $strategy) {
@@ -436,10 +595,8 @@ class BotEngineService
             $mtf = $this->botDataService->mtfSeries($instrument, [
                 5 => 60,
             ]);
-        } elseif ($bot->type === 'openrouter_llm') {
-            // Для OpenRouter-бота диагностика должна использовать те же MTF-данные, что и боевой scan.
-            // Это исключает ситуацию, когда "на графике одно объяснение", а в проде модель видит другой контекст.
-            $mtf = $this->openRouterMtfSeries($instrument, $runtime['config']);
+        } elseif ($bot->type === 'openrouter_llm' || $bot->type === 'openrouter_llm_analyst') {
+            $mtf = $this->openRouterMtfSeries($instrument, $runtime['config'], $bot->type === 'openrouter_llm_analyst');
         }
 
         $decision = $strategy->analyze($closed, $series['partial'], [
@@ -531,15 +688,21 @@ class BotEngineService
      *
     * @return array{config:array<string,mixed>,count:int,expiry_sec:int,min_confidence:float,min_payout:float,stale_after_sec:int,min_closed_bars:int,dedupe_bucket_sec:int,series_timeframe:int}
      */
-    private function runtimeSettings(Bot $bot): array
+    public function runtimeSettings(Bot $bot): array
     {
         $config = is_array($bot->config) ? $bot->config : [];
         $defaultCount = match ($bot->type) {
             'feshan' => 2500,
             'candle_reversal_confirm' => 180,
+            'openrouter_llm_analyst' => 120,
             default => 120,
         };
-        $count = max(10, min(5000, (int) ($config['count'] ?? $defaultCount)));
+        $count = match ($bot->type) {
+            // LLM-боты: count = сколько M1 загрузить и отправить в модель (см. OpenRouterLlmConfig).
+            'openrouter_llm' => \App\Support\OpenRouterLlmConfig::m1BarCount($config, 120, 20),
+            'openrouter_llm_analyst' => \App\Support\OpenRouterLlmConfig::m1BarCount($config),
+            default => max(10, min(5000, (int) ($config['count'] ?? $defaultCount))),
+        };
         $expirySec = match ($bot->type) {
             'three_candles_in_row' => (int) ($config['expiry_sec'] ?? 60),
             'akim_trade_1m' => (int) ($config['expiry_sec'] ?? 60),
@@ -564,7 +727,10 @@ class BotEngineService
         $minPayout = (float) ($config['min_payout'] ?? match ($bot->type) {
             'feshan' => 80.0,
             'openrouter_llm' => 70.0,
-            default => 0.0,
+            'candle_reversal_confirm' => 80.0,
+            'three_candles_in_row' => 80.0,
+            'akim_trade_1m' => 80.0,
+            default => 80.0,
         });
         $staleAfterSec = (int) ($config['stale_after_sec'] ?? 30);
         $minClosedBars = match ($bot->type) {
@@ -575,6 +741,8 @@ class BotEngineService
             // LLM-боту нужен достаточно широкий контекст последних свечей,
             // иначе модель чаще даёт шумные и нестабильные решения.
             'openrouter_llm' => 20,
+            // Аналитик: ручной запрос без порога «минимум баров».
+            'openrouter_llm_analyst' => 0,
             default => 3,
         };
         // Указываем таймфрейм входного потока для стратегии.
@@ -606,7 +774,7 @@ class BotEngineService
      * @param  array<string,mixed>  $config
      * @return array<string, list<array{time:int,open:float,high:float,low:float,close:float,volume:float}>>
      */
-    private function openRouterMtfSeries(string $instrument, array $config): array
+    private function openRouterMtfSeries(string $instrument, array $config, bool $includeM1 = false): array
     {
         // Флаг позволяет быстро отключить MTF без правок кода — удобно для A/B сравнения качества сигналов.
         $mtfEnabled = (bool) ($config['mtf_enabled'] ?? true);
@@ -614,17 +782,11 @@ class BotEngineService
             return [];
         }
 
-        // Кол-во баров ограничиваем диапазонами, чтобы не перегружать БД и payload LLM.
-        $m5Take = max(20, min(300, (int) ($config['m5_take'] ?? 96)));
-        $m15Take = max(20, min(300, (int) ($config['m15_take'] ?? 64)));
+        // Один лимит на ТФ: m5_take / m15_take / h1_take / count (M1) = загрузка из БД = отправка в LLM.
+        $m1Min = $includeM1 ? 1 : 20;
+        $tfMap = \App\Support\OpenRouterLlmConfig::mtfBarMap($config, $includeM1, $m1Min);
 
-        $h1Take = max(10, min(200, (int) ($config['h1_take'] ?? 24)));
-
-        return $this->botDataService->mtfSeries($instrument, [
-            5 => $m5Take,
-            15 => $m15Take,
-            60 => $h1Take,
-        ]);
+        return $this->botDataService->mtfSeries($instrument, $tfMap);
     }
 
     /**
@@ -898,76 +1060,6 @@ class BotEngineService
         return (float) $c['high'] < (float) $a['low'];
     }
 
-    /**
-     * Длина бара (сек), на open которого выравниваем entry/expiry, если экспирация совпадает с этим окном.
-     *
-     * @return int|null null — выравнивание не применяется (expiry не совпадает с M1/M5 окном).
-     */
-    private function resolveAlignBarPeriodSec(Bot $bot, int $decisionExpirySec, int $seriesTimeframeMinutes): ?int
-    {
-        $seriesPeriodSec = max(60, $seriesTimeframeMinutes * 60);
-
-        // MTF-разворот по ТЗ: 5 минут экспирации → один M5-бар (300 с), не M1.
-        if ($bot->type === 'candle_reversal_confirm' && $decisionExpirySec === 300) {
-            return 300;
-        }
-
-        if ($decisionExpirySec === $seriesPeriodSec) {
-            return $seriesPeriodSec;
-        }
-
-        return null;
-    }
-
-    /**
-     * Open агрегированного бара: первая M1 в бакете [barStart, barStart + periodSec).
-     *
-     * @param  list<array<string,mixed>>  $closed
-     */
-    private function resolveBarOpenPrice(array $closed, ?array $partial, int $barStart, int $periodSec): ?float
-    {
-        $barEndExclusive = $barStart + $periodSec;
-        $firstTime = null;
-        $open = null;
-
-        foreach ($closed as $bar) {
-            $t = (int) ($bar['time'] ?? 0);
-            if ($t < $barStart || $t >= $barEndExclusive) {
-                continue;
-            }
-            if ($firstTime === null || $t < $firstTime) {
-                $firstTime = $t;
-                $open = (float) ($bar['open'] ?? 0);
-            }
-        }
-
-        if (is_array($partial)) {
-            $t = (int) ($partial['time'] ?? 0);
-            if ($t >= $barStart && $t < $barEndExclusive && ($firstTime === null || $t < $firstTime)) {
-                $open = (float) ($partial['open'] ?? 0);
-            }
-        }
-
-        return $open;
-    }
-
-    /**
-     * Решает, нужно ли выравнивать вход на границу бара (M1 или M5).
-     *
-     * По умолчанию включено для three_candles_in_row, akim_trade_1m, candle_reversal_confirm.
-     * Отключение: config `align_entry_to_partial_bar` = false.
-     *
-     * @param  array<string,mixed>  $config
-     */
-    private function shouldAlignEntryToBar(Bot $bot, array $config): bool
-    {
-        if (array_key_exists('align_entry_to_partial_bar', $config)) {
-            return (bool) $config['align_entry_to_partial_bar'];
-        }
-
-        return in_array($bot->type, ['three_candles_in_row', 'akim_trade_1m', 'candle_reversal_confirm'], true);
-    }
-
     private function resolveStrategy(string $type): ?BotStrategyInterface
     {
         return match ($type) {
@@ -978,8 +1070,58 @@ class BotEngineService
             // Новый бот полностью изолирован от старых эвристик:
             // торговое решение принимает только LLM через OpenRouter.
             'openrouter_llm' => new OpenRouterLlmStrategy($this->openRouterClient),
+            'openrouter_llm_analyst' => new OpenRouterLlmAnalystStrategy($this->openRouterClient),
             default => null,
         };
+    }
+
+    private function lastLlmLogErrorMessage(int $botId, ?int $llmLogId): ?string
+    {
+        if (! Schema::hasTable('bot_llm_logs')) {
+            return null;
+        }
+
+        $q = BotLlmLog::query()->where('bot_id', $botId)->orderByDesc('id');
+        if ($llmLogId !== null && $llmLogId > 0) {
+            $q->whereKey($llmLogId);
+        }
+
+        $log = $q->first(['error_message', 'status']);
+        if ($log === null) {
+            return null;
+        }
+
+        $msg = trim((string) ($log->error_message ?? ''));
+        if ($msg !== '') {
+            return $msg;
+        }
+
+        return $log->status === 'error' ? 'unknown_llm_error' : null;
+    }
+
+    private function manualAnalysisFailureSummary(?string $errorDetail, string $model): string
+    {
+        if ($errorDetail === null || $errorDetail === '') {
+            return 'Не удалось получить ответ от модели. Проверьте OPENROUTER_API_KEY и раздел «Логи».';
+        }
+
+        if (str_contains($errorDetail, 'OPENROUTER_API_KEY')) {
+            return $errorDetail;
+        }
+
+        if (str_contains($errorDetail, 'max_tokens_exhausted')) {
+            return 'Лимит max tokens исчерпан (модель не успела выдать итог). Увеличьте Max tokens в настройках (например 2000–4000) или выберите модель без reasoning.';
+        }
+
+        if (str_contains($errorDetail, 'cURL error 28') || str_contains($errorDetail, 'timed out')) {
+            return 'Таймаут ожидания OpenRouter. Увеличьте «Таймаут ожидания ответа OpenRouter» в настройках бота (например 180–300 с) или уменьшите объём свечей.';
+        }
+
+        if (str_starts_with($errorDetail, 'HTTP request returned status code')) {
+            return 'Ошибка OpenRouter: '.$errorDetail;
+        }
+
+        return 'Ошибка OpenRouter ('.$model.'): '.$errorDetail;
     }
 
     /**

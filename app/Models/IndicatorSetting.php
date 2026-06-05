@@ -4,6 +4,7 @@ namespace App\Models;
 
 use App\Services\Indicators\LiquiditySwingsIndicatorService;
 use App\Services\Indicators\PriceActionDgtIndicatorService;
+use App\Services\Indicators\SmcFlowIndicatorService;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
@@ -14,6 +15,9 @@ class IndicatorSetting extends Model
 
     /** Параметры оверлея Liquidity Swings (LuxAlgo), те же ключи, что LiquiditySwingsIndicatorService::defaultParams(). */
     public const KEY_LIQUIDITY_SWINGS = 'liquidity_swings';
+
+    /** SMC Flow (3.txt): UT Bot и последующие модули — ключи SmcFlowIndicatorService::defaultParams(). */
+    public const KEY_SMC_FLOW = 'smc_flow';
 
     protected $fillable = ['bot_id', 'indicator_key', 'settings'];
 
@@ -59,6 +63,25 @@ class IndicatorSetting extends Model
         $row = static::query()
             ->where('bot_id', $bot->id)
             ->where('indicator_key', self::KEY_LIQUIDITY_SWINGS)
+            ->first();
+        $db = is_array($row?->settings) ? $row->settings : [];
+
+        return array_replace($defaults, $legacy, $db);
+    }
+
+    /**
+     * Параметры SMC Flow: дефолты сервиса ← legacy config бота ← indicator_settings (приоритет).
+     */
+    public static function mergedSmcFlowParams(Bot $bot): array
+    {
+        $defaults = SmcFlowIndicatorService::defaultParams();
+        $botConfig = is_array($bot->config) ? $bot->config : [];
+        $legacy = isset($botConfig[self::KEY_SMC_FLOW]) && is_array($botConfig[self::KEY_SMC_FLOW])
+            ? $botConfig[self::KEY_SMC_FLOW]
+            : [];
+        $row = static::query()
+            ->where('bot_id', $bot->id)
+            ->where('indicator_key', self::KEY_SMC_FLOW)
             ->first();
         $db = is_array($row?->settings) ? $row->settings : [];
 

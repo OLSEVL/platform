@@ -25,6 +25,7 @@ class BotLlmLog extends Model
         'request_text',
         'response_text',
         'usage_json',
+        'chart_levels_json',
         'error_message',
     ];
 
@@ -34,6 +35,7 @@ class BotLlmLog extends Model
             'request_json' => 'array',
             'response_json' => 'array',
             'usage_json' => 'array',
+            'chart_levels_json' => 'array',
         ];
     }
 

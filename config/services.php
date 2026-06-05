@@ -39,6 +39,18 @@ return [
         'url' => env('POCKET_OPTIONS_PROXY_URL', 'http://127.0.0.1:3000'),
     ],
 
+    // Сдвиг timestamp от PO feed (сек). -7200 если feed стабильно на 2 ч впереди UTC сервера.
+    // Дублирует FEED_TIME_CORRECTION_SEC в ingest; PHP применяет, если ingest без env.
+    'feed' => [
+        'feed_time_correction_sec' => (int) env('FEED_TIME_CORRECTION_SEC', 0),
+        'max_skew_sec' => (int) env('FEED_TIME_MAX_SKEW_SEC', 300),
+    ],
+
+    // sync = зеркало сразу после paper-сделки; queue = только через Laravel jobs (медленнее).
+    'mirror' => [
+        'dispatch' => env('MIRROR_DISPATCH', 'sync'),
+    ],
+
     'webshare' => [
         'api_key' => env('WEBSHARE_API_KEY'),
     ],
@@ -50,7 +62,10 @@ return [
         'base_url' => env('OPENROUTER_BASE_URL', 'https://openrouter.ai/api/v1'),
         'referer' => env('OPENROUTER_HTTP_REFERER', ''),
         'title' => env('OPENROUTER_APP_TITLE', 'Platform Bot'),
-        'timeout_sec' => (int) env('OPENROUTER_TIMEOUT_SEC', 25),
+        // Дефолт HTTP-таймаут, если в config бота не задан openrouter_timeout_sec.
+        'timeout_sec' => (int) env('OPENROUTER_TIMEOUT_SEC', 120),
+        // Верхняя граница таймаута из настроек бота (сек).
+        'timeout_sec_max' => (int) env('OPENROUTER_TIMEOUT_SEC_MAX', 600),
     ],
 
 ];

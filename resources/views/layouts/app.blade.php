@@ -16,6 +16,8 @@
             <a href="{{ route('bots.live-trades') }}" class="text-slate-200 hover:text-white transition-colors">Лента сделок</a>
             <a href="{{ route('instruments.index') }}" class="text-slate-200 hover:text-white transition-colors">Инструменты</a>
             <a href="{{ route('settings.index') }}" class="text-slate-200 hover:text-white transition-colors">Настройки</a>
+            <a href="{{ route('profile.trading.edit') }}" class="text-slate-200 hover:text-white transition-colors">Профиль</a>
+            <a href="{{ route('profile.mirror-queue.index') }}" class="text-slate-200 hover:text-white transition-colors">Очередь PO</a>
             <form action="{{ route('logout') }}" method="POST" class="inline">
                 @csrf
                 <button type="submit" class="text-slate-400 hover:text-slate-200 text-sm transition-colors">Выход</button>

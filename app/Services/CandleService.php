@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\InstrumentCandle;
+use App\Support\FeedTimeNormalizer;
 use Illuminate\Support\Collection;
 
 class CandleService
@@ -78,7 +79,10 @@ class CandleService
                 ->get(['time', 'open', 'high', 'low', 'close', 'volume'])
                 ->reverse()
                 ->values();
-            $agg = $this->aggregateBySecondsCollection($rows, $periodSeconds);
+            $agg = $this->aggregateBySecondsCollection(
+                $this->remapS5RowsForAggregation($rows),
+                $periodSeconds,
+            );
             if ($maxBars !== null && count($agg) > $maxBars) {
                 $agg = array_slice($agg, -$maxBars);
             }
@@ -149,7 +153,14 @@ class CandleService
         // M1 приоритетно строим из S5.
         $s5Rows = InstrumentCandle::forInstrument($instrument)->forTimeframe(self::TF_S5);
         if ($sinceUnix !== null) {
-            $s5Rows->where('time', '>=', $sinceUnix);
+            $correction = FeedTimeNormalizer::correctionSec();
+            $s5Rows->where(function ($query) use ($sinceUnix, $correction): void {
+                $query->where('time', '>=', $sinceUnix);
+                // Параллельный поток S5 без коррекции лежит на +|correction| сек — подтягиваем для remap.
+                if ($correction < 0) {
+                    $query->orWhere('time', '>=', $sinceUnix - $correction);
+                }
+            });
         }
         if ($beforeUnix !== null) {
             $s5Rows->where('time', '<', $beforeUnix);
@@ -162,7 +173,10 @@ class CandleService
             ->reverse()
             ->values();
         if ($s5Rows->isNotEmpty()) {
-            $m1 = $this->aggregateBySecondsCollection($s5Rows, self::M1_SECONDS);
+            $m1 = $this->aggregateBySecondsCollection(
+                $this->remapS5RowsForAggregation($s5Rows),
+                self::M1_SECONDS,
+            );
             if ($maxBars !== null && count($m1) > $maxBars) {
                 $m1 = array_slice($m1, -$maxBars);
             }
@@ -342,6 +356,145 @@ class CandleService
         }
 
         return ['candles' => $candles, 'instrument' => $instrument, 'timeframe' => (string) $timeframe];
+    }
+
+    /**
+     * Живая свеча для графика: тот же алгоритм, что и для закрытых баров (агрегация S5 из БД + S5 partial).
+     * Так M1/M5 на платформе совпадают с PO, а не с «одним срезом» 5-секундного OHLC.
+     *
+     * @param  array<string, mixed>  $s5Partial  S5 partial из Redis (ingest-current-candle)
+     * @return array{time:int,open:float,high:float,low:float,close:float,volume:float,is_partial:bool}|null
+     */
+    public function liveBarFromS5Partial(string $instrument, int $timeframeMinutes, array $s5Partial): ?array
+    {
+        $s5Partial = FeedTimeNormalizer::normalizePartial($s5Partial);
+        $partialTime = (int) ($s5Partial['effective_feed_time'] ?? ($s5Partial['time'] ?? 0));
+        if ($partialTime <= 0 || FeedTimeNormalizer::isSkewedVsServer($partialTime, time())) {
+            return null;
+        }
+
+        if ($timeframeMinutes === self::TF_S5) {
+            $bucket = (int) (floor($partialTime / 5) * 5);
+
+            return [
+                'time' => $bucket,
+                'open' => round((float) ($s5Partial['open'] ?? 0), 5),
+                'high' => round((float) ($s5Partial['high'] ?? 0), 5),
+                'low' => round((float) ($s5Partial['low'] ?? 0), 5),
+                'close' => round((float) ($s5Partial['close'] ?? 0), 5),
+                'volume' => round((float) ($s5Partial['volume'] ?? 0), 2),
+                'is_partial' => true,
+            ];
+        }
+
+        $periodSeconds = match ($timeframeMinutes) {
+            self::TF_S15 => 15,
+            self::TF_S30 => 30,
+            default => max(60, $timeframeMinutes * 60),
+        };
+        $bucketStart = (int) (floor($partialTime / $periodSeconds) * $periodSeconds);
+        $partialS5Bucket = (int) (floor($partialTime / 5) * 5);
+
+        $s5Query = InstrumentCandle::forInstrument($instrument)
+            ->forTimeframe(self::TF_S5)
+            ->where(function ($query) use ($bucketStart, $periodSeconds): void {
+                $query->where(function ($q) use ($bucketStart, $periodSeconds): void {
+                    $q->where('time', '>=', $bucketStart)
+                        ->where('time', '<', $bucketStart + $periodSeconds);
+                });
+                $correction = FeedTimeNormalizer::correctionSec();
+                if ($correction < 0) {
+                    $offset = -$correction;
+                    $query->orWhere(function ($q) use ($bucketStart, $periodSeconds, $offset): void {
+                        $q->where('time', '>=', $bucketStart + $offset)
+                            ->where('time', '<', $bucketStart + $periodSeconds + $offset);
+                    });
+                }
+            })
+            ->orderBy('time');
+
+        $s5Rows = $s5Query->get(['time', 'open', 'high', 'low', 'close', 'volume']);
+
+        $rows = $this->remapS5RowsForAggregation($s5Rows);
+        $rows = array_values(array_filter(
+            $rows,
+            static fn (object $row): bool => (int) $row->time !== $partialS5Bucket,
+        ));
+
+        $rows[] = (object) [
+            'time' => $partialS5Bucket,
+            'open' => (float) ($s5Partial['open'] ?? 0),
+            'high' => (float) ($s5Partial['high'] ?? 0),
+            'low' => (float) ($s5Partial['low'] ?? 0),
+            'close' => (float) ($s5Partial['close'] ?? 0),
+            'volume' => (float) ($s5Partial['volume'] ?? 0),
+        ];
+
+        if ($rows === []) {
+            return null;
+        }
+
+        $aggregated = $this->aggregateBySecondsCollection($rows, $periodSeconds);
+        foreach ($aggregated as $bar) {
+            if ((int) ($bar['time'] ?? 0) !== $bucketStart) {
+                continue;
+            }
+
+            return [
+                'time' => (int) $bar['time'],
+                'open' => round((float) $bar['open'], 5),
+                'high' => round((float) $bar['high'], 5),
+                'low' => round((float) $bar['low'], 5),
+                'close' => round((float) $bar['close'], 5),
+                'volume' => round((float) ($bar['volume'] ?? 0), 2),
+                'is_partial' => true,
+            ];
+        }
+
+        return null;
+    }
+
+    /**
+     * Переносит S5-бары с «дублирующей» (+2h) оси времени на UTC-ось платформы перед агрегацией M1.
+     *
+     * @param  Collection<int, InstrumentCandle>|iterable<InstrumentCandle>  $rows
+     * @return list<object{time:int,open:float,high:float,low:float,close:float,volume:float}>
+     */
+    private function remapS5RowsForAggregation(Collection|iterable $rows): array
+    {
+        $serverNow = time();
+        /** @var array<int, object{time:int,stored_time:int,open:float,high:float,low:float,close:float,volume:float}> $byS5Bucket */
+        $byS5Bucket = [];
+        foreach ($rows as $row) {
+            $storedTime = (int) $row->time;
+            $normalizedTime = FeedTimeNormalizer::normalizeStoredUnixTime($storedTime, $serverNow);
+            if ($normalizedTime <= 0) {
+                continue;
+            }
+            $s5Bucket = (int) (floor($normalizedTime / 5) * 5);
+            $candidate = (object) [
+                'time' => $s5Bucket,
+                'stored_time' => $storedTime,
+                'open' => (float) $row->open,
+                'high' => (float) $row->high,
+                'low' => (float) $row->low,
+                'close' => (float) $row->close,
+                'volume' => (float) ($row->volume ?? 0),
+            ];
+            if (! isset($byS5Bucket[$s5Bucket])) {
+                $byS5Bucket[$s5Bucket] = $candidate;
+
+                continue;
+            }
+            // Два потока (скорректированный и «+2h») на один 5s bucket — берём ближе к server_unix.
+            $prevDistance = abs($byS5Bucket[$s5Bucket]->stored_time - $serverNow);
+            $newDistance = abs($storedTime - $serverNow);
+            if ($newDistance < $prevDistance) {
+                $byS5Bucket[$s5Bucket] = $candidate;
+            }
+        }
+
+        return array_values($byS5Bucket);
     }
 
     public function hasFreshData(string $instrument, int $maxAgeMinutes = 5): bool

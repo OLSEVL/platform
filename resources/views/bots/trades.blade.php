@@ -32,9 +32,13 @@
                     <th class="px-4 py-3 text-left">Направление</th>
                     <th class="px-4 py-3 text-left">Сторона</th>
                     <th class="px-4 py-3 text-left">Цена входа</th>
-                    <th class="px-4 py-3 text-left">Время входа</th>
+                    <th class="px-4 py-3 text-left" title="Сумма ставки на Pocket Option при зеркалировании">Сумма ($)</th>
+                    <th class="px-4 py-3 text-left" title="Момент сигнала и входа в paper (bots:scan)">Вход</th>
+                    <th class="px-4 py-3 text-left" title="Запись в БД (обычно совпадает с входом)">Создана</th>
+                    <th class="px-4 py-3 text-left" title="Когда ордер ушёл на Pocket Option">На PO</th>
                     <th class="px-4 py-3 text-left">Цена завершения</th>
-                    <th class="px-4 py-3 text-left">Время окончания</th>
+                    <th class="px-4 py-3 text-left" title="Вход + длительность сделки (expiry_sec)">Экспирация</th>
+                    <th class="px-4 py-3 text-left" title="Когда платформа зафиксировала итог (bots:settle)">Закрыта (факт)</th>
                     <th class="px-4 py-3 text-left">До конца</th>
                     <th class="px-4 py-3 text-left">Результат</th>
                     <th class="px-4 py-3 text-left">PnL</th>
@@ -70,9 +74,37 @@
                             {{ $sideLabel }}
                         </td>
                         <td class="px-4 py-3 text-zinc-300 font-mono">{{ $t->entry_price !== null ? number_format((float)$t->entry_price, 5) : '—' }}</td>
-                        <td class="px-4 py-3 text-zinc-300">{{ optional($t->entry_time)->format('Y-m-d H:i:s') }}</td>
+                        <td class="px-4 py-3 text-zinc-200 font-mono tabular-nums">{{ $t->mirrorEntryAmountLabel() }}</td>
+                        <td class="px-4 py-3 text-zinc-400 text-xs">
+                            {{ optional($t->entry_time)->format('Y-m-d H:i:s') }}
+                        </td>
+                        <td class="px-4 py-3 text-zinc-100">{{ optional($t->created_at)->format('Y-m-d H:i:s') }}</td>
+                        <td class="px-4 py-3 text-zinc-400 text-xs">
+                            @php
+                                $mirroredAt = is_array($t->meta_json) ? ($t->meta_json['mirrored_at'] ?? null) : null;
+                                if (is_string($mirroredAt) && $mirroredAt !== '') {
+                                    try {
+                                        $mirroredAt = \Illuminate\Support\Carbon::parse($mirroredAt)->format('Y-m-d H:i:s');
+                                    } catch (\Throwable) {
+                                        $mirroredAt = substr($mirroredAt, 0, 19);
+                                    }
+                                } else {
+                                    $mirroredAt = null;
+                                }
+                            @endphp
+                            {{ $mirroredAt ?? '—' }}
+                        </td>
                         <td class="px-4 py-3 text-zinc-300 font-mono">{{ $t->expiry_price !== null ? number_format((float)$t->expiry_price, 5) : '—' }}</td>
-                        <td class="px-4 py-3 text-zinc-300">{{ optional($t->expiry_time)->format('Y-m-d H:i:s') }}</td>
+                        <td class="px-4 py-3 text-zinc-400 text-xs">
+                            {{ optional($t->expiry_time)->format('Y-m-d H:i:s') }}
+                        </td>
+                        <td class="px-4 py-3 text-zinc-100">
+                            @if($t->settled_at)
+                                {{ $t->settled_at->format('Y-m-d H:i:s') }}
+                            @else
+                                <span class="text-zinc-500">—</span>
+                            @endif
+                        </td>
                         <td class="px-4 py-3">
                             @if($t->status === 'open' && $t->expiry_time)
                                 @php
@@ -114,7 +146,7 @@
                     </tr>
                 @empty
                     <tr>
-                        <td colspan="13" class="px-4 py-8 text-center text-zinc-500">Сделок пока нет.</td>
+                        <td colspan="17" class="px-4 py-8 text-center text-zinc-500">Сделок пока нет.</td>
                     </tr>
                 @endforelse
             </tbody>

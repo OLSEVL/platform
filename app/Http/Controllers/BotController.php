@@ -8,19 +8,21 @@ use App\Models\BotLlmLog;
 use App\Models\BotTrade;
 use App\Models\IndicatorSetting;
 use App\Models\PocketInstrument;
+use App\Support\BotScanProgress;
 use App\Services\Bots\BotEngineService;
 use App\Services\Bots\OpenRouterClient;
 use App\Services\CandleService;
 use App\Services\Indicators\LiquiditySwingsIndicatorService;
 use App\Services\Indicators\PriceActionDgtIndicatorService;
+use App\Services\Indicators\SmcFlowIndicatorService;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Collection;
-use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\Rule;
 use Illuminate\View\View;
@@ -235,27 +237,42 @@ class BotController extends Controller
         $from = now()->subHours(2);
         $trades = BotTrade::query()
             ->with('bot')
-            ->where('entry_time', '>=', $from)
-            ->latest('entry_time')
+            // Лента «последние 2 ч» — по фактическому появлению записи, не по плановому entry_time (бар).
+            ->where('created_at', '>=', $from)
+            ->latest('created_at')
             ->limit(200)
             ->get()
-            ->map(fn (BotTrade $t) => [
-                'id' => $t->id,
-                // bot_id нужен фронту, чтобы построить прямую ссылку на "Сигналы и сделки"
-                // именно того бота, которому принадлежит текущая строка ленты.
-                'bot_id' => (int) $t->bot_id,
-                'entry_time' => optional($t->entry_time)->format('Y-m-d H:i:s'),
-                'bot_name' => $t->bot?->name ?? '—',
-                'instrument' => $t->instrument,
-                'side' => $t->side,
-                'status' => $t->status,
-                'result' => $t->result ?? 'pending',
-                'entry_price' => $t->entry_price !== null ? number_format((float) $t->entry_price, 5, '.', '') : null,
-                'expiry_price' => $t->expiry_price !== null ? number_format((float) $t->expiry_price, 5, '.', '') : null,
-                'expiry_time' => optional($t->expiry_time)->format('Y-m-d H:i:s'),
-                'expiry_ts' => optional($t->expiry_time)?->timestamp,
-                'pnl' => $t->pnl !== null ? number_format((float) $t->pnl, 4, '.', '') : null,
-            ])
+            ->map(function (BotTrade $t) {
+                $meta = is_array($t->meta_json) ? $t->meta_json : [];
+                $mirroredAt = isset($meta['mirrored_at']) ? (string) $meta['mirrored_at'] : null;
+                if ($mirroredAt !== null && strlen($mirroredAt) > 19) {
+                    try {
+                        $mirroredAt = Carbon::parse($mirroredAt)->format('Y-m-d H:i:s');
+                    } catch (\Throwable) {
+                        $mirroredAt = substr($mirroredAt, 0, 19);
+                    }
+                }
+
+                return [
+                    'id' => $t->id,
+                    'bot_id' => (int) $t->bot_id,
+                    'entry_time' => optional($t->entry_time)->format('Y-m-d H:i:s'),
+                    'created_at' => optional($t->created_at)->format('Y-m-d H:i:s'),
+                    'mirrored_at' => $mirroredAt,
+                    'bot_name' => $t->bot?->name ?? '—',
+                    'instrument' => $t->instrument,
+                    'side' => $t->side,
+                    'status' => $t->status,
+                    'result' => $t->result ?? 'pending',
+                    'entry_price' => $t->entry_price !== null ? number_format((float) $t->entry_price, 5, '.', '') : null,
+                    'entry_amount' => BotTrade::formatMirrorAmountLabel(BotTrade::mirrorAmountFromMeta($meta)),
+                    'expiry_price' => $t->expiry_price !== null ? number_format((float) $t->expiry_price, 5, '.', '') : null,
+                    'expiry_time' => optional($t->expiry_time)->format('Y-m-d H:i:s'),
+                    'settled_at' => optional($t->settled_at)->format('Y-m-d H:i:s'),
+                    'expiry_ts' => optional($t->expiry_time)?->timestamp,
+                    'pnl' => $t->pnl !== null ? number_format((float) $t->pnl, 4, '.', '') : null,
+                ];
+            })
             ->values();
 
         return response()->json([
@@ -270,9 +287,8 @@ class BotController extends Controller
     {
         $this->ensureBotOwner($bot);
 
-        // Для openrouter_llm пробуем загрузить актуальный список моделей от OpenRouter.
-        // Результат кэшируем, чтобы не делать внешний HTTP-запрос на каждый заход в настройки.
-        $openrouterModels = $bot->type === 'openrouter_llm'
+        // Для LLM-ботов каталог моделей тянем напрямую с OpenRouter (без кэша — заходы редкие).
+        $openrouterModels = in_array($bot->type, ['openrouter_llm', 'openrouter_llm_analyst'], true)
             ? $this->openRouterModelsForSettings($openRouterClient)
             : [];
 
@@ -304,12 +320,15 @@ class BotController extends Controller
                 'count' => ['required', 'integer', 'min:10', 'max:5000'],
                 'expiry_sec' => ['required', 'integer', 'min:30', 'max:86400'],
                 'min_confidence' => ['required', 'numeric', 'min:0', 'max:1'],
+                // Пары с payout ниже порога не анализируются (экономический фильтр).
+                'min_payout' => ['required', 'numeric', 'min:0', 'max:100'],
                 'stale_after_sec' => ['required', 'integer', 'min:5', 'max:600'],
             ]);
             $config = array_merge($bot->config ?? [], [
                 'count' => (int) $extra['count'],
                 'expiry_sec' => (int) $extra['expiry_sec'],
                 'min_confidence' => (float) $extra['min_confidence'],
+                'min_payout' => (float) $extra['min_payout'],
                 'stale_after_sec' => (int) $extra['stale_after_sec'],
             ]);
             unset($config['streak_len'], $config['confirm_streak_len']);
@@ -319,12 +338,15 @@ class BotController extends Controller
                 'count' => ['required', 'integer', 'min:10', 'max:5000'],
                 'expiry_sec' => ['required', 'integer', 'min:30', 'max:86400'],
                 'min_confidence' => ['required', 'numeric', 'min:0', 'max:1'],
+                // Пары с payout ниже порога не анализируются (экономический фильтр).
+                'min_payout' => ['required', 'numeric', 'min:0', 'max:100'],
                 'stale_after_sec' => ['required', 'integer', 'min:5', 'max:600'],
             ]);
             $config = array_merge($bot->config ?? [], [
                 'count' => (int) $extra['count'],
                 'expiry_sec' => (int) $extra['expiry_sec'],
                 'min_confidence' => (float) $extra['min_confidence'],
+                'min_payout' => (float) $extra['min_payout'],
                 'stale_after_sec' => (int) $extra['stale_after_sec'],
                 'version' => 'akim_trade_1m_v1',
             ]);
@@ -335,6 +357,8 @@ class BotController extends Controller
             $extra = $request->validate([
                 'count' => ['required', 'integer', 'min:10', 'max:5000'],
                 'min_confidence' => ['required', 'numeric', 'min:0', 'max:1'],
+                // Пары с payout ниже порога не анализируются (экономический фильтр).
+                'min_payout' => ['required', 'numeric', 'min:0', 'max:100'],
                 'stale_after_sec' => ['required', 'integer', 'min:5', 'max:600'],
                 // M5-блок (разворотная свеча + confirm).
                 'm5_reversal_min_wick_ratio' => ['required', 'numeric', 'min:0.12', 'max:0.75'],
@@ -350,6 +374,7 @@ class BotController extends Controller
                 // По ТЗ фиксируем вход на 5 минут.
                 'expiry_sec' => 300,
                 'min_confidence' => (float) $extra['min_confidence'],
+                'min_payout' => (float) $extra['min_payout'],
                 'stale_after_sec' => (int) $extra['stale_after_sec'],
                 'm5_reversal_min_wick_ratio' => (float) $extra['m5_reversal_min_wick_ratio'],
                 'm5_reversal_max_body_ratio' => (float) $extra['m5_reversal_max_body_ratio'],
@@ -390,7 +415,7 @@ class BotController extends Controller
             // OpenRouter LLM-бот: решение по сделке формируется нейросетью по свечному контексту.
             // Все параметры валидируем явно, чтобы конфиг оставался консистентным и безопасным.
             $extra = $request->validate([
-                'count' => ['required', 'integer', 'min:20', 'max:5000'],
+                'count' => ['required', 'integer', 'min:20', 'max:500'],
                 'expiry_sec' => ['required', 'integer', 'min:60', 'max:900'],
                 'min_confidence' => ['required', 'numeric', 'min:0', 'max:1'],
                 'min_payout' => ['required', 'numeric', 'min:0', 'max:100'],
@@ -399,8 +424,12 @@ class BotController extends Controller
                 'model' => ['required', 'string', 'min:3', 'max:128'],
                 'temperature' => ['required', 'numeric', 'min:0', 'max:2'],
                 'max_tokens' => ['required', 'integer', 'min:32', 'max:4096'],
-                // Сколько последних закрытых свечей отправлять в LLM на анализ.
-                'candles_take' => ['required', 'integer', 'min:20', 'max:500'],
+                'openrouter_timeout_sec' => [
+                    'required',
+                    'integer',
+                    'min:30',
+                    'max:'.(int) config('services.openrouter.timeout_sec_max', 600),
+                ],
                 // Системный промпт ограничиваем по длине, чтобы не раздувать latency/стоимость запроса.
                 'system_prompt' => ['required', 'string', 'min:20', 'max:12000'],
                 // Флаг и лимиты MTF-контекста для LLM (M5/M15/H1).
@@ -410,7 +439,7 @@ class BotController extends Controller
                 'm15_take' => ['required', 'integer', 'min:20', 'max:300'],
                 'h1_take' => ['required', 'integer', 'min:10', 'max:200'],
             ]);
-            $config = array_merge($bot->config ?? [], [
+            $config = \App\Support\OpenRouterLlmConfig::withoutLegacyCandlesTake(array_merge($bot->config ?? [], [
                 'count' => (int) $extra['count'],
                 'expiry_sec' => (int) $extra['expiry_sec'],
                 'min_confidence' => (float) $extra['min_confidence'],
@@ -419,14 +448,50 @@ class BotController extends Controller
                 'model' => trim((string) $extra['model']),
                 'temperature' => (float) $extra['temperature'],
                 'max_tokens' => (int) $extra['max_tokens'],
-                'candles_take' => (int) $extra['candles_take'],
+                'openrouter_timeout_sec' => (int) $extra['openrouter_timeout_sec'],
                 'system_prompt' => trim((string) $extra['system_prompt']),
                 'mtf_enabled' => $request->boolean('mtf_enabled'),
                 'm5_take' => (int) $extra['m5_take'],
                 'm15_take' => (int) $extra['m15_take'],
                 'h1_take' => (int) $extra['h1_take'],
                 'version' => 'openrouter_llm_v1',
+            ]));
+        } elseif ($bot->type === 'openrouter_llm_analyst') {
+            // Бот-аналитик: только параметры LLM и MTF, без торговых фильтров и экспирации.
+            $extra = $request->validate([
+                'count' => ['required', 'integer', 'min:1', 'max:500'],
+                's5_take' => ['required', 'integer', 'min:1', 'max:1500'],
+                'model' => ['required', 'string', 'min:3', 'max:128'],
+                'temperature' => ['required', 'numeric', 'min:0', 'max:2'],
+                'max_tokens' => ['required', 'integer', 'min:64', 'max:8192'],
+                'openrouter_timeout_sec' => [
+                    'required',
+                    'integer',
+                    'min:30',
+                    'max:'.(int) config('services.openrouter.timeout_sec_max', 600),
+                ],
+                'system_prompt' => ['required', 'string', 'min:20', 'max:12000'],
+                'mtf_enabled' => ['sometimes', 'boolean'],
+                'm5_take' => ['required', 'integer', 'min:1', 'max:300'],
+                'm15_take' => ['required', 'integer', 'min:1', 'max:300'],
+                'h1_take' => ['required', 'integer', 'min:1', 'max:200'],
             ]);
+            $config = \App\Support\OpenRouterLlmConfig::withoutLegacyCandlesTake(array_merge($bot->config ?? [], [
+                'count' => (int) $extra['count'],
+                's5_take' => (int) $extra['s5_take'],
+                'model' => trim((string) $extra['model']),
+                'temperature' => (float) $extra['temperature'],
+                'max_tokens' => (int) $extra['max_tokens'],
+                'openrouter_timeout_sec' => (int) $extra['openrouter_timeout_sec'],
+                'system_prompt' => trim((string) $extra['system_prompt']),
+                'mtf_enabled' => $request->boolean('mtf_enabled'),
+                'm5_take' => (int) $extra['m5_take'],
+                'm15_take' => (int) $extra['m15_take'],
+                'h1_take' => (int) $extra['h1_take'],
+                'version' => 'openrouter_llm_analyst_v1',
+            ]));
+            // Плановый scan для аналитика не используется — всегда выключаем флаг активности.
+            $isActive = false;
         } else {
             $json = $request->validate([
                 'config_json' => ['required', 'string', 'max:65535'],
@@ -521,9 +586,15 @@ class BotController extends Controller
             );
     }
 
-    public function activity(Bot $bot): View
+    public function activity(Bot $bot): View|RedirectResponse
     {
         $this->ensureBotOwner($bot);
+
+        if ($bot->type === 'openrouter_llm_analyst') {
+            return redirect()
+                ->route('bots.show', $bot)
+                ->with('status', 'У бота-аналитика нет сигналов и сделок — используйте «Сделать анализ» на графике.');
+        }
 
         $targetTradeId = request()->integer('trade_id');
 
@@ -551,6 +622,11 @@ class BotController extends Controller
     public function logs(Bot $bot, Request $request): View
     {
         $this->ensureBotOwner($bot);
+
+        // Бот-аналитик пишет только bot_llm_logs (без bot_analysis_runs и сделок).
+        if ($bot->type === 'openrouter_llm_analyst') {
+            return $this->logsForChartAnalyst($bot, $request);
+        }
 
         $status = (string) $request->query('status', '');
         $instrument = trim((string) $request->query('instrument', ''));
@@ -670,13 +746,70 @@ class BotController extends Controller
         ]);
     }
 
-    public function instrumentsSidebarData(Bot $bot): JsonResponse
+    /**
+     * Страница логов для бота-аналитика: только история запросов к OpenRouter (bot_llm_logs).
+     */
+    private function logsForChartAnalyst(Bot $bot, Request $request): View
+    {
+        $status = (string) $request->query('status', '');
+        $instrument = trim((string) $request->query('instrument', ''));
+
+        $llmLogs = collect();
+        $instrumentOptions = [];
+        $avgLatency = null;
+        $totalOk = 0;
+        $totalError = 0;
+
+        if (Schema::hasTable('bot_llm_logs')) {
+            $q = BotLlmLog::query()
+                ->where('bot_id', $bot->id)
+                ->latest('id');
+            if (in_array($status, ['ok', 'error'], true)) {
+                $q->where('status', $status);
+            }
+            if ($instrument !== '') {
+                $q->where('instrument', $instrument);
+            }
+            $llmLogs = $q->paginate(50)->withQueryString();
+
+            $instrumentOptions = BotLlmLog::query()
+                ->where('bot_id', $bot->id)
+                ->distinct()
+                ->orderBy('instrument')
+                ->pluck('instrument')
+                ->map(fn ($v) => (string) $v)
+                ->values()
+                ->all();
+
+            $totalOk = (int) BotLlmLog::query()->where('bot_id', $bot->id)->where('status', 'ok')->count();
+            $totalError = (int) BotLlmLog::query()->where('bot_id', $bot->id)->where('status', 'error')->count();
+            $avgLatency = BotLlmLog::query()
+                ->where('bot_id', $bot->id)
+                ->whereNotNull('latency_ms')
+                ->avg('latency_ms');
+        }
+
+        return view('bots.logs-analyst', [
+            'bot' => $bot,
+            'llmLogs' => $llmLogs,
+            'instrumentOptions' => $instrumentOptions,
+            'selectedStatus' => $status,
+            'selectedInstrument' => $instrument,
+            'totalOk' => $totalOk,
+            'totalError' => $totalError,
+            'avgLatencyMs' => $avgLatency !== null ? (float) $avgLatency : null,
+        ]);
+    }
+
+    public function instrumentsSidebarData(Bot $bot, BotEngineService $engine): JsonResponse
     {
         $this->ensureBotOwner($bot);
 
         $sidebar = $this->sidebarInstrumentsPayload($bot);
+        $scanMinPayout = (float) $engine->runtimeSettings($bot)['min_payout'];
 
         $expiryMap = $sidebar['nearest_expiry_ts'];
+        $scanProgress = BotScanProgress::snapshot($bot->id, $scanMinPayout);
 
         return response()->json([
             'instruments' => $sidebar['instruments']->map(fn (PocketInstrument $inst) => [
@@ -685,7 +818,19 @@ class BotController extends Controller
                 'current_payout' => $inst->current_payout !== null ? (float) $inst->current_payout : null,
                 'open_trade' => isset($sidebar['open_trade_set'][$inst->instrument]),
                 'expiry_ts' => $expiryMap[$inst->instrument] ?? null,
+                'scan_dot' => BotScanProgress::dotColor(
+                    $bot->id,
+                    $inst->instrument,
+                    $inst->current_payout !== null ? (float) $inst->current_payout : null,
+                    $scanMinPayout
+                ),
             ])->values(),
+            'scan_active' => $scanProgress['scan_active'],
+            'analyzing_instrument' => $scanProgress['analyzing_instrument'],
+            'analyzed_instruments' => $scanProgress['analyzed_instruments'],
+            'scan_total' => $scanProgress['scan_total'],
+            'scan_remaining' => $scanProgress['scan_remaining'],
+            'scan_min_payout' => $scanMinPayout,
             'server_time' => now()->toIso8601String(),
         ]);
     }
@@ -730,11 +875,18 @@ class BotController extends Controller
         $this->ensureBotOwner($bot);
 
         // Явно требуем инструмент: анализ всегда делаем для выбранной на графике пары.
-        $instrument = (string) $request->validate([
+        $validated = $request->validate([
             'instrument' => ['required', 'string', 'max:64'],
-        ])['instrument'];
+            'user_question' => ['nullable', 'string', 'max:2000'],
+        ]);
+        $instrument = (string) $validated['instrument'];
+        $userQuestion = trim((string) ($validated['user_question'] ?? ''));
 
-        $analysis = $engine->explainInstrumentDecision($bot, $instrument);
+        if ($bot->type === 'openrouter_llm_analyst') {
+            $analysis = $engine->runManualChartAnalysis($bot, $instrument, $userQuestion);
+        } else {
+            $analysis = $engine->explainInstrumentDecision($bot, $instrument);
+        }
 
         return response()->json($analysis + [
             'bot_id' => $bot->id,
@@ -1004,7 +1156,7 @@ class BotController extends Controller
         ];
     }
 
-    public function show(Bot $bot): View
+    public function show(Bot $bot, BotEngineService $engine): View
     {
         $this->ensureBotOwner($bot);
 
@@ -1065,8 +1217,11 @@ class BotController extends Controller
             $activeTradeSidebar = $this->openTradeSidebarRow($activeTrade);
         }
 
+        $scanMinPayout = (float) $engine->runtimeSettings($bot)['min_payout'];
+
         return view('bots.show', [
             'bot' => $bot,
+            'isChartAnalystBot' => $bot->type === 'openrouter_llm_analyst',
             'chartSignals' => $chartSignalsPayload,
             'instruments' => $instruments,
             'timeframes' => $timeframes,
@@ -1080,6 +1235,8 @@ class BotController extends Controller
             'activeTradeSecondsLeft' => $activeTradeSecondsLeft,
             'activeTradeSidebar' => $activeTradeSidebar,
             'tvCrosshairEnabled' => $tvCrosshairEnabled,
+            'scanMinPayout' => $scanMinPayout,
+            'scanProgress' => BotScanProgress::snapshot($bot->id, $scanMinPayout),
         ]);
     }
 
@@ -1097,6 +1254,7 @@ class BotController extends Controller
         CandleService $candleService,
         PriceActionDgtIndicatorService $pa,
         LiquiditySwingsIndicatorService $liquiditySwings,
+        SmcFlowIndicatorService $smcFlow,
     ): JsonResponse {
         $this->ensureBotOwner($bot);
 
@@ -1119,10 +1277,13 @@ class BotController extends Controller
         // Один проход по свечам: Liquidity Swings лёгкий относительно DGT, отдаём в том же JSON (слой на графике включается отдельно).
         $lsParams = IndicatorSetting::mergedLiquiditySwingsParams($bot);
         $liquidityPayload = $liquiditySwings->compute($rows, $lsParams);
+        $smcParams = IndicatorSetting::mergedSmcFlowParams($bot);
+        $smcPayload = $smcFlow->compute($rows, $smcParams);
 
         return response()->json([
             'indicator' => $payload,
             'liquidity_swings' => $liquidityPayload,
+            'smc_flow' => $smcPayload,
             'instrument' => $instrument,
             'timeframe' => $timeframe,
             'server_time' => now()->toIso8601String(),
@@ -1206,22 +1367,46 @@ class BotController extends Controller
      * Если OpenRouter временно недоступен, возвращаем пустой список, а UI позволит
      * ввести model id вручную (fallback без блокировки страницы).
      *
-     * @return list<array{id:string,name:string}>
+     * @return list<array{id:string,name:string,pricing?:array{prompt:float|null,completion:float|null}|null,pricing_label?:string}>
      */
     private function openRouterModelsForSettings(OpenRouterClient $openRouterClient): array
     {
         try {
-            /** @var list<array{id:string,name:string}> $models */
-            $models = Cache::remember(
-                'openrouter_models_for_settings_v1',
-                now()->addMinutes(15),
-                fn () => $openRouterClient->listModels()
-            );
+            return $this->normalizeOpenRouterModelsForSettings($openRouterClient->listModels());
+        } catch (Throwable $e) {
+            Log::warning('openrouter_models_for_settings_failed', [
+                'message' => $e->getMessage(),
+            ]);
 
-            return $models;
-        } catch (Throwable) {
             return [];
         }
+    }
+
+    /**
+     * Дополняет pricing_label, если в записи есть pricing, но нет готовой подписи.
+     *
+     * @param  list<array<string,mixed>>  $models
+     * @return list<array<string,mixed>>
+     */
+    private function normalizeOpenRouterModelsForSettings(array $models): array
+    {
+        $out = [];
+        foreach ($models as $model) {
+            if (! is_array($model)) {
+                continue;
+            }
+            $pricingLabel = trim((string) ($model['pricing_label'] ?? ''));
+            if ($pricingLabel === '') {
+                $rawPricing = $model['pricing'] ?? null;
+                $normalized = is_array($rawPricing)
+                    ? OpenRouterClient::normalizePricing($rawPricing)
+                    : null;
+                $model['pricing_label'] = OpenRouterClient::formatPricingLabel($normalized);
+            }
+            $out[] = $model;
+        }
+
+        return $out;
     }
 
     /**

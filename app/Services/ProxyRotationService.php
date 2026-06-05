@@ -9,6 +9,10 @@ use Illuminate\Support\Facades\DB;
 
 class ProxyRotationService
 {
+    public function __construct(
+        private readonly ProxyDeadProbeService $deadProbe,
+    ) {
+    }
     private const SETTING_AUTO_ROTATION_ENABLED = 'proxy_auto_rotation_enabled';
     private const SETTING_COOLDOWN_STREAK_THRESHOLD = 'proxy_cooldown_streak_threshold';
     private const SETTING_MAX_INSTRUMENTS_PER_PROXY = 'proxy_max_instruments_per_endpoint';
@@ -135,8 +139,87 @@ class ProxyRotationService
     }
 
     /**
+     * Сводка ёмкости пула для UI: сколько слотов назначения осталось на ready-прокси.
+     *
+     * @return array{
+     *   active_instruments: int,
+     *   ready_proxies: int,
+     *   max_per_proxy: int,
+     *   total_slots: int,
+     *   used_slots_on_ready: int,
+     *   free_slots: int,
+     *   is_exhausted: bool,
+     *   instruments_on_dead_proxy: int,
+     *   instruments_without_proxy: int
+     * }
+     */
+    public function getPoolCapacitySummary(): array
+    {
+        $maxPerProxy = $this->getMaxInstrumentsPerProxy();
+        $readyProxies = ProxyEndpoint::query()
+            ->readyForAssignment()
+            ->withCount([
+                'instruments as active_instruments_count' => fn ($q) => $q->where('is_active', true),
+            ])
+            ->get();
+
+        $freeSlots = 0;
+        $usedOnReady = 0;
+        foreach ($readyProxies as $proxy) {
+            $used = (int) $proxy->active_instruments_count;
+            $usedOnReady += $used;
+            $freeSlots += max(0, $maxPerProxy - $used);
+        }
+
+        $activeInstruments = PocketInstrument::query()->active()->count();
+        $onDead = PocketInstrument::query()
+            ->active()
+            ->whereHas('proxyEndpoint', fn ($q) => $q->where('status', ProxyEndpoint::STATUS_DEAD))
+            ->count();
+        $withoutProxy = PocketInstrument::query()
+            ->active()
+            ->whereNull('proxy_endpoint_id')
+            ->count();
+
+        $totalSlots = $readyProxies->count() * $maxPerProxy;
+
+        return [
+            'active_instruments' => $activeInstruments,
+            'ready_proxies' => $readyProxies->count(),
+            'max_per_proxy' => $maxPerProxy,
+            'total_slots' => $totalSlots,
+            'used_slots_on_ready' => $usedOnReady,
+            'free_slots' => $freeSlots,
+            'is_exhausted' => $activeInstruments > 0 && $freeSlots === 0,
+            'instruments_on_dead_proxy' => $onDead,
+            'instruments_without_proxy' => $withoutProxy,
+        ];
+    }
+
+    /**
+     * Текст для flash/UI, когда pickReplacementProxy не нашёл свободный endpoint.
+     */
+    public function formatPoolExhaustedMessage(): string
+    {
+        $c = $this->getPoolCapacitySummary();
+
+        return sprintf(
+            'Пул прокси исчерпан: свободных слотов %d из %d (ready-прокси: %d, лимит %d инстр./прокси, активных инструментов: %d). '
+            .'Добавьте прокси (Webshare), увеличьте лимит на endpoint или выключите лишние инструменты. '
+            .'На dead-прокси сейчас: %d инстр.',
+            $c['free_slots'],
+            $c['total_slots'],
+            $c['ready_proxies'],
+            $c['max_per_proxy'],
+            $c['active_instruments'],
+            $c['instruments_on_dead_proxy'],
+        );
+    }
+
+    /**
      * Выбирает следующий прокси и назначает его инструменту.
-     * При $markCurrentAsDead=true текущий прокси переводится в dead перед ротацией.
+     * При $markCurrentAsDead=true текущий прокси → dead только после успешного назначения replacement
+     * (иначе инструмент не остаётся на dead без замены).
      */
     public function rotateInstrumentProxy(PocketInstrument $instrument, bool $markCurrentAsDead = false): ?ProxyEndpoint
     {
@@ -144,17 +227,7 @@ class ProxyRotationService
             $instrument->refresh();
             $currentProxy = $instrument->proxyEndpoint;
 
-            if ($markCurrentAsDead && $currentProxy) {
-                // Инкремент счётчика делаем отдельным SQL update, чтобы не передавать
-                // Query\Expression в модельные cast (это даёт warning/500 в рантайме).
-                ProxyEndpoint::query()->whereKey($currentProxy->id)->increment('failure_count');
-                $currentProxy->update([
-                    'status' => ProxyEndpoint::STATUS_DEAD,
-                    'last_error' => 'manual_mark_dead',
-                    'last_failed_at' => now(),
-                ]);
-            }
-
+            // Сначала ищем замену: при исчерпанном пуле не помечаем текущий dead зря.
             $replacement = $this->pickReplacementProxy($currentProxy?->id);
             if (! $replacement) {
                 return null;
@@ -163,6 +236,15 @@ class ProxyRotationService
             $instrument->update([
                 'proxy_endpoint_id' => $replacement->id,
             ]);
+
+            if ($markCurrentAsDead && $currentProxy) {
+                ProxyEndpoint::query()->whereKey($currentProxy->id)->increment('failure_count');
+                $currentProxy->update([
+                    'status' => ProxyEndpoint::STATUS_DEAD,
+                    'last_error' => 'manual_mark_dead',
+                    'last_failed_at' => now(),
+                ]);
+            }
 
             return $replacement;
         });
@@ -174,6 +256,12 @@ class ProxyRotationService
      */
     public function ensureInstrumentHasReadyProxy(PocketInstrument $instrument): ?ProxyEndpoint
     {
+        if ($this->deadProbe->isInstrumentProbeLocked($instrument)) {
+            $instrument->loadMissing('proxyEndpoint');
+
+            return $instrument->proxyEndpoint;
+        }
+
         $instrument->loadMissing('proxyEndpoint');
         $current = $instrument->proxyEndpoint;
 
@@ -194,6 +282,12 @@ class ProxyRotationService
         $proxy = $instrument->proxyEndpoint;
 
         if (! $proxy) {
+            return;
+        }
+
+        // На время пробы dead не усугубляем failure_count и не уводим инструмент с тестового proxy.
+        if ($this->deadProbe->isInstrumentProbeLocked($instrument)
+            || $this->deadProbe->isProxyUnderProbe($proxy->id)) {
             return;
         }
 

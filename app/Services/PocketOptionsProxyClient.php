@@ -36,4 +36,90 @@ class PocketOptionsProxyClient
         }
         return ['candles' => $normalized, 'instrument' => $data['instrument'] ?? $instrument, 'timeframe' => (string) ($data['timeframe'] ?? $timeframe)];
     }
+
+    /**
+     * Зеркало paper-сделки: один ордер на Pocket Option через proxy.
+     *
+     * @return array{ok: bool, order_id: ?string, status: ?string, instrument?: string, side?: string, duration?: int, error?: string}
+     */
+    /**
+     * Проверка SSID без размещения ордера (auth + WebSocket).
+     *
+     * @return array{ok: bool, error?: string}
+     */
+    public function testAuth(string $ssid, bool $isDemo = true, ?string $proxyUrl = null): array
+    {
+        $payload = [
+            'ssid' => $ssid,
+            'is_demo' => $isDemo,
+        ];
+        if ($proxyUrl !== null && $proxyUrl !== '') {
+            $payload['proxy_url'] = $proxyUrl;
+        }
+
+        $response = Http::timeout(45)->post("{$this->baseUrl}/api/test-auth", $payload);
+
+        if ($response->failed()) {
+            $detail = $response->json('detail') ?? $response->body();
+
+            return [
+                'ok' => false,
+                'error' => is_string($detail) ? $detail : json_encode($detail),
+            ];
+        }
+
+        $data = $response->json();
+
+        return [
+            'ok' => (bool) ($data['ok'] ?? false),
+            'error' => isset($data['error']) ? (string) $data['error'] : null,
+        ];
+    }
+
+    public function placeOrder(
+        string $ssid,
+        string $instrument,
+        string $side,
+        float $amount,
+        int $durationSec,
+        bool $isDemo = true,
+        ?string $proxyUrl = null,
+    ): array {
+        $payload = [
+            'ssid' => $ssid,
+            'instrument' => $instrument,
+            'side' => strtoupper($side),
+            'amount' => $amount,
+            'duration' => $durationSec,
+            'is_demo' => $isDemo,
+        ];
+        if ($proxyUrl !== null && $proxyUrl !== '') {
+            $payload['proxy_url'] = $proxyUrl;
+        }
+
+        $response = Http::timeout(120)->post("{$this->baseUrl}/api/place-order", $payload);
+
+        if ($response->failed()) {
+            $detail = $response->json('detail') ?? $response->body();
+
+            return [
+                'ok' => false,
+                'order_id' => null,
+                'status' => null,
+                'error' => is_string($detail) ? $detail : json_encode($detail),
+            ];
+        }
+
+        $data = $response->json();
+
+        return [
+            'ok' => (bool) ($data['ok'] ?? false),
+            'confirmed' => (bool) ($data['confirmed'] ?? true),
+            'order_id' => isset($data['order_id']) ? (string) $data['order_id'] : null,
+            'status' => isset($data['status']) ? (string) $data['status'] : null,
+            'instrument' => $data['instrument'] ?? $instrument,
+            'side' => $data['side'] ?? strtoupper($side),
+            'duration' => isset($data['duration']) ? (int) $data['duration'] : $durationSec,
+        ];
+    }
 }

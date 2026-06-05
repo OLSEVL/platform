@@ -22,6 +22,10 @@ Homestead.json
 Homestead.yaml
 Thumbs.db
 
+# CodeGraph local index (MCP code intelligence)
+.codegraph/
+.agents/
+
 bot/.venv/
 bot/__pycache__/
 bot/stream_logs/

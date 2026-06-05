@@ -83,4 +83,3 @@ class CurrentCandleCacheService
         return self::KEY_PREFIX.$instrument;
     }
 }
-

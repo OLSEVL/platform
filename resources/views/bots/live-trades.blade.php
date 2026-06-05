@@ -22,9 +22,13 @@
                     <th class="px-4 py-3 text-left">Направление</th>
                     <th class="px-4 py-3 text-left">Сторона</th>
                     <th class="px-4 py-3 text-left">Цена входа</th>
-                    <th class="px-4 py-3 text-left">Время входа</th>
+                    <th class="px-4 py-3 text-left" title="Сумма ставки на Pocket Option при зеркалировании">Сумма ($)</th>
+                    <th class="px-4 py-3 text-left" title="Момент сигнала (bots:scan)">Вход</th>
+                    <th class="px-4 py-3 text-left" title="Запись в БД">Создана</th>
+                    <th class="px-4 py-3 text-left" title="Когда ордер ушёл на Pocket Option">На PO</th>
                     <th class="px-4 py-3 text-left">Цена завершения</th>
-                    <th class="px-4 py-3 text-left">Время окончания</th>
+                    <th class="px-4 py-3 text-left" title="Вход + expiry_sec">Экспирация</th>
+                    <th class="px-4 py-3 text-left" title="Когда платформа зафиксировала итог">Закрыта (факт)</th>
                     <th class="px-4 py-3 text-left">До конца</th>
                     <th class="px-4 py-3 text-left">Результат</th>
                     <th class="px-4 py-3 text-left">PnL</th>
@@ -33,7 +37,7 @@
             </thead>
             <tbody id="live-trades-body" class="divide-y divide-zinc-800 bg-zinc-950/40">
                 <tr>
-                    <td colspan="13" class="px-4 py-8 text-center text-zinc-500">Загрузка…</td>
+                    <td colspan="17" class="px-4 py-8 text-center text-zinc-500">Загрузка…</td>
                 </tr>
             </tbody>
         </table>
@@ -92,7 +96,7 @@
 
     function renderRows(trades) {
         if (!trades.length) {
-            body.innerHTML = '<tr><td colspan="13" class="px-4 py-8 text-center text-zinc-500">За последние 2 часа сделок нет.</td></tr>';
+            body.innerHTML = '<tr><td colspan="17" class="px-4 py-8 text-center text-zinc-500">За последние 2 часа сделок нет.</td></tr>';
             return;
         }
 
@@ -114,9 +118,13 @@
                     <td class="px-4 py-3 text-zinc-400 font-mono">${sideLabel(t.side)}</td>
                     <td class="px-4 py-3 text-zinc-300">${sideLabel(t.side)}</td>
                     <td class="px-4 py-3 text-zinc-300 font-mono">${t.entry_price ?? '—'}</td>
-                    <td class="px-4 py-3 text-zinc-300">${t.entry_time ?? '—'}</td>
+                    <td class="px-4 py-3 text-zinc-200 font-mono tabular-nums">${t.entry_amount ?? '—'}</td>
+                    <td class="px-4 py-3 text-zinc-400 text-xs">${t.entry_time ?? '—'}</td>
+                    <td class="px-4 py-3 text-zinc-100">${t.created_at ?? '—'}</td>
+                    <td class="px-4 py-3 text-zinc-400 text-xs">${t.mirrored_at ?? '—'}</td>
                     <td class="px-4 py-3 text-zinc-300 font-mono">${t.expiry_price ?? '—'}</td>
-                    <td class="px-4 py-3 text-zinc-300">${t.expiry_time ?? '—'}</td>
+                    <td class="px-4 py-3 text-zinc-400 text-xs">${t.expiry_time ?? '—'}</td>
+                    <td class="px-4 py-3 text-zinc-100">${t.settled_at ?? '<span class="text-zinc-500">—</span>'}</td>
                     <td class="px-4 py-3">${timeLeftCell(t)}</td>
                     <td class="px-4 py-3">${resultCell(t.result)}</td>
                     <td class="px-4 py-3 text-zinc-300">${t.pnl ?? '—'}</td>

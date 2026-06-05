@@ -50,4 +50,9 @@ class User extends Authenticatable
     {
         return $this->hasMany(Bot::class);
     }
+
+    public function tradingSettings(): \Illuminate\Database\Eloquent\Relations\HasOne
+    {
+        return $this->hasOne(UserTradingSetting::class);
+    }
 }

@@ -105,6 +105,48 @@ class BotSettlementServiceTest extends TestCase
     }
 
     /**
+     * Если свечей на экспирации нет и прошло больше grace-периода — закрываем как draw по entry,
+     * чтобы сделка не зависала в status=open.
+     */
+    public function test_settlement_falls_back_to_entry_price_draw_when_no_candles_after_grace(): void
+    {
+        $trade = $this->makeOpenTrade([
+            'side' => 'PUT',
+            'entry_price' => 83.45210,
+            'expiry_time' => now()->subMinutes(10),
+        ]);
+
+        $res = app(BotSettlementService::class)->settleDueTrades($trade->bot_id);
+        $trade->refresh();
+
+        $this->assertSame(1, $res['settled']);
+        $this->assertSame(1, $res['settled_fallback']);
+        $this->assertSame(BotTrade::STATUS_SETTLED, $trade->status);
+        $this->assertSame(BotTrade::RESULT_DRAW, $trade->result);
+        $this->assertSame(83.4521, (float) $trade->expiry_price);
+        $this->assertSame(0.0, (float) $trade->pnl);
+        $this->assertSame('entry_price_draw', $trade->meta_json['settlement_fallback'] ?? null);
+    }
+
+    /**
+     * В grace-период после экспирации без свечей сделку пока не трогаем (ждём ingest).
+     */
+    public function test_settlement_skips_recent_due_trade_without_candles_during_grace(): void
+    {
+        $trade = $this->makeOpenTrade([
+            'entry_price' => 100.00000,
+            'expiry_time' => now()->subSeconds(30),
+        ]);
+
+        $res = app(BotSettlementService::class)->settleDueTrades($trade->bot_id);
+        $trade->refresh();
+
+        $this->assertSame(0, $res['settled']);
+        $this->assertSame(1, $res['skipped']);
+        $this->assertSame(BotTrade::STATUS_OPEN, $trade->status);
+    }
+
+    /**
      * @param  array<string,mixed>  $overrides
      */
     private function makeOpenTrade(array $overrides = []): BotTrade

@@ -1,0 +1,25 @@
+[Unit]
+Description=Platform dead-proxy auto probe loop (PO/WS via control instrument)
+After=network-online.target mysql.service
+Wants=network-online.target
+# Ingest должен отдавать /api/proxy/instruments до начала пробы
+After=pocket-options-proxy.service
+
+[Service]
+Type=simple
+User=o
+Group=o
+WorkingDirectory=/home/o/platform
+# Laravel читает .env из корня проекта
+ExecStart=/usr/bin/php8.3 artisan proxies:probe-loop
+Restart=always
+RestartSec=15
+# Корректное завершение: probe-loop не получает SIGKILL при stop
+KillMode=mixed
+TimeoutStopSec=90
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=platform-proxy-probe
+
+[Install]
+WantedBy=multi-user.target

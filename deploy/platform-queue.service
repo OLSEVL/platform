@@ -1,0 +1,17 @@
+[Unit]
+Description=Platform Laravel queue worker (bot trade mirroring)
+After=network.target mysql.service
+
+[Service]
+Type=simple
+User=o
+Group=o
+WorkingDirectory=/home/o/platform
+ExecStart=/usr/bin/php artisan queue:work database --queue=mirror,default --sleep=1 --tries=3 --max-time=3600 --timeout=180
+Restart=always
+RestartSec=5
+StandardOutput=append:/home/o/platform/storage/logs/queue.log
+StandardError=append:/home/o/platform/storage/logs/queue.log
+
+[Install]
+WantedBy=multi-user.target

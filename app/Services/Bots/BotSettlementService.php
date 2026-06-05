@@ -5,9 +5,16 @@ namespace App\Services\Bots;
 use App\Models\BotTrade;
 use App\Models\InstrumentCandle;
 use App\Services\CandleService;
+use App\Services\Mirror\UserMartingaleService;
 
 class BotSettlementService
 {
+    /**
+     * Сколько секунд после экспирации ждём появления свечи в БД.
+     * Ingest может отставать на несколько секунд; раньше этого окна не закрываем сделку без цены.
+     */
+    private const CANDLE_LOOKUP_GRACE_SEC = 120;
+
     public function __construct(
         private readonly CandleService $candleService,
     ) {}
@@ -18,6 +25,7 @@ class BotSettlementService
             ->where('status', BotTrade::STATUS_OPEN)
             ->where('expiry_time', '<=', now())
             ->orderBy('expiry_time')
+            ->orderBy('id')
             ->limit($limit);
 
         if ($botId !== null) {
@@ -27,15 +35,31 @@ class BotSettlementService
         $rows = $q->get();
         $settled = 0;
         $skipped = 0;
+        $settledFallback = 0;
+
+        $martingale = app(UserMartingaleService::class);
 
         foreach ($rows as $trade) {
+            $metaBefore = is_array($trade->meta_json) ? $trade->meta_json : [];
+            $mirrorStatusBefore = (string) ($metaBefore['mirror_status'] ?? '');
+
             $expiryTs = (int) $trade->expiry_time->timestamp;
             $settlement = $this->resolveSettlementPriceAtExpiry((string) $trade->instrument, $expiryTs);
+            $usedEntryFallback = false;
 
             if ($settlement === null) {
-                $skipped++;
+                $secondsSinceExpiry = time() - $expiryTs;
+                if ($secondsSinceExpiry < self::CANDLE_LOOKUP_GRACE_SEC) {
+                    // Свеча ещё может догрузиться — не закрываем преждевременно.
+                    $skipped++;
 
-                continue;
+                    continue;
+                }
+
+                // Нет рыночных данных даже после grace: закрываем как ничью по entry_price,
+                // иначе status=open навсегда «висит» в статистике без маркеров на графике.
+                $settlement = (float) $trade->entry_price;
+                $usedEntryFallback = true;
             }
 
             $entry = (float) $trade->entry_price;
@@ -56,20 +80,36 @@ class BotSettlementService
                 default => 0.0,
             };
 
-            $trade->update([
+            $updatePayload = [
                 'status' => BotTrade::STATUS_SETTLED,
                 'result' => $result,
                 'expiry_price' => $expiry,
                 'pnl' => $pnl,
                 'settled_at' => now(),
-            ]);
+            ];
+            if ($usedEntryFallback) {
+                $updatePayload['meta_json'] = array_merge(
+                    is_array($trade->meta_json) ? $trade->meta_json : [],
+                    [
+                        'settlement_fallback' => 'entry_price_draw',
+                        'settlement_fallback_reason' => 'no_candle_at_expiry',
+                    ],
+                );
+            }
+
+            $trade->update($updatePayload);
+            $martingale->advanceAfterSettledTrade($trade, $result, $mirrorStatusBefore);
             $settled++;
+            if ($usedEntryFallback) {
+                $settledFallback++;
+            }
         }
 
         return [
             'checked' => $rows->count(),
             'settled' => $settled,
             'skipped' => $skipped,
+            'settled_fallback' => $settledFallback,
         ];
     }
 

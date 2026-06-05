@@ -11,6 +11,7 @@ use App\Services\CandleStructureZoneDetector;
 use App\Services\CurrentCandleCacheService;
 use App\Services\Indicators\LiquiditySwingsIndicatorService;
 use App\Services\Indicators\PriceActionDgtIndicatorService;
+use App\Services\Indicators\SmcFlowIndicatorService;
 use App\Support\M1CandleCountdown;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -214,10 +215,10 @@ class DashboardController extends Controller
         if ($includePartial && $before === null) {
             $partial = $currentCandleCache->getPartial($instrument);
             if ($partial && $currentCandleCache->isFresh($partial, 30)) {
-                $lastClosedTime = ! empty($data) ? (int) end($data)['time'] : 0;
-                $livePartial = $this->buildLivePartialFromS5($timeframe, $partial, $data);
+                $livePartial = $candleService->liveBarFromS5Partial($instrument, $timeframe, $partial);
                 if ($livePartial !== null) {
                     $liveTime = (int) $livePartial['time'];
+                    $lastClosedTime = ! empty($data) ? (int) end($data)['time'] : 0;
                     if ($liveTime > $lastClosedTime) {
                         $data[] = $livePartial;
                     } elseif ($liveTime === $lastClosedTime && $data !== []) {
@@ -345,6 +346,37 @@ class DashboardController extends Controller
         ]);
     }
 
+    /**
+     * Оверлей SMC Flow (UT Bot, зоны/линии/лейблы): те же свечи, что у /candles и /structures.
+     * Параметры берутся из настроек «якорного» бота пользователя (chartIndicatorBotForUser).
+     */
+    public function smcFlowIndicatorData(
+        Request $request,
+        CandleService $candleService,
+        SmcFlowIndicatorService $smcFlow,
+    ): JsonResponse {
+        $request->validate([
+            'instrument' => ['required', 'string', 'max:64'],
+            'timeframe' => ['nullable', 'integer', Rule::in(CandleService::DASHBOARD_TIMEFRAMES)],
+        ]);
+        $instrument = (string) $request->input('instrument');
+        $timeframe = (int) ($request->input('timeframe') ?? 1);
+        $since = time() - 86400;
+        $rows = $candleService->seriesForDashboard($instrument, $timeframe, $since, null, 5000);
+        $anchorBot = $this->chartIndicatorBotForUser();
+        $smcParams = $anchorBot !== null
+            ? IndicatorSetting::mergedSmcFlowParams($anchorBot)
+            : SmcFlowIndicatorService::defaultParams();
+        $payload = $smcFlow->compute($rows, $smcParams);
+
+        return response()->json([
+            'smc_flow' => $payload,
+            'instrument' => $instrument,
+            'timeframe' => $timeframe,
+            'server_time' => now()->toIso8601String(),
+        ]);
+    }
+
     public function payouts(): JsonResponse
     {
         $rows = PocketInstrument::active()
@@ -357,76 +389,4 @@ class DashboardController extends Controller
         return response()->json(['payouts' => $rows->values()->all()]);
     }
 
-    /**
-     * Строит live-partial для любого таймфрейма на основе S5 partial.
-     *
-     * Важная идея:
-     * - не сканируем БД "по всему bucket", а берём уже рассчитанный последний бар из $currentData;
-     * - если последний бар в том же bucket, обновляем его high/low/close/volume;
-     * - если bucket новый, создаём новый partial-бар из текущего S5 partial.
-     *
-     * Так мы получаем "живую" свечу для всех TF без тяжёлых запросов к БД на каждый polling.
-     *
-     * @param  list<array{time:int,open:float,high:float,low:float,close:float,volume:float,is_partial:bool}>  $currentData
-     * @param  array<string,mixed>  $partial
-     * @return array{time:int,open:float,high:float,low:float,close:float,volume:float,is_partial:bool}|null
-     */
-    private function buildLivePartialFromS5(int $timeframe, array $partial, array $currentData): ?array
-    {
-        $partialRawTime = (int) ($partial['time'] ?? 0);
-        if ($partialRawTime <= 0) {
-            return null;
-        }
-        $bucketSeconds = $this->timeframeToSeconds($timeframe);
-        if ($bucketSeconds <= 0) {
-            return null;
-        }
-        $bucketStart = (int) (floor($partialRawTime / $bucketSeconds) * $bucketSeconds);
-        $pOpen = (float) ($partial['open'] ?? 0);
-        $pHigh = (float) ($partial['high'] ?? $pOpen);
-        $pLow = (float) ($partial['low'] ?? $pOpen);
-        $pClose = (float) ($partial['close'] ?? $pOpen);
-        $pVolume = (float) ($partial['volume'] ?? 0);
-
-        $last = $currentData !== [] ? $currentData[array_key_last($currentData)] : null;
-        if (is_array($last) && (int) ($last['time'] ?? 0) === $bucketStart) {
-            // Replace-режим: обновляем текущий бар в его же bucket.
-            $open = (float) ($last['open'] ?? $pOpen);
-            $high = max((float) ($last['high'] ?? $pHigh), $pHigh);
-            $low = min((float) ($last['low'] ?? $pLow), $pLow);
-            $close = $pClose;
-            // Если partial уже "дочерняя" свеча этого bucket, её volume добавляем поверх текущего.
-            $volume = (float) ($last['volume'] ?? 0) + $pVolume;
-        } else {
-            // Append-режим: новый bucket ещё не присутствует в текущем ряду.
-            $open = $pOpen;
-            $high = $pHigh;
-            $low = $pLow;
-            $close = $pClose;
-            $volume = $pVolume;
-        }
-
-        return [
-            'time' => $bucketStart,
-            'open' => round($open, 5),
-            'high' => round($high, 5),
-            'low' => round($low, 5),
-            'close' => round($close, 5),
-            'volume' => round((float) $volume, 2),
-            'is_partial' => true,
-        ];
-    }
-
-    /**
-     * Преобразует UI timeframe в секунды bucket-а.
-     */
-    private function timeframeToSeconds(int $timeframe): int
-    {
-        return match ($timeframe) {
-            CandleService::TF_S5 => 5,
-            CandleService::TF_S15 => 15,
-            CandleService::TF_S30 => 30,
-            default => max(1, $timeframe) * 60,
-        };
-    }
 }

@@ -71,14 +71,14 @@ class CandleReversalMtfBotScanTest extends TestCase
         $this->assertGreaterThanOrEqual(1, BotTrade::query()->where('instrument', $instrument)->count());
     }
 
-    public function test_entry_aligns_to_m5_bar_when_expiry_is_300_seconds(): void
+    public function test_entry_uses_signal_time_and_full_expiry_duration(): void
     {
-        $instrument = 'REV_MTF_ALIGN';
+        $instrument = 'REV_MTF_SIGNAL_TIME';
 
         $user = User::factory()->create();
         Bot::query()->create([
             'user_id' => $user->id,
-            'name' => 'MTF Align Test',
+            'name' => 'MTF Signal Time Test',
             'type' => 'candle_reversal_confirm',
             'is_active' => true,
             'config' => [
@@ -113,19 +113,17 @@ class CandleReversalMtfBotScanTest extends TestCase
         $tFirstPatternBar = 1_700_004_000;
         $t0 = $tFirstPatternBar - 70 * 60;
         $partialStart = $t0 + 85 * 60;
-        $m5BarStart = (int) (floor($partialStart / 300) * 300);
-        $m5Open = 99.11;
+        $partialClose = 99.13;
 
-        // «Сейчас» внутри открытого M5-бара, иначе движок отклонит выравнивание (бар уже закрыт).
         Carbon::setTestNow(Carbon::createFromTimestamp($partialStart + 20, 'UTC'));
 
         $partial = [
             'instrument' => $instrument,
             'time' => $partialStart,
-            'open' => $m5Open,
-            'high' => $m5Open + 0.05,
-            'low' => $m5Open - 0.05,
-            'close' => $m5Open + 0.02,
+            'open' => 99.11,
+            'high' => $partialClose + 0.05,
+            'low' => 99.10,
+            'close' => $partialClose,
             'volume' => 1.0,
             'is_partial' => true,
             'updated_at' => time(),
@@ -137,15 +135,17 @@ class CandleReversalMtfBotScanTest extends TestCase
         });
 
         $bot = Bot::query()->firstOrFail();
+        $signalAt = now();
         $summary = app(BotEngineService::class)->scanBot($bot);
 
         $this->assertGreaterThan(0, $summary['trades'], json_encode($summary));
 
         $trade = BotTrade::query()->where('instrument', $instrument)->firstOrFail();
-        $this->assertSame($m5BarStart, (int) $trade->entry_time->timestamp);
-        $this->assertSame($m5BarStart + 300, (int) $trade->expiry_time->timestamp);
-        $this->assertEqualsWithDelta($m5Open, (float) $trade->entry_price, 0.00001);
-        $this->assertTrue((bool) ($trade->meta_json['aligned_to_bar'] ?? false));
+        $this->assertSame($signalAt->timestamp, (int) $trade->entry_time->timestamp);
+        $this->assertSame($signalAt->copy()->addSeconds(300)->timestamp, (int) $trade->expiry_time->timestamp);
+        $this->assertEqualsWithDelta($partialClose, (float) $trade->entry_price, 0.00001);
+        $this->assertSame(300, (int) ($trade->meta_json['expiry_sec_used'] ?? 0));
+        $this->assertArrayNotHasKey('aligned_to_bar', $trade->meta_json ?? []);
 
         Carbon::setTestNow();
     }

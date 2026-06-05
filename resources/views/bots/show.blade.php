@@ -11,6 +11,31 @@
     #instrument-list::-webkit-scrollbar { width: 8px; }
     #instrument-list::-webkit-scrollbar-track { background: #27272a; }
     #instrument-list::-webkit-scrollbar-thumb { background: #52525b; border-radius: 4px; }
+    /* Панель анализа над графиком: длинный ответ LLM прокручивается, график остаётся видимым. */
+    #bot-analysis-body {
+        scrollbar-gutter: stable;
+        scrollbar-width: thin;
+        scrollbar-color: #52525b #27272a;
+    }
+    #bot-analysis-body::-webkit-scrollbar { width: 8px; }
+    #bot-analysis-body::-webkit-scrollbar-track { background: #27272a; }
+    #bot-analysis-body::-webkit-scrollbar-thumb { background: #52525b; border-radius: 4px; }
+    /* Свернутая панель: только шапка (summary + meta), график получает больше высоты. */
+    #bot-analysis-panel.bot-analysis-collapsed {
+        max-height: none;
+    }
+    #bot-analysis-panel.bot-analysis-collapsed #bot-analysis-body {
+        display: none;
+    }
+    #bot-analysis-panel.bot-analysis-collapsed #bot-analysis-meta {
+        display: -webkit-box;
+        -webkit-box-orient: vertical;
+        -webkit-line-clamp: 1;
+        overflow: hidden;
+    }
+    #bot-analysis-panel.bot-analysis-collapsed #bot-analysis-header {
+        cursor: pointer;
+    }
 </style>
 <span class="sr-only pointer-events-none bg-blue-900/40 bg-blue-900/50 bg-stone-800/45 text-stone-200" aria-hidden="true"></span>
 <div class="flex min-h-0 flex-1 w-full gap-0 overflow-hidden">
@@ -36,6 +61,15 @@
                         data-open-trade="{{ $isOpenTradeInstrument ? '1' : '0' }}">
                         <div class="flex items-center justify-between gap-2">
                             <div class="flex min-w-0 flex-1 items-center gap-1.5">
+                                @php($instPayout = $inst->current_payout !== null ? (float) $inst->current_payout : null)
+                                @php($scanDot = \App\Support\BotScanProgress::dotColor($bot->id, $inst->instrument, $instPayout, (float) ($scanMinPayout ?? 80)))
+                                @if($scanDot !== 'none')
+                                <span
+                                    class="instrument-scan-dot shrink-0 inline-block h-2 w-2 rounded-full {{ $scanDot === 'red' ? 'bg-red-500' : ($scanDot === 'green' ? 'bg-emerald-500' : 'bg-zinc-500') }}"
+                                    title="{{ $scanDot === 'red' ? 'Идёт анализ' : ($scanDot === 'green' ? 'Проверено' : 'Ожидает проверки') }}"
+                                    aria-hidden="true"
+                                ></span>
+                                @endif
                                 <span class="font-medium text-zinc-100 truncate">{{ $inst->display_name ?? $inst->instrument }}</span>
                                 @if($isOpenTradeInstrument && isset($nearestExpiryByInstrument[$inst->instrument]))
                                     @php($expTs = (int) $nearestExpiryByInstrument[$inst->instrument])
@@ -151,13 +185,42 @@
                                 </svg>
                             </a>
                         </div>
+                        @if($isChartAnalystBot ?? false)
+                        <div class="flex items-center justify-between gap-1 border-t border-zinc-800 pt-2 mt-1">
+                            <label for="layer-llm-levels" class="flex min-w-0 flex-1 items-center gap-2 text-sm text-zinc-300 cursor-pointer">
+                                <input type="checkbox" id="layer-llm-levels" class="rounded border-zinc-600 bg-zinc-800 text-amber-500 shrink-0" checked>
+                                <span class="truncate">Уровни LLM</span>
+                            </label>
+                        </div>
+                        @endif
                     </div>
                 </div>
+                @php($isChartAnalystBot = $isChartAnalystBot ?? false)
+                @unless($isChartAnalystBot)
+                @php($scanRemaining = ($scanProgress['scan_active'] ?? false) ? ($scanProgress['scan_remaining'] ?? null) : null)
+                @php($scanMinPayoutDisplay = rtrim(rtrim(number_format((float) ($scanMinPayout ?? 80), 1, '.', ''), '0'), '.'))
+                <span
+                    id="bot-scan-remaining-wrap"
+                    class="{{ $scanRemaining === null ? 'hidden' : '' }} shrink-0 text-xs text-zinc-400 tabular-nums"
+                    aria-live="polite"
+                >
+                    Осталось для анализа пар (для payout &gt; <span id="bot-scan-min-payout" class="font-medium text-zinc-300">{{ $scanMinPayoutDisplay }}</span>%):
+                    <span id="bot-scan-remaining-count" class="font-medium text-zinc-200">{{ $scanRemaining ?? 0 }}</span>
+                </span>
+                @endunless
                 <div class="flex flex-wrap items-center gap-1.5 shrink-0">
+                    @if($isChartAnalystBot)
+                        <label for="bot-analysis-user-question" class="sr-only">Дополнительный вопрос к анализу</label>
+                        <input type="text" id="bot-analysis-user-question" maxlength="2000" autocomplete="off"
+                            placeholder="Доп. вопрос (необязательно)…"
+                            class="w-44 sm:w-56 rounded border border-zinc-600 bg-zinc-800 px-2 py-1 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-blue-500/50">
+                    @endif
                     <button type="button" id="bot-analysis-btn"
-                        class="inline-flex items-center rounded border border-zinc-600 bg-zinc-800 px-2.5 py-1 text-xs font-medium text-zinc-200 shadow-sm transition-colors hover:bg-zinc-700 hover:border-zinc-500 hover:text-zinc-50 focus:outline-none focus:ring-2 focus:ring-blue-500/50">Анализ</button>
+                        class="inline-flex items-center rounded border border-zinc-600 bg-zinc-800 px-2.5 py-1 text-xs font-medium text-zinc-200 shadow-sm transition-colors hover:bg-zinc-700 hover:border-zinc-500 hover:text-zinc-50 focus:outline-none focus:ring-2 focus:ring-blue-500/50">{{ $isChartAnalystBot ? 'Сделать анализ' : 'Анализ' }}</button>
+                    @unless($isChartAnalystBot)
                     <a href="{{ route('bots.activity', $bot) }}"
                         class="inline-flex items-center rounded border border-zinc-600 bg-zinc-800 px-2.5 py-1 text-xs font-medium text-zinc-200 shadow-sm transition-colors hover:bg-zinc-700 hover:border-zinc-500 hover:text-zinc-50 focus:outline-none focus:ring-2 focus:ring-blue-500/50">Сигналы и сделки</a>
+                    @endunless
                     <a href="{{ route('bots.logs', $bot) }}"
                         class="inline-flex items-center rounded border border-zinc-600 bg-zinc-800 px-2.5 py-1 text-xs font-medium text-zinc-200 shadow-sm transition-colors hover:bg-zinc-700 hover:border-zinc-500 hover:text-zinc-50 focus:outline-none focus:ring-2 focus:ring-blue-500/50">Логи и метрики</a>
                     <a href="{{ route('bots.settings', $bot) }}"
@@ -169,23 +232,33 @@
                 <span id="chart-loading" class="text-sm text-zinc-500 hidden">Загрузка…</span>
             </div>
         </div>
-        {{-- Панель объяснения входа вынесена над графиком: абсолютные слои графика не перекрывают текст анализа. --}}
-        <div id="bot-analysis-panel" class="hidden border-b border-zinc-800 bg-zinc-900/95 px-3 py-2 text-xs">
-                <div class="flex items-start justify-between gap-3">
-                    <div class="min-w-0">
+        {{-- Панель анализа над графиком: шапка фиксирована, тело с overflow-y (как в правом сайдбаре). --}}
+        <div id="bot-analysis-panel" class="hidden shrink-0 flex min-h-0 max-h-[min(50vh,32rem)] flex-col overflow-hidden border-b border-zinc-800 bg-zinc-900/95 text-xs">
+                <div id="bot-analysis-header" class="flex shrink-0 items-start justify-between gap-3 px-3 pt-2 pb-1">
+                    <div class="min-w-0 flex-1">
                         <div id="bot-analysis-summary" class="font-medium text-zinc-200">Анализ не запрошен.</div>
-                        <div id="bot-analysis-meta" class="mt-0.5 text-zinc-500"></div>
+                        <div id="bot-analysis-meta" class="mt-0.5 text-zinc-500 break-words"></div>
                     </div>
-                    <button type="button" id="bot-analysis-close" class="shrink-0 rounded border border-zinc-700 bg-zinc-800 px-2 py-0.5 text-[11px] text-zinc-300 hover:bg-zinc-700">Закрыть</button>
+                    <div class="flex shrink-0 items-center gap-1.5">
+                        <button type="button" id="bot-analysis-collapse-btn"
+                            class="rounded border border-zinc-700 bg-zinc-800 px-2 py-0.5 text-[11px] text-zinc-300 hover:bg-zinc-700"
+                            aria-expanded="true"
+                            title="Свернуть текст анализа, оставить график">Свернуть</button>
+                        <button type="button" id="bot-analysis-close" class="rounded border border-zinc-700 bg-zinc-800 px-2 py-0.5 text-[11px] text-zinc-300 hover:bg-zinc-700">Закрыть</button>
+                    </div>
                 </div>
-                <div id="bot-analysis-text" class="mt-2 whitespace-pre-wrap break-words text-zinc-300"></div>
-                <div id="bot-analysis-reasons-wrap" class="mt-2 hidden">
-                    <div class="text-[10px] uppercase tracking-wide text-zinc-500">Причины / триггеры</div>
-                    <ul id="bot-analysis-reasons" class="mt-1 list-disc space-y-1 pl-4 text-zinc-300"></ul>
-                </div>
-                <div id="bot-analysis-blockers-wrap" class="mt-2 hidden">
-                    <div class="text-[10px] uppercase tracking-wide text-rose-400">Что блокирует вход</div>
-                    <ul id="bot-analysis-blockers" class="mt-1 list-disc space-y-1 pl-4 text-rose-300"></ul>
+                <div id="bot-analysis-body" class="min-h-0 flex-1 overflow-y-auto overscroll-y-contain px-3 pb-2">
+                    <div id="bot-analysis-text" class="whitespace-pre-wrap break-words text-zinc-300"></div>
+                    @unless($isChartAnalystBot)
+                    <div id="bot-analysis-reasons-wrap" class="mt-2 hidden">
+                        <div class="text-[10px] uppercase tracking-wide text-zinc-500">Причины / триггеры</div>
+                        <ul id="bot-analysis-reasons" class="mt-1 list-disc space-y-1 pl-4 text-zinc-300"></ul>
+                    </div>
+                    <div id="bot-analysis-blockers-wrap" class="mt-2 hidden">
+                        <div class="text-[10px] uppercase tracking-wide text-rose-400">Что блокирует вход</div>
+                        <ul id="bot-analysis-blockers" class="mt-1 list-disc space-y-1 pl-4 text-rose-300"></ul>
+                    </div>
+                    @endunless
                 </div>
             </div>
         @if(config('app.time_debug_panel'))
@@ -216,6 +289,8 @@
             {{-- Индикатор Price Action DGT: z выше structure-overlay, чтобы боковой VP не перекрывался зонами OB/FVG. --}}
             <div id="price-action-overlay" class="absolute inset-0 z-[7] pointer-events-none overflow-visible hidden"></div>
             <div id="smc-flow-overlay" class="absolute inset-0 z-[8] pointer-events-none overflow-visible hidden"></div>
+            {{-- Уровни из chart_levels (LLM-аналитик): горизонтали и зоны поверх свечей. --}}
+            <div id="llm-levels-overlay" class="absolute inset-0 z-[9] pointer-events-none overflow-visible hidden"></div>
             <div id="candle-timer-overlay"
                 class="pointer-events-none absolute z-[6] hidden h-0 w-0 overflow-visible"
                 title="До закрытия текущей свечи выбранного таймфрейма (мм:сс)">
@@ -294,6 +369,7 @@
     const SIGNALS_URL = '{{ route("bots.signals.data", $bot) }}';
     const TRADES_HISTORY_URL = '{{ route("bots.trades") }}';
     const BOT_ANALYSIS_URL = '{{ route("bots.analysis.data", $bot) }}';
+    const BOT_IS_CHART_ANALYST = @json($isChartAnalystBot ?? false);
     const BOT_STATS_URL = '{{ route("bots.stats.data", $bot) }}';
     // Два среза для правой панели: подгружаем оба с сервера при SSR, переключатель шлёт scope= в polling.
     const STATS_SCOPE_STORAGE_KEY = 'platform.bot.show.statsScope.v1.{{ $bot->id }}';
@@ -409,6 +485,8 @@
     const liquiditySwingsOverlay = document.getElementById('liquidity-swings-overlay');
     const priceActionOverlay = document.getElementById('price-action-overlay');
     const smcFlowOverlay = document.getElementById('smc-flow-overlay');
+    const llmLevelsOverlay = document.getElementById('llm-levels-overlay');
+    const layerLlmLevels = document.getElementById('layer-llm-levels');
     const candleTimerOverlay = document.getElementById('candle-timer-overlay');
     const candleCloseTimerEl = document.getElementById('candle-close-timer');
     const candleTfLabelEl = document.getElementById('candle-tf-label');
@@ -429,6 +507,9 @@
     const instrumentSearchClearBtn = document.getElementById('instrument-search-clear');
     const botAnalysisBtn = document.getElementById('bot-analysis-btn');
     const botAnalysisPanel = document.getElementById('bot-analysis-panel');
+    const botAnalysisBody = document.getElementById('bot-analysis-body');
+    const botAnalysisHeader = document.getElementById('bot-analysis-header');
+    const botAnalysisCollapseBtn = document.getElementById('bot-analysis-collapse-btn');
     const botAnalysisCloseBtn = document.getElementById('bot-analysis-close');
     const botAnalysisSummary = document.getElementById('bot-analysis-summary');
     const botAnalysisMeta = document.getElementById('bot-analysis-meta');
@@ -476,6 +557,9 @@
     let lastZones = [];
     let openTrades = [];
     let entryPriceLineHandles = [];
+    /** Последние уровни LLM-аналитика для текущей пары (chart_levels из API). */
+    let lastLlmChartLevels = null;
+    let lastLlmChartLevelsInstrument = null;
     // Кэш серверного времени из разных API-ответов (signals/open-trades/instruments/stats),
     // чтобы в debug-плашке видеть фактический "опорный" серверный timestamp.
     let lastServerTimes = { signals: null, openTrades: null, instruments: null, stats: null };
@@ -602,6 +686,7 @@
             if (layerPa && typeof obj.paDgt === 'boolean') layerPa.checked = obj.paDgt;
             if (layerLiquidity && typeof obj.liquiditySwings === 'boolean') layerLiquidity.checked = obj.liquiditySwings;
             if (layerSmc && typeof obj.smcFlow === 'boolean') layerSmc.checked = obj.smcFlow;
+            if (BOT_IS_CHART_ANALYST && layerLlmLevels && typeof obj.llmLevels === 'boolean') layerLlmLevels.checked = obj.llmLevels;
         } catch (_) {}
     }
 
@@ -613,8 +698,171 @@
                 paDgt: layerPa ? layerPa.checked : false,
                 liquiditySwings: layerLiquidity ? layerLiquidity.checked : false,
                 smcFlow: layerSmc ? layerSmc.checked : false,
+                llmLevels: (BOT_IS_CHART_ANALYST && layerLlmLevels) ? layerLlmLevels.checked : false,
             }));
         } catch (_) {}
+    }
+
+    /** Сбрасывает оверлей уровней LLM (смена пары, новый анализ, закрытие панели). */
+    function clearLlmChartLevels() {
+        lastLlmChartLevels = null;
+        lastLlmChartLevelsInstrument = null;
+        if (llmLevelsOverlay) llmLevelsOverlay.innerHTML = '';
+    }
+
+    function llmLevelKindColor(kind, side) {
+        const k = (kind || 'level').toString().toLowerCase();
+        if (k === 'entry') {
+            if (side === 'CALL') return '#22c55e';
+            if (side === 'PUT') return '#ef4444';
+            return '#38bdf8';
+        }
+        const map = {
+            support: '#22c55e',
+            resistance: '#ef4444',
+            pivot: '#eab308',
+            range_high: '#a855f7',
+            range_low: '#a855f7',
+            level: '#94a3b8',
+        };
+        return map[k] || map.level;
+    }
+
+    function llmLevelDefaultStyle(kind) {
+        const k = (kind || '').toString().toLowerCase();
+        return (k === 'resistance' || k === 'range_high') ? 'dashed' : 'solid';
+    }
+
+    function llmZoneFillColor(timeframe) {
+        const tf = (timeframe || '').toString().toUpperCase();
+        if (tf === 'H1') return 'rgba(168, 85, 247, 0.18)';
+        if (tf === 'M15') return 'rgba(59, 130, 246, 0.16)';
+        if (tf === 'M5') return 'rgba(34, 197, 94, 0.14)';
+        if (tf === 'M1') return 'rgba(245, 158, 11, 0.14)';
+        return 'rgba(148, 163, 184, 0.14)';
+    }
+
+    /** Рисует горизонтали/зоны из chart_levels поверх графика (только openrouter_llm_analyst). */
+    function redrawLlmLevelsOverlay() {
+        if (!BOT_IS_CHART_ANALYST || !llmLevelsOverlay || !chart || !candlestickSeries) return;
+        llmLevelsOverlay.innerHTML = '';
+        if (!layerLlmLevels || !layerLlmLevels.checked) return;
+        if (!lastLlmChartLevels || !allChartData.length) return;
+        if (lastLlmChartLevelsInstrument && currentInstrument && lastLlmChartLevelsInstrument !== currentInstrument) return;
+
+        const chartW = Math.max(1, chartWrapper ? chartWrapper.clientWidth : 0);
+        const labelLanes = new Map();
+
+        function appendHLine(y, color, style, lineWidth) {
+            const div = document.createElement('div');
+            div.style.position = 'absolute';
+            div.style.left = '0';
+            div.style.top = (y - lineWidth / 2) + 'px';
+            div.style.width = chartW + 'px';
+            div.style.pointerEvents = 'none';
+            const st = (style || 'solid').toLowerCase();
+            if (st === 'dashed' || st === 'dotted') {
+                div.style.height = '0';
+                div.style.borderTop = `${lineWidth}px ${st} ${color}`;
+            } else {
+                div.style.height = lineWidth + 'px';
+                div.style.background = color;
+            }
+            llmLevelsOverlay.appendChild(div);
+        }
+
+        function appendLabel(y, text, color) {
+            const bucket = Math.round(y / 14);
+            let top = Math.max(2, Math.min((chartWrapper.clientHeight || 0) - 14, y - 8));
+            const prev = labelLanes.get(bucket);
+            if (prev != null && Math.abs(prev - top) < 12) top = Math.max(2, top - 12);
+            labelLanes.set(bucket, top);
+            const span = document.createElement('span');
+            span.textContent = String(text || '');
+            span.style.position = 'absolute';
+            span.style.right = '6px';
+            span.style.top = top + 'px';
+            span.style.fontSize = '10px';
+            span.style.lineHeight = '1.1';
+            span.style.fontWeight = '600';
+            span.style.color = color;
+            span.style.background = 'rgba(9, 9, 11, 0.72)';
+            span.style.padding = '1px 4px';
+            span.style.borderRadius = '3px';
+            span.style.pointerEvents = 'none';
+            span.style.whiteSpace = 'nowrap';
+            span.style.maxWidth = '45%';
+            span.style.overflow = 'hidden';
+            span.style.textOverflow = 'ellipsis';
+            llmLevelsOverlay.appendChild(span);
+        }
+
+        try {
+            const zones = Array.isArray(lastLlmChartLevels.zones) ? lastLlmChartLevels.zones : [];
+            zones.forEach((z) => {
+                if (!z || typeof z !== 'object') return;
+                const y1 = candlestickSeries.priceToCoordinate(Number(z.price_high));
+                const y2 = candlestickSeries.priceToCoordinate(Number(z.price_low));
+                if (y1 == null || y2 == null || Number.isNaN(y1) || Number.isNaN(y2)) return;
+                const div = document.createElement('div');
+                div.style.position = 'absolute';
+                div.style.left = '0';
+                div.style.top = Math.min(y1, y2) + 'px';
+                div.style.width = chartW + 'px';
+                div.style.height = Math.max(1, Math.abs(y2 - y1)) + 'px';
+                div.style.background = llmZoneFillColor(z.timeframe);
+                div.style.borderTop = '1px dashed rgba(148, 163, 184, 0.35)';
+                div.style.borderBottom = '1px dashed rgba(148, 163, 184, 0.35)';
+                div.style.pointerEvents = 'none';
+                llmLevelsOverlay.appendChild(div);
+                if (z.label) appendLabel((y1 + y2) / 2, z.label, '#cbd5e1');
+            });
+
+            const levels = Array.isArray(lastLlmChartLevels.levels) ? lastLlmChartLevels.levels : [];
+            levels.forEach((ln) => {
+                if (!ln || typeof ln !== 'object') return;
+                const price = Number(ln.price);
+                if (!Number.isFinite(price)) return;
+                const y = candlestickSeries.priceToCoordinate(price);
+                if (y == null || Number.isNaN(y)) return;
+                const color = llmLevelKindColor(ln.kind, null);
+                const style = ln.style || llmLevelDefaultStyle(ln.kind);
+                const lw = (String(ln.kind || '').toLowerCase() === 'pivot') ? 2 : 1;
+                appendHLine(y, color, style, lw);
+                const label = ln.label || ((ln.timeframe ? ln.timeframe + ' ' : '') + (ln.kind || 'level'));
+                appendLabel(y, label, color);
+            });
+
+            const entry = (lastLlmChartLevels.entry && typeof lastLlmChartLevels.entry === 'object')
+                ? lastLlmChartLevels.entry
+                : null;
+            if (entry && Number.isFinite(Number(entry.price))) {
+                const y = candlestickSeries.priceToCoordinate(Number(entry.price));
+                if (y != null && !Number.isNaN(y)) {
+                    const side = entry.side ? String(entry.side).toUpperCase() : null;
+                    const color = llmLevelKindColor('entry', side);
+                    appendHLine(y, color, 'solid', 2);
+                    const entryLabel = entry.label || ('entry' + (side ? ' ' + side : ''));
+                    appendLabel(y, entryLabel, color);
+                }
+            }
+        } catch (e) {
+            console.error('[LLM levels] redraw', e);
+        }
+    }
+
+    function applyLlmChartLevelsFromAnalysis(data) {
+        if (!BOT_IS_CHART_ANALYST) return;
+        const instrument = data && data.instrument ? String(data.instrument) : (currentInstrument || null);
+        if (data && data.chart_levels_ok && data.chart_levels) {
+            lastLlmChartLevels = data.chart_levels;
+            lastLlmChartLevelsInstrument = instrument;
+            if (layerLlmLevels) layerLlmLevels.checked = true;
+        } else {
+            clearLlmChartLevels();
+        }
+        if (llmLevelsOverlay) llmLevelsOverlay.classList.remove('hidden');
+        redrawLlmLevelsOverlay();
     }
 
     /** Нормализация цвета индикатора (#RRGGBBAA) для CSS. */
@@ -1329,13 +1577,14 @@
     function activeTradeMarkersForCurrentInstrument() {
         if (!currentInstrument) return [];
         const nowSec = Math.floor(Date.now() / 1000);
-        const lastBarTime = allChartData.length ? Number(allChartData[allChartData.length - 1].time) : null;
         const active = (openTrades || [])
             .filter((t) => t.instrument === currentInstrument && toUnixSec(t.expiry_ts) > nowSec);
         const markers = [];
         active.forEach((t) => {
             const side = (t.side || '').toUpperCase();
             const isCall = side === 'CALL';
+            // Только реальный entry_ts (момент сигнала). Раньше второй маркер вешался на lastBarTime
+            // текущей формирующейся свечи — при каждой новой минуте «прыгал» по графику.
             const entryTime = toBucketTime(toUnixSec(t.entry_ts));
             if (entryTime) {
                 markers.push({
@@ -1343,16 +1592,7 @@
                     position: isCall ? 'belowBar' : 'aboveBar',
                     color: isCall ? '#10b981' : '#f43f5e',
                     shape: 'circle',
-                    text: '● OPEN',
-                });
-            }
-            if (lastBarTime) {
-                markers.push({
-                    time: lastBarTime,
-                    position: isCall ? 'belowBar' : 'aboveBar',
-                    color: isCall ? '#10b981' : '#f43f5e',
-                    shape: 'square',
-                    text: `${side} OPEN`,
+                    text: `● OPEN ${side}`,
                 });
             }
         });
@@ -1735,9 +1975,67 @@
             el.appendChild(li);
         });
     }
-    function renderBotAnalysis(data) {
+    /** Свернуть/развернуть текстовый блок анализа (шапка остаётся видимой). */
+    function setBotAnalysisCollapsed(collapsed) {
+        if (!botAnalysisPanel) return;
+        const isCollapsed = !!collapsed;
+        botAnalysisPanel.classList.toggle('bot-analysis-collapsed', isCollapsed);
+        if (botAnalysisCollapseBtn) {
+            botAnalysisCollapseBtn.textContent = isCollapsed ? 'Развернуть' : 'Свернуть';
+            botAnalysisCollapseBtn.setAttribute('aria-expanded', isCollapsed ? 'false' : 'true');
+            botAnalysisCollapseBtn.title = isCollapsed
+                ? 'Показать полный текст анализа'
+                : 'Свернуть текст анализа, оставить график';
+        }
+        requestAnimationFrame(() => {
+            if (chart && chartWrapper && chartWrapper.clientWidth) {
+                chart.resize(chartWrapper.clientWidth, chartWrapper.clientHeight);
+            }
+        });
+    }
+
+    function renderChartAnalystAnalysis(data) {
         if (!botAnalysisPanel) return;
         botAnalysisPanel.classList.remove('hidden');
+        setBotAnalysisCollapsed(false);
+        latestManualAnalysis = data || null;
+
+        const hasError = !!(data && data.error);
+        let summaryText = (data && data.summary) ? String(data.summary) : 'Нет данных анализа.';
+        if (data && data.error_detail) {
+            summaryText += ' — ' + String(data.error_detail);
+        }
+        botAnalysisSummary.textContent = summaryText;
+        botAnalysisSummary.classList.toggle('text-emerald-300', !hasError && !!(data && data.analysis_text));
+        botAnalysisSummary.classList.toggle('text-rose-300', hasError || !(data && data.analysis_text));
+
+        const instrument = data && data.instrument ? String(data.instrument) : (currentInstrument || '—');
+        const model = data && data.model ? String(data.model) : '—';
+        const logId = data && data.llm_log_id != null ? String(data.llm_log_id) : '—';
+        const billingLabel = (data && data.billing_label) ? String(data.billing_label) : '';
+        let meta = `${instrument} · модель: ${model}`;
+        if (billingLabel) {
+            meta += ` · ${billingLabel}`;
+        }
+        if (data && data.chart_levels_message) {
+            meta += ` · ${String(data.chart_levels_message)}`;
+        }
+        meta += ` · log #${logId}`;
+        botAnalysisMeta.textContent = meta;
+
+        botAnalysisText.textContent = data && data.analysis_text ? String(data.analysis_text) : '';
+        if (botAnalysisBody) botAnalysisBody.scrollTop = 0;
+        applyLlmChartLevelsFromAnalysis(data);
+        updateSidebarActiveTradePanel();
+    }
+    function renderBotAnalysis(data) {
+        if (BOT_IS_CHART_ANALYST) {
+            renderChartAnalystAnalysis(data);
+            return;
+        }
+        if (!botAnalysisPanel) return;
+        botAnalysisPanel.classList.remove('hidden');
+        setBotAnalysisCollapsed(false);
         latestManualAnalysis = data || null;
 
         const canEnter = !!(data && data.can_enter);
@@ -1758,13 +2056,18 @@
         fillList(botAnalysisBlockers, blockers);
         botAnalysisReasonsWrap.classList.toggle('hidden', reasons.length === 0);
         botAnalysisBlockersWrap.classList.toggle('hidden', blockers.length === 0);
-        // Синхронизируем правую панель сразу после получения анализа, чтобы можно было сравнить с режимом "сделка открыта".
+        if (botAnalysisBody) botAnalysisBody.scrollTop = 0;
         updateSidebarActiveTradePanel();
     }
     async function fetchBotAnalysis() {
         if (botAnalysisLoading) return;
         if (!currentInstrument) {
-            renderBotAnalysis({
+            renderBotAnalysis(BOT_IS_CHART_ANALYST ? {
+                summary: 'Сначала выберите инструмент слева, затем нажмите «Сделать анализ».',
+                instrument: '—',
+                analysis_text: '',
+                error: 'no_instrument',
+            } : {
                 can_enter: false,
                 summary: 'Сначала выберите инструмент слева, затем запустите анализ.',
                 instrument: '—',
@@ -1779,19 +2082,31 @@
         }
 
         botAnalysisLoading = true;
+        if (BOT_IS_CHART_ANALYST) clearLlmChartLevels();
         const prevLabel = botAnalysisBtn ? botAnalysisBtn.textContent : '';
         if (botAnalysisBtn) {
             botAnalysisBtn.disabled = true;
-            botAnalysisBtn.textContent = 'Анализ…';
+            botAnalysisBtn.textContent = BOT_IS_CHART_ANALYST ? 'Анализ…' : 'Анализ…';
         }
         try {
-            const url = `${BOT_ANALYSIS_URL}?instrument=${encodeURIComponent(currentInstrument)}`;
+            const params = new URLSearchParams({ instrument: currentInstrument });
+            if (BOT_IS_CHART_ANALYST) {
+                const qEl = document.getElementById('bot-analysis-user-question');
+                const q = qEl && qEl.value ? String(qEl.value).trim() : '';
+                if (q) params.set('user_question', q);
+            }
+            const url = `${BOT_ANALYSIS_URL}?${params.toString()}`;
             const res = await fetch(url, { headers: { 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' } });
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
             const payload = await res.json();
             renderBotAnalysis(payload);
         } catch (_) {
-            renderBotAnalysis({
+            renderBotAnalysis(BOT_IS_CHART_ANALYST ? {
+                summary: 'Не удалось получить анализ от сервера.',
+                instrument: currentInstrument,
+                analysis_text: '',
+                error: 'http_error',
+            } : {
                 can_enter: false,
                 summary: 'Не удалось получить анализ от сервера.',
                 instrument: currentInstrument,
@@ -1806,7 +2121,7 @@
             botAnalysisLoading = false;
             if (botAnalysisBtn) {
                 botAnalysisBtn.disabled = false;
-                botAnalysisBtn.textContent = prevLabel || 'Анализ';
+                botAnalysisBtn.textContent = prevLabel || (BOT_IS_CHART_ANALYST ? 'Сделать анализ' : 'Анализ');
             }
         }
     }
@@ -1894,6 +2209,24 @@
         return 'text-rose-400';
     }
     const instrumentListEl = document.getElementById('instrument-list');
+    function instrumentScanDotMeta(color) {
+        if (color === 'red') {
+            return { className: 'bg-red-500', title: 'Идёт анализ' };
+        }
+        if (color === 'green') {
+            return { className: 'bg-emerald-500', title: 'Проверено' };
+        }
+        return { className: 'bg-zinc-500', title: 'Ожидает проверки' };
+    }
+    function appendInstrumentScanDot(nameWrap, color) {
+        if (!color || color === 'none') return;
+        const meta = instrumentScanDotMeta(color);
+        const dot = document.createElement('span');
+        dot.className = `instrument-scan-dot shrink-0 inline-block h-2 w-2 rounded-full ${meta.className}`;
+        dot.title = meta.title;
+        dot.setAttribute('aria-hidden', 'true');
+        nameWrap.appendChild(dot);
+    }
     function renderInstrumentSidebarRows(instruments) {
         if (!instrumentListEl) return;
         instrumentListEl.replaceChildren();
@@ -1917,6 +2250,7 @@
             row.className = 'flex items-center justify-between gap-2';
             const nameWrap = document.createElement('div');
             nameWrap.className = 'flex min-w-0 flex-1 items-center gap-1.5';
+            appendInstrumentScanDot(nameWrap, inst.scan_dot || 'gray');
             const name = document.createElement('span');
             name.className = 'font-medium text-zinc-100 truncate';
             name.textContent = inst.display_name || inst.instrument;
@@ -1944,12 +2278,44 @@
             instrumentListEl.appendChild(li);
         });
     }
+    function formatScanMinPayout(value) {
+        const n = Number(value);
+        if (!Number.isFinite(n)) return '80';
+        return String(Math.round(n * 10) / 10).replace(/\.0$/, '');
+    }
+    function updateScanRemainingCounter(payload) {
+        const wrap = document.getElementById('bot-scan-remaining-wrap');
+        const countEl = document.getElementById('bot-scan-remaining-count');
+        const minPayoutEl = document.getElementById('bot-scan-min-payout');
+        if (!wrap || !countEl) return;
+        if (minPayoutEl && payload && payload.scan_min_payout != null) {
+            minPayoutEl.textContent = formatScanMinPayout(payload.scan_min_payout);
+        }
+        const total = Number.parseInt(String(payload?.scan_total ?? ''), 10);
+        const analyzed = Array.isArray(payload?.analyzed_instruments) ? payload.analyzed_instruments.length : 0;
+        const active = !!(payload && (
+            payload.scan_active
+            || payload.analyzing_instrument
+            || (Number.isFinite(total) && total > 0 && analyzed > 0)
+        ));
+        let remaining = payload ? payload.scan_remaining : null;
+        if (active && remaining == null && Number.isFinite(total) && total > 0) {
+            remaining = Math.max(0, total - analyzed);
+        }
+        if (!active || remaining == null) {
+            wrap.classList.add('hidden');
+            return;
+        }
+        countEl.textContent = String(Math.max(0, Number.parseInt(String(remaining), 10) || 0));
+        wrap.classList.remove('hidden');
+    }
     function refreshInstrumentSidebar() {
         return fetch(INSTRUMENTS_SIDEBAR_URL, { headers: { 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' } })
             .then((r) => r.json())
             .then((d) => {
                 if (d && d.server_time) lastServerTimes.instruments = d.server_time;
                 renderInstrumentSidebarRows(d.instruments || []);
+                updateScanRemainingCounter(d);
                 applyInstrumentFilter(instrumentSearchInput.value);
                 syncSearchClearButton();
                 if (currentInstrument) {
@@ -2601,6 +2967,7 @@
             try {
                 redrawStructureOverlay();
                 redrawPriceActionOverlay();
+                redrawLlmLevelsOverlay();
             } catch (e) {
                 console.error('[bot chart] dom overlay sync', e);
             }
@@ -2642,6 +3009,7 @@
         if (liquiditySwingsOverlay) liquiditySwingsOverlay.classList.remove('hidden');
         if (priceActionOverlay) priceActionOverlay.classList.remove('hidden');
         if (smcFlowOverlay) smcFlowOverlay.classList.remove('hidden');
+        if (BOT_IS_CHART_ANALYST && llmLevelsOverlay) llmLevelsOverlay.classList.remove('hidden');
         chartPlaceholder.classList.add('hidden');
         // Собираем конфиг кроссхейра в зависимости от настройки из "Настройки бота":
         // - true: режим как в TradingView (свободный курсор + линии X/Y + подписи),
@@ -2868,6 +3236,7 @@
         if (priceActionOverlay) priceActionOverlay.innerHTML = '';
         if (liquiditySwingsOverlay) liquiditySwingsOverlay.innerHTML = '';
         if (smcFlowOverlay) smcFlowOverlay.innerHTML = '';
+        if (BOT_IS_CHART_ANALYST) clearLlmChartLevels();
         updateChartTitle();
         updateTfOptionStyles();
         setLoading(true);
@@ -2942,11 +3311,18 @@
             redrawStructureOverlay();
         });
     }
+    if (BOT_IS_CHART_ANALYST && layerLlmLevels) {
+        layerLlmLevels.addEventListener('change', () => {
+            saveLayerPrefs();
+            redrawLlmLevelsOverlay();
+        });
+    }
     new ResizeObserver(() => {
         if (chart && chartWrapper.clientWidth) {
             chart.resize(chartWrapper.clientWidth, chartWrapper.clientHeight);
             redrawStructureOverlay();
             redrawPriceActionOverlay();
+            redrawLlmLevelsOverlay();
             requestAnimationFrame(positionCandleTimerOverlay);
         }
     }).observe(chartWrapper);
@@ -2970,7 +3346,25 @@
         instrumentSearchInput.focus();
     });
     botAnalysisBtn.addEventListener('click', fetchBotAnalysis);
-    botAnalysisCloseBtn.addEventListener('click', () => botAnalysisPanel.classList.add('hidden'));
+    if (botAnalysisCollapseBtn) {
+        botAnalysisCollapseBtn.addEventListener('click', () => {
+            const collapsed = botAnalysisPanel && botAnalysisPanel.classList.contains('bot-analysis-collapsed');
+            setBotAnalysisCollapsed(!collapsed);
+        });
+    }
+    if (botAnalysisHeader) {
+        botAnalysisHeader.addEventListener('click', (e) => {
+            if (e.target.closest('button')) return;
+            if (botAnalysisPanel && botAnalysisPanel.classList.contains('bot-analysis-collapsed')) {
+                setBotAnalysisCollapsed(false);
+            }
+        });
+    }
+    botAnalysisCloseBtn.addEventListener('click', () => {
+        botAnalysisPanel.classList.add('hidden');
+        setBotAnalysisCollapsed(false);
+        if (BOT_IS_CHART_ANALYST) clearLlmChartLevels();
+    });
 
     loadLayerPrefs();
     updateTfOptionStyles();

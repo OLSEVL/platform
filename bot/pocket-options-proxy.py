@@ -17,10 +17,13 @@ HTTP API сервер, который подключается к Pocket Options
 import sys
 import io
 import os
+import json
+import re
 import asyncio
+import hashlib
 from contextlib import asynccontextmanager
 from datetime import datetime
-from typing import Optional, List, Dict, Any
+from typing import Any, Optional, List, Dict
 from fastapi import FastAPI, HTTPException, Query, Body
 from fastapi.responses import JSONResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -44,8 +47,12 @@ if pocketoption_path not in sys.path:
     sys.path.insert(0, pocketoption_path)
 
 # Импортируем после добавления пути
+import uuid
+
 from pocketoptionapi_async import AsyncPocketOptionClient
-from pocketoptionapi_async.constants import ASSETS
+from pocketoptionapi_async.constants import API_LIMITS, ASSETS
+from pocketoptionapi_async.exceptions import InvalidParameterError
+from pocketoptionapi_async.models import Order, OrderDirection
 
 # Настройки сервера
 PORT = 3000
@@ -110,6 +117,8 @@ app.add_middleware(
 
 # Глобальный словарь для хранения клиентов (по SSID)
 _clients: Dict[str, AsyncPocketOptionClient] = {}
+# Ingest + HTTP в одном loop: не больше 2 одновременных place-order.
+_place_order_semaphore = asyncio.Semaphore(2)
 
 
 def convert_ui_asset_to_websocket(ui_asset: str) -> str:
@@ -240,6 +249,127 @@ async def get_or_create_client(session_token: str, uid: str) -> AsyncPocketOptio
     _clients[client_key] = client
     
     return client
+
+
+def _ssid_client_cache_key(ssid: str) -> str:
+    """Ключ кэша клиента по полной строке SSID (без хранения SSID в ключе словаря целиком)."""
+    return "ssid:" + hashlib.sha256(ssid.encode("utf-8")).hexdigest()[:24]
+
+
+def normalize_pocket_ssid(raw: str, is_demo: bool = True) -> str:
+    """Полный SSID 42[\"auth\",...] из строки auth, JSON sessionToken или голого токена."""
+    raw = (raw or "").strip()
+    if raw.startswith('42["auth",'):
+        import re as _re
+
+        token = None
+        m = _re.search(r'"session"\s*:\s*"([^"]+)"', raw)
+        if m:
+            token = m.group(1)
+        else:
+            m = _re.search(r'"sessionToken"\s*:\s*"([^"]+)"', raw)
+            if m:
+                token = m.group(1)
+        if token:
+            uid_m = _re.search(r'"uid"\s*:\s*"?(\d+)"?', raw)
+            uid = int(uid_m.group(1)) if uid_m else 0
+            demo_m = _re.search(r'"isDemo"\s*:\s*(\d+)', raw)
+            demo = int(demo_m.group(1)) if demo_m else (1 if is_demo else 0)
+            return (
+                f'42["auth",{{"session":"{token}","uid":{uid},"isDemo":{demo},'
+                f'"platform":2,"isFastHistory":true,"isOptimized":true}}]'
+            )
+        return raw
+    if raw.startswith("{") or "sessionToken" in raw:
+        trimmed = re.sub(r"\}\]+\s*$", "}", raw.strip())
+        if not trimmed.endswith("}"):
+            trimmed += "}"
+        try:
+            data = json.loads(trimmed)
+        except json.JSONDecodeError:
+            data = {}
+            m = re.search(r'"sessionToken"\s*:\s*"([^"]+)"', raw)
+            if m:
+                data["sessionToken"] = m.group(1)
+            m = re.search(r'"uid"\s*:\s*"?(\d+)"?', raw)
+            if m:
+                data["uid"] = int(m.group(1))
+        token = data.get("sessionToken") or data.get("session")
+        if token:
+            uid = int(data.get("uid") or data.get("userId") or 0)
+            demo = int(data.get("isDemo", 1 if is_demo else 0))
+            return (
+                f'42["auth",{{"session":"{token}","uid":{uid},"isDemo":{demo},'
+                f'"platform":2,"isFastHistory":true,"isOptimized":true}}]'
+            )
+    if len(raw) >= 16 and raw.replace("_", "").replace("-", "").isalnum():
+        demo = 1 if is_demo else 0
+        return (
+            f'42["auth",{{"session":"{raw}","uid":0,"isDemo":{demo},'
+            f'"platform":2,"isFastHistory":true,"isOptimized":true}}]'
+        )
+    raise HTTPException(status_code=400, detail="Invalid SSID format (expected 42[\"auth\",...] or JSON sessionToken)")
+
+
+async def get_or_create_client_by_ssid(
+    ssid: str,
+    is_demo: bool = True,
+    proxy_url: Optional[str] = None,
+) -> AsyncPocketOptionClient:
+    """
+    Клиент Pocket Option по полной строке SSID из профиля пользователя (42["auth",...]).
+    proxy_url — тот же прокси, что у ingest для пары (если прямое подключение недоступно).
+    """
+    ssid = normalize_pocket_ssid(ssid, is_demo=is_demo)
+
+    proxy_tag = hashlib.sha256((proxy_url or "").encode("utf-8")).hexdigest()[:8]
+    client_key = f"{_ssid_client_cache_key(ssid)}:{proxy_tag}"
+    if client_key in _clients:
+        client = _clients[client_key]
+        if client.is_connected:
+            return client
+        try:
+            await client.connect()
+            if client.is_connected:
+                return client
+        except Exception:
+            pass
+        del _clients[client_key]
+
+    print(
+        f"[INFO] Создание клиента по SSID (demo={is_demo}, proxy={'yes' if proxy_url else 'no'})...",
+        flush=True,
+    )
+    # persistent_connection — стабильнее openOrder под нагрузкой ingest.
+    client = AsyncPocketOptionClient(
+        ssid,
+        is_demo=is_demo,
+        enable_logging=False,
+        persistent_connection=True,
+        auto_reconnect=True,
+        proxy_url=proxy_url,
+    )
+    try:
+        success = await client.connect()
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Pocket Option connect error: {exc}") from exc
+    if not success:
+        raise HTTPException(status_code=502, detail="Failed to connect to Pocket Option (connect returned false)")
+    # Ingest и зеркало делят event loop — даём WS время на auth; при нагрузке 5 с мало.
+    for attempt in range(2):
+        await asyncio.sleep(6 if attempt == 0 else 4)
+        if client.is_connected:
+            _clients[client_key] = client
+            return client
+        try:
+            await client.connect()
+        except Exception:
+            pass
+
+    raise HTTPException(
+        status_code=502,
+        detail="Pocket Option client not connected after auth (SSID устарел — скопируйте новый 42[\"auth\",...] из DevTools кабинета PO)",
+    )
 
 
 async def get_candles_data(
@@ -1031,6 +1161,161 @@ async def get_candles(
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 
+def _normalize_order_asset(instrument: str) -> str:
+    """Имя актива для openOrder: как в ingest (без #), без жёсткого whitelist ASSETS."""
+    name = (instrument or "").strip()
+    if name.startswith("#"):
+        name = name[1:]
+    if "/" in name or " " in name:
+        name = convert_ui_asset_to_websocket(name)
+    return name.replace("#", "")
+
+
+def _mirror_order_confirmed(result: Any) -> bool:
+    """
+    PO API при таймауте ответа создаёт «fallback» OrderResult со status=ACTIVE,
+    но сделки в кабинете нет — не считаем такой ордер успешным.
+    """
+    err = getattr(result, "error_message", None) or ""
+    if err and "Timeout waiting for server confirmation" in str(err):
+        return False
+    return True
+
+
+async def place_mirror_order(
+    client: AsyncPocketOptionClient,
+    instrument: str,
+    amount: float,
+    direction: OrderDirection,
+    duration: int,
+) -> Any:
+    """
+    Размещение ордера без проверки asset in ASSETS — ingest уже торгует теми же парами.
+    """
+    asset = _normalize_order_asset(instrument)
+    if (
+        amount < API_LIMITS["min_order_amount"]
+        or amount > API_LIMITS["max_order_amount"]
+    ):
+        raise InvalidParameterError(
+            f"Amount must be between {API_LIMITS['min_order_amount']} and {API_LIMITS['max_order_amount']}"
+        )
+    if (
+        duration < API_LIMITS["min_duration"]
+        or duration > API_LIMITS["max_duration"]
+    ):
+        raise InvalidParameterError(
+            f"Duration must be between {API_LIMITS['min_duration']} and {API_LIMITS['max_duration']} seconds"
+        )
+
+    request_id = str(uuid.uuid4())
+    order = Order(
+        asset=asset,
+        amount=amount,
+        direction=direction,
+        duration=duration,
+        request_id=request_id,
+    )
+    await client._send_order(order)
+    # 25 с достаточно при прогретом WS; 60 с блокировало sync-зеркало и копило очередь.
+    result = await client._wait_for_order_result(request_id, order, timeout=25.0)
+    if not _mirror_order_confirmed(result):
+        raise HTTPException(
+            status_code=502,
+            detail="Pocket Option не подтвердил ордер (нет successopenOrder). "
+            "Проверьте SSID, demo/real и что пара доступна для торговли.",
+        )
+    return result
+
+
+@app.post("/api/test-auth")
+async def test_auth_api(payload: Dict[str, Any] = Body(...)):
+    """
+    Проверка SSID: подключение к PO без ордера (для профиля и artisan profile:test-po-connection).
+    """
+    ssid = str(payload.get("ssid") or "").strip()
+    is_demo = bool(payload.get("is_demo", True))
+    proxy_url = payload.get("proxy_url")
+    if proxy_url is not None:
+        proxy_url = str(proxy_url).strip() or None
+
+    if not ssid:
+        raise HTTPException(status_code=400, detail="Required: ssid")
+
+    try:
+        await get_or_create_client_by_ssid(ssid, is_demo=is_demo, proxy_url=proxy_url)
+        return {"ok": True}
+    except HTTPException as exc:
+        return {"ok": False, "error": exc.detail}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+
+@app.post("/api/place-order")
+async def place_order_api(
+    payload: Dict[str, Any] = Body(...),
+):
+    """
+    Размещает бинарный опцион (зеркало paper-сделки бота на платформе).
+    Тело: ssid, instrument, side (CALL|PUT), amount, duration (сек), is_demo (bool).
+    """
+    ssid = str(payload.get("ssid") or "").strip()
+    instrument = str(payload.get("instrument") or "").strip()
+    side = str(payload.get("side") or "").upper().strip()
+    amount = float(payload.get("amount") or 0)
+    duration = int(payload.get("duration") or 0)
+    is_demo = bool(payload.get("is_demo", True))
+    proxy_url = payload.get("proxy_url")
+    if proxy_url is not None:
+        proxy_url = str(proxy_url).strip() or None
+
+    if not ssid or not instrument or side not in ("CALL", "PUT") or amount <= 0 or duration <= 0:
+        raise HTTPException(
+            status_code=400,
+            detail="Required: ssid, instrument, side (CALL|PUT), amount > 0, duration > 0",
+        )
+
+    asset_clean = _normalize_order_asset(instrument)
+    direction = OrderDirection.CALL if side == "CALL" else OrderDirection.PUT
+
+    print(
+        f"[HTTP] POST /api/place-order instrument={asset_clean} side={side} amount={amount} duration={duration}s demo={is_demo}",
+        flush=True,
+    )
+
+    try:
+        async with _place_order_semaphore:
+            client = await get_or_create_client_by_ssid(ssid, is_demo=is_demo, proxy_url=proxy_url)
+            result = await place_mirror_order(
+                client,
+                asset_clean,
+                amount,
+                direction,
+                duration,
+            )
+        order_id = getattr(result, "order_id", None) or getattr(result, "id", None)
+        status = getattr(result, "status", None)
+        return JSONResponse(
+            content={
+                "ok": True,
+                "confirmed": True,
+                "order_id": str(order_id) if order_id is not None else None,
+                "status": str(status) if status is not None else None,
+                "instrument": asset_clean,
+                "side": side,
+                "duration": duration,
+            }
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"[ERROR] place-order: {e}", flush=True)
+        import traceback
+
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/")
 async def root():
     """Корневой endpoint"""
@@ -1041,6 +1326,8 @@ async def root():
             "/api/assets": "GET - Получить список всех активов и категорий",
             "/api/candles": "GET - Получить данные свечей (может возвращать график PNG при include_chart=true и timeframe=1)",
             "/api/chart": "GET - Получить свечной график (PNG изображение)",
+            "/api/test-auth": "POST - Проверить SSID (без ордера)",
+            "/api/place-order": "POST - Разместить ордер (зеркало сделки бота)",
         }
     }
 

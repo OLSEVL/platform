@@ -4,10 +4,12 @@ namespace App\Http\Controllers;
 
 use App\Models\Bot;
 use App\Models\IndicatorSetting;
-use App\Services\Indicators\PriceActionDgtIndicatorService;
 use App\Services\Indicators\LiquiditySwingsIndicatorService;
+use App\Services\Indicators\PriceActionDgtIndicatorService;
+use App\Services\Indicators\SmcFlowIndicatorService;
 use App\Support\LiquiditySwingsSettingsForm;
 use App\Support\PriceActionDgtSettingsForm;
+use App\Support\SmcFlowSettingsForm;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\View\View;
@@ -107,6 +109,45 @@ class BotChartIndicatorController extends Controller
 
         return redirect()->route('bots.indicators.liquidity-swings.edit', $bot)
             ->with('status', 'Настройки Liquidity Swings сохранены.');
+    }
+
+    public function editSmcFlow(Bot $bot): View
+    {
+        $this->ensureBotOwner($bot);
+        $smc = IndicatorSetting::mergedSmcFlowParams($bot);
+
+        return view('bots.indicators.smc-flow', [
+            'bot' => $bot,
+            'smc' => $smc,
+        ]);
+    }
+
+    public function updateSmcFlow(Request $request, Bot $bot): RedirectResponse
+    {
+        $this->ensureBotOwner($bot);
+        if ($request->boolean('use_expert_json')) {
+            $request->validate([
+                'expert_settings_json' => ['required', 'string', 'max:65535'],
+            ]);
+            $raw = trim((string) $request->input('expert_settings_json', ''));
+            $decoded = json_decode($raw, true);
+            if (! is_array($decoded)) {
+                return back()->withInput()->withErrors(['expert_settings_json' => 'Некорректный JSON.']);
+            }
+            $params = array_replace(SmcFlowIndicatorService::defaultParams(), $decoded);
+        } else {
+            $params = SmcFlowSettingsForm::buildFromRequest($request);
+        }
+        IndicatorSetting::updateOrCreate(
+            ['bot_id' => $bot->id, 'indicator_key' => IndicatorSetting::KEY_SMC_FLOW],
+            ['settings' => $params]
+        );
+        $config = is_array($bot->config) ? $bot->config : [];
+        unset($config[IndicatorSetting::KEY_SMC_FLOW]);
+        $bot->update(['config' => $config]);
+
+        return redirect()->route('bots.indicators.smc-flow.edit', $bot)
+            ->with('status', 'Настройки SMC Flow сохранены.');
     }
 
     private function ensureBotOwner(Bot $bot): void

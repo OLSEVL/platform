@@ -6,6 +6,8 @@ use App\Http\Controllers\BotChartIndicatorController;
 use App\Http\Controllers\BotController;
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\InstrumentController;
+use App\Http\Controllers\ProfileMirrorQueueController;
+use App\Http\Controllers\ProfileTradingController;
 use App\Http\Controllers\SettingsController;
 use Illuminate\Support\Facades\Route;
 
@@ -21,6 +23,7 @@ Route::middleware('auth')->group(function () {
     Route::get('/structures', [DashboardController::class, 'structures'])->name('structures.data');
     Route::get('/indicators/price-action-dgt', [DashboardController::class, 'priceActionDgtIndicatorData'])->name('dashboard.indicators.price-action-dgt');
     Route::get('/indicators/liquidity-swings', [DashboardController::class, 'liquiditySwingsIndicatorData'])->name('dashboard.indicators.liquidity-swings');
+    Route::get('/indicators/smc-flow', [DashboardController::class, 'smcFlowIndicatorData'])->name('dashboard.indicators.smc-flow');
     Route::get('/payouts', [DashboardController::class, 'payouts'])->name('payouts.data');
     Route::get('/instruments/data', [DashboardController::class, 'instrumentsSidebarData'])->name('dashboard.instruments.data');
     Route::prefix('bots')->name('bots.')->group(function () {
@@ -41,6 +44,8 @@ Route::middleware('auth')->group(function () {
         Route::get('/{bot}/indicators/fvg', [BotChartIndicatorController::class, 'editFvg'])->name('indicators.fvg.edit');
         Route::get('/{bot}/indicators/liquidity-swings', [BotChartIndicatorController::class, 'editLiquiditySwings'])->name('indicators.liquidity-swings.edit');
         Route::put('/{bot}/indicators/liquidity-swings', [BotChartIndicatorController::class, 'updateLiquiditySwings'])->name('indicators.liquidity-swings.update');
+        Route::get('/{bot}/indicators/smc-flow', [BotChartIndicatorController::class, 'editSmcFlow'])->name('indicators.smc-flow.edit');
+        Route::put('/{bot}/indicators/smc-flow', [BotChartIndicatorController::class, 'updateSmcFlow'])->name('indicators.smc-flow.update');
         Route::get('/{bot}/activity', [BotController::class, 'activity'])->name('activity');
         Route::get('/{bot}/logs', [BotController::class, 'logs'])->name('logs');
         Route::get('/{bot}/settings', [BotController::class, 'settings'])->name('settings');
@@ -53,6 +58,16 @@ Route::middleware('auth')->group(function () {
     Route::post('/instruments/{instrument}/proxy/replace', [InstrumentController::class, 'replaceProxy'])->name('instruments.proxy.replace');
     Route::post('/instruments/{instrument}/proxy/replace-and-mark-dead', [InstrumentController::class, 'replaceProxyAndMarkDead'])->name('instruments.proxy.replace-mark-dead');
     Route::post('/instruments/{instrument}/proxy/remove', [InstrumentController::class, 'removeProxy'])->name('instruments.proxy.remove');
+    Route::redirect('/profile', '/profile/trading')->name('profile.index');
+    Route::get('/profile/trading', [ProfileTradingController::class, 'edit'])->name('profile.trading.edit');
+    Route::put('/profile/trading', [ProfileTradingController::class, 'update'])->name('profile.trading.update');
+    Route::post('/profile/trading/reset-martingale', [ProfileTradingController::class, 'resetMartingale'])
+        ->name('profile.trading.reset-martingale');
+    Route::post('/profile/trading/test-connection', [ProfileTradingController::class, 'testConnection'])
+        ->name('profile.trading.test-connection');
+    Route::get('/profile/mirror-queue', [ProfileMirrorQueueController::class, 'index'])->name('profile.mirror-queue.index');
+    Route::get('/profile/mirror-queue/data', [ProfileMirrorQueueController::class, 'data'])->name('profile.mirror-queue.data');
+
     Route::get('/settings', [SettingsController::class, 'index'])->name('settings.index');
     Route::post('/settings/proxies/refresh', [SettingsController::class, 'refreshProxies'])->name('settings.proxies.refresh');
     Route::post('/settings/proxies/auto-rotation', [SettingsController::class, 'updateProxyRotation'])->name('settings.proxies.auto-rotation');
@@ -60,5 +75,7 @@ Route::middleware('auth')->group(function () {
     Route::post('/settings/proxies/reactivate-all', [SettingsController::class, 'reactivateAllProblemProxies'])->name('settings.proxies.reactivate-all');
     Route::post('/settings/proxies/{proxy}/test-quick-ajax', [SettingsController::class, 'testQuickProxyAjax'])->name('settings.proxies.test-quick-ajax');
     Route::post('/settings/proxies/{proxy}/test-deep-ajax', [SettingsController::class, 'testDeepProxyAjax'])->name('settings.proxies.test-deep-ajax');
+    Route::get('/settings/proxies/{proxy}/health-row-ajax', [SettingsController::class, 'proxyHealthRowAjax'])->name('settings.proxies.health-row-ajax');
+    Route::get('/settings/proxies/health-live-ajax', [SettingsController::class, 'proxyHealthLiveAjax'])->name('settings.proxies.health-live-ajax');
     Route::post('/settings/payout/monitoring', [SettingsController::class, 'updatePayoutMonitoring'])->name('settings.payout.monitoring');
 });

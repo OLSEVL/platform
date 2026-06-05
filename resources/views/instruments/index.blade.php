@@ -11,6 +11,19 @@
 @if(session('error'))
     <p class="mb-4 p-3 bg-red-950/60 border border-red-800 text-red-200 rounded">{{ session('error') }}</p>
 @endif
+@php
+    $poolCap = $proxyPoolCapacity ?? [];
+    $poolExhausted = (bool) ($poolCap['is_exhausted'] ?? false);
+@endphp
+@if($poolExhausted)
+    <div class="mb-4 p-3 rounded-lg bg-amber-950/50 border border-amber-800 text-amber-200 text-sm">
+        <strong>Пул прокси исчерпан.</strong>
+        Свободных слотов: {{ $poolCap['free_slots'] ?? 0 }} / {{ $poolCap['total_slots'] ?? 0 }}.
+        Замена и «Пометить bad + заменить» не сработают, пока не появится место
+        ({{ $poolCap['ready_proxies'] ?? 0 }} ready-прокси × лимит {{ $poolCap['max_per_proxy'] ?? 1 }}).
+        <a href="{{ route('settings.index') }}" class="underline text-amber-100 hover:text-white">Настройки → прокси</a>.
+    </div>
+@endif
 <div class="bg-zinc-900 border border-zinc-800 rounded-lg shadow-lg shadow-black/20 overflow-hidden">
     <table class="min-w-full divide-y divide-zinc-800">
         <thead class="bg-zinc-800/80">
@@ -23,9 +36,34 @@
                 <th class="px-6 py-3 text-left text-xs font-medium text-zinc-400 uppercase">Статус</th>
                 <th class="px-6 py-3 text-left text-xs font-medium text-zinc-400 uppercase">Свои auth</th>
                 <th class="px-6 py-3 text-left text-xs font-medium text-zinc-400 uppercase">Прокси</th>
-                <th class="px-6 py-3 text-left text-xs font-medium text-zinc-400 uppercase">Payout</th>
-                <th class="px-6 py-3 text-left text-xs font-medium text-zinc-400 uppercase">Источник</th>
-                <th class="px-6 py-3 text-left text-xs font-medium text-zinc-400 uppercase">Обновлён Payout</th>
+                <th
+                    class="px-6 py-3 text-left align-bottom min-w-[5.5rem]"
+                    title="Процент выплаты (current_payout), последнее известное значение от ingest. Не означает, что PO только что прислал обновление."
+                >
+                    <span class="block text-xs font-medium text-zinc-300">Payout %</span>
+                    <span class="block text-[10px] font-normal text-zinc-500 leading-snug mt-0.5">значение в БД</span>
+                </th>
+                <th
+                    class="px-6 py-3 text-left align-bottom min-w-[6rem]"
+                    title="Откуда пришло последнее значение payout: payout_update (WebSocket-событие PO) или json_data (поле в ответе по активу)."
+                >
+                    <span class="block text-xs font-medium text-zinc-300">Источник</span>
+                    <span class="block text-[10px] font-normal text-zinc-500 leading-snug mt-0.5">канал от PO</span>
+                </th>
+                <th
+                    class="px-6 py-3 text-left align-bottom min-w-[9rem]"
+                    title="last_payout_event_at — когда Pocket Options в последний раз прислал payout_update или payout в json_data. Красное = давно нет события от брокера (порог в Настройках) или payout_is_stale. Не путать с POST ingest."
+                >
+                    <span class="block text-xs font-medium text-zinc-300">Событие PO</span>
+                    <span class="block text-[10px] font-normal text-zinc-500 leading-snug mt-0.5">когда брокер прислал payout</span>
+                </th>
+                <th
+                    class="px-6 py-3 text-left align-bottom min-w-[9rem]"
+                    title="last_payout_at — когда ingest в последний раз успешно вызвал POST /api/ingest-payout (heartbeat ~30 с). Жёлтое «нет POST» = для активного инструмента нет POST &gt; 2 мин (воркер/связь). Свежий POST при stale PO — норма."
+                >
+                    <span class="block text-xs font-medium text-zinc-300">POST ingest</span>
+                    <span class="block text-[10px] font-normal text-zinc-500 leading-snug mt-0.5">когда ingest записал в БД</span>
+                </th>
                 <th class="px-6 py-3 text-right text-xs font-medium text-zinc-400 uppercase">Действия</th>
             </tr>
         </thead>
@@ -33,7 +71,14 @@
             @forelse($instruments as $i)
             <tr class="hover:bg-zinc-800/50">
                 <td class="px-3 py-4 text-center text-sm tabular-nums text-zinc-500">{{ $loop->iteration }}</td>
-                <td class="px-6 py-4 font-mono text-zinc-300">{{ $i->instrument }}</td>
+                <td class="px-6 py-4 font-mono">
+                    {{-- Ссылка на главную: JS графика читает ?instrument= и открывает соответствующую пару. --}}
+                    <a
+                        href="{{ route('dashboard', ['instrument' => $i->instrument]) }}"
+                        class="text-blue-400 hover:text-blue-300 hover:underline"
+                        title="Открыть график на главной"
+                    >{{ $i->instrument }}</a>
+                </td>
                 <td class="px-6 py-4">{{ $i->display_name ?? '—' }}</td>
                 <td class="px-6 py-4">{{ $i->priority }}</td>
                 <td class="px-6 py-4">
@@ -115,22 +160,50 @@
                 </td>
                 <td class="px-6 py-4">{{ $i->payout_source ?? '—' }}</td>
                 <td class="px-6 py-4">
-                    @if($i->last_payout_at)
-                        {{-- Показываем конкретное локальное время + ISO в title для быстрой визуальной и технической сверки timezone. --}}
+                    @php
+                        // Колонка отражает последнее событие payout от Pocket Options, не heartbeat ingest.
+                        $payoutEventAt = $i->last_payout_event_at ?? $i->last_payout_at;
+                    @endphp
+                    @if($payoutEventAt)
                         @php
-                            // Порог "устаревшего" payout управляется из раздела "Настройки".
-                            // Это даёт оператору гибкость: на волатильном рынке можно ужесточить
-                            // алерт, а в спокойные часы — ослабить без правки кода.
                             $staleThresholdMinutes = (int) ($payoutStaleMinutesThreshold ?? 5);
-                            $isPayoutStale = $i->last_payout_at->lt(now()->subMinutes($staleThresholdMinutes));
+                            $isPayoutStale = (bool) $i->payout_is_stale
+                                || $payoutEventAt->lt(now()->subMinutes($staleThresholdMinutes));
                         @endphp
-                        <span title="{{ $i->last_payout_at->timezone(config('app.timezone'))->toIso8601String() }}">
+                        <span title="PO event: {{ $payoutEventAt->timezone(config('app.timezone'))->toIso8601String() }}">
                             <span class="{{ $isPayoutStale ? 'text-rose-300 font-medium' : '' }}">
-                                {{ $i->last_payout_at->timezone(config('app.timezone'))->format('d.m.Y H:i') }}
+                                {{ $payoutEventAt->timezone(config('app.timezone'))->format('d.m.Y H:i') }}
                             </span>
                             <span class="{{ $isPayoutStale ? 'text-rose-400' : 'text-zinc-500' }}">
-                                ({{ $i->last_payout_at->diffForHumans() }})
+                                ({{ $payoutEventAt->diffForHumans() }})
                             </span>
+                            @if($i->payout_is_stale)
+                                <span class="ml-1 inline-flex px-1.5 py-0.5 rounded text-[10px] font-medium bg-rose-950/80 text-rose-300 border border-rose-800/80">stale</span>
+                            @endif
+                        </span>
+                    @else
+                        <span class="text-zinc-500">—</span>
+                    @endif
+                </td>
+                <td class="px-6 py-4">
+                    @if($i->last_payout_at)
+                        @php
+                            // Heartbeat ingest: при живом воркере POST payout приходит примерно раз в 30 с.
+                            $ingestAt = $i->last_payout_at;
+                            $ingestSilentMinutes = 2;
+                            $isIngestSilent = $i->is_active
+                                && $ingestAt->lt(now()->subMinutes($ingestSilentMinutes));
+                        @endphp
+                        <span title="Последний POST /api/ingest-payout: {{ $ingestAt->timezone(config('app.timezone'))->toIso8601String() }}">
+                            <span class="{{ $isIngestSilent ? 'text-amber-300 font-medium' : 'text-zinc-300' }}">
+                                {{ $ingestAt->timezone(config('app.timezone'))->format('d.m.Y H:i') }}
+                            </span>
+                            <span class="{{ $isIngestSilent ? 'text-amber-400/90' : 'text-zinc-500' }}">
+                                ({{ $ingestAt->diffForHumans() }})
+                            </span>
+                            @if($isIngestSilent)
+                                <span class="ml-1 inline-flex px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-950/80 text-amber-300 border border-amber-800/80">нет POST</span>
+                            @endif
                         </span>
                     @else
                         <span class="text-zinc-500">—</span>
@@ -154,7 +227,7 @@
                 </td>
             </tr>
             @empty
-            <tr><td colspan="11" class="px-6 py-8 text-center text-zinc-500">Нет инструментов. <a href="{{ route('instruments.create') }}" class="text-blue-400 hover:underline">Добавить</a></td></tr>
+            <tr><td colspan="12" class="px-6 py-8 text-center text-zinc-500">Нет инструментов. <a href="{{ route('instruments.create') }}" class="text-blue-400 hover:underline">Добавить</a></td></tr>
             @endforelse
         </tbody>
     </table>

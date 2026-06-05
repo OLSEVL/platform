@@ -20,6 +20,12 @@ class ProxyEndpoint extends Model
         'last_failed_at',
         'last_success_at',
         'cooldown_until',
+        'last_http_check_at',
+        'last_http_status',
+        'last_http_latency_ms',
+        'last_http_check_result',
+        'last_http_check_mode',
+        'last_auto_test',
     ];
 
     protected function casts(): array
@@ -29,6 +35,10 @@ class ProxyEndpoint extends Model
             'last_failed_at' => 'datetime',
             'last_success_at' => 'datetime',
             'cooldown_until' => 'datetime',
+            'last_http_check_at' => 'datetime',
+            'last_http_status' => 'integer',
+            'last_http_latency_ms' => 'integer',
+            'last_auto_test' => 'array',
         ];
     }
 

@@ -22,6 +22,8 @@ class InstrumentController extends Controller
         );
         $payoutStaleMinutesThreshold = max(1, min(1440, $payoutStaleMinutesThreshold));
 
+        $proxyRotation = app(ProxyRotationService::class);
+
         return view('instruments.index', [
             'instruments' => PocketInstrument::query()
                 ->with('proxyEndpoint')
@@ -29,6 +31,7 @@ class InstrumentController extends Controller
                 ->orderBy('instrument')
                 ->get(),
             'payoutStaleMinutesThreshold' => $payoutStaleMinutesThreshold,
+            'proxyPoolCapacity' => $proxyRotation->getPoolCapacitySummary(),
         ]);
     }
 
@@ -126,7 +129,7 @@ class InstrumentController extends Controller
     {
         $newProxy = $rotationService->rotateInstrumentProxy($instrument, false);
         if (! $newProxy) {
-            return back()->with('error', 'Нет доступного прокси для замены.');
+            return back()->with('error', $rotationService->formatPoolExhaustedMessage());
         }
 
         return back()->with('success', 'Прокси инструмента успешно заменён.');
@@ -136,7 +139,8 @@ class InstrumentController extends Controller
     {
         $newProxy = $rotationService->rotateInstrumentProxy($instrument, true);
         if (! $newProxy) {
-            return back()->with('error', 'Не удалось заменить прокси: в пуле нет свободных рабочих прокси.');
+            return back()->with('error', $rotationService->formatPoolExhaustedMessage()
+                .' Текущий прокси не помечен dead — сначала нужна свободная замена.');
         }
 
         return back()->with('success', 'Текущий прокси помечен нерабочим и заменён.');

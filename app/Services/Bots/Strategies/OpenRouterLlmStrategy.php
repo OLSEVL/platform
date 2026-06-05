@@ -25,8 +25,8 @@ class OpenRouterLlmStrategy implements BotStrategyInterface
         $model = (string) ($cfg['model'] ?? 'openai/gpt-5.2');
         $temperature = (float) ($cfg['temperature'] ?? 0.0);
         $maxTokens = (int) ($cfg['max_tokens'] ?? 350);
+        $timeoutSec = OpenRouterClient::resolveChatTimeoutSec($cfg);
         $systemPrompt = (string) ($cfg['system_prompt'] ?? $this->defaultSystemPrompt());
-        $candlesTake = max(20, min(500, (int) ($cfg['candles_take'] ?? 120)));
         $decisionVersion = (string) ($cfg['decision_version'] ?? ($cfg['version'] ?? 'openrouter_llm_v1'));
         $mtfEnabled = (bool) ($cfg['mtf_enabled'] ?? true);
         $botId = isset($context['bot_id']) ? (int) $context['bot_id'] : null;
@@ -38,14 +38,13 @@ class OpenRouterLlmStrategy implements BotStrategyInterface
         $m15 = is_array($mtf['15'] ?? null) ? array_values($mtf['15']) : [];
         $h1 = is_array($mtf['60'] ?? null) ? array_values($mtf['60']) : [];
 
-        // Передаём в модель только последние N закрытых свечей:
-        // это уменьшает размер запроса и удерживает контекст в "актуальной зоне" рынка.
-        $closedTail = array_slice($closedCandles, -$candlesTake);
+        // В LLM уходит весь M1-ряд, загруженный scan по count (одно поле в настройках).
+        $closedForLlm = array_values($closedCandles);
         $payload = [
             'instrument' => $instrument,
             'timeframe' => 'M1',
             'payout' => $payout,
-            'closed_candles' => $closedTail,
+            'closed_candles' => $closedForLlm,
             'partial_candle' => $partialCandle,
             // MTF-контекст для модели:
             // H1 задаёт старший bias, M15/M5 дают структуру и подтверждение сетапа.
@@ -86,7 +85,8 @@ class OpenRouterLlmStrategy implements BotStrategyInterface
                 $model,
                 $requestMessages,
                 $temperature,
-                $maxTokens
+                $maxTokens,
+                $timeoutSec
             );
         } catch (Throwable $e) {
             $this->persistLlmLog([
@@ -129,7 +129,7 @@ class OpenRouterLlmStrategy implements BotStrategyInterface
             'latency_ms' => (int) round((microtime(true) - $startedAt) * 1000),
         ]);
 
-        $content = $this->extractAssistantContent($response);
+        $content = OpenRouterClient::extractAssistantContent($response);
         if ($content === null || $content === '') {
             return null;
         }
@@ -158,7 +158,7 @@ class OpenRouterLlmStrategy implements BotStrategyInterface
             'features' => array_merge($features, [
                 'provider' => 'openrouter',
                 'model' => $model,
-                'candles_sent' => count($closedTail),
+                'candles_sent' => count($closedForLlm),
                 'temperature' => $temperature,
                 // Дублируем MTF-метрики в features для последующего аудита в истории сигналов/сделок.
                 'mtf_enabled' => $mtfEnabled,
@@ -169,28 +169,6 @@ class OpenRouterLlmStrategy implements BotStrategyInterface
             'decision_version' => $decisionVersion,
             'llm_log_id' => $llmLogId,
         ];
-    }
-
-    /**
-     * Достаём текст ответа ассистента из OpenRouter/OpenAI-совместимого формата.
-     */
-    private function extractAssistantContent(array $response): ?string
-    {
-        $choices = $response['choices'] ?? null;
-        if (! is_array($choices) || $choices === []) {
-            return null;
-        }
-        $first = $choices[0];
-        if (! is_array($first)) {
-            return null;
-        }
-        $message = $first['message'] ?? null;
-        if (! is_array($message)) {
-            return null;
-        }
-        $content = $message['content'] ?? null;
-
-        return is_string($content) ? trim($content) : null;
     }
 
     /**

@@ -63,6 +63,84 @@ class BotDataService
     }
 
     /**
+     * Секундный ряд S5 (timeframe=4005) из БД + живая S5-свеча из Redis (ingest-current-candle).
+     *
+     * @return array{closed:list<array<string,mixed>>,partial:array<string,mixed>|null,series:list<array<string,mixed>>}
+     */
+    public function s5Series(
+        string $instrument,
+        int $count = 240,
+        bool $includePartial = true,
+        int $staleAfterSec = 30,
+    ): array {
+        $rows = $this->candleService->seriesForDashboard(
+            $instrument,
+            CandleService::TF_S5,
+            null,
+            null,
+            $count,
+        );
+
+        $closed = array_map(static fn (array $r) => [
+            'time' => (int) ($r['time'] ?? 0),
+            'open' => (float) ($r['open'] ?? 0),
+            'high' => (float) ($r['high'] ?? 0),
+            'low' => (float) ($r['low'] ?? 0),
+            'close' => (float) ($r['close'] ?? 0),
+            'volume' => (float) ($r['volume'] ?? 0),
+            'is_partial' => false,
+        ], $rows);
+
+        $partial = null;
+        if ($includePartial) {
+            $partialCandidate = $this->currentCandleCache->getPartial($instrument);
+            if ($partialCandidate && $this->currentCandleCache->isFresh($partialCandidate, $staleAfterSec)) {
+                $normalized = $this->normalizePartialBar($partialCandidate);
+                if ($closed === []) {
+                    $partial = $normalized;
+                } else {
+                    $lastClosedTime = (int) end($closed)['time'];
+                    $partialTime = (int) $normalized['time'];
+                    if ($partialTime > $lastClosedTime) {
+                        $partial = $normalized;
+                    } elseif ($partialTime === $lastClosedTime) {
+                        // Текущий S5-бакет уже попал в БД — обновляем OHLC живым partial.
+                        $closed[array_key_last($closed)] = $normalized;
+                    }
+                }
+            }
+        }
+
+        $series = $closed;
+        if ($partial) {
+            $series[] = $partial;
+        }
+
+        return [
+            'closed' => $closed,
+            'partial' => $partial,
+            'series' => $series,
+        ];
+    }
+
+    /**
+     * @param  array<string, mixed>  $partial
+     * @return array{time:int,open:float,high:float,low:float,close:float,volume:float,is_partial:bool}
+     */
+    private function normalizePartialBar(array $partial): array
+    {
+        return [
+            'time' => (int) ($partial['time'] ?? 0),
+            'open' => (float) ($partial['open'] ?? 0),
+            'high' => (float) ($partial['high'] ?? 0),
+            'low' => (float) ($partial['low'] ?? 0),
+            'close' => (float) ($partial['close'] ?? 0),
+            'volume' => (float) ($partial['volume'] ?? 0),
+            'is_partial' => true,
+        ];
+    }
+
+    /**
      * Агрегированные свечи для MTF-стратегий (из M1 в БД). Ключи — минуты таймфрейма.
      *
      * @param  array<int, int>  $tfToMaxBars

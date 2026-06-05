@@ -1,0 +1,24 @@
+[Unit]
+Description=agentmemory — persistent memory server for Cursor/AI agents (REST :3111, viewer :3113)
+Documentation=https://github.com/rohitg00/agentmemory
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=o
+Group=o
+WorkingDirectory=/home/o/platform
+Environment=HOME=/home/o
+Environment=PATH=/home/o/.local/bin:/usr/local/bin:/usr/bin:/bin
+# Запуск через npx: всегда подтягивает актуальный @agentmemory/agentmemory с npm.
+ExecStart=/usr/bin/npx --yes @agentmemory/agentmemory@latest
+Restart=always
+RestartSec=10
+# Даём iii-engine и памяти подняться после холодного старта.
+TimeoutStartSec=120
+StandardOutput=append:/home/o/platform/storage/logs/agentmemory.log
+StandardError=append:/home/o/platform/storage/logs/agentmemory.log
+
+[Install]
+WantedBy=multi-user.target

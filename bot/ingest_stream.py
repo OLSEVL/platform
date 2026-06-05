@@ -260,8 +260,13 @@ async def post_ingest_payout(
     current_payout: Optional[float],
     payout_source: Optional[str],
     is_stale: bool,
+    last_payout_event_at: float,
 ) -> bool:
-    """POST /api/ingest-payout."""
+    """POST /api/ingest-payout.
+
+    last_payout_event_at — monotonic time.time() последнего payout_update/json_data от PO.
+    last_payout_at в payload — время этого POST (heartbeat ingest), не событие брокера.
+    """
     if not PLATFORM_URL:
         return False
     url = f"{PLATFORM_URL}/api/ingest-payout"
@@ -269,9 +274,11 @@ async def post_ingest_payout(
         "Content-Type": "application/json",
         "Accept": "application/json",
     }
+    event_iso = datetime.fromtimestamp(last_payout_event_at, tz=timezone.utc).isoformat()
     payload = {
         "instrument": instrument,
         "current_payout": float(current_payout) if current_payout is not None else None,
+        "last_payout_event_at": event_iso,
         "last_payout_at": datetime.now(timezone.utc).isoformat(),
         "payout_source": payout_source,
         "is_stale": bool(is_stale),
@@ -338,6 +345,44 @@ async def post_ingest_current_candle(
             return True
     except Exception as e:
         print(f"[INGEST] post_ingest_current_candle {instrument}: {e}")
+        return False
+
+
+async def post_ingest_proxy_health(
+    instrument: str,
+    event: str,
+    error: Optional[str] = None,
+    streak: Optional[int] = None,
+) -> bool:
+    """POST /api/ingest-proxy-health — факты WebSocket (connected / ошибки) по инструменту."""
+    if not PLATFORM_URL:
+        return False
+    url = f"{PLATFORM_URL}/api/ingest-proxy-health"
+    headers = {
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    }
+    payload: Dict[str, Any] = {
+        "instrument": instrument,
+        "event": str(event)[:64],
+    }
+    if error:
+        payload["error"] = str(error)[:1000]
+    if streak is not None:
+        payload["streak"] = int(streak)
+    try:
+        session = await _ensure_ingest_http_session()
+        async with session.post(url, headers=headers, json=payload) as resp:
+            if resp.status not in (200, 201, 204):
+                body = await resp.text()
+                print(
+                    f"[INGEST] post_ingest_proxy_health {instrument} HTTP {resp.status} body={body[:300]}",
+                    flush=True,
+                )
+                return False
+            return True
+    except Exception as e:
+        print(f"[INGEST] post_ingest_proxy_health {instrument}: {e}", flush=True)
         return False
 
 
@@ -606,13 +651,33 @@ async def run_instrument_worker(
             if not ok:
                 connect_fail_streak += 1
                 delay = min(300, 5 * (2 ** min(connect_fail_streak - 1, 6)))
+                # Деталь из WebSocket-клиента (регион, последняя ошибка) — иначе только «connect_failed».
+                connect_detail = "connect_failed"
+                try:
+                    ws = getattr(client, "_websocket", None)
+                    info = getattr(ws, "connection_info", None) if ws else None
+                    last_err = getattr(ws, "_last_error", None) if ws else None
+                    if info is not None:
+                        region = getattr(info, "region", None) or getattr(info, "url", None)
+                        if region:
+                            connect_detail = f"connect_failed region={region}"
+                    if last_err:
+                        connect_detail = f"{connect_detail}: {last_err}"
+                except Exception:
+                    pass
+                await post_ingest_proxy_health(
+                    instrument=instrument,
+                    event="connect_failed",
+                    error=connect_detail,
+                    streak=connect_fail_streak,
+                )
                 await post_ingest_proxy_failure(
                     instrument=instrument,
-                    error="connect_failed",
+                    error=connect_detail,
                     streak=connect_fail_streak,
                 )
                 print(
-                    f"[INGEST] {instrument}: connect failed (streak={connect_fail_streak}), "
+                    f"[INGEST] {instrument}: {connect_detail} (streak={connect_fail_streak}), "
                     f"sleep {delay}s",
                     flush=True,
                 )
@@ -624,6 +689,12 @@ async def run_instrument_worker(
             if not client.is_connected:
                 connect_fail_streak += 1
                 delay = min(300, 5 * (2 ** min(connect_fail_streak - 1, 6)))
+                await post_ingest_proxy_health(
+                    instrument=instrument,
+                    event="not_connected_after_wait",
+                    error="not_connected_after_wait",
+                    streak=connect_fail_streak,
+                )
                 await post_ingest_proxy_failure(
                     instrument=instrument,
                     error="not_connected_after_wait",
@@ -636,6 +707,7 @@ async def run_instrument_worker(
                 await asyncio.sleep(delay)
                 continue
             connect_fail_streak = 0
+            await post_ingest_proxy_health(instrument=instrument, event="connected")
 
             proxy_info = f" via proxy" if proxy_url else ""
             print(f"[INGEST] {instrument}: connected{proxy_info}, streaming ticks...", flush=True)
@@ -680,6 +752,11 @@ async def run_instrument_worker(
                         f"[INGEST] {instrument}: connection lost, reconnecting... "
                         f"(keeping {len(current_candles)} in-memory candle bucket(s))",
                         flush=True,
+                    )
+                    await post_ingest_proxy_health(
+                        instrument=instrument,
+                        event="connection_lost",
+                        error="connection_lost",
                     )
                     break
 
@@ -753,6 +830,7 @@ async def run_instrument_worker(
                             current_payout=last_payout_value,
                             payout_source=last_payout_source,
                             is_stale=payout_is_stale,
+                            last_payout_event_at=last_payout_event_at,
                         )
                         if ok:
                             last_payout_post_at = now_mono
@@ -854,6 +932,12 @@ async def run_instrument_worker(
         except Exception as e:
             print(f"[INGEST] {instrument} error: {e}", flush=True)
             connect_fail_streak += 1
+            await post_ingest_proxy_health(
+                instrument=instrument,
+                event="worker_exception",
+                error=f"worker_exception: {e}",
+                streak=connect_fail_streak,
+            )
             await post_ingest_proxy_failure(
                 instrument=instrument,
                 error=f"worker_exception: {e}",

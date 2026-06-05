@@ -13,7 +13,8 @@ class PocketInstrument extends Model
     protected $fillable = [
         'instrument', 'display_name', 'priority',
         'session_token', 'uid', 'is_demo', 'is_active', 'proxy_endpoint_id',
-        'current_payout', 'last_payout_at', 'payout_source',
+        'current_payout', 'last_payout_at', 'last_payout_event_at', 'payout_is_stale', 'payout_source',
+        'last_ws_connected_at', 'last_ws_error', 'last_ws_error_at',
     ];
 
     protected function casts(): array
@@ -23,6 +24,7 @@ class PocketInstrument extends Model
             'is_active' => 'boolean',
             'priority' => 'integer',
             'current_payout' => 'decimal:2',
+            'payout_is_stale' => 'boolean',
         ];
     }
 
@@ -38,6 +40,32 @@ class PocketInstrument extends Model
      * - SET: всегда приводим вход к UTC и сериализуем в "Y-m-d H:i:s", чтобы в БД лежал стабильный UTC.
      */
     protected function lastPayoutAt(): Attribute
+    {
+        return $this->utcTimestampAttribute();
+    }
+
+    /**
+     * Время последнего события payout от Pocket Options (не время POST ingest).
+     */
+    protected function lastPayoutEventAt(): Attribute
+    {
+        return $this->utcTimestampAttribute();
+    }
+
+    protected function lastWsConnectedAt(): Attribute
+    {
+        return $this->utcTimestampAttribute();
+    }
+
+    protected function lastWsErrorAt(): Attribute
+    {
+        return $this->utcTimestampAttribute();
+    }
+
+    /**
+     * Единый UTC cast для payout-таймстампов: в БД храним "Y-m-d H:i:s" как UTC.
+     */
+    private function utcTimestampAttribute(): Attribute
     {
         return Attribute::make(
             get: function (?string $value): ?Carbon {

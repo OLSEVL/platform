@@ -1,0 +1,21 @@
+[Unit]
+Description=Pocket Options HTTP/WebSocket proxy (candles + place-order)
+After=network.target
+
+[Service]
+Type=simple
+User=o
+Group=o
+WorkingDirectory=/home/o/platform/bot
+EnvironmentFile=-/home/o/platform/bot/proxy.env
+Environment=PLATFORM_URL=http://127.0.0.1:8080
+# Старый nohup/root-прокси часто держит :3000 — systemd иначе падает с EADDRINUSE.
+ExecStartPre=-/usr/bin/fuser -k 3000/tcp
+ExecStart=/home/o/platform/bot/.venv/bin/python /home/o/platform/bot/pocket-options-proxy.py
+Restart=always
+RestartSec=5
+StandardOutput=append:/home/o/platform/storage/logs/proxy.log
+StandardError=append:/home/o/platform/storage/logs/proxy.log
+
+[Install]
+WantedBy=multi-user.target
