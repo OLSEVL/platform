@@ -13,6 +13,7 @@ use App\Services\Indicators\LiquiditySwingsIndicatorService;
 use App\Services\Indicators\PriceActionDgtIndicatorService;
 use App\Services\Indicators\SmcFlowIndicatorService;
 use App\Support\M1CandleCountdown;
+use App\Support\PriceScale;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -195,10 +196,10 @@ class DashboardController extends Controller
 
         $data = array_map(fn (array $c) => [
             'time' => $c['time'],
-            'open' => round($c['open'], 5),
-            'high' => round($c['high'], 5),
-            'low' => round($c['low'], 5),
-            'close' => round($c['close'], 5),
+            'open' => (float) $c['open'],
+            'high' => (float) $c['high'],
+            'low' => (float) $c['low'],
+            'close' => (float) $c['close'],
             'volume' => round($c['volume'] ?? 0, 2),
             'is_partial' => false,
         ], $rows);
@@ -257,11 +258,24 @@ class DashboardController extends Controller
             ? M1CandleCountdown::secondsToClose($lastOpen, $serverUnix)
             : null;
 
+        // LBP/USD OTC и другие микро-цены: адаптивная точность вместо фиксированных 5 знаков.
+        $priceDecimals = PriceScale::resolveFromCandles($data);
+        $data = array_map(static fn (array $c) => [
+            'time' => $c['time'],
+            'open' => PriceScale::roundPrice((float) $c['open'], $priceDecimals),
+            'high' => PriceScale::roundPrice((float) $c['high'], $priceDecimals),
+            'low' => PriceScale::roundPrice((float) $c['low'], $priceDecimals),
+            'close' => PriceScale::roundPrice((float) $c['close'], $priceDecimals),
+            'volume' => round((float) ($c['volume'] ?? 0), 2),
+            'is_partial' => (bool) ($c['is_partial'] ?? false),
+        ], $data);
+
         return response()->json([
             'candles' => $data,
             'server_unix' => $serverUnix,
             'feed_debug' => $feedDebug,
             'm1_seconds_to_close' => $m1SecondsToClose,
+            'price_scale' => PriceScale::chartFormat($priceDecimals),
         ]);
     }
 

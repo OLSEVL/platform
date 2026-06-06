@@ -339,24 +339,66 @@ class OpenRouterClient
     }
 
     /**
-     * Стоимость одного chat/completions-запроса (USD) из блока usage ответа OpenRouter.
+     * Разбор стоимости из usage OpenRouter: итого + вход (prompt) + выход (completion).
+     * Поле usage.cost — полная цена вызова (не только prompt).
+     *
+     * @param  array<string,mixed>|null  $usage
+     * @return array{
+     *   total_cost_usd:float|null,
+     *   prompt_cost_usd:float|null,
+     *   completion_cost_usd:float|null
+     * }
+     */
+    public static function parseUsageCosts(?array $usage): array
+    {
+        $empty = [
+            'total_cost_usd' => null,
+            'prompt_cost_usd' => null,
+            'completion_cost_usd' => null,
+        ];
+        if (! is_array($usage)) {
+            return $empty;
+        }
+
+        $total = isset($usage['cost']) && is_numeric($usage['cost'])
+            ? (float) $usage['cost']
+            : null;
+
+        $details = is_array($usage['cost_details'] ?? null) ? $usage['cost_details'] : null;
+        $prompt = null;
+        $completion = null;
+        if ($details !== null) {
+            if (isset($details['upstream_inference_prompt_cost']) && is_numeric($details['upstream_inference_prompt_cost'])) {
+                $prompt = (float) $details['upstream_inference_prompt_cost'];
+            }
+            // В API OpenRouter поле называется completions (с «s»).
+            if (isset($details['upstream_inference_completions_cost']) && is_numeric($details['upstream_inference_completions_cost'])) {
+                $completion = (float) $details['upstream_inference_completions_cost'];
+            }
+            if ($total === null && isset($details['upstream_inference_cost']) && is_numeric($details['upstream_inference_cost'])) {
+                $total = (float) $details['upstream_inference_cost'];
+            }
+        }
+
+        if ($total === null && $prompt !== null && $completion !== null) {
+            $total = $prompt + $completion;
+        }
+
+        return [
+            'total_cost_usd' => $total,
+            'prompt_cost_usd' => $prompt,
+            'completion_cost_usd' => $completion,
+        ];
+    }
+
+    /**
+     * Полная стоимость одного chat/completions-вызова (USD) — alias для total_cost_usd.
      *
      * @param  array<string,mixed>|null  $usage
      */
     public static function parseRequestCostUsd(?array $usage): ?float
     {
-        if (! is_array($usage)) {
-            return null;
-        }
-        if (isset($usage['cost']) && is_numeric($usage['cost'])) {
-            return (float) $usage['cost'];
-        }
-        $details = $usage['cost_details'] ?? null;
-        if (is_array($details) && isset($details['upstream_inference_cost']) && is_numeric($details['upstream_inference_cost'])) {
-            return (float) $details['upstream_inference_cost'];
-        }
-
-        return null;
+        return self::parseUsageCosts($usage)['total_cost_usd'];
     }
 
     /**
@@ -440,10 +482,46 @@ class OpenRouterClient
     }
 
     /**
-     * Человекочитаемая подпись для UI: стоимость запроса и остаток баланса.
+     * Подпись стоимости: вход (prompt) + выход (completion) + итого за анализ.
+     *
+     * @param  array{
+     *   total_cost_usd?:float|null,
+     *   prompt_cost_usd?:float|null,
+     *   completion_cost_usd?:float|null,
+     *   request_cost_usd?:float|null
+     * }  $billing
+     */
+    public static function formatCostUsageLabel(array $billing): string
+    {
+        $total = $billing['total_cost_usd'] ?? $billing['request_cost_usd'] ?? null;
+        $prompt = $billing['prompt_cost_usd'] ?? null;
+        $completion = $billing['completion_cost_usd'] ?? null;
+
+        if ($prompt !== null && $completion !== null) {
+            $parts = [
+                'Вход: '.self::formatUsd($prompt),
+                'Выход: '.self::formatUsd($completion),
+                'Итого: '.self::formatUsd($total ?? ($prompt + $completion)),
+            ];
+
+            return implode(' · ', $parts);
+        }
+
+        if ($total !== null && $total >= 0) {
+            return 'Итого анализа: '.self::formatUsd($total);
+        }
+
+        return '';
+    }
+
+    /**
+     * Человекочитаемая подпись для UI: стоимость анализа, токены и остаток баланса.
      *
      * @param  array{
      *   request_cost_usd?:float|null,
+     *   total_cost_usd?:float|null,
+     *   prompt_cost_usd?:float|null,
+     *   completion_cost_usd?:float|null,
      *   balance_remaining_usd?:float|null,
      *   total_credits_usd?:float|null,
      *   total_usage_usd?:float|null,
@@ -455,9 +533,9 @@ class OpenRouterClient
     public static function formatBillingLabel(array $billing): string
     {
         $parts = [];
-        $requestCost = $billing['request_cost_usd'] ?? null;
-        if ($requestCost !== null && $requestCost >= 0) {
-            $parts[] = 'Запрос: '.self::formatUsd($requestCost);
+        $costLabel = self::formatCostUsageLabel($billing);
+        if ($costLabel !== '') {
+            $parts[] = $costLabel;
         }
         $tokenLabel = self::formatTokenUsageLabel($billing);
         if ($tokenLabel !== '') {

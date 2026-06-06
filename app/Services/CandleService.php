@@ -378,10 +378,10 @@ class CandleService
 
             return [
                 'time' => $bucket,
-                'open' => round((float) ($s5Partial['open'] ?? 0), 5),
-                'high' => round((float) ($s5Partial['high'] ?? 0), 5),
-                'low' => round((float) ($s5Partial['low'] ?? 0), 5),
-                'close' => round((float) ($s5Partial['close'] ?? 0), 5),
+                'open' => (float) ($s5Partial['open'] ?? 0),
+                'high' => (float) ($s5Partial['high'] ?? 0),
+                'low' => (float) ($s5Partial['low'] ?? 0),
+                'close' => (float) ($s5Partial['close'] ?? 0),
                 'volume' => round((float) ($s5Partial['volume'] ?? 0), 2),
                 'is_partial' => true,
             ];
@@ -442,10 +442,10 @@ class CandleService
 
             return [
                 'time' => (int) $bar['time'],
-                'open' => round((float) $bar['open'], 5),
-                'high' => round((float) $bar['high'], 5),
-                'low' => round((float) $bar['low'], 5),
-                'close' => round((float) $bar['close'], 5),
+                'open' => (float) $bar['open'],
+                'high' => (float) $bar['high'],
+                'low' => (float) $bar['low'],
+                'close' => (float) $bar['close'],
                 'volume' => round((float) ($bar['volume'] ?? 0), 2),
                 'is_partial' => true,
             ];

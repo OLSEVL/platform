@@ -960,6 +960,104 @@
         }
     }
 
+    /** Mxwll BoS/CHoCH — горизонтальный пунктир структуры. */
+    function smcIsStructureLine(ln) {
+        if (!ln || typeof ln !== 'object') return false;
+        const kind = String(ln.kind || '');
+        if (kind === 'mxwll_main_leg') return true;
+        const st = String(ln.style || 'Solid').toLowerCase();
+        const p0 = Number(ln.price_start ?? ln.price);
+        const p1 = Number(ln.price_end ?? ln.price);
+        return st === 'dashed' && Math.abs(p0 - p1) < 1e-10;
+    }
+
+    function smcIsStructureLabel(lb) {
+        if (!lb || typeof lb !== 'object') return false;
+        return String(lb.kind || '') === 'mxwll_structure'
+            || /^(I-)?(BoS|CHoCH)$/.test(String(lb.text || ''));
+    }
+
+    function smcAppendOverlayLine(fragment, ts, ln, viewportW) {
+        const x1 = ts.timeToCoordinate(Number(ln.time_start));
+        const x2 = ts.timeToCoordinate(Number(ln.time_end));
+        const priceStart = Number(ln.price_start ?? ln.price);
+        const priceEnd = Number(ln.price_end ?? ln.price);
+        const y1 = candlestickSeries.priceToCoordinate(priceStart);
+        const y2 = candlestickSeries.priceToCoordinate(priceEnd);
+        if (x1 == null || x2 == null || y1 == null || y2 == null) return false;
+        if ([x1, x2, y1, y2].some((v) => Number.isNaN(v))) return false;
+        if (Math.max(x1, x2) < -60 || Math.min(x1, x2) > viewportW + 60) return false;
+        const st = (ln.style || 'Solid').toLowerCase();
+        const col = paCssColor(ln.color);
+        const lw = Math.max(1, Number(ln.width) || 2);
+        const isHoriz = Math.abs(priceStart - priceEnd) < 1e-10;
+        if (isHoriz && (st === 'dotted' || st === 'dashed')) {
+            const left = Math.min(x1, x2);
+            const w = Math.max(1, Math.abs(x2 - x1));
+            const div = document.createElement('div');
+            div.style.position = 'absolute';
+            div.style.left = left + 'px';
+            div.style.top = (y1 - lw / 2) + 'px';
+            div.style.width = w + 'px';
+            div.style.height = '0';
+            div.style.pointerEvents = 'none';
+            div.style.background = 'transparent';
+            div.style.borderTop = (st === 'dotted' ? `${lw}px dotted ` : `${lw}px dashed `) + col;
+            fragment.appendChild(div);
+        } else {
+            appendOverlaySegment(fragment, x1, y1, x2, y2, col, lw);
+        }
+        return true;
+    }
+
+    function smcAppendOverlayLabel(fragment, ts, lb, viewportW) {
+        if (!lb || typeof lb !== 'object') return;
+        const isStructureLabel = smcIsStructureLabel(lb);
+        const x = ts.timeToCoordinate(Number(lb.time));
+        const y = candlestickSeries.priceToCoordinate(Number(lb.price));
+        if (y == null || Number.isNaN(y)) return;
+        const cullPad = isStructureLabel ? 140 : 80;
+        if (x == null || Number.isNaN(x) || x < -cullPad || x > viewportW + cullPad) return;
+        const pos = String(lb.position || '');
+        let transform = 'translate(-50%, calc(-100% - 4px))';
+        if (pos === 'below') {
+            transform = 'translate(-50%, 8px)';
+        } else if (pos === 'center') {
+            transform = 'translate(-50%, -50%)';
+        } else if (pos === 'above') {
+            transform = 'translate(-50%, calc(-100% - 8px))';
+        } else if (pos === 'left') {
+            transform = 'translate(8px, -50%)';
+        }
+        const span = document.createElement('span');
+        span.textContent = String(lb.text || '');
+        span.style.position = 'absolute';
+        span.style.left = x + 'px';
+        span.style.top = y + 'px';
+        span.style.transform = transform;
+        span.style.fontSize = isStructureLabel
+            ? (lastSmcPayload.label_size === 'normal' ? '13px' : (lastSmcPayload.label_size === 'small' ? '12px' : '11px'))
+            : lsLabelFontPx(lastSmcPayload.label_size);
+        span.style.fontWeight = isStructureLabel ? '700' : '600';
+        span.style.lineHeight = '1.1';
+        span.style.color = paCssColor(lb.color || '#ffffff');
+        if (isStructureLabel) {
+            span.style.textShadow = '0 0 4px rgba(0,0,0,0.95), 0 1px 2px rgba(0,0,0,0.9)';
+            span.style.zIndex = '3';
+            span.style.letterSpacing = '0.02em';
+        }
+        const bg = String(lb.background || '');
+        const transparentBg = bg === '' || bg === 'transparent' || bg.toLowerCase() === '#00000000';
+        if (!transparentBg) {
+            span.style.background = paCssColor(bg || '#22c55e');
+            span.style.padding = '2px 5px';
+            span.style.borderRadius = '3px';
+        }
+        span.style.pointerEvents = 'none';
+        span.style.whiteSpace = 'nowrap';
+        fragment.appendChild(span);
+    }
+
     /** Зоны, линии и лейблы SMC Flow (UT Bot) — отдельный DOM-слой поверх DGT. */
     function redrawSmcFlowOverlay() {
         if (!smcFlowOverlay || !chart || !candlestickSeries) return;
@@ -969,6 +1067,13 @@
         try {
             const areas = Array.isArray(lastSmcPayload.areas) ? lastSmcPayload.areas : [];
             const lines = Array.isArray(lastSmcPayload.lines) ? lastSmcPayload.lines : [];
+            const labels = Array.isArray(lastSmcPayload.labels) ? lastSmcPayload.labels : [];
+            const structureLines = [];
+            const otherLines = [];
+            lines.forEach((ln) => {
+                if (smcIsStructureLine(ln)) structureLines.push(ln);
+                else otherLines.push(ln);
+            });
             const fragment = document.createDocumentFragment();
             const viewportW = Math.max(1, chartWrapper?.clientWidth || 0);
             const maxRenderable = Math.max(250, Math.min(900, Math.floor(viewportW * 0.9)));
@@ -996,55 +1101,15 @@
                 fragment.appendChild(div);
                 rendered++;
             });
-            lines.forEach((ln) => {
+            // Пунктиры BoS/CHoCH — в приоритете, иначе их вытесняют сегменты UT/Hull.
+            structureLines.forEach((ln) => {
+                if (smcAppendOverlayLine(fragment, ts, ln, viewportW)) rendered++;
+            });
+            otherLines.forEach((ln) => {
                 if (rendered >= maxRenderable) return;
-                if (!ln || typeof ln !== 'object') return;
-                const x1 = ts.timeToCoordinate(Number(ln.time_start));
-                const x2 = ts.timeToCoordinate(Number(ln.time_end));
-                const priceStart = Number(ln.price_start ?? ln.price);
-                const priceEnd = Number(ln.price_end ?? ln.price);
-                const y1 = candlestickSeries.priceToCoordinate(priceStart);
-                const y2 = candlestickSeries.priceToCoordinate(priceEnd);
-                if (x1 == null || x2 == null || y1 == null || y2 == null) return;
-                if ([x1, x2, y1, y2].some((v) => Number.isNaN(v))) return;
-                if (Math.max(x1, x2) < -60 || Math.min(x1, x2) > viewportW + 60) return;
-                appendOverlaySegment(
-                    fragment,
-                    x1,
-                    y1,
-                    x2,
-                    y2,
-                    paCssColor(ln.color),
-                    Math.max(1, Number(ln.width) || 2)
-                );
-                rendered++;
+                if (smcAppendOverlayLine(fragment, ts, ln, viewportW)) rendered++;
             });
-            const labels = Array.isArray(lastSmcPayload.labels) ? lastSmcPayload.labels : [];
-            labels.forEach((lb) => {
-                if (!lb || typeof lb !== 'object') return;
-                const x = ts.timeToCoordinate(Number(lb.time));
-                const y = candlestickSeries.priceToCoordinate(Number(lb.price));
-                if (x == null || y == null || Number.isNaN(x) || Number.isNaN(y)) return;
-                if (x < -80 || x > viewportW + 80) return;
-                const span = document.createElement('span');
-                span.textContent = String(lb.text || '');
-                span.style.position = 'absolute';
-                span.style.left = x + 'px';
-                span.style.top = y + 'px';
-                span.style.transform = (lb.position === 'below')
-                    ? 'translate(-50%, 6px)'
-                    : 'translate(-50%, calc(-100% - 4px))';
-                span.style.fontSize = lsLabelFontPx(lastSmcPayload.label_size);
-                span.style.fontWeight = '600';
-                span.style.lineHeight = '1';
-                span.style.color = paCssColor(lb.color || '#ffffff');
-                span.style.background = paCssColor(lb.background || '#22c55e');
-                span.style.padding = '2px 5px';
-                span.style.borderRadius = '3px';
-                span.style.pointerEvents = 'none';
-                span.style.whiteSpace = 'nowrap';
-                fragment.appendChild(span);
-            });
+            labels.forEach((lb) => smcAppendOverlayLabel(fragment, ts, lb, viewportW));
             smcFlowOverlay.appendChild(fragment);
         } catch (e) {
             console.error('[SMC Flow] dashboard redraw', e);

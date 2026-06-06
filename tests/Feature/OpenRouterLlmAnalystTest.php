@@ -46,6 +46,10 @@ class OpenRouterLlmAnalystTest extends TestCase
                     'completion_tokens' => 3,
                     'total_tokens' => 10,
                     'cost' => 0.0012,
+                    'cost_details' => [
+                        'upstream_inference_prompt_cost' => 0.0009,
+                        'upstream_inference_completions_cost' => 0.0003,
+                    ],
                 ],
             ], 200),
             'https://openrouter.ai/api/v1/credits' => Http::response([
@@ -78,12 +82,15 @@ class OpenRouterLlmAnalystTest extends TestCase
         $response->assertJsonPath('chart_levels.levels.0.kind', 'support');
         $response->assertJsonPath('user_question', 'Есть ли сетап на отбой?');
         $response->assertJsonPath('billing.request_cost_usd', 0.0012);
+        $response->assertJsonPath('billing.total_cost_usd', 0.0012);
+        $response->assertJsonPath('billing.prompt_cost_usd', 0.0009);
+        $response->assertJsonPath('billing.completion_cost_usd', 0.0003);
         $response->assertJsonPath('billing.balance_remaining_usd', 2.5);
         $response->assertJsonPath('billing.total_tokens', 10);
         $response->assertJsonPath('billing.prompt_tokens', 7);
         $response->assertJsonPath('billing.completion_tokens', 3);
         $response->assertJsonFragment([
-            'billing_label' => 'Запрос: $0.0012 · Токены: 10 ( prompt tokens: 7 + completion tokens: 3 ) · Баланс: $2.5',
+            'billing_label' => 'Вход: $0.0009 · Выход: $0.0003 · Итого: $0.0012 · Токены: 10 ( prompt tokens: 7 + completion tokens: 3 ) · Баланс: $2.5',
         ]);
 
         $this->assertDatabaseHas('bot_llm_logs', [
@@ -115,6 +122,9 @@ class OpenRouterLlmAnalystTest extends TestCase
         $payload = $request['payload'] ?? [];
         $this->assertArrayHasKey('closed_candles_s5', $payload);
         $this->assertArrayHasKey('partial_candle_s5', $payload);
+        $this->assertStringContainsString('--- system ---', (string) ($log->request_text ?? ''));
+        $this->assertStringContainsString('Анализируй график кратко на русском.', (string) ($log->request_text ?? ''));
+        $this->assertStringContainsString('--- user ---', (string) ($log->request_text ?? ''));
     }
 
     public function test_activity_redirects_for_analyst(): void

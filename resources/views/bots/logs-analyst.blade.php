@@ -83,7 +83,7 @@
                             @if($log->request_text)
                                 <details class="mt-1">
                                     <summary class="cursor-pointer text-zinc-500">Запрос</summary>
-                                    <pre class="mt-2 whitespace-pre-wrap break-words text-[11px] leading-relaxed text-zinc-500">{{ Str::limit($log->request_text, 4000) }}</pre>
+                                    <pre class="mt-2 whitespace-pre-wrap break-words text-[11px] leading-relaxed text-zinc-500">{{ \App\Support\OpenRouterLlmLogFormatter::requestTextForDisplay(is_array($log->request_json) ? $log->request_json : null, $log->request_text) }}</pre>
                                 </details>
                             @endif
                         </td>

@@ -36,6 +36,42 @@
     #bot-analysis-panel.bot-analysis-collapsed #bot-analysis-header {
         cursor: pointer;
     }
+    /*
+     * Слои внутри #chart-wrapper (снизу вверх):
+     * 1) canvas LW Charts (свечи),
+     * 2) DOM-оверлеи анализа (уровни LLM, OB/FVG, SMC…),
+     * 3) HTML-кроссхейр — всегда поверх оверлеев, подписи цены/времени не перекрываются.
+     */
+    #chart-wrapper {
+        isolation: isolate;
+    }
+    #chart-wrapper > table {
+        position: relative;
+        z-index: 1;
+    }
+    #chart-wrapper .chart-dom-overlay {
+        z-index: 2;
+    }
+    #bot-crosshair-overlay {
+        z-index: 3;
+    }
+    #bot-crosshair-hline {
+        border-top: 1px solid #94a3b8;
+    }
+    #bot-crosshair-vline {
+        border-left: 1px solid #94a3b8;
+    }
+    .bot-crosshair-axis-label {
+        font-size: 11px;
+        line-height: 1.2;
+        color: #f4f4f5;
+        background: #334155;
+        padding: 2px 6px;
+        border-radius: 2px;
+        text-align: center;
+        white-space: nowrap;
+        pointer-events: none;
+    }
 </style>
 <span class="sr-only pointer-events-none bg-blue-900/40 bg-blue-900/50 bg-stone-800/45 text-stone-200" aria-hidden="true"></span>
 <div class="flex min-h-0 flex-1 w-full gap-0 overflow-hidden">
@@ -281,16 +317,22 @@
             <div id="chart-placeholder" class="absolute inset-0 flex items-center justify-center text-zinc-500 bg-zinc-950/90 z-0">
                 Нажмите на инструмент слева, чтобы показать минутный график
             </div>
-            <div id="chart-wrapper" class="absolute inset-0 hidden z-[1]"></div>
-            {{-- Полосы длительности сделок (entry -> expiry) поверх графика. --}}
-            <div id="trade-duration-overlay" class="absolute inset-0 z-[4] pointer-events-none overflow-hidden hidden"></div>
-            <div id="structure-overlay" class="absolute inset-0 z-[5] pointer-events-none overflow-visible hidden"></div>
-            <div id="liquidity-swings-overlay" class="absolute inset-0 z-[6] pointer-events-none overflow-visible hidden"></div>
-            {{-- Индикатор Price Action DGT: z выше structure-overlay, чтобы боковой VP не перекрывался зонами OB/FVG. --}}
-            <div id="price-action-overlay" class="absolute inset-0 z-[7] pointer-events-none overflow-visible hidden"></div>
-            <div id="smc-flow-overlay" class="absolute inset-0 z-[8] pointer-events-none overflow-visible hidden"></div>
-            {{-- Уровни из chart_levels (LLM-аналитик): горизонтали и зоны поверх свечей. --}}
-            <div id="llm-levels-overlay" class="absolute inset-0 z-[9] pointer-events-none overflow-visible hidden"></div>
+            {{-- Canvas LW Charts и DOM-оверлеи в одном контейнере: оверлеи z-1, table/canvas z-2 (кроссхейр сверху). --}}
+            <div id="chart-wrapper" class="absolute inset-0 hidden z-[1]">
+                <div id="trade-duration-overlay" class="chart-dom-overlay absolute inset-0 pointer-events-none overflow-hidden hidden"></div>
+                <div id="structure-overlay" class="chart-dom-overlay absolute inset-0 pointer-events-none overflow-visible hidden"></div>
+                <div id="liquidity-swings-overlay" class="chart-dom-overlay absolute inset-0 pointer-events-none overflow-visible hidden"></div>
+                <div id="price-action-overlay" class="chart-dom-overlay absolute inset-0 pointer-events-none overflow-visible hidden"></div>
+                <div id="smc-flow-overlay" class="chart-dom-overlay absolute inset-0 pointer-events-none overflow-visible hidden"></div>
+                <div id="llm-levels-overlay" class="chart-dom-overlay absolute inset-0 pointer-events-none overflow-visible hidden"></div>
+                {{-- Кроссхейр поверх всех DOM-оверлеев: линии + подписи цены/времени не перекрываются уровнями LLM. --}}
+                <div id="bot-crosshair-overlay" class="absolute inset-0 pointer-events-none overflow-visible hidden">
+                    <div id="bot-crosshair-hline" class="absolute left-0 hidden h-0 w-0"></div>
+                    <div id="bot-crosshair-vline" class="absolute top-0 hidden h-0 w-0"></div>
+                    <span id="bot-crosshair-price" class="bot-crosshair-axis-label absolute hidden"></span>
+                    <span id="bot-crosshair-time" class="bot-crosshair-axis-label absolute hidden"></span>
+                </div>
+            </div>
             <div id="candle-timer-overlay"
                 class="pointer-events-none absolute z-[6] hidden h-0 w-0 overflow-visible"
                 title="До закрытия текущей свечи выбранного таймфрейма (мм:сс)">
@@ -425,6 +467,22 @@
         m1CloseCountdownAnchorPerfMs = performance.now();
     }
 
+    /** Микро-инструменты (LBP/USD OTC ~0.0000057): precision/minMove с API, иначе свечи схлопываются. */
+    function applyPriceScaleFromPayload(payload) {
+        if (!candlestickSeries || !payload || !payload.price_scale) return;
+        const precision = Number(payload.price_scale.precision);
+        const minMove = Number(payload.price_scale.min_move);
+        if (!Number.isFinite(precision) || !Number.isFinite(minMove) || precision <= 0 || minMove <= 0) return;
+        botChartPricePrecision = precision;
+        try {
+            candlestickSeries.applyOptions({
+                priceFormat: { type: 'price', precision, minMove },
+            });
+        } catch (e) {
+            console.error('[bot chart] price scale', e);
+        }
+    }
+
     function m1CountdownLeftNow() {
         if (m1CloseCountdownAnchorSec === null || m1CloseCountdownAnchorPerfMs === null) return null;
         const elapsed = (performance.now() - m1CloseCountdownAnchorPerfMs) / 1000;
@@ -486,6 +544,11 @@
     const priceActionOverlay = document.getElementById('price-action-overlay');
     const smcFlowOverlay = document.getElementById('smc-flow-overlay');
     const llmLevelsOverlay = document.getElementById('llm-levels-overlay');
+    const botCrosshairOverlay = document.getElementById('bot-crosshair-overlay');
+    const botCrosshairHLine = document.getElementById('bot-crosshair-hline');
+    const botCrosshairVLine = document.getElementById('bot-crosshair-vline');
+    const botCrosshairPrice = document.getElementById('bot-crosshair-price');
+    const botCrosshairTime = document.getElementById('bot-crosshair-time');
     const layerLlmLevels = document.getElementById('layer-llm-levels');
     const candleTimerOverlay = document.getElementById('candle-timer-overlay');
     const candleCloseTimerEl = document.getElementById('candle-close-timer');
@@ -536,6 +599,8 @@
 
     let chart = null;
     let candlestickSeries = null;
+    /** Точность подписи цены кроссхейра (синхронизируется с price_scale API). */
+    let botChartPricePrecision = 5;
     let currentInstrument = null;
     let currentDisplayName = '';
     let currentTimeframeMinutes = 1;
@@ -1029,6 +1094,103 @@
         }
     }
 
+    function smcIsStructureLine(ln) {
+        if (!ln || typeof ln !== 'object') return false;
+        const kind = String(ln.kind || '');
+        if (kind === 'mxwll_main_leg') return true;
+        const st = String(ln.style || 'Solid').toLowerCase();
+        const p0 = Number(ln.price_start ?? ln.price);
+        const p1 = Number(ln.price_end ?? ln.price);
+        return st === 'dashed' && Math.abs(p0 - p1) < 1e-10;
+    }
+
+    function smcIsStructureLabel(lb) {
+        if (!lb || typeof lb !== 'object') return false;
+        return String(lb.kind || '') === 'mxwll_structure'
+            || /^(I-)?(BoS|CHoCH)$/.test(String(lb.text || ''));
+    }
+
+    function smcAppendOverlayLine(fragment, ts, ln, viewportW) {
+        const x1 = ts.timeToCoordinate(Number(ln.time_start));
+        const x2 = ts.timeToCoordinate(Number(ln.time_end));
+        const priceStart = Number(ln.price_start ?? ln.price);
+        const priceEnd = Number(ln.price_end ?? ln.price);
+        const y1 = candlestickSeries.priceToCoordinate(priceStart);
+        const y2 = candlestickSeries.priceToCoordinate(priceEnd);
+        if (x1 == null || x2 == null || y1 == null || y2 == null) return false;
+        if ([x1, x2, y1, y2].some((v) => Number.isNaN(v))) return false;
+        if (Math.max(x1, x2) < -60 || Math.min(x1, x2) > viewportW + 60) return false;
+        const st = (ln.style || 'Solid').toLowerCase();
+        const col = paCssColor(ln.color);
+        const lw = Math.max(1, Number(ln.width) || 2);
+        const isHoriz = Math.abs(priceStart - priceEnd) < 1e-10;
+        if (isHoriz && (st === 'dotted' || st === 'dashed')) {
+            const left = Math.min(x1, x2);
+            const w = Math.max(1, Math.abs(x2 - x1));
+            const div = document.createElement('div');
+            div.style.position = 'absolute';
+            div.style.left = left + 'px';
+            div.style.top = (y1 - lw / 2) + 'px';
+            div.style.width = w + 'px';
+            div.style.height = '0';
+            div.style.pointerEvents = 'none';
+            div.style.background = 'transparent';
+            div.style.borderTop = (st === 'dotted' ? `${lw}px dotted ` : `${lw}px dashed `) + col;
+            fragment.appendChild(div);
+        } else {
+            appendOverlaySegment(fragment, x1, y1, x2, y2, col, lw);
+        }
+        return true;
+    }
+
+    function smcAppendOverlayLabel(fragment, ts, lb, viewportW) {
+        if (!lb || typeof lb !== 'object') return;
+        const isStructureLabel = smcIsStructureLabel(lb);
+        const x = ts.timeToCoordinate(Number(lb.time));
+        const y = candlestickSeries.priceToCoordinate(Number(lb.price));
+        if (y == null || Number.isNaN(y)) return;
+        const cullPad = isStructureLabel ? 140 : 80;
+        if (x == null || Number.isNaN(x) || x < -cullPad || x > viewportW + cullPad) return;
+        const pos = String(lb.position || '');
+        let transform = 'translate(-50%, calc(-100% - 4px))';
+        if (pos === 'below') {
+            transform = 'translate(-50%, 8px)';
+        } else if (pos === 'center') {
+            transform = 'translate(-50%, -50%)';
+        } else if (pos === 'above') {
+            transform = 'translate(-50%, calc(-100% - 8px))';
+        } else if (pos === 'left') {
+            transform = 'translate(8px, -50%)';
+        }
+        const span = document.createElement('span');
+        span.textContent = String(lb.text || '');
+        span.style.position = 'absolute';
+        span.style.left = x + 'px';
+        span.style.top = y + 'px';
+        span.style.transform = transform;
+        span.style.fontSize = isStructureLabel
+            ? (lastSmcPayload.label_size === 'normal' ? '13px' : (lastSmcPayload.label_size === 'small' ? '12px' : '11px'))
+            : lsLabelFontPx(lastSmcPayload.label_size);
+        span.style.fontWeight = isStructureLabel ? '700' : '600';
+        span.style.lineHeight = '1.1';
+        span.style.color = paCssColor(lb.color || '#ffffff');
+        if (isStructureLabel) {
+            span.style.textShadow = '0 0 4px rgba(0,0,0,0.95), 0 1px 2px rgba(0,0,0,0.9)';
+            span.style.zIndex = '3';
+            span.style.letterSpacing = '0.02em';
+        }
+        const bg = String(lb.background || '');
+        const transparentBg = bg === '' || bg === 'transparent' || bg.toLowerCase() === '#00000000';
+        if (!transparentBg) {
+            span.style.background = paCssColor(bg || '#22c55e');
+            span.style.padding = '2px 5px';
+            span.style.borderRadius = '3px';
+        }
+        span.style.pointerEvents = 'none';
+        span.style.whiteSpace = 'nowrap';
+        fragment.appendChild(span);
+    }
+
     function redrawSmcFlowOverlay() {
         if (!smcFlowOverlay || !chart || !candlestickSeries) return;
         smcFlowOverlay.innerHTML = '';
@@ -1037,6 +1199,13 @@
         try {
             const areas = Array.isArray(lastSmcPayload.areas) ? lastSmcPayload.areas : [];
             const lines = Array.isArray(lastSmcPayload.lines) ? lastSmcPayload.lines : [];
+            const labels = Array.isArray(lastSmcPayload.labels) ? lastSmcPayload.labels : [];
+            const structureLines = [];
+            const otherLines = [];
+            lines.forEach((ln) => {
+                if (smcIsStructureLine(ln)) structureLines.push(ln);
+                else otherLines.push(ln);
+            });
             const fragment = document.createDocumentFragment();
             const viewportW = Math.max(1, chartWrapper?.clientWidth || 0);
             const maxRenderable = Math.max(250, Math.min(900, Math.floor(viewportW * 0.9)));
@@ -1065,55 +1234,14 @@
                 fragment.appendChild(div);
                 rendered++;
             });
-            lines.forEach((ln) => {
+            structureLines.forEach((ln) => {
+                if (smcAppendOverlayLine(fragment, ts, ln, viewportW)) rendered++;
+            });
+            otherLines.forEach((ln) => {
                 if (rendered >= maxRenderable) return;
-                if (!ln || typeof ln !== 'object') return;
-                const x1 = ts.timeToCoordinate(Number(ln.time_start));
-                const x2 = ts.timeToCoordinate(Number(ln.time_end));
-                const priceStart = Number(ln.price_start ?? ln.price);
-                const priceEnd = Number(ln.price_end ?? ln.price);
-                const y1 = candlestickSeries.priceToCoordinate(priceStart);
-                const y2 = candlestickSeries.priceToCoordinate(priceEnd);
-                if (x1 == null || x2 == null || y1 == null || y2 == null) return;
-                if ([x1, x2, y1, y2].some((v) => Number.isNaN(v))) return;
-                if (Math.max(x1, x2) < -60 || Math.min(x1, x2) > viewportW + 60) return;
-                appendOverlaySegment(
-                    fragment,
-                    x1,
-                    y1,
-                    x2,
-                    y2,
-                    paCssColor(ln.color),
-                    Math.max(1, Number(ln.width) || 2)
-                );
-                rendered++;
+                if (smcAppendOverlayLine(fragment, ts, ln, viewportW)) rendered++;
             });
-            const labels = Array.isArray(lastSmcPayload.labels) ? lastSmcPayload.labels : [];
-            labels.forEach((lb) => {
-                if (!lb || typeof lb !== 'object') return;
-                const x = ts.timeToCoordinate(Number(lb.time));
-                const y = candlestickSeries.priceToCoordinate(Number(lb.price));
-                if (x == null || y == null || Number.isNaN(x) || Number.isNaN(y)) return;
-                if (x < -80 || x > viewportW + 80) return;
-                const span = document.createElement('span');
-                span.textContent = String(lb.text || '');
-                span.style.position = 'absolute';
-                span.style.left = x + 'px';
-                span.style.top = y + 'px';
-                span.style.transform = (lb.position === 'below')
-                    ? 'translate(-50%, 6px)'
-                    : 'translate(-50%, calc(-100% - 4px))';
-                span.style.fontSize = lsLabelFontPx(lastSmcPayload.label_size);
-                span.style.fontWeight = '600';
-                span.style.lineHeight = '1';
-                span.style.color = paCssColor(lb.color || '#ffffff');
-                span.style.background = paCssColor(lb.background || '#22c55e');
-                span.style.padding = '2px 5px';
-                span.style.borderRadius = '3px';
-                span.style.pointerEvents = 'none';
-                span.style.whiteSpace = 'nowrap';
-                fragment.appendChild(span);
-            });
+            labels.forEach((lb) => smcAppendOverlayLabel(fragment, ts, lb, viewportW));
             smcFlowOverlay.appendChild(fragment);
         } catch (e) {
             console.error('[SMC Flow] bot redraw', e);
@@ -2833,6 +2961,7 @@
             .then((r) => r.json())
             .then((payload) => {
                 applyM1CountdownFromPayload(payload);
+                applyPriceScaleFromPayload(payload);
                 if (currentTimeframeMinutes !== 1) {
                     applyGenericCountdownFromPayload(payload, currentTimeframeMinutes);
                 } else {
@@ -3001,6 +3130,131 @@
         };
     }
 
+    /** Границы области свечей (без ценовой шкалы справа и шкалы времени снизу). */
+    function computeChartPlotBounds() {
+        const cw = chartWrapper ? chartWrapper.clientWidth : 0;
+        const ch = chartWrapper ? chartWrapper.clientHeight : 0;
+        let scaleW = 78;
+        try {
+            if (candlestickSeries && typeof candlestickSeries.priceScale === 'function') {
+                const w = Number(candlestickSeries.priceScale().width());
+                if (Number.isFinite(w) && w > 0) scaleW = w;
+            }
+        } catch (_) {}
+        let timeH = 28;
+        try {
+            if (chart && typeof chart.timeScale === 'function') {
+                const h = Number(chart.timeScale().height());
+                if (Number.isFinite(h) && h > 0) timeH = h;
+            }
+        } catch (_) {}
+        return {
+            plotW: Math.max(1, cw - scaleW),
+            plotH: Math.max(1, ch - timeH),
+            scaleW,
+            timeH,
+            cw,
+            ch,
+        };
+    }
+
+    function hideBotCrosshairOverlay() {
+        [botCrosshairHLine, botCrosshairVLine, botCrosshairPrice, botCrosshairTime].forEach((el) => {
+            if (el) el.classList.add('hidden');
+        });
+    }
+
+    function formatBotCrosshairPrice(price) {
+        if (!Number.isFinite(Number(price))) return '';
+        return Number(price).toFixed(botChartPricePrecision);
+    }
+
+    function formatBotCrosshairTime(time) {
+        if (time == null) return '';
+        const sec = typeof time === 'number' ? time : Number(time);
+        if (!Number.isFinite(sec)) return '';
+        const d = new Date(sec * 1000);
+        const p = (n) => String(n).padStart(2, '0');
+        return `${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+    }
+
+    /** Рисуем кроссхейр в HTML-слое z-3: поверх уровней LLM и других DOM-оверлеев. */
+    function setupBotCrosshairOverlay() {
+        if (!botCrosshairOverlay || !chart) return;
+        if (!TV_CROSSHAIR_ENABLED) {
+            botCrosshairOverlay.classList.add('hidden');
+            hideBotCrosshairOverlay();
+            return;
+        }
+        botCrosshairOverlay.classList.remove('hidden');
+        chart.subscribeCrosshairMove((param) => {
+            if (!TV_CROSSHAIR_ENABLED || !param || !param.point || !candlestickSeries) {
+                hideBotCrosshairOverlay();
+                return;
+            }
+            const x = Number(param.point.x);
+            const y = Number(param.point.y);
+            if (!Number.isFinite(x) || !Number.isFinite(y) || x < 0 || y < 0) {
+                hideBotCrosshairOverlay();
+                return;
+            }
+            const b = computeChartPlotBounds();
+            if (x > b.plotW || y > b.plotH) {
+                hideBotCrosshairOverlay();
+                return;
+            }
+
+            if (botCrosshairHLine) {
+                botCrosshairHLine.classList.remove('hidden');
+                botCrosshairHLine.style.left = '0';
+                botCrosshairHLine.style.top = y + 'px';
+                botCrosshairHLine.style.width = b.plotW + 'px';
+            }
+            if (botCrosshairVLine) {
+                botCrosshairVLine.classList.remove('hidden');
+                botCrosshairVLine.style.top = '0';
+                botCrosshairVLine.style.left = x + 'px';
+                botCrosshairVLine.style.height = b.plotH + 'px';
+            }
+
+            let price = null;
+            try {
+                price = candlestickSeries.coordinateToPrice(y);
+            } catch (_) {}
+            if (botCrosshairPrice) {
+                botCrosshairPrice.classList.remove('hidden');
+                botCrosshairPrice.textContent = formatBotCrosshairPrice(price);
+                botCrosshairPrice.style.right = '0';
+                botCrosshairPrice.style.width = b.scaleW + 'px';
+                botCrosshairPrice.style.top = Math.max(0, Math.min(b.ch - 18, y - 9)) + 'px';
+            }
+
+            if (botCrosshairTime) {
+                botCrosshairTime.classList.remove('hidden');
+                botCrosshairTime.textContent = formatBotCrosshairTime(param.time);
+                const labelW = 72;
+                botCrosshairTime.style.top = b.plotH + 'px';
+                botCrosshairTime.style.left = Math.max(0, Math.min(b.plotW - labelW, x - labelW / 2)) + 'px';
+            }
+        });
+    }
+
+    /** Canvas (z-1) → оверлеи анализа (z-2) → HTML-кроссхейр (z-3). */
+    function ensureChartLayerStack() {
+        if (!chartWrapper) return;
+        const lwTable = chartWrapper.querySelector(':scope > table');
+        if (lwTable) {
+            lwTable.style.position = 'relative';
+            lwTable.style.zIndex = '1';
+        }
+        chartWrapper.querySelectorAll('.chart-dom-overlay').forEach((el) => {
+            el.style.zIndex = '2';
+        });
+        if (botCrosshairOverlay) {
+            botCrosshairOverlay.style.zIndex = '3';
+        }
+    }
+
     function createChart() {
         entryPriceLineHandles = [];
         if (chart) chart.remove();
@@ -3016,22 +3270,15 @@
         // - false: упрощенный режим (прилипание к барам, скрытые линии и их подписи).
         const crosshairOptions = TV_CROSSHAIR_ENABLED
             ? {
+                // Режим Normal оставляем для логики курсора; линии/подписи рисуем в #bot-crosshair-overlay (z-3).
                 mode: LightweightCharts.CrosshairMode.Normal,
                 vertLine: {
-                    visible: true,
-                    width: 1,
-                    color: '#94a3b8',
-                    style: LightweightCharts.LineStyle.Solid,
-                    labelVisible: true,
-                    labelBackgroundColor: '#334155',
+                    visible: false,
+                    labelVisible: false,
                 },
                 horzLine: {
-                    visible: true,
-                    width: 1,
-                    color: '#94a3b8',
-                    style: LightweightCharts.LineStyle.Solid,
-                    labelVisible: true,
-                    labelBackgroundColor: '#334155',
+                    visible: false,
+                    labelVisible: false,
                 },
             }
             : {
@@ -3089,6 +3336,8 @@
         } catch (e) {
             console.error('[bot chart] attachPrimitive(dom overlay sync)', e);
         }
+        ensureChartLayerStack();
+        setupBotCrosshairOverlay();
         chart.subscribeClick((param) => {
             if (!param || param.time == null) return;
             const clickedBucketTs = toBucketTime(toUnixSec(param.time));
@@ -3320,6 +3569,7 @@
     new ResizeObserver(() => {
         if (chart && chartWrapper.clientWidth) {
             chart.resize(chartWrapper.clientWidth, chartWrapper.clientHeight);
+            ensureChartLayerStack();
             redrawStructureOverlay();
             redrawPriceActionOverlay();
             redrawLlmLevelsOverlay();

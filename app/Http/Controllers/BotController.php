@@ -693,6 +693,7 @@ class BotController extends Controller
                     'model',
                     'status',
                     'latency_ms',
+                    'request_json',
                     'request_text',
                     'response_text',
                     'error_message',

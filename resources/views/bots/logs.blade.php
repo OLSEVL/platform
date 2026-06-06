@@ -123,7 +123,7 @@
                                     <div class="mt-2 space-y-2">
                                         <div>
                                             <div class="text-zinc-500 mb-1">Request</div>
-                                            <pre class="whitespace-pre-wrap break-words text-[11px] leading-relaxed">{{ $latestLog->request_text ?? '—' }}</pre>
+                                            <pre class="whitespace-pre-wrap break-words text-[11px] leading-relaxed">{{ \App\Support\OpenRouterLlmLogFormatter::requestTextForDisplay(is_array($latestLog->request_json) ? $latestLog->request_json : null, $latestLog->request_text) ?: '—' }}</pre>
                                         </div>
                                         <div>
                                             <div class="text-zinc-500 mb-1">Response</div>

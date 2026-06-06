@@ -482,6 +482,9 @@ class BotEngineService
      * @param  array<string,mixed>|null  $decision
      * @return array{
      *   request_cost_usd:float|null,
+     *   total_cost_usd:float|null,
+     *   prompt_cost_usd:float|null,
+     *   completion_cost_usd:float|null,
      *   balance_remaining_usd:float|null,
      *   total_credits_usd:float|null,
      *   total_usage_usd:float|null,
@@ -494,6 +497,9 @@ class BotEngineService
     {
         $billing = [
             'request_cost_usd' => null,
+            'total_cost_usd' => null,
+            'prompt_cost_usd' => null,
+            'completion_cost_usd' => null,
             'balance_remaining_usd' => null,
             'total_credits_usd' => null,
             'total_usage_usd' => null,
@@ -503,18 +509,20 @@ class BotEngineService
         ];
 
         if (is_array($decision)) {
-            if (isset($decision['request_cost_usd']) && is_numeric($decision['request_cost_usd'])) {
-                $billing['request_cost_usd'] = (float) $decision['request_cost_usd'];
-            }
             if (is_array($decision['usage'] ?? null)) {
                 $usage = $decision['usage'];
-                if ($billing['request_cost_usd'] === null) {
-                    $billing['request_cost_usd'] = OpenRouterClient::parseRequestCostUsd($usage);
-                }
+                $costs = OpenRouterClient::parseUsageCosts($usage);
+                $billing['total_cost_usd'] = $costs['total_cost_usd'];
+                $billing['prompt_cost_usd'] = $costs['prompt_cost_usd'];
+                $billing['completion_cost_usd'] = $costs['completion_cost_usd'];
+                $billing['request_cost_usd'] = $costs['total_cost_usd'];
                 $tokens = OpenRouterClient::parseRequestTokens($usage);
                 $billing['prompt_tokens'] = $tokens['prompt_tokens'];
                 $billing['completion_tokens'] = $tokens['completion_tokens'];
                 $billing['total_tokens'] = $tokens['total_tokens'];
+            } elseif (isset($decision['request_cost_usd']) && is_numeric($decision['request_cost_usd'])) {
+                $billing['request_cost_usd'] = (float) $decision['request_cost_usd'];
+                $billing['total_cost_usd'] = (float) $decision['request_cost_usd'];
             }
         }
 
