@@ -64,26 +64,27 @@ class SmcFlowSettingsForm
       'lux_fvg_threshold_pct' => ['required', 'numeric', 'min:0', 'max:100'],
       'lux_fvg_show_last' => ['required', 'integer', 'min:0', 'max:50'],
       'lux_fvg_extend_bars' => ['required', 'integer', 'min:0', 'max:200'],
-      'color_lux_fvg_bull' => ['required', 'string', 'max:32'],
-      'color_lux_fvg_bull_alpha' => ['required', 'integer', 'min:0', 'max:100'],
-      'color_lux_fvg_bear' => ['required', 'string', 'max:32'],
-      'color_lux_fvg_bear_alpha' => ['required', 'integer', 'min:0', 'max:100'],
+      // Цвета Lux FVG/OB в UI пока не выводим — берём из defaultParams(), если не переданы.
+      'color_lux_fvg_bull' => ['nullable', 'string', 'max:32'],
+      'color_lux_fvg_bull_alpha' => ['nullable', 'integer', 'min:0', 'max:100'],
+      'color_lux_fvg_bear' => ['nullable', 'string', 'max:32'],
+      'color_lux_fvg_bear_alpha' => ['nullable', 'integer', 'min:0', 'max:100'],
       'lux_ob_length' => ['required', 'integer', 'min:1', 'max:50'],
       'lux_ob_bull_count' => ['required', 'integer', 'min:1', 'max:20'],
       'lux_ob_bear_count' => ['required', 'integer', 'min:1', 'max:20'],
       'lux_ob_mitigation' => ['required', Rule::in(['Wick', 'Close'])],
       'lux_ob_avg_line_style' => ['required', Rule::in(['solid', 'dashed', 'dotted'])],
       'lux_ob_avg_line_width' => ['required', 'integer', 'min:1', 'max:6'],
-      'color_lux_ob_bull_bg' => ['required', 'string', 'max:32'],
-      'color_lux_ob_bull_bg_alpha' => ['required', 'integer', 'min:0', 'max:100'],
-      'color_lux_ob_bull_border' => ['required', 'string', 'max:32'],
-      'color_lux_ob_bull_avg' => ['required', 'string', 'max:32'],
-      'color_lux_ob_bull_avg_alpha' => ['required', 'integer', 'min:0', 'max:100'],
-      'color_lux_ob_bear_bg' => ['required', 'string', 'max:32'],
-      'color_lux_ob_bear_bg_alpha' => ['required', 'integer', 'min:0', 'max:100'],
-      'color_lux_ob_bear_border' => ['required', 'string', 'max:32'],
-      'color_lux_ob_bear_avg' => ['required', 'string', 'max:32'],
-      'color_lux_ob_bear_avg_alpha' => ['required', 'integer', 'min:0', 'max:100'],
+      'color_lux_ob_bull_bg' => ['nullable', 'string', 'max:32'],
+      'color_lux_ob_bull_bg_alpha' => ['nullable', 'integer', 'min:0', 'max:100'],
+      'color_lux_ob_bull_border' => ['nullable', 'string', 'max:32'],
+      'color_lux_ob_bull_avg' => ['nullable', 'string', 'max:32'],
+      'color_lux_ob_bull_avg_alpha' => ['nullable', 'integer', 'min:0', 'max:100'],
+      'color_lux_ob_bear_bg' => ['nullable', 'string', 'max:32'],
+      'color_lux_ob_bear_bg_alpha' => ['nullable', 'integer', 'min:0', 'max:100'],
+      'color_lux_ob_bear_border' => ['nullable', 'string', 'max:32'],
+      'color_lux_ob_bear_avg' => ['nullable', 'string', 'max:32'],
+      'color_lux_ob_bear_avg_alpha' => ['nullable', 'integer', 'min:0', 'max:100'],
       'label_size' => ['required', Rule::in(['tiny', 'small', 'normal'])],
     ]);
 
@@ -166,10 +167,10 @@ class SmcFlowSettingsForm
       'lux_fvg_mitigation_levels' => $request->boolean('lux_fvg_mitigation_levels'),
       'lux_fvg_extend_bars' => (int) $validated['lux_fvg_extend_bars'],
       'lux_fvg_dynamic' => $request->boolean('lux_fvg_dynamic'),
-      'color_lux_fvg_bull' => trim((string) $validated['color_lux_fvg_bull']),
-      'color_lux_fvg_bull_alpha' => (int) $validated['color_lux_fvg_bull_alpha'],
-      'color_lux_fvg_bear' => trim((string) $validated['color_lux_fvg_bear']),
-      'color_lux_fvg_bear_alpha' => (int) $validated['color_lux_fvg_bear_alpha'],
+      'color_lux_fvg_bull' => self::colorOrDefault($request, 'color_lux_fvg_bull', $defaults, '#089981'),
+      'color_lux_fvg_bull_alpha' => self::intOrDefault($request, 'color_lux_fvg_bull_alpha', $defaults, 70),
+      'color_lux_fvg_bear' => self::colorOrDefault($request, 'color_lux_fvg_bear', $defaults, '#f23645'),
+      'color_lux_fvg_bear_alpha' => self::intOrDefault($request, 'color_lux_fvg_bear_alpha', $defaults, 70),
       'lux_ob_enabled' => $request->boolean('lux_ob_enabled'),
       'lux_ob_length' => (int) $validated['lux_ob_length'],
       'lux_ob_bull_count' => (int) $validated['lux_ob_bull_count'],
@@ -177,17 +178,49 @@ class SmcFlowSettingsForm
       'lux_ob_mitigation' => (string) $validated['lux_ob_mitigation'],
       'lux_ob_avg_line_style' => (string) $validated['lux_ob_avg_line_style'],
       'lux_ob_avg_line_width' => (int) $validated['lux_ob_avg_line_width'],
-      'color_lux_ob_bull_bg' => trim((string) $validated['color_lux_ob_bull_bg']),
-      'color_lux_ob_bull_bg_alpha' => (int) $validated['color_lux_ob_bull_bg_alpha'],
-      'color_lux_ob_bull_border' => trim((string) $validated['color_lux_ob_bull_border']),
-      'color_lux_ob_bull_avg' => trim((string) $validated['color_lux_ob_bull_avg']),
-      'color_lux_ob_bull_avg_alpha' => (int) $validated['color_lux_ob_bull_avg_alpha'],
-      'color_lux_ob_bear_bg' => trim((string) $validated['color_lux_ob_bear_bg']),
-      'color_lux_ob_bear_bg_alpha' => (int) $validated['color_lux_ob_bear_bg_alpha'],
-      'color_lux_ob_bear_border' => trim((string) $validated['color_lux_ob_bear_border']),
-      'color_lux_ob_bear_avg' => trim((string) $validated['color_lux_ob_bear_avg']),
-      'color_lux_ob_bear_avg_alpha' => (int) $validated['color_lux_ob_bear_avg_alpha'],
+      'color_lux_ob_bull_bg' => self::colorOrDefault($request, 'color_lux_ob_bull_bg', $defaults, '#089981'),
+      'color_lux_ob_bull_bg_alpha' => self::intOrDefault($request, 'color_lux_ob_bull_bg_alpha', $defaults, 80),
+      'color_lux_ob_bull_border' => self::colorOrDefault($request, 'color_lux_ob_bull_border', $defaults, '#089981'),
+      'color_lux_ob_bull_avg' => self::colorOrDefault($request, 'color_lux_ob_bull_avg', $defaults, '#9598a1'),
+      'color_lux_ob_bull_avg_alpha' => self::intOrDefault($request, 'color_lux_ob_bull_avg_alpha', $defaults, 37),
+      'color_lux_ob_bear_bg' => self::colorOrDefault($request, 'color_lux_ob_bear_bg', $defaults, '#f23645'),
+      'color_lux_ob_bear_bg_alpha' => self::intOrDefault($request, 'color_lux_ob_bear_bg_alpha', $defaults, 80),
+      'color_lux_ob_bear_border' => self::colorOrDefault($request, 'color_lux_ob_bear_border', $defaults, '#f23645'),
+      'color_lux_ob_bear_avg' => self::colorOrDefault($request, 'color_lux_ob_bear_avg', $defaults, '#9598a1'),
+      'color_lux_ob_bear_avg_alpha' => self::intOrDefault($request, 'color_lux_ob_bear_avg_alpha', $defaults, 37),
       'label_size' => (string) $validated['label_size'],
     ]);
+  }
+
+  /**
+   * Поле цвета из запроса или из сохранённых настроек / дефолта сервиса.
+   *
+   * @param  array<string, mixed>  $defaults
+   */
+  private static function colorOrDefault(Request $request, string $key, array $defaults, string $fallback): string
+  {
+    $raw = $request->input($key);
+    if (is_string($raw) && trim($raw) !== '') {
+      return trim($raw);
+    }
+
+    $fromDefaults = $defaults[$key] ?? $fallback;
+
+    return is_string($fromDefaults) && trim($fromDefaults) !== '' ? trim($fromDefaults) : $fallback;
+  }
+
+  /**
+   * @param  array<string, mixed>  $defaults
+   */
+  private static function intOrDefault(Request $request, string $key, array $defaults, int $fallback): int
+  {
+    $raw = $request->input($key);
+    if ($raw !== null && $raw !== '' && is_numeric($raw)) {
+      return (int) $raw;
+    }
+
+    $fromDefaults = $defaults[$key] ?? $fallback;
+
+    return is_numeric($fromDefaults) ? (int) $fromDefaults : $fallback;
   }
 }

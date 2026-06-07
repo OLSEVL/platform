@@ -47,6 +47,8 @@ class OpenRouterLlmAnalystStrategy implements BotStrategyInterface
         /** @var list<array<string,mixed>> $closedS5 */
         $closedS5 = is_array($context['s5_closed'] ?? null) ? array_values($context['s5_closed']) : [];
         $partialS5 = is_array($context['s5_partial'] ?? null) ? $context['s5_partial'] : null;
+        /** @var array<string,mixed> $smcFlowSummary */
+        $smcFlowSummary = is_array($context['smc_flow_summary'] ?? null) ? $context['smc_flow_summary'] : [];
 
         $payload = [
             'instrument' => $instrument,
@@ -56,6 +58,8 @@ class OpenRouterLlmAnalystStrategy implements BotStrategyInterface
             'partial_candle_m1' => $partialCandle,
             'closed_candles_s5' => $closedS5,
             'partial_candle_s5' => $partialS5,
+            'smc_flow_summary' => $smcFlowSummary,
+            'expiry_focus_min' => [3, 6],
             'mtf' => [
                 'enabled' => $mtfEnabled,
                 'm1_closed' => $m1,
@@ -170,6 +174,7 @@ class OpenRouterLlmAnalystStrategy implements BotStrategyInterface
                 'model' => $model,
                 'candles_sent' => count($closedForLlm),
                 's5_bars_sent' => count($closedS5) + ($partialS5 ? 1 : 0),
+                'smc_flow_modules' => $smcFlowSummary['modules'] ?? [],
                 'mtf_enabled' => $mtfEnabled,
                 'm1_bars_sent' => count($m1),
                 'm5_bars_sent' => count($m5),

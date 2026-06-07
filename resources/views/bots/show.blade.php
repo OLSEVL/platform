@@ -617,6 +617,8 @@
     let signalsRefreshInterval = null;
     let botStatsRefreshInterval = null;
     let botAnalysisLoading = false;
+    /** Интервал секундного таймера на кнопке «Сделать анализ» / «Анализ». */
+    let botAnalysisTimerId = null;
     // Последний ручной анализ по кнопке "Анализ" для выбранной пары; используем в правой панели при отсутствии сделки.
     let latestManualAnalysis = null;
     let lastZones = [];
@@ -928,6 +930,18 @@
         }
         if (llmLevelsOverlay) llmLevelsOverlay.classList.remove('hidden');
         redrawLlmLevelsOverlay();
+    }
+
+    /** После ручного анализа подставляем SMC Flow с сервера (тот же расчёт, что ушёл в LLM). */
+    function applySmcFlowFromAnalysis(data) {
+        if (!BOT_IS_CHART_ANALYST) return;
+        if (data && data.smc_flow && typeof data.smc_flow === 'object') {
+            lastSmcPayload = data.smc_flow;
+            if (layerSmc) layerSmc.checked = true;
+            saveLayerPrefs();
+            if (smcFlowOverlay) smcFlowOverlay.classList.remove('hidden');
+            redrawSmcFlowOverlay();
+        }
     }
 
     /** Нормализация цвета индикатора (#RRGGBBAA) для CSS. */
@@ -2154,6 +2168,7 @@
         botAnalysisText.textContent = data && data.analysis_text ? String(data.analysis_text) : '';
         if (botAnalysisBody) botAnalysisBody.scrollTop = 0;
         applyLlmChartLevelsFromAnalysis(data);
+        applySmcFlowFromAnalysis(data);
         updateSidebarActiveTradePanel();
     }
     function renderBotAnalysis(data) {
@@ -2187,6 +2202,28 @@
         if (botAnalysisBody) botAnalysisBody.scrollTop = 0;
         updateSidebarActiveTradePanel();
     }
+    /** Показывает на кнопке анализа, сколько секунд идёт запрос: «Анализ (3)». */
+    function startBotAnalysisButtonTimer() {
+        stopBotAnalysisButtonTimer();
+        let seconds = 1;
+        if (botAnalysisBtn) {
+            botAnalysisBtn.textContent = `Анализ (${seconds})`;
+        }
+        botAnalysisTimerId = setInterval(() => {
+            seconds += 1;
+            if (botAnalysisBtn) {
+                botAnalysisBtn.textContent = `Анализ (${seconds})`;
+            }
+        }, 1000);
+    }
+
+    function stopBotAnalysisButtonTimer() {
+        if (botAnalysisTimerId !== null) {
+            clearInterval(botAnalysisTimerId);
+            botAnalysisTimerId = null;
+        }
+    }
+
     async function fetchBotAnalysis() {
         if (botAnalysisLoading) return;
         if (!currentInstrument) {
@@ -2214,8 +2251,8 @@
         const prevLabel = botAnalysisBtn ? botAnalysisBtn.textContent : '';
         if (botAnalysisBtn) {
             botAnalysisBtn.disabled = true;
-            botAnalysisBtn.textContent = BOT_IS_CHART_ANALYST ? 'Анализ…' : 'Анализ…';
         }
+        startBotAnalysisButtonTimer();
         try {
             const params = new URLSearchParams({ instrument: currentInstrument });
             if (BOT_IS_CHART_ANALYST) {
@@ -2247,6 +2284,7 @@
             });
         } finally {
             botAnalysisLoading = false;
+            stopBotAnalysisButtonTimer();
             if (botAnalysisBtn) {
                 botAnalysisBtn.disabled = false;
                 botAnalysisBtn.textContent = prevLabel || (BOT_IS_CHART_ANALYST ? 'Сделать анализ' : 'Анализ');

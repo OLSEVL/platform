@@ -6,10 +6,14 @@ use App\Models\Bot;
 use App\Models\BotAnalysisRun;
 use App\Models\BotLlmLog;
 use App\Models\BotSignal;
+use App\Models\IndicatorSetting;
 use App\Services\Mirror\MirrorTradeDispatcher;
 use App\Models\BotTrade;
 use App\Models\PocketInstrument;
+use App\Services\CandleService;
+use App\Services\Indicators\SmcFlowIndicatorService;
 use App\Support\BotScanProgress;
+use App\Support\SmcFlowLlmSnapshot;
 use App\Services\Bots\Strategies\AkimTrade1MStrategy;
 use App\Services\Bots\Strategies\BotStrategyInterface;
 use App\Services\Bots\Strategies\CandleReversalMtfConfirmStrategy;
@@ -422,6 +426,7 @@ class BotEngineService
         // S5 — сырой секундный поток ingest (4005), для тайминга внутри текущей M1.
         $s5Series = $this->botDataService->s5Series($instrument, $s5Count, true, 31536000);
         $mtf = $this->openRouterMtfSeries($instrument, $config, true);
+        $smcFlowPack = $this->buildAnalystSmcFlowPack($bot, $instrument, $count);
 
         $decision = $strategy->analyze($closed, $partial, [
             'bot_id' => $bot->id,
@@ -431,6 +436,7 @@ class BotEngineService
             'mtf' => $mtf,
             's5_closed' => $s5Series['closed'],
             's5_partial' => $s5Series['partial'],
+            'smc_flow_summary' => $smcFlowPack['snapshot'],
             'user_question' => mb_substr(trim($userQuestion), 0, 2000),
         ]);
 
@@ -473,6 +479,49 @@ class BotEngineService
             'error' => null,
             'billing' => $billing,
             'billing_label' => OpenRouterClient::formatBillingLabel($billing),
+            'smc_flow' => $smcFlowPack['overlay'],
+            'smc_flow_modules' => $smcFlowPack['overlay']['modules'] ?? [],
+        ];
+    }
+
+    /**
+     * SMC Flow на M1 для аналитика: полный overlay для графика + компактный snapshot для LLM.
+     * Параметры — из indicator_settings бота (как на графике).
+     *
+     * @return array{snapshot:array<string,mixed>,overlay:array<string,mixed>,bar_count:int}
+     */
+    private function buildAnalystSmcFlowPack(Bot $bot, string $instrument, int $m1BarCount): array
+    {
+        $emptyOverlay = [
+            'lines' => [],
+            'areas' => [],
+            'labels' => [],
+            'modules' => [],
+            'label_size' => 'tiny',
+        ];
+
+        $candleService = app(CandleService::class);
+        $smcFlow = app(SmcFlowIndicatorService::class);
+
+        // Для структуры Mxwll нужен длинный M1-ряд; в LLM свечей меньше, SMC считаем отдельно.
+        $smcBars = min(5000, max($m1BarCount, 1440));
+        $since = time() - max(86400, $smcBars * 60);
+        $rows = $candleService->seriesForDashboard($instrument, 1, $since, null, $smcBars);
+        if ($rows === []) {
+            return [
+                'snapshot' => SmcFlowLlmSnapshot::build($emptyOverlay, []),
+                'overlay' => $emptyOverlay,
+                'bar_count' => 0,
+            ];
+        }
+
+        $params = IndicatorSetting::mergedSmcFlowParams($bot);
+        $overlay = $smcFlow->compute($rows, $params);
+
+        return [
+            'snapshot' => SmcFlowLlmSnapshot::build($overlay, $rows),
+            'overlay' => $overlay,
+            'bar_count' => count($rows),
         ];
     }
 

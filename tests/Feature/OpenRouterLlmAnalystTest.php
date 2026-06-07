@@ -122,6 +122,10 @@ class OpenRouterLlmAnalystTest extends TestCase
         $payload = $request['payload'] ?? [];
         $this->assertArrayHasKey('closed_candles_s5', $payload);
         $this->assertArrayHasKey('partial_candle_s5', $payload);
+        $this->assertArrayHasKey('smc_flow_summary', $payload);
+        $this->assertSame([3, 6], $payload['expiry_focus_min'] ?? null);
+
+        $response->assertJsonStructure(['smc_flow' => ['lines', 'areas', 'labels', 'modules']]);
         $this->assertStringContainsString('--- system ---', (string) ($log->request_text ?? ''));
         $this->assertStringContainsString('Анализируй график кратко на русском.', (string) ($log->request_text ?? ''));
         $this->assertStringContainsString('--- user ---', (string) ($log->request_text ?? ''));
