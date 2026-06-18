@@ -9,8 +9,41 @@ final class OpenRouterChartLevelsParser
 {
     public const FENCE_TAG = 'chart_levels';
 
-    /** Полный system prompt бота openrouter_llm_analyst (текст + chart_levels). */
+    /** System prompt аналитика с SMC Flow (текст + chart_levels). */
     public static function defaultAnalystSystemPrompt(): string
+    {
+        return self::defaultAnalystSystemPromptWithSmcFlow();
+    }
+
+    /**
+     * @param  array<string, mixed>  $config
+     */
+    public static function defaultAnalystSystemPromptForConfig(array $config): string
+    {
+        return OpenRouterLlmConfig::analystSmcFlowEnabled($config)
+            ? self::defaultAnalystSystemPromptWithSmcFlow()
+            : self::defaultAnalystSystemPromptClassic();
+    }
+
+    /** Аналитик без SMC Flow: MTF + S5, как до интеграции индикатора. */
+    public static function defaultAnalystSystemPromptClassic(): string
+    {
+        return <<<'PROMPT'
+Ты торговый AI-аналитик для бинарных опционов.
+Работаешь по MTF-логике: H1 -> M15 -> M5 -> M1, плюс секундный поток S5 для тайминга.
+
+Главная задача — разбор графика и рыночной структуры.
+
+Данные в запросе:
+- closed_candles_m1, partial_candle_m1 — минутки M1
+- closed_candles_s5, partial_candle_s5 — секундные S5 (5 сек); микроструктура и тайминг внутри текущей M1
+- mtf.m1_closed, m5_closed, m15_closed, h1_closed — старшие ТФ (если mtf.enabled)
+- user_question — дополнительный вопрос трейдера (может быть null)
+PROMPT
+            .self::promptInstructionsClassic();
+    }
+
+    public static function defaultAnalystSystemPromptWithSmcFlow(): string
     {
         return <<<'PROMPT'
 Ты торговый AI-аналитик для бинарных опционов.
@@ -35,13 +68,56 @@ final class OpenRouterChartLevelsParser
 2) Явная торговая рекомендация: CALL, PUT или NONE (если NONE — краткая причина).
 3) Точка входа и горизонт 3–6 мин, если даёшь CALL/PUT.
 PROMPT
-            .self::promptInstructions();
+            .self::promptInstructionsWithSmcFlow();
+    }
+
+    /** Формат ответа для классического аналитика (без SMC Flow). */
+    public static function promptInstructionsClassic(): string
+    {
+        return <<<'TXT'
+
+Формат ответа (обязательно):
+1) Связный текст на русском: H1 → M15 → M5 → M1 → уровни → сценарии.
+   Торговая рекомендация (CALL/PUT) опциональна — только при явном согласованном сетапе.
+2) В самом конце ответа — отдельный блок для отрисовки на графике (после текста, без markdown вокруг JSON внутри блока):
+
+```chart_levels
+{
+  "levels": [
+    {
+      "price": 1.08542,
+      "kind": "support",
+      "timeframe": "H1",
+      "label": "H1 support",
+      "style": "solid"
+    }
+  ],
+  "zones": [],
+  "entry": null
+}
+```
+
+Правила chart_levels:
+- Блок только внутри ```chart_levels ... ``` (закрывающие ``` обязательны).
+- Корень JSON — объект { ... }, не массив [ ... ]; первый символ после открытия блока — {.
+- price / price_high / price_low — числа из данных свечей (не выдумывай далёкие уровни).
+- kind: support | resistance | pivot | range_high | range_low | entry
+- timeframe: H1 | M15 | M5 | M1 (опционально)
+- style: solid | dashed (опционально)
+- levels и zones — все значимые уровни, которые упомянул в тексте; лимита по количеству нет.
+- entry — только если в тексте есть явная точка входа; иначе null или не указывай поле.
+TXT;
     }
 
     /**
-     * Инструкция для system prompt: текст анализа + JSON-уровни в конце.
+     * Инструкция для system prompt: текст анализа + JSON-уровни в конце (с SMC Flow).
      */
     public static function promptInstructions(): string
+    {
+        return self::promptInstructionsWithSmcFlow();
+    }
+
+    public static function promptInstructionsWithSmcFlow(): string
     {
         return <<<'TXT'
 
@@ -78,6 +154,8 @@ PROMPT
 ```
 
 Правила chart_levels:
+- Блок только внутри ```chart_levels ... ``` (закрывающие ``` обязательны).
+- Корень JSON — объект { ... }, не массив [ ... ]; первый символ после открытия блока — {.
 - price / price_high / price_low — числа из данных свечей (не выдумывай далёкие уровни).
 - kind: support | resistance | pivot | range_high | range_low | entry
 - timeframe: H1 | M15 | M5 | M1 (опционально)
@@ -107,18 +185,38 @@ TXT;
             ];
         }
 
-        // ```chart_levels ... ``` или ```json chart_levels ... ```
-        $pattern = '/```(?:'.preg_quote(self::FENCE_TAG, '/').'|json\s+'.preg_quote(self::FENCE_TAG, '/').')\s*\r?\n([\s\S]*?)\r?\n```/iu';
-        if (! preg_match($pattern, $trimmed, $matches, PREG_OFFSET_CAPTURE)) {
-            return [
-                'analysis_text' => $trimmed,
-                'chart_levels_raw' => null,
-                'fence_found' => false,
-            ];
+        // ```chart_levels ... ``` (закрытый fence)
+        $patternClosed = '/```(?:'.preg_quote(self::FENCE_TAG, '/').'|json\s+'.preg_quote(self::FENCE_TAG, '/').')\s*\r?\n([\s\S]*?)\r?\n```/iu';
+        if (preg_match($patternClosed, $trimmed, $matches, PREG_OFFSET_CAPTURE)) {
+            return self::splitResult($trimmed, (int) $matches[0][1], (string) ($matches[1][0] ?? ''));
         }
 
-        $analysisText = trim(substr($trimmed, 0, (int) $matches[0][1]));
-        $jsonRaw = trim((string) ($matches[1][0] ?? ''));
+        // Обрезанный ответ: открывающий ```chart_levels без закрывающих ```
+        $patternOpenFence = '/```(?:'.preg_quote(self::FENCE_TAG, '/').'|json\s+'.preg_quote(self::FENCE_TAG, '/').')\s*\r?\n([\s\S]*)$/iu';
+        if (preg_match($patternOpenFence, $trimmed, $matches, PREG_OFFSET_CAPTURE)) {
+            return self::splitResult($trimmed, (int) $matches[0][1], (string) ($matches[1][0] ?? ''));
+        }
+
+        // Без fence: «chart_levels:» или «chart_levels» + JSON в конце (частая ошибка Llama и др.)
+        $patternPlain = '/\r?\n\s*#*\s*'.preg_quote(self::FENCE_TAG, '/').'\s*:?\s*\r?\n([\s\S]+)$/iu';
+        if (preg_match($patternPlain, $trimmed, $matches, PREG_OFFSET_CAPTURE)) {
+            return self::splitResult($trimmed, (int) $matches[0][1], (string) ($matches[1][0] ?? ''));
+        }
+
+        return [
+            'analysis_text' => $trimmed,
+            'chart_levels_raw' => null,
+            'fence_found' => false,
+        ];
+    }
+
+    /**
+     * @return array{analysis_text:string,chart_levels_raw:?string,fence_found:bool}
+     */
+    private static function splitResult(string $full, int $blockOffset, string $jsonRaw): array
+    {
+        $analysisText = trim(substr($full, 0, $blockOffset));
+        $jsonRaw = trim($jsonRaw);
 
         return [
             'analysis_text' => $analysisText,
@@ -158,17 +256,8 @@ TXT;
             ];
         }
 
-        try {
-            $decoded = json_decode($jsonRaw, true, 512, JSON_THROW_ON_ERROR);
-        } catch (\JsonException) {
-            return [
-                'ok' => false,
-                'message' => 'уровни: не распознаны',
-                'data' => $empty['data'],
-            ];
-        }
-
-        if (! is_array($decoded)) {
+        $decoded = self::decodeChartLevelsPayload($jsonRaw);
+        if ($decoded === null) {
             return [
                 'ok' => false,
                 'message' => 'уровни: не распознаны',
@@ -180,6 +269,14 @@ TXT;
         $zones = self::normalizeZones($decoded['zones'] ?? null);
         $entry = self::normalizeEntry($decoded['entry'] ?? null);
 
+        if ($levels === [] && $zones === [] && $entry === null) {
+            return [
+                'ok' => false,
+                'message' => 'уровни: не распознаны',
+                'data' => $empty['data'],
+            ];
+        }
+
         return [
             'ok' => true,
             'message' => null,
@@ -188,6 +285,183 @@ TXT;
                 'zones' => $zones,
                 'entry' => $entry,
             ],
+        ];
+    }
+
+    /**
+     * Пытается распарсить JSON уровней: нормальный decode, починка типичных ошибок LLM, salvage из обрезка.
+     *
+     * @return array<string, mixed>|null
+     */
+    private static function decodeChartLevelsPayload(string $jsonRaw): ?array
+    {
+        $trimmed = trim($jsonRaw);
+        if ($trimmed === '') {
+            return null;
+        }
+
+        $repaired = self::repairJsonRaw($trimmed);
+        $candidates = array_unique(array_filter([
+            $trimmed,
+            $repaired,
+            self::tryCloseTruncatedJson($repaired),
+            self::tryCloseTruncatedJson($trimmed),
+        ], static fn (string $s): bool => $s !== ''));
+
+        foreach ($candidates as $candidate) {
+            try {
+                $decoded = json_decode($candidate, true, 512, JSON_THROW_ON_ERROR);
+                if (is_array($decoded)) {
+                    return $decoded;
+                }
+            } catch (\JsonException) {
+                continue;
+            }
+        }
+
+        return self::salvageChartLevelsPayload($trimmed);
+    }
+
+    /** Типичные ошибки моделей: `[ "levels":` вместо `{ "levels":`, лишние backticks. */
+    private static function repairJsonRaw(string $jsonRaw): string
+    {
+        $s = trim($jsonRaw);
+        $s = preg_replace('/^```(?:json)?\s*/i', '', $s) ?? $s;
+        $s = preg_replace('/\s*```$/', '', $s) ?? $s;
+        $s = trim($s);
+
+        // Llama иногда оборачивает объект в массив: [ "levels": [ ... ] ]
+        if (preg_match('/^\[\s*"levels"\s*:/s', $s)) {
+            $s = preg_replace('/^\[\s*/', '{', $s, 1) ?? $s;
+            if (preg_match('/\]\s*$/', $s)) {
+                $s = preg_replace('/\]\s*$/', '}', $s, 1) ?? $s;
+            }
+        }
+
+        return $s;
+    }
+
+    /** Дозакрывает обрезанный JSON (max_tokens / обрыв на середине объекта). */
+    private static function tryCloseTruncatedJson(string $jsonRaw): string
+    {
+        $candidate = rtrim(rtrim($jsonRaw), ',');
+        for ($attempt = 0; $attempt < 10; $attempt++) {
+            try {
+                $decoded = json_decode($candidate, true, 512, JSON_THROW_ON_ERROR);
+                if (is_array($decoded)) {
+                    return $candidate;
+                }
+            } catch (\JsonException) {
+            }
+
+            $needCurly = substr_count($candidate, '{') - substr_count($candidate, '}');
+            $needSquare = substr_count($candidate, '[') - substr_count($candidate, ']');
+            if ($needCurly > 0) {
+                $candidate .= '}';
+            } elseif ($needSquare > 0) {
+                $candidate .= ']';
+            } else {
+                break;
+            }
+        }
+
+        return $candidate;
+    }
+
+    /**
+     * Извлекает уровни/зоны из невалидного JSON по полям price / price_high+price_low.
+     *
+     * @return array<string, mixed>|null
+     */
+    private static function salvageChartLevelsPayload(string $raw): ?array
+    {
+        $levels = [];
+        if (preg_match_all('/\{[^{}]*"price"\s*:\s*[0-9]+(?:\.[0-9]+)?[^{}]*\}/s', $raw, $levelMatches)) {
+            foreach ($levelMatches[0] as $blob) {
+                try {
+                    $item = json_decode($blob, true, 64, JSON_THROW_ON_ERROR);
+                } catch (\JsonException) {
+                    continue;
+                }
+                if (is_array($item) && isset($item['price']) && is_numeric($item['price'])) {
+                    $levels[] = $item;
+                }
+            }
+        }
+
+        $zones = [];
+        if (preg_match_all('/\{[^{}]*"price_high"\s*:\s*[0-9]+(?:\.[0-9]+)?[^{}]*"price_low"\s*:\s*[0-9]+(?:\.[0-9]+)?[^{}]*\}/s', $raw, $zoneMatches)) {
+            foreach ($zoneMatches[0] as $blob) {
+                try {
+                    $item = json_decode($blob, true, 64, JSON_THROW_ON_ERROR);
+                } catch (\JsonException) {
+                    continue;
+                }
+                if (is_array($item) && isset($item['price_high'], $item['price_low'])) {
+                    $zones[] = $item;
+                }
+            }
+        }
+
+        $entry = null;
+        if (preg_match('/\{[^{}]*"price"\s*:\s*[0-9]+(?:\.[0-9]+)?[^{}]*"side"\s*:\s*"(?:CALL|PUT)"[^{}]*\}/s', $raw, $entryMatch)) {
+            try {
+                $parsedEntry = json_decode($entryMatch[0], true, 64, JSON_THROW_ON_ERROR);
+                if (is_array($parsedEntry)) {
+                    $entry = $parsedEntry;
+                }
+            } catch (\JsonException) {
+            }
+        }
+
+        if ($levels === [] && $zones === [] && $entry === null) {
+            return null;
+        }
+
+        // Обрезанный объект уровня без закрывающей }: { "price": 1.4, "kind": "resistance",
+        if (preg_match_all(
+            '/\{\s*"price"\s*:\s*([0-9]+(?:\.[0-9]+)?)\s*,\s*"kind"\s*:\s*"([^"]+)"(?:\s*,\s*"timeframe"\s*:\s*"([^"]+)")?(?:\s*,\s*"label"\s*:\s*"((?:[^"\\\\]|\\\\.)*)")?(?:\s*,\s*"style"\s*:\s*"([^"]+)")?\s*(?:,|\s*$)/m',
+            $raw,
+            $partialMatches,
+            PREG_SET_ORDER
+        )) {
+            foreach ($partialMatches as $m) {
+                $price = (float) $m[1];
+                $already = false;
+                foreach ($levels as $existing) {
+                    if (is_array($existing) && isset($existing['price']) && (float) $existing['price'] === $price) {
+                        $already = true;
+                        break;
+                    }
+                }
+                if ($already) {
+                    continue;
+                }
+                $item = [
+                    'price' => $price,
+                    'kind' => $m[2],
+                ];
+                if (! empty($m[3])) {
+                    $item['timeframe'] = $m[3];
+                }
+                if (isset($m[4]) && $m[4] !== '') {
+                    $item['label'] = $m[4];
+                }
+                if (! empty($m[5])) {
+                    $item['style'] = $m[5];
+                }
+                $levels[] = $item;
+            }
+        }
+
+        if ($levels === [] && $zones === [] && $entry === null) {
+            return null;
+        }
+
+        return [
+            'levels' => $levels,
+            'zones' => $zones,
+            'entry' => $entry,
         ];
     }
 

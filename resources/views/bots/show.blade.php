@@ -404,7 +404,7 @@
 <script>
 (function() {
     const CANDLES_URL = '{{ route("candles.data") }}';
-    const STRUCTURES_URL = '{{ route("structures.data") }}';
+    const STRUCTURES_URL = '{{ route("bots.structures.data", $bot) }}';
     const PA_INDICATOR_URL = '{{ route("bots.indicators.data", $bot) }}';
     const INSTRUMENTS_SIDEBAR_URL = '{{ route("bots.instruments.sidebar-data", $bot) }}';
     const OPEN_TRADES_URL = '{{ route("bots.open-trades.data", $bot) }}';
@@ -412,6 +412,7 @@
     const TRADES_HISTORY_URL = '{{ route("bots.trades") }}';
     const BOT_ANALYSIS_URL = '{{ route("bots.analysis.data", $bot) }}';
     const BOT_IS_CHART_ANALYST = @json($isChartAnalystBot ?? false);
+    const BOT_ANALYST_SMC_FLOW_ENABLED = @json($analystSmcFlowEnabled ?? false);
     const BOT_STATS_URL = '{{ route("bots.stats.data", $bot) }}';
     // Два среза для правой панели: подгружаем оба с сервера при SSR, переключатель шлёт scope= в polling.
     const STATS_SCOPE_STORAGE_KEY = 'platform.bot.show.statsScope.v1.{{ $bot->id }}';
@@ -591,8 +592,8 @@
     const timeDebugFeedDelta = document.getElementById('time-debug-feed-delta');
     const timeDebugPlatform = document.getElementById('time-debug-platform');
     const timeDebugMarker = document.getElementById('time-debug-marker');
-    // Без записи в localStorage все слои выключены (чекбоксы без checked в разметке).
-    const LAYER_PREFS_KEY = 'platform.bot.show.chartLayers.v5';
+    // Настройки слоёв графика — отдельно для каждого бота (общий ключ v5 тянул smcFlow с другого бота).
+    const LAYER_PREFS_KEY = 'platform.bot.show.chartLayers.v6.bot.{{ $bot->id }}';
     let lastPaPayload = null;
     let lastLsPayload = null;
     let lastSmcPayload = null;
@@ -752,7 +753,10 @@
             if (typeof obj.imbalances === 'boolean') layerFvg.checked = obj.imbalances;
             if (layerPa && typeof obj.paDgt === 'boolean') layerPa.checked = obj.paDgt;
             if (layerLiquidity && typeof obj.liquiditySwings === 'boolean') layerLiquidity.checked = obj.liquiditySwings;
-            if (layerSmc && typeof obj.smcFlow === 'boolean') layerSmc.checked = obj.smcFlow;
+            // Классический Chart Analyst без SMC в LLM — слой SMC не включаем из сохранённых prefs.
+            if (layerSmc && typeof obj.smcFlow === 'boolean') {
+                layerSmc.checked = (BOT_IS_CHART_ANALYST && !BOT_ANALYST_SMC_FLOW_ENABLED) ? false : obj.smcFlow;
+            }
             if (BOT_IS_CHART_ANALYST && layerLlmLevels && typeof obj.llmLevels === 'boolean') layerLlmLevels.checked = obj.llmLevels;
         } catch (_) {}
     }
@@ -934,7 +938,7 @@
 
     /** После ручного анализа подставляем SMC Flow с сервера (тот же расчёт, что ушёл в LLM). */
     function applySmcFlowFromAnalysis(data) {
-        if (!BOT_IS_CHART_ANALYST) return;
+        if (!BOT_IS_CHART_ANALYST || !BOT_ANALYST_SMC_FLOW_ENABLED) return;
         if (data && data.smc_flow && typeof data.smc_flow === 'object') {
             lastSmcPayload = data.smc_flow;
             if (layerSmc) layerSmc.checked = true;
@@ -1229,10 +1233,11 @@
                 if (rendered >= maxRenderable) return;
                 if (!ar || typeof ar !== 'object') return;
                 const x1 = ts.timeToCoordinate(Number(ar.time_start));
-                const x2 = ts.timeToCoordinate(Number(ar.time_end));
+                const x2 = zoneEndXClipped(ts, Number(ar.time_end), allChartData);
                 const y1 = candlestickSeries.priceToCoordinate(Number(ar.price_high));
                 const y2 = candlestickSeries.priceToCoordinate(Number(ar.price_low));
                 if (x1 == null || x2 == null || y1 == null || y2 == null) return;
+                if (Math.abs(x2 - x1) < 1) return;
                 if ([x1, x2, y1, y2].some((v) => Number.isNaN(v))) return;
                 if (Math.max(x1, x2) < -80 || Math.min(x1, x2) > viewportW + 80) return;
                 const div = document.createElement('div');
@@ -2368,6 +2373,24 @@
         const lastIdx = allChartData.length - 1;
         return range.to >= lastIdx - 1e-3;
     }
+
+    /**
+     * DOM-зоны поверх canvas: обрезаем правый край, чтобы не перекрывать формирующуюся свечу.
+     */
+    function zoneEndXClipped(ts, tEnd, candles) {
+        if (!candles?.length) return null;
+        const lastBarTime = candles[candles.length - 1].time;
+        const endTime = tEnd ?? lastBarTime;
+        let x2 = ts.timeToCoordinate(endTime);
+        if (x2 == null) return null;
+        if (endTime < lastBarTime || candles.length < 2) return x2;
+        const xLast = ts.timeToCoordinate(lastBarTime);
+        const xPrev = ts.timeToCoordinate(candles[candles.length - 2].time);
+        if (xLast == null || xPrev == null) return x2;
+        const halfBar = Math.max(2, Math.abs(xLast - xPrev) / 2);
+        return Math.min(x2, xLast - halfBar);
+    }
+
     function payoutClassByValue(value) {
         if (value == null || Number.isNaN(value)) return 'text-zinc-500';
         if (value >= 80) return 'text-emerald-400';
@@ -3036,21 +3059,43 @@
         const showOb = layerOb.checked;
         const showFvg = layerFvg.checked;
         const zonePaint = {
-            order_block_bull: { background: 'rgba(212, 184, 150, 0.35)', border: '1px solid rgba(180, 140, 100, 0.55)' },
-            order_block_bear: { background: 'rgba(212, 184, 150, 0.35)', border: '1px solid rgba(180, 140, 100, 0.55)' },
+            order_block_bull: { background: 'rgba(33, 87, 243, 0.2)', border: '1px solid rgba(33, 87, 243, 0.85)' },
+            order_block_bull_break: { background: 'rgba(255, 17, 0, 0.2)', border: '1px dashed rgba(255, 17, 0, 0.85)' },
+            order_block_bear: { background: 'rgba(255, 93, 0, 0.2)', border: '1px solid rgba(255, 93, 0, 0.85)' },
+            order_block_bear_break: { background: 'rgba(12, 181, 26, 0.2)', border: '1px dashed rgba(12, 181, 26, 0.85)' },
             imbalance_bull: { background: 'rgba(14, 165, 233, 0.2)', border: '1px solid rgba(2, 132, 199, 0.45)' },
             imbalance_bear: { background: 'rgba(14, 165, 233, 0.2)', border: '1px solid rgba(2, 132, 199, 0.45)' },
             default: { background: 'rgba(156, 163, 175, 0.15)', border: '1px solid rgba(107, 114, 128, 0.35)' }
         };
+        /** Подпись типа ордерблока внутри зоны (текст приходит с API на русском). */
+        function appendOrderBlockLabel(parent, z) {
+            if (!z.label || !String(z.type || '').startsWith('order_block')) return;
+            const lbl = document.createElement('span');
+            lbl.textContent = z.label;
+            lbl.style.position = 'absolute';
+            lbl.style.left = '4px';
+            lbl.style.top = '3px';
+            lbl.style.fontSize = '10px';
+            lbl.style.fontWeight = '600';
+            lbl.style.lineHeight = '1.2';
+            lbl.style.color = z.label_color || '#f4f4f5';
+            lbl.style.textShadow = '0 1px 2px rgba(0,0,0,0.9)';
+            lbl.style.pointerEvents = 'none';
+            lbl.style.whiteSpace = 'nowrap';
+            lbl.style.zIndex = '1';
+            parent.appendChild(lbl);
+        }
         lastZones.forEach((z) => {
             if (z.type.startsWith('order_block') && !showOb) return;
             if (z.type.startsWith('imbalance') && !showFvg) return;
             if (lastBarTime < z.time_start) return;
+            const tEnd = z.time_end ?? lastBarTime;
             const x1 = chart.timeScale().timeToCoordinate(z.time_start);
-            const x2 = chart.timeScale().timeToCoordinate(lastBarTime);
+            const x2 = zoneEndXClipped(chart.timeScale(), tEnd, allChartData);
             const y1 = candlestickSeries.priceToCoordinate(z.price_high);
             const y2 = candlestickSeries.priceToCoordinate(z.price_low);
             if (x1 == null || x2 == null || y1 == null || y2 == null) return;
+            if (Math.abs(x2 - x1) < 1) return;
             const paint = zonePaint[z.type] || zonePaint.default;
             const div = document.createElement('div');
             div.style.position = 'absolute';
@@ -3060,8 +3105,9 @@
             div.style.top = Math.min(y1, y2) + 'px';
             div.style.width = Math.max(1, Math.abs(x2 - x1)) + 'px';
             div.style.height = Math.max(1, Math.abs(y2 - y1)) + 'px';
-            div.style.background = paint.background;
-            div.style.border = paint.border;
+            div.style.background = z.fill || paint.background;
+            div.style.border = z.border || paint.border;
+            appendOrderBlockLabel(div, z);
             structureOverlay.appendChild(div);
         });
         renderTradeDurationOverlay();

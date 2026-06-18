@@ -78,6 +78,25 @@ class CurrentCandleCacheService
         return (time() - $updatedAt) <= $staleAfterSec;
     }
 
+    /**
+     * Удаляет partial-свечи после смены пула прокси, чтобы график не рисовал устаревший хвост.
+     *
+     * @param  list<string>  $instruments
+     */
+    public function clearAllPartials(array $instruments): void
+    {
+        if ($instruments === []) {
+            return;
+        }
+
+        try {
+            $keys = array_map(fn (string $instrument): string => $this->key($instrument), $instruments);
+            Redis::del(...$keys);
+        } catch (Throwable) {
+            // Redis может быть недоступен — график восстановится по закрытым барам из БД.
+        }
+    }
+
     private function key(string $instrument): string
     {
         return self::KEY_PREFIX.$instrument;

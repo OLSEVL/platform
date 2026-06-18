@@ -94,6 +94,64 @@ class ProxyRotationServiceTest extends TestCase
         $this->assertSame($replacement->id, $toRotate->proxy_endpoint_id);
     }
 
+    public function test_ensure_rotates_off_dead_proxy(): void
+    {
+        $rotation = app(ProxyRotationService::class);
+        $rotation->setMaxInstrumentsPerProxy(2);
+
+        $deadProxy = ProxyEndpoint::query()->create([
+            'url' => 'http://bad:1@9.9.9.9:9',
+            'status' => ProxyEndpoint::STATUS_DEAD,
+        ]);
+        $activeProxy = ProxyEndpoint::query()->create([
+            'url' => 'http://good:1@8.8.8.8:8',
+            'status' => ProxyEndpoint::STATUS_ACTIVE,
+        ]);
+
+        $instrument = PocketInstrument::query()->create([
+            'instrument' => 'EURJPY_otc',
+            'is_active' => true,
+            'proxy_endpoint_id' => $deadProxy->id,
+        ]);
+
+        $rotation->setAutoRotationEnabled(true);
+        $result = $rotation->ensureInstrumentHasReadyProxy($instrument->fresh());
+
+        $this->assertNotNull($result);
+        $this->assertSame($activeProxy->id, $result->id);
+        $this->assertSame($activeProxy->id, $instrument->fresh()->proxy_endpoint_id);
+    }
+
+    public function test_mark_proxy_failure_moves_to_dead_when_streak_exceeded(): void
+    {
+        $rotation = app(ProxyRotationService::class);
+        $rotation->setAutoRotationEnabled(true);
+        $rotation->setDeadStreakThreshold(3);
+
+        $badProxy = ProxyEndpoint::query()->create([
+            'url' => 'http://bad:1@9.9.9.9:9',
+            'status' => ProxyEndpoint::STATUS_ACTIVE,
+        ]);
+        $goodProxy = ProxyEndpoint::query()->create([
+            'url' => 'http://good:1@8.8.8.8:8',
+            'status' => ProxyEndpoint::STATUS_ACTIVE,
+        ]);
+
+        $instrument = PocketInstrument::query()->create([
+            'instrument' => 'EURUSD_otc',
+            'is_active' => true,
+            'proxy_endpoint_id' => $badProxy->id,
+        ]);
+
+        $rotation->markProxyFailure($instrument, 'connect_failed', 3);
+
+        $badProxy->refresh();
+        $instrument->refresh();
+
+        $this->assertSame(ProxyEndpoint::STATUS_DEAD, $badProxy->status);
+        $this->assertSame($goodProxy->id, $instrument->proxy_endpoint_id);
+    }
+
     public function test_pool_capacity_reports_exhausted_when_no_free_slots(): void
     {
         $rotation = app(ProxyRotationService::class);

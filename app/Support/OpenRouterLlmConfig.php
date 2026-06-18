@@ -92,4 +92,14 @@ final class OpenRouterLlmConfig
 
         return $map;
     }
+
+    /**
+     * Включён ли SMC Flow в ручном анализе openrouter_llm_analyst (snapshot в LLM + overlay после анализа).
+     *
+     * @param  array<string, mixed>  $config
+     */
+    public static function analystSmcFlowEnabled(array $config): bool
+    {
+        return (bool) ($config['analyst_smc_flow_enabled'] ?? false);
+    }
 }

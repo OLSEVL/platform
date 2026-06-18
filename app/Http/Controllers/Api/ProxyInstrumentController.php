@@ -15,12 +15,28 @@ use Illuminate\Http\Request;
 
 class ProxyInstrumentController extends Controller
 {
+    public function poolVersion(ProxyRotationService $proxyRotation): JsonResponse
+    {
+        return response()->json([
+            'version' => $proxyRotation->getPoolVersion(),
+        ]);
+    }
+
     public function instruments(ProxyRotationService $proxyRotation, ProxyDeadProbeService $deadProbe): JsonResponse
     {
         $autoRotationEnabled = $proxyRotation->isAutoRotationEnabled();
 
+        // Активные инструменты + контрольная пара во время dead-пробы (даже если is_active=false).
+        $probeLock = $deadProbe->getActiveLock();
+        $probeInstrumentId = (int) ($probeLock['instrument_id'] ?? 0);
+
         $list = PocketInstrument::query()
-            ->active()
+            ->where(function ($query) use ($probeInstrumentId): void {
+                $query->where('is_active', true);
+                if ($probeInstrumentId > 0) {
+                    $query->orWhere('id', $probeInstrumentId);
+                }
+            })
             ->with('proxyEndpoint')
             ->orderByPriority()
             ->get()

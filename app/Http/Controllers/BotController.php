@@ -10,8 +10,10 @@ use App\Models\IndicatorSetting;
 use App\Models\PocketInstrument;
 use App\Support\BotScanProgress;
 use App\Services\Bots\BotEngineService;
+use App\Services\DataCleanupService;
 use App\Services\Bots\OpenRouterClient;
 use App\Services\CandleService;
+use App\Services\CandleStructureZoneDetector;
 use App\Services\Indicators\LiquiditySwingsIndicatorService;
 use App\Services\Indicators\PriceActionDgtIndicatorService;
 use App\Services\Indicators\SmcFlowIndicatorService;
@@ -55,21 +57,6 @@ class BotController extends Controller
         $now = now();
         $from = $now->copy()->subHours($hours);
 
-        $raw = DB::table('bot_trades as t')
-            ->join('bots as b', 'b.id', '=', 't.bot_id')
-            ->selectRaw("
-                b.id as bot_id,
-                b.name as bot_name,
-                DATE_FORMAT(t.entry_time, '%Y-%m-%d %H:00:00') as bucket,
-                COUNT(*) as trades_total,
-                SUM(CASE WHEN t.result = 'win' THEN 1 ELSE 0 END) as wins,
-                SUM(CASE WHEN t.result = 'loss' THEN 1 ELSE 0 END) as losses
-            ")
-            ->where('t.entry_time', '>=', $from)
-            ->groupBy('b.id', 'b.name', 'bucket')
-            ->orderBy('bucket')
-            ->get();
-
         // Общий winrate за выбранный период по всем ботам (учитываем только win/loss).
         $overall = DB::table('bot_trades as t')
             ->where('t.entry_time', '>=', $from)
@@ -84,15 +71,39 @@ class BotController extends Controller
         $overallTotal = $overallWins + $overallLosses;
         $overallWinrate = $overallTotal > 0 ? round(($overallWins * 100) / $overallTotal, 2) : null;
 
-        // Ширина интервала для графика: короче период — мельче бакеты (ось времени читабельнее).
-        $bucketSeconds = match (true) {
-            $hours <= 1 => 300,
-            $hours <= 6 => 900,
-            $hours <= 48 => 3600,
-            default => 21600,
-        };
+        // Интервал обобщения статистики (график + таблица): 1/5/15/30 мин или 1 час.
+        $intervalPresets = [
+            60 => '1 минута',
+            300 => '5 минут',
+            900 => '15 минут',
+            1800 => '30 минут',
+            3600 => '1 час',
+        ];
+        $requestedInterval = (int) $request->input('interval', 0);
+        $bucketSeconds = array_key_exists($requestedInterval, $intervalPresets)
+            ? $requestedInterval
+            : match (true) {
+                $hours <= 1 => 300,
+                $hours <= 6 => 900,
+                $hours <= 48 => 3600,
+                default => 3600,
+            };
 
-        // Внутренний уровень — по одной строке на сделку с бакетом; внешний SUM + GROUP BY совместимы с sql_mode=only_full_group_by.
+        $raw = DB::table('bot_trades as t')
+            ->join('bots as b', 'b.id', '=', 't.bot_id')
+            ->selectRaw("
+                b.id as bot_id,
+                b.name as bot_name,
+                FLOOR(UNIX_TIMESTAMP(t.entry_time) / ?) * ? as bucket_ts,
+                COUNT(*) as trades_total,
+                SUM(CASE WHEN t.result = 'win' THEN 1 ELSE 0 END) as wins,
+                SUM(CASE WHEN t.result = 'loss' THEN 1 ELSE 0 END) as losses
+            ", [$bucketSeconds, $bucketSeconds])
+            ->where('t.entry_time', '>=', $from)
+            ->groupBy('b.id', 'b.name', 'bucket_ts')
+            ->orderByDesc('bucket_ts')
+            ->orderBy('b.name')
+            ->get();
         $tradesPerBucket = DB::table('bot_trades as t')
             ->join('bots as b', 'b.id', '=', 't.bot_id')
             ->where('t.entry_time', '>=', $from)
@@ -149,8 +160,13 @@ class BotController extends Controller
                 $timeline[] = $ts;
             }
         }
+        // Слишком мелкий интервал на длинном периоде — на графике оставляем только последние 600 точек.
+        $maxChartBuckets = 600;
+        if (count($timeline) > $maxChartBuckets) {
+            $timeline = array_slice($timeline, -$maxChartBuckets);
+        }
 
-        // Группируем win/loss по бакетам для расчёта winrate в каждом интервале времени.
+        // Группируем win/loss по бакетам для расчёта winrate в каждого интервала времени.
         $bucketStats = [];
         foreach ($netByBucket as $row) {
             $bid = (int) $row->bot_id;
@@ -164,6 +180,29 @@ class BotController extends Controller
             ];
         }
 
+        // Все включённые боты пользователя — график для каждого, даже без сделок за период.
+        $activeBots = Bot::query()
+            ->where('user_id', auth()->id())
+            ->where('is_active', true)
+            ->orderBy('name')
+            ->get(['id', 'name']);
+
+        // Winrate за период по каждому боту (для подписи под заголовком графика).
+        $botPeriodStats = DB::table('bot_trades as t')
+            ->join('bots as b', 'b.id', '=', 't.bot_id')
+            ->where('b.user_id', auth()->id())
+            ->where('b.is_active', true)
+            ->where('t.entry_time', '>=', $from)
+            ->whereIn('t.result', [BotTrade::RESULT_WIN, BotTrade::RESULT_LOSS])
+            ->groupBy('b.id', 'b.name')
+            ->selectRaw("
+                b.id as bot_id,
+                SUM(CASE WHEN t.result = 'win' THEN 1 ELSE 0 END) as wins,
+                SUM(CASE WHEN t.result = 'loss' THEN 1 ELSE 0 END) as losses
+            ")
+            ->get()
+            ->keyBy('bot_id');
+
         $tz = config('app.timezone');
         $chartLabels = [];
         foreach ($timeline as $bk) {
@@ -172,24 +211,45 @@ class BotController extends Controller
 
         // Ось Y: winrate в процентах по каждому бакету (0..100), без кумулятивного накопления.
         $chartSeries = [];
-        foreach ($bucketStats as $botId => $payload) {
+        foreach ($activeBots as $bot) {
+            $botId = (int) $bot->id;
+            $byTs = $bucketStats[$botId]['by_ts'] ?? [];
             $values = [];
+            $bucketWins = [];
+            $bucketLosses = [];
             foreach ($timeline as $bk) {
-                $cell = $payload['by_ts'][$bk] ?? ['w' => 0, 'l' => 0];
-                $total = $cell['w'] + $cell['l'];
+                $cell = $byTs[$bk] ?? ['w' => 0, 'l' => 0];
+                $w = (int) $cell['w'];
+                $l = (int) $cell['l'];
+                $total = $w + $l;
+                $bucketWins[] = $w;
+                $bucketLosses[] = $l;
                 $values[] = $total > 0
-                    ? round(100.0 * $cell['w'] / $total, 2)
+                    ? round(100.0 * $w / $total, 2)
                     : null;
             }
+
+            $periodRow = $botPeriodStats->get($botId);
+            $botWins = (int) ($periodRow->wins ?? 0);
+            $botLosses = (int) ($periodRow->losses ?? 0);
+            $botTotal = $botWins + $botLosses;
+
             $chartSeries[] = [
                 'bot_id' => $botId,
-                'name' => $payload['name'],
+                'name' => (string) $bot->name,
                 'values' => $values,
+                'bucket_wins' => $bucketWins,
+                'bucket_losses' => $bucketLosses,
+                'wins' => $botWins,
+                'losses' => $botLosses,
+                'winrate' => $botTotal > 0 ? round(($botWins * 100) / $botTotal, 2) : null,
             ];
         }
 
         return view('bots.analytics', [
             'hours' => $hours,
+            'interval' => $bucketSeconds,
+            'intervalPresets' => $intervalPresets,
             'rows' => $raw,
             'chartLabels' => $chartLabels,
             'chartSeries' => $chartSeries,
@@ -385,31 +445,30 @@ class BotController extends Controller
                 'm1_wick_requirement_scope' => (string) $extra['m1_wick_requirement_scope'],
                 'version' => 'candle_reversal_confirm_v2_mtf',
             ]);
-        } elseif ($bot->type === 'feshan') {
-            // Feshan v2: вход только по снятию ликвидности (liquidity sweep) на M1.
+        } elseif ($bot->type === 'smc_flow') {
+            // SMC Flow: UT flip + 3BR confirm + LuxAlgo OB filter; экспирация по умолчанию 3 мин.
             $extra = $request->validate([
-                'count' => ['required', 'integer', 'min:10', 'max:5000'],
-                'expiry_sec' => ['required', 'integer', 'min:60', 'max:900'],
+                'count' => ['required', 'integer', 'min:80', 'max:5000'],
+                'expiry_sec' => ['required', 'integer', 'min:120', 'max:600'],
                 'min_confidence' => ['required', 'numeric', 'min:0', 'max:1'],
-                // Экономический фильтр: бот торгует только пары с payout не ниже указанного порога.
                 'min_payout' => ['required', 'numeric', 'min:0', 'max:100'],
-                'liquidity_lookback' => ['required', 'integer', 'min:5', 'max:50'],
-                'sweep_min_wick_ratio' => ['required', 'numeric', 'min:0.05', 'max:0.8'],
-                'sweep_min_reclaim_ratio' => ['required', 'numeric', 'min:0.05', 'max:0.8'],
-                'entry_extrema_distance' => ['required', 'numeric', 'min:0.02', 'max:0.4'],
                 'stale_after_sec' => ['required', 'integer', 'min:5', 'max:600'],
+                'smc_three_br_confirm_max_bars' => ['required', 'integer', 'min:1', 'max:120'],
+                'smc_require_ob' => ['sometimes', 'boolean'],
+                'smc_three_br_allow_pattern' => ['sometimes', 'boolean'],
+                'smc_ob_touch_max_bars' => ['sometimes', 'integer', 'min:0', 'max:12'],
             ]);
             $config = array_merge($bot->config ?? [], [
                 'count' => (int) $extra['count'],
                 'expiry_sec' => (int) $extra['expiry_sec'],
                 'min_confidence' => (float) $extra['min_confidence'],
                 'min_payout' => (float) $extra['min_payout'],
-                'liquidity_lookback' => (int) $extra['liquidity_lookback'],
-                'sweep_min_wick_ratio' => (float) $extra['sweep_min_wick_ratio'],
-                'sweep_min_reclaim_ratio' => (float) $extra['sweep_min_reclaim_ratio'],
-                'entry_extrema_distance' => (float) $extra['entry_extrema_distance'],
                 'stale_after_sec' => (int) $extra['stale_after_sec'],
-                'version' => 'feshan_liquidity_v2',
+                'smc_three_br_confirm_max_bars' => (int) $extra['smc_three_br_confirm_max_bars'],
+                'smc_require_ob' => $request->boolean('smc_require_ob'),
+                'smc_three_br_allow_pattern' => $request->boolean('smc_three_br_allow_pattern'),
+                'smc_ob_touch_max_bars' => (int) ($extra['smc_ob_touch_max_bars'] ?? $request->input('smc_ob_touch_max_bars', 3)),
+                'version' => 'smc_flow_ut_3br_ob_v1',
             ]);
         } elseif ($bot->type === 'openrouter_llm') {
             // OpenRouter LLM-бот: решение по сделке формируется нейросетью по свечному контексту.
@@ -501,7 +560,7 @@ class BotController extends Controller
                 return back()->withInput()->withErrors(['config_json' => 'Некорректный JSON в поле конфигурации.']);
             }
             // price_action_dgt вынесен в таблицу indicator_settings (отдельное поле формы).
-            unset($decoded[IndicatorSetting::KEY_PRICE_ACTION_DGT], $decoded[IndicatorSetting::KEY_LIQUIDITY_SWINGS]);
+            unset($decoded[IndicatorSetting::KEY_PRICE_ACTION_DGT], $decoded[IndicatorSetting::KEY_LIQUIDITY_SWINGS], $decoded[IndicatorSetting::KEY_ORDER_BLOCKS]);
             $config = $decoded;
         }
 
@@ -518,7 +577,7 @@ class BotController extends Controller
         $config['analysis_runs_logging_enabled'] = $request->boolean('analysis_runs_logging_enabled');
 
         // price_action_dgt хранится только в indicator_settings (страница индикатора), из config убираем при любом сохранении общих настроек.
-        unset($config[IndicatorSetting::KEY_PRICE_ACTION_DGT], $config[IndicatorSetting::KEY_LIQUIDITY_SWINGS]);
+        unset($config[IndicatorSetting::KEY_PRICE_ACTION_DGT], $config[IndicatorSetting::KEY_LIQUIDITY_SWINGS], $config[IndicatorSetting::KEY_ORDER_BLOCKS]);
 
         $bot->update([
             'name' => $base['name'],
@@ -529,61 +588,15 @@ class BotController extends Controller
         return redirect()->route('bots.settings', $bot)->with('status', 'Настройки сохранены.');
     }
 
-    public function cleanupRecent(Bot $bot): RedirectResponse
+    public function cleanupRecent(Bot $bot, DataCleanupService $dataCleanup): RedirectResponse
     {
         $this->ensureBotOwner($bot);
 
-        // Очищаем всё, что старше 24 часов:
-        // берём скользящую границу now()-24h и удаляем записи с временем < cutoff.
-        // Так сохраняются только последние 24 часа, а "исторический хвост" удаляется.
-        $cutoff = now()->subHours(24);
-
-        $deletedLogs = 0;
-        $deletedTrades = 0;
-        $deletedSignals = 0;
-        $deletedAnalysisRuns = 0;
-
-        DB::transaction(function () use ($bot, $cutoff, &$deletedLogs, &$deletedTrades, &$deletedSignals, &$deletedAnalysisRuns): void {
-            // Таблица LLM-логов может отсутствовать на старых инсталляциях.
-            // Перед raw SQL удалением проверяем её существование, чтобы кнопка не падала с SQL-ошибкой.
-            if (Schema::hasTable('bot_llm_logs')) {
-                $deletedLogs = DB::delete(
-                    'DELETE FROM bot_llm_logs WHERE bot_id = ? AND created_at < ?',
-                    [$bot->id, $cutoff]
-                );
-            }
-            if (Schema::hasTable('bot_analysis_runs')) {
-                $deletedAnalysisRuns = DB::delete(
-                    'DELETE FROM bot_analysis_runs WHERE bot_id = ? AND started_at < ?',
-                    [$bot->id, $cutoff]
-                );
-            }
-
-            // Удаляем старые сделки этого бота по времени входа.
-            // Используем raw SQL по требованию: прямой SQL DELETE вместо Eloquent query builder.
-            $deletedTrades = DB::delete(
-                'DELETE FROM bot_trades WHERE bot_id = ? AND entry_time < ?',
-                [$bot->id, $cutoff]
-            );
-
-            // Удаляем старые сигналы этого бота, чтобы данные сигналов/сделок оставались согласованы.
-            $deletedSignals = DB::delete(
-                'DELETE FROM bot_signals WHERE bot_id = ? AND signal_at < ?',
-                [$bot->id, $cutoff]
-            );
-        });
+        $result = $dataCleanup->purgeOlderThan(DataCleanupService::DEFAULT_RETENTION_HOURS, $bot->id);
 
         return redirect()
             ->route('bots.settings', $bot)
-            ->with(
-                'status',
-                sprintf(
-                    'Очистка выполнена (удалено старше 24 часов): logs=%d, trades=%d, signals=%d.',
-                    $deletedLogs + $deletedAnalysisRuns,
-                    $deletedTrades,
-                    $deletedSignals
-                )
-            );
+            ->with('status', $dataCleanup->formatResultMessage($result, includeCandles: false));
     }
 
     public function activity(Bot $bot): View|RedirectResponse
@@ -1223,6 +1236,8 @@ class BotController extends Controller
         return view('bots.show', [
             'bot' => $bot,
             'isChartAnalystBot' => $bot->type === 'openrouter_llm_analyst',
+            'analystSmcFlowEnabled' => $bot->type === 'openrouter_llm_analyst'
+                && \App\Support\OpenRouterLlmConfig::analystSmcFlowEnabled(is_array($bot->config) ? $bot->config : []),
             'chartSignals' => $chartSignalsPayload,
             'instruments' => $instruments,
             'timeframes' => $timeframes,
@@ -1289,6 +1304,32 @@ class BotController extends Controller
             'timeframe' => $timeframe,
             'server_time' => now()->toIso8601String(),
         ]);
+    }
+
+    /**
+     * Ордерблоки и FVG для графика бота — параметры из indicator_settings этого бота.
+     */
+    public function structuresData(
+        Request $request,
+        Bot $bot,
+        CandleStructureZoneDetector $detector,
+        CandleService $candleService,
+    ): JsonResponse {
+        $this->ensureBotOwner($bot);
+
+        $validated = $request->validate([
+            'instrument' => ['required', 'string', 'max:63'],
+            'timeframe' => ['nullable', 'integer', Rule::in(CandleService::DASHBOARD_TIMEFRAMES)],
+        ]);
+
+        $instrument = (string) $validated['instrument'];
+        $timeframe = (int) ($validated['timeframe'] ?? 1);
+        $since = time() - 86400;
+        $rows = $candleService->seriesForDashboard($instrument, $timeframe, $since, null, null);
+        $obParams = IndicatorSetting::mergedOrderBlocksParams($bot);
+        $zones = $detector->activeZones($rows, $obParams);
+
+        return response()->json(['zones' => $zones]);
     }
 
     public function signalsData(Bot $bot): JsonResponse

@@ -4,6 +4,8 @@ namespace App\Http\Controllers;
 
 use App\Models\PocketInstrument;
 use App\Models\ProxyEndpoint;
+use App\Services\CurrentCandleCacheService;
+use App\Services\DataCleanupService;
 use App\Services\ProxyDiagnosticsService;
 use App\Services\ProxyRotationService;
 use Illuminate\Http\JsonResponse;
@@ -30,18 +32,18 @@ class SettingsController extends Controller
 
         return view('settings.index', [
             'proxyAutoRotationEnabled' => $proxyRotation->isAutoRotationEnabled(),
-            'proxyCooldownStreakThreshold' => $proxyRotation->getCooldownStreakThreshold(),
+            'proxyDeadStreakThreshold' => $proxyRotation->getDeadStreakThreshold(),
             'proxyMaxInstrumentsPerEndpoint' => $proxyRotation->getMaxInstrumentsPerProxy(),
             'payoutStaleMinutesThreshold' => $payoutStaleMinutesThreshold,
             'proxyHealthFilter' => $healthFilter,
             'proxyPoolHealth' => $proxyDiagnostics->buildPoolHealth($healthFilter, $payoutStaleMinutesThreshold),
             'proxyPoolCapacity' => $proxyRotation->getPoolCapacitySummary(),
-            // Список активных инструментов для выбора "контрольной пары":
-            // по ней фоновой задачей проверяется, можно ли возвращать dead-прокси в active.
+            // Все инструменты для выбора контрольной пары (в т.ч. is_active=false):
+            // пробу можно вести отдельной «выключенной» парой, не включая её в основной ingest-пул.
             'proxyReactivationProbeInstruments' => PocketInstrument::query()
-                ->active()
+                ->orderByDesc('is_active')
                 ->orderBy('instrument')
-                ->get(['instrument', 'display_name']),
+                ->get(['instrument', 'display_name', 'is_active']),
             'proxyReactivationProbeInstrument' => $this->getProxyReactivationProbeInstrument(),
             'proxyAutoTestEnabled' => $this->isProxyAutoTestEnabled(),
             'proxyAutoTestAllEnabled' => $this->isProxyAutoTestAllEnabled(),
@@ -49,13 +51,15 @@ class SettingsController extends Controller
             'proxyStats' => [
                 'total' => ProxyEndpoint::query()->count(),
                 'active' => ProxyEndpoint::query()->where('status', ProxyEndpoint::STATUS_ACTIVE)->count(),
-                'cooldown' => ProxyEndpoint::query()->where('status', ProxyEndpoint::STATUS_COOLDOWN)->count(),
                 'dead' => ProxyEndpoint::query()->where('status', ProxyEndpoint::STATUS_DEAD)->count(),
             ],
         ]);
     }
 
-    public function refreshProxies(ProxyRotationService $proxyRotation)
+    public function refreshProxies(
+        ProxyRotationService $proxyRotation,
+        CurrentCandleCacheService $currentCandleCache,
+    )
     {
         $apiKey = (string) config('services.webshare.api_key', '');
         if ($apiKey === '') {
@@ -132,7 +136,6 @@ class SettingsController extends Controller
                     'last_error' => null,
                     'last_failed_at' => null,
                     'last_success_at' => null,
-                    'cooldown_until' => null,
                     'last_http_check_at' => null,
                     'last_http_status' => null,
                     'last_http_latency_ms' => null,
@@ -146,10 +149,20 @@ class SettingsController extends Controller
 
         $assigned = $proxyRotation->assignRoundRobinToActiveInstruments();
 
+        // Сигнал ingest: немедленно перечитать proxy_url и перезапустить WebSocket-воркеры.
+        $proxyRotation->markPoolRefreshed();
+
+        // Сбрасываем partial-свечи в Redis — иначе график ещё ~3 мин показывает старый хвост
+        // от прежних прокси, пока не истечёт TTL current_candle:*.
+        $currentCandleCache->clearAllPartials(
+            PocketInstrument::query()->active()->pluck('instrument')->all()
+        );
+
         return back()->with(
             'success',
             sprintf(
-                'Прокси полностью обновлены: назначено %d активным инструментам из %d прокси в новом пуле.',
+                'Прокси полностью обновлены: назначено %d активным инструментам из %d прокси в новом пуле. '
+                .'Ingest подхватит новые endpoint в течение ~15 с; partial-кэш свечей сброшен.',
                 $assigned,
                 $proxyCount,
             )
@@ -159,7 +172,7 @@ class SettingsController extends Controller
     public function updateProxyRotation(\Illuminate\Http\Request $request, ProxyRotationService $proxyRotation)
     {
         $validated = $request->validate([
-            'proxy_cooldown_streak_threshold' => 'nullable|integer|min:1|max:1000',
+            'proxy_dead_streak_threshold' => 'nullable|integer|min:1|max:1000',
             'proxy_max_instruments_per_endpoint' => 'nullable|integer|min:1|max:100',
             'proxy_reactivation_probe_instrument' => 'nullable|string|max:63',
             'proxy_probe_window_sec' => 'nullable|integer|min:5|max:180',
@@ -167,10 +180,10 @@ class SettingsController extends Controller
 
         // Явная boolean-настройка через checkbox "on/off".
         $enabled = $request->boolean('proxy_auto_rotation_enabled');
-        $threshold = (int) ($validated['proxy_cooldown_streak_threshold'] ?? $proxyRotation->getCooldownStreakThreshold());
+        $threshold = (int) ($validated['proxy_dead_streak_threshold'] ?? $proxyRotation->getDeadStreakThreshold());
         $maxInstrumentsPerProxy = (int) ($validated['proxy_max_instruments_per_endpoint'] ?? $proxyRotation->getMaxInstrumentsPerProxy());
         $proxyRotation->setAutoRotationEnabled($enabled);
-        $proxyRotation->setCooldownStreakThreshold($threshold);
+        $proxyRotation->setDeadStreakThreshold($threshold);
         $proxyRotation->setMaxInstrumentsPerProxy($maxInstrumentsPerProxy);
         // Параметр "контрольного инструмента" для авто-реанимации dead:
         // возвращаем прокси в active только если по этой паре есть признаки живого PO/WS.
@@ -214,44 +227,29 @@ class SettingsController extends Controller
         return back()->with(
             'success',
             $enabled
-                ? "Автоматическая ротация прокси включена. Порог cooldown: streak >= {$threshold}, лимит нагрузки: до {$maxInstrumentsPerProxy} инструмент(ов) на 1 прокси."
+                ? "Автоматическая ротация прокси включена. Порог dead: streak >= {$threshold}, лимит нагрузки: до {$maxInstrumentsPerProxy} инструмент(ов) на 1 прокси."
                 : "Автоматическая ротация прокси выключена. Порог сохранён: streak >= {$threshold}, лимит нагрузки: до {$maxInstrumentsPerProxy} инструмент(ов) на 1 прокси."
         );
     }
 
     public function reactivateProxy(ProxyEndpoint $proxy)
     {
-        // "Реанимация" прокси: возвращаем endpoint в рабочий пул.
-        // При ручной реанимации начинаем "новый цикл жизни" прокси:
-        // обнуляем счётчик ошибок, чтобы endpoint заново оценивался с нуля.
-        $proxy->update([
-            'status' => ProxyEndpoint::STATUS_ACTIVE,
-            'failure_count' => 0,
-            'last_error' => null,
-            'last_failed_at' => null,
-            'cooldown_until' => null,
-            'updated_at' => now(),
-        ]);
+        // dead → active: сбрасываем streak и текст ошибки — endpoint оценивается заново с нуля.
+        $proxy->update(ProxyEndpoint::deadToActiveResetAttributes());
 
         return back()->with('success', 'Прокси возвращён в active-пул.');
     }
 
     public function reactivateAllProblemProxies()
     {
-        // 1) Реанимируем статусы dead/cooldown -> active.
+        // Реанимируем dead → active и сразу обнуляем счётчик/ошибки у каждого такого endpoint.
         $reactivated = ProxyEndpoint::query()
-            ->whereIn('status', [ProxyEndpoint::STATUS_DEAD, ProxyEndpoint::STATUS_COOLDOWN])
-            ->update([
-                'status' => ProxyEndpoint::STATUS_ACTIVE,
-                'last_error' => null,
-                'last_failed_at' => null,
-                'cooldown_until' => null,
-                'updated_at' => now(),
-            ]);
+            ->where('status', ProxyEndpoint::STATUS_DEAD)
+            ->update(ProxyEndpoint::deadToActiveResetAttributes());
 
-        // 2) Сбрасываем счётчик ошибок у всех proxy с failure_count > 0,
-        // независимо от текущего статуса (active/cooldown/dead).
+        // Дополнительно сбрасываем streak у active-прокси, которые ещё не dead, но копят ошибки.
         $resetCounters = ProxyEndpoint::query()
+            ->where('status', ProxyEndpoint::STATUS_ACTIVE)
             ->where('failure_count', '>', 0)
             ->update([
                 'failure_count' => 0,
@@ -266,7 +264,26 @@ class SettingsController extends Controller
 
         return back()->with(
             'success',
-            "Реанимировано (dead/cooldown→active): {$reactivated} шт.; сброшено счётчиков ошибок: {$resetCounters} шт."
+            "Реанимировано (dead→active): {$reactivated} шт.; сброшено счётчиков ошибок: {$resetCounters} шт."
+        );
+    }
+
+    public function purgeOldData(\Illuminate\Http\Request $request, DataCleanupService $dataCleanup): \Illuminate\Http\RedirectResponse
+    {
+        $validated = $request->validate([
+            // Окно хранения из селекта рядом с кнопкой «Удалить все данные».
+            'retention_hours' => 'nullable|integer|in:'.implode(',', DataCleanupService::ALLOWED_RETENTION_HOURS),
+        ]);
+
+        $retentionHours = $dataCleanup->normalizeRetentionHours(
+            (int) ($validated['retention_hours'] ?? DataCleanupService::DEFAULT_RETENTION_HOURS)
+        );
+
+        $result = $dataCleanup->purgeOlderThan($retentionHours);
+
+        return back()->with(
+            'success',
+            $dataCleanup->formatResultMessage($result),
         );
     }
 

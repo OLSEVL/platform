@@ -58,7 +58,6 @@
         <div class="mb-4 text-sm text-zinc-300">
             Всего в пуле: <span class="text-zinc-100 font-medium">{{ $proxyStats['total'] ?? 0 }}</span>,
             active: <span class="text-emerald-400">{{ $proxyStats['active'] ?? 0 }}</span>,
-            cooldown: <span class="text-amber-400">{{ $proxyStats['cooldown'] ?? 0 }}</span>,
             dead: <span class="text-rose-400">{{ $proxyStats['dead'] ?? 0 }}</span>.
             <span class="block mt-1 text-zinc-500">
                 Ёмкость назначения: свободно
@@ -79,7 +78,7 @@
         <h2 class="text-lg font-semibold text-zinc-100 mb-2">Ротация прокси</h2>
         <p class="text-sm text-zinc-400 mb-4">
             Когда опция включена, API при выдаче инструментов автоматически переназначает прокси для инструментов
-            без рабочего endpoint (например, dead/cooldown/не назначен).
+            без рабочего endpoint (например, dead/не назначен).
         </p>
         <form action="{{ route('settings.proxies.auto-rotation') }}" method="POST" class="flex flex-col items-start gap-3">
             @csrf
@@ -114,13 +113,13 @@
                 Автоматический тест dead-прокси
             </label>
             <label class="flex flex-col gap-1 text-zinc-200 text-sm">
-                <span>Порог перевода в cooldown (streak >=)</span>
+                <span>Порог перевода в dead (streak >=)</span>
                 <input
                     type="number"
-                    name="proxy_cooldown_streak_threshold"
+                    name="proxy_dead_streak_threshold"
                     min="1"
                     max="1000"
-                    value="{{ (int) ($proxyCooldownStreakThreshold ?? 10) }}"
+                    value="{{ (int) ($proxyDeadStreakThreshold ?? 10) }}"
                     class="w-28 px-2 py-1 rounded border border-zinc-600 bg-zinc-950 text-zinc-100 focus:ring-2 focus:ring-indigo-600 focus:border-transparent"
                 >
             </label>
@@ -151,7 +150,7 @@
                             value="{{ $inst->instrument }}"
                             @selected(($proxyReactivationProbeInstrument ?? '') === $inst->instrument)
                         >
-                            {{ $inst->instrument }}@if(!empty($inst->display_name)) — {{ $inst->display_name }}@endif
+                            {{ $inst->instrument }}@if(!empty($inst->display_name)) — {{ $inst->display_name }}@endif @if(!$inst->is_active) (выкл.) @endif
                         </option>
                     @endforeach
                 </select>
@@ -253,17 +252,17 @@
                 <a href="{{ route('settings.index', ['health_filter' => 'all']) }}" class="{{ $healthFilterLinkClass('all', $healthFilterCurrent) }}">Все</a>
                 <a href="{{ route('settings.index', ['health_filter' => 'problems']) }}" class="{{ $healthFilterLinkClass('problems', $healthFilterCurrent) }}">Проблемные</a>
                 <a href="{{ route('settings.index', ['health_filter' => 'false_dead']) }}" class="{{ $healthFilterLinkClass('false_dead', $healthFilterCurrent) }}">Ложный dead</a>
-                <a href="{{ route('settings.index', ['health_filter' => 'active']) }}" class="{{ $healthFilterLinkClass('active', $healthFilterCurrent) }}">Active / cooldown</a>
+                <a href="{{ route('settings.index', ['health_filter' => 'active']) }}" class="{{ $healthFilterLinkClass('active', $healthFilterCurrent) }}">Active</a>
             </div>
             <form
                 action="{{ route('settings.proxies.reactivate-all') }}"
                 method="POST"
                 class="sm:ml-auto"
-                onsubmit="return confirm('Реанимировать все прокси в статусах dead/cooldown?');"
+                onsubmit="return confirm('Реанимировать все dead-прокси?');"
             >
                 @csrf
                 <button type="submit" class="inline-flex items-center px-3 py-1.5 rounded bg-emerald-700 hover:bg-emerald-600 text-white text-xs font-medium whitespace-nowrap">
-                    Реанимировать все dead/cooldown
+                    Реанимировать все dead
                 </button>
             </form>
         </div>
@@ -312,7 +311,6 @@
                                 $proxyId = $row['proxy_id'];
                                 $statusClass = match($row['status']) {
                                     'active' => 'text-emerald-400',
-                                    'cooldown' => 'text-amber-400',
                                     'dead' => 'text-rose-400',
                                     default => 'text-zinc-400',
                                 };
@@ -542,6 +540,45 @@
     </div>
 
     <div class="bg-zinc-900 border border-zinc-800 rounded-lg shadow-lg shadow-black/20 p-5 mt-6">
+        <h2 class="text-lg font-semibold text-zinc-100 mb-2">Очистка данных</h2>
+        <p class="text-sm text-zinc-400 mb-4">
+            Удаляет исторические данные платформы: свечи в БД, сигналы и сделки всех ботов,
+            LLM-логи, анализы и записи запусков. Действие необратимо.
+            Вариант «0 часов» стирает <strong class="text-zinc-300">всё</strong> без исключения;
+            остальные варианты оставляют данные за последние N часов.
+        </p>
+        <form
+            action="{{ route('settings.data.purge') }}"
+            method="POST"
+            class="flex flex-wrap items-end gap-3"
+            onsubmit="const h=this.retention_hours.value; return confirm(h==='0' ? 'Удалить ВСЕ данные без исключения? Действие необратимо.' : 'Удалить все данные старше выбранного периода? Действие необратимо.');"
+        >
+            @csrf
+            <label class="flex flex-col gap-1 text-zinc-200 text-sm">
+                <span>Удалить данные старше</span>
+                <select
+                    name="retention_hours"
+                    class="min-w-[10rem] px-2 py-2 rounded border border-zinc-600 bg-zinc-950 text-zinc-100 focus:ring-2 focus:ring-rose-600 focus:border-transparent"
+                >
+                    <option value="0">0 часов (всё)</option>
+                    <option value="1">1 час</option>
+                    <option value="3">3 часа</option>
+                    <option value="6">6 часов</option>
+                    <option value="12">12 часов</option>
+                    <option value="24" selected>24 часа</option>
+                    <option value="48">48 часов</option>
+                </select>
+            </label>
+            <button
+                type="submit"
+                class="inline-flex items-center justify-center px-4 py-2 rounded bg-rose-700 hover:bg-rose-600 text-white font-medium"
+            >
+                Удалить все данные
+            </button>
+        </form>
+    </div>
+
+    <div class="bg-zinc-900 border border-zinc-800 rounded-lg shadow-lg shadow-black/20 p-5 mt-6">
         <h2 class="text-lg font-semibold text-zinc-100 mb-2">Мониторинг Payout</h2>
         <p class="text-sm text-zinc-400 mb-4">
             Порог влияет на колонку «Событие payout (PO)» в разделе «Инструменты».
@@ -740,7 +777,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const statusNode = rowNode.querySelector('.js-proxy-status');
         if (statusNode) {
-            const map = { active: 'text-emerald-400', cooldown: 'text-amber-400', dead: 'text-rose-400' };
+            const map = { active: 'text-emerald-400', dead: 'text-rose-400' };
             setClassIfChanged(statusNode, `js-proxy-status ${map[row.status] || 'text-zinc-400'}`);
             setTextIfChanged(statusNode, row.status || '—');
         }

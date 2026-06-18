@@ -7,7 +7,7 @@
         <a href="{{ route('bots.analytics') }}" class="text-sm text-blue-400 hover:text-blue-300">Открыть аналитику</a>
     </div>
 
-    <div class="rounded border border-amber-900/60 bg-amber-950/30 p-4 text-sm text-amber-100/90">
+    <!-- <div class="rounded border border-amber-900/60 bg-amber-950/30 p-4 text-sm text-amber-100/90">
         <p class="font-medium text-amber-200">Как боты запускаются</p>
         <p class="mt-1 text-amber-100/80">
             Скан и закрытие сделок идут по расписанию Laravel (раз в минуту). В продакшене нужен cron
@@ -22,7 +22,7 @@
         <p class="mt-2 text-amber-100/70">
             По каждому инструменту одновременно только одна открытая paper-сделка; пока она не закрыта по времени и не отработает settle, новый сигнал по той же паре не создаётся.
         </p>
-    </div>
+    </div> -->
 
     @if($bots->isEmpty())
         <div class="rounded border border-zinc-800 bg-zinc-900/60 p-4 text-zinc-400">

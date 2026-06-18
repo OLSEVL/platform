@@ -30,7 +30,7 @@ class OpenRouterLlmAnalystStrategy implements BotStrategyInterface
         $temperature = (float) ($cfg['temperature'] ?? 0.2);
         $maxTokens = (int) ($cfg['max_tokens'] ?? 900);
         $timeoutSec = OpenRouterClient::resolveChatTimeoutSec($cfg);
-        $systemPrompt = (string) ($cfg['system_prompt'] ?? $this->defaultSystemPrompt());
+        $systemPrompt = (string) ($cfg['system_prompt'] ?? $this->defaultSystemPrompt($cfg));
         $mtfEnabled = (bool) ($cfg['mtf_enabled'] ?? true);
         $botId = isset($context['bot_id']) ? (int) $context['bot_id'] : null;
 
@@ -47,8 +47,11 @@ class OpenRouterLlmAnalystStrategy implements BotStrategyInterface
         /** @var list<array<string,mixed>> $closedS5 */
         $closedS5 = is_array($context['s5_closed'] ?? null) ? array_values($context['s5_closed']) : [];
         $partialS5 = is_array($context['s5_partial'] ?? null) ? $context['s5_partial'] : null;
+        $analystSmcEnabled = (bool) ($context['analyst_smc_flow_enabled'] ?? false);
         /** @var array<string,mixed> $smcFlowSummary */
-        $smcFlowSummary = is_array($context['smc_flow_summary'] ?? null) ? $context['smc_flow_summary'] : [];
+        $smcFlowSummary = $analystSmcEnabled && is_array($context['smc_flow_summary'] ?? null)
+            ? $context['smc_flow_summary']
+            : [];
 
         $payload = [
             'instrument' => $instrument,
@@ -58,8 +61,6 @@ class OpenRouterLlmAnalystStrategy implements BotStrategyInterface
             'partial_candle_m1' => $partialCandle,
             'closed_candles_s5' => $closedS5,
             'partial_candle_s5' => $partialS5,
-            'smc_flow_summary' => $smcFlowSummary,
-            'expiry_focus_min' => [3, 6],
             'mtf' => [
                 'enabled' => $mtfEnabled,
                 'm1_closed' => $m1,
@@ -76,6 +77,10 @@ class OpenRouterLlmAnalystStrategy implements BotStrategyInterface
             ],
             'response_format' => 'plain_text_russian',
         ];
+        if ($analystSmcEnabled) {
+            $payload['smc_flow_summary'] = $smcFlowSummary;
+            $payload['expiry_focus_min'] = [3, 6];
+        }
 
         $userContent = "Проанализируй график по данным ниже. Ответ — связный текст на русском.\n";
         if ($userQuestion !== '') {
@@ -174,7 +179,8 @@ class OpenRouterLlmAnalystStrategy implements BotStrategyInterface
                 'model' => $model,
                 'candles_sent' => count($closedForLlm),
                 's5_bars_sent' => count($closedS5) + ($partialS5 ? 1 : 0),
-                'smc_flow_modules' => $smcFlowSummary['modules'] ?? [],
+                'analyst_smc_flow_enabled' => $analystSmcEnabled,
+                'smc_flow_modules' => $analystSmcEnabled ? ($smcFlowSummary['modules'] ?? []) : [],
                 'mtf_enabled' => $mtfEnabled,
                 'm1_bars_sent' => count($m1),
                 'm5_bars_sent' => count($m5),
@@ -190,9 +196,9 @@ class OpenRouterLlmAnalystStrategy implements BotStrategyInterface
         ];
     }
 
-    private function defaultSystemPrompt(): string
+    private function defaultSystemPrompt(array $cfg): string
     {
-        return OpenRouterChartLevelsParser::defaultAnalystSystemPrompt();
+        return OpenRouterChartLevelsParser::defaultAnalystSystemPromptForConfig($cfg);
     }
 
     /**

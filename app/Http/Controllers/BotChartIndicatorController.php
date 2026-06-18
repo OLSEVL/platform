@@ -4,6 +4,8 @@ namespace App\Http\Controllers;
 
 use App\Models\Bot;
 use App\Models\IndicatorSetting;
+use App\Services\Indicators\OrderBlocksIndicatorService;
+use App\Support\OrderBlocksSettingsForm;
 use App\Services\Indicators\LiquiditySwingsIndicatorService;
 use App\Services\Indicators\PriceActionDgtIndicatorService;
 use App\Services\Indicators\SmcFlowIndicatorService;
@@ -61,8 +63,40 @@ class BotChartIndicatorController extends Controller
     public function editOrderBlocks(Bot $bot): View
     {
         $this->ensureBotOwner($bot);
+        $ob = IndicatorSetting::mergedOrderBlocksParams($bot);
 
-        return view('bots.indicators.order-blocks', ['bot' => $bot]);
+        return view('bots.indicators.order-blocks', [
+            'bot' => $bot,
+            'ob' => $ob,
+        ]);
+    }
+
+    public function updateOrderBlocks(Request $request, Bot $bot): RedirectResponse
+    {
+        $this->ensureBotOwner($bot);
+        if ($request->boolean('use_expert_json')) {
+            $request->validate([
+                'expert_settings_json' => ['required', 'string', 'max:65535'],
+            ]);
+            $raw = trim((string) $request->input('expert_settings_json', ''));
+            $decoded = json_decode($raw, true);
+            if (! is_array($decoded)) {
+                return back()->withInput()->withErrors(['expert_settings_json' => 'Некорректный JSON.']);
+            }
+            $params = array_replace(OrderBlocksIndicatorService::defaultParams(), $decoded);
+        } else {
+            $params = OrderBlocksSettingsForm::buildFromRequest($request);
+        }
+        IndicatorSetting::updateOrCreate(
+            ['bot_id' => $bot->id, 'indicator_key' => IndicatorSetting::KEY_ORDER_BLOCKS],
+            ['settings' => $params]
+        );
+        $config = is_array($bot->config) ? $bot->config : [];
+        unset($config[IndicatorSetting::KEY_ORDER_BLOCKS]);
+        $bot->update(['config' => $config]);
+
+        return redirect()->route('bots.indicators.order-blocks.edit', $bot)
+            ->with('status', 'Настройки ордерблоков сохранены.');
     }
 
     public function editFvg(Bot $bot): View

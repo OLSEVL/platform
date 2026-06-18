@@ -127,7 +127,7 @@ class OpenRouterLlmAnalystTest extends TestCase
 
         $response->assertJsonStructure(['smc_flow' => ['lines', 'areas', 'labels', 'modules']]);
         $this->assertStringContainsString('--- system ---', (string) ($log->request_text ?? ''));
-        $this->assertStringContainsString('Анализируй график кратко на русском.', (string) ($log->request_text ?? ''));
+        $this->assertStringContainsString('smc_flow_summary', (string) ($log->request_text ?? ''));
         $this->assertStringContainsString('--- user ---', (string) ($log->request_text ?? ''));
     }
 
@@ -141,7 +141,47 @@ class OpenRouterLlmAnalystTest extends TestCase
             ->assertRedirect(route('bots.show', $bot));
     }
 
-    private function makeAnalystBot(?User $user = null): Bot
+    public function test_classic_analyst_omits_smc_flow_from_llm_payload(): void
+    {
+        if (! Schema::hasTable('bot_llm_logs')) {
+            $this->markTestSkipped('bot_llm_logs table missing');
+        }
+
+        Http::fake([
+            'https://openrouter.ai/api/v1/chat/completions' => Http::response([
+                'choices' => [['message' => ['content' => 'Классический анализ без SMC.']]],
+                'usage' => ['prompt_tokens' => 5, 'completion_tokens' => 2, 'total_tokens' => 7, 'cost' => 0.0001],
+            ], 200),
+            'https://openrouter.ai/api/v1/credits' => Http::response([
+                'data' => ['total_credits' => 10, 'total_usage' => 0],
+            ], 200),
+        ]);
+
+        $user = User::factory()->create();
+        $bot = $this->makeAnalystBot($user, false);
+        PocketInstrument::query()->create([
+            'instrument' => 'EURUSD',
+            'display_name' => 'EUR/USD',
+            'is_active' => true,
+            'priority' => 1,
+            'current_payout' => 85.0,
+        ]);
+
+        $this->actingAs($user)->getJson(route('bots.analysis.data', $bot).'?instrument=EURUSD')
+            ->assertOk()
+            ->assertJsonPath('analyst_smc_flow_enabled', false)
+            ->assertJsonPath('smc_flow', null);
+
+        $log = \Illuminate\Support\Facades\DB::table('bot_llm_logs')
+            ->where('bot_id', $bot->id)
+            ->latest('id')
+            ->first();
+        $request = json_decode((string) ($log->request_json ?? ''), true);
+        $payload = $request['payload'] ?? [];
+        $this->assertArrayNotHasKey('smc_flow_summary', $payload);
+    }
+
+    private function makeAnalystBot(?User $user = null, bool $smcFlowEnabled = true): Bot
     {
         $user ??= User::factory()->create();
 
@@ -157,7 +197,10 @@ class OpenRouterLlmAnalystTest extends TestCase
                 'temperature' => 0,
                 'max_tokens' => 200,
                 'mtf_enabled' => false,
-                'system_prompt' => 'Анализируй график кратко на русском.',
+                'analyst_smc_flow_enabled' => $smcFlowEnabled,
+                'system_prompt' => $smcFlowEnabled
+                    ? \App\Support\OpenRouterChartLevelsParser::defaultAnalystSystemPromptWithSmcFlow()
+                    : \App\Support\OpenRouterChartLevelsParser::defaultAnalystSystemPromptClassic(),
                 'openrouter_timeout_sec' => 120,
                 'version' => 'openrouter_llm_analyst_v1',
             ],

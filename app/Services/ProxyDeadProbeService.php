@@ -19,7 +19,7 @@ class ProxyDeadProbeService
 {
     public const SETTING_AUTO_TEST_ENABLED = 'proxy_auto_test_enabled';
 
-    /** Тест по кругу всех endpoint (active/cooldown/dead), взаимоисключимо с dead-only. */
+    /** Тест по кругу всех endpoint (active/dead), взаимоисключимо с dead-only. */
     public const SETTING_AUTO_TEST_ALL_ENABLED = 'proxy_auto_test_all_enabled';
 
     public const SETTING_PROBE_INSTRUMENT = 'proxy_reactivation_probe_instrument';
@@ -202,9 +202,9 @@ class ProxyDeadProbeService
             return ['status' => 'skip', 'reason' => 'auto_test_disabled'];
         }
 
+        // Контрольная пара может быть выключена в списке инструментов — для пробы достаточно session_token в БД.
         $instrument = PocketInstrument::query()
             ->where('instrument', $probeInstrumentName)
-            ->where('is_active', true)
             ->first();
 
         if (! $instrument) {
@@ -212,10 +212,12 @@ class ProxyDeadProbeService
                 'state' => 'done',
                 'status' => 'skip',
                 'instrument' => $probeInstrumentName,
-                'reason' => 'probe_instrument_not_found_or_inactive',
+                'reason' => 'probe_instrument_not_found',
             ]);
+            // Иначе probe-loop крутится на том же proxy #id без advanceCursor.
+            $this->advanceCursor($targetProxy->id);
 
-            return ['status' => 'skip', 'reason' => 'probe_instrument_not_found_or_inactive', 'instrument' => $probeInstrumentName];
+            return ['status' => 'skip', 'reason' => 'probe_instrument_not_found', 'instrument' => $probeInstrumentName];
         }
 
         $payoutStaleMinutes = $this->getPayoutStaleMinutes();
@@ -324,15 +326,10 @@ class ProxyDeadProbeService
     private function applyProbeSuccess(ProxyEndpoint $proxy, Carbon $now): string
     {
         if ($proxy->status === ProxyEndpoint::STATUS_DEAD) {
-            ProxyEndpoint::query()->whereKey($proxy->id)->update([
-                'status' => ProxyEndpoint::STATUS_ACTIVE,
-                'failure_count' => 0,
-                'last_error' => null,
-                'last_failed_at' => null,
-                'cooldown_until' => null,
-                'last_success_at' => $now,
-                'updated_at' => $now,
-            ]);
+            ProxyEndpoint::query()->whereKey($proxy->id)->update(array_merge(
+                ProxyEndpoint::deadToActiveResetAttributes($now),
+                ['last_success_at' => $now],
+            ));
 
             return 'reactivated_by_auto_probe';
         }

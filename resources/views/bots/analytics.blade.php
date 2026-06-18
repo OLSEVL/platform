@@ -10,11 +10,18 @@
         72 => 'Последние 3 дня',
         168 => 'Последняя неделя',
     ];
+    $intervalPresets = $intervalPresets ?? [
+        60 => '1 минута',
+        300 => '5 минут',
+        900 => '15 минут',
+        1800 => '30 минут',
+        3600 => '1 час',
+    ];
 @endphp
 <div class="space-y-6">
     <h1 class="text-2xl font-semibold">Аналитика ботов</h1>
 
-    {{-- Период: выпадающий список + авто-отправка формы при смене --}}
+    {{-- Период и интервал обобщения — авто-отправка формы при смене любого селекта. --}}
     <form method="GET" class="flex flex-wrap items-center gap-3">
         <label for="hours" class="text-sm text-zinc-400">Период:</label>
         <select id="hours" name="hours"
@@ -24,32 +31,57 @@
                 <option value="{{ $h }}" @selected((int) $hours === (int) $h)>{{ $label }}</option>
             @endforeach
         </select>
-        <span class="text-xs text-zinc-500">Ось X — время; ось Y — winrate в процентах от 0% до 100% для каждого временного интервала.</span>
+        <label for="interval" class="text-sm text-zinc-400">Интервал:</label>
+        <select id="interval" name="interval"
+                class="rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 min-w-[10rem]"
+                onchange="this.form.submit()">
+            @foreach($intervalPresets as $sec => $label)
+                <option value="{{ $sec }}" @selected((int) ($interval ?? 3600) === (int) $sec)>{{ $label }}</option>
+            @endforeach
+        </select>
+        <span class="text-xs text-zinc-500">Ось X — время с шагом выбранного интервала; ось Y — winrate 0–100% в каждом интервале.</span>
     </form>
 
+    {{-- Сводка по всем ботам за период — фиксированный блок под формой, не привязан к первому графику. --}}
+    @if($overallWinrate !== null || $overallWins > 0 || $overallLosses > 0)
+        <div class="flex flex-wrap items-center gap-3 text-sm">
+            <span class="rounded border border-zinc-700 bg-zinc-900/70 px-3 py-1.5 text-zinc-200">
+                Общий winrate:
+                @if($overallWinrate !== null)
+                    <span class="font-semibold text-emerald-400">{{ number_format((float) $overallWinrate, 2) }}%</span>
+                @else
+                    <span class="font-semibold text-zinc-400">нет данных</span>
+                @endif
+            </span>
+            <span class="text-xs text-zinc-500">
+                Wins: <span class="text-emerald-400">{{ (int) $overallWins }}</span>,
+                Losses: <span class="text-rose-400">{{ (int) $overallLosses }}</span>
+            </span>
+        </div>
+    @endif
+
+    {{-- График для каждого включённого бота; пустой canvas, если за период нет сделок. --}}
     @if(!empty($chartSeries))
         <div class="space-y-6">
             @foreach($chartSeries as $series)
                 <div class="rounded border border-zinc-800 bg-zinc-950/40 p-4">
-                    {{-- Название бота и общий winrate за период в одной строке (сводка по всем ботов — один раз у первого графика). --}}
-                    <div class="mb-3 flex flex-wrap items-baseline justify-between gap-x-4 gap-y-2">
+                    <div class="mb-3 space-y-2">
                         <h2 class="text-sm font-medium text-zinc-200">{{ $series['name'] }}</h2>
-                        @if($loop->first)
-                            <div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-zinc-300 sm:text-sm">
-                                <span class="rounded border border-zinc-700 bg-zinc-900/70 px-2.5 py-1">
-                                    Общий winrate:
-                                    @if($overallWinrate !== null)
-                                        <span class="font-semibold text-emerald-400">{{ number_format((float) $overallWinrate, 2) }}%</span>
-                                    @else
-                                        <span class="font-semibold text-zinc-400">нет данных</span>
-                                    @endif
-                                </span>
-                                <span class="text-zinc-500">
-                                    Wins: <span class="text-emerald-400">{{ (int) $overallWins }}</span>,
-                                    Losses: <span class="text-rose-400">{{ (int) $overallLosses }}</span>
-                                </span>
-                            </div>
-                        @endif
+                        {{-- Winrate конкретного бота за период — у каждого графика своя строка. --}}
+                        <div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-zinc-300 sm:text-sm">
+                            <span class="rounded border border-zinc-700 bg-zinc-900/70 px-2.5 py-1">
+                                Winrate:
+                                @if($series['winrate'] !== null)
+                                    <span class="font-semibold text-emerald-400">{{ number_format((float) $series['winrate'], 2) }}%</span>
+                                @else
+                                    <span class="font-semibold text-zinc-400">нет данных</span>
+                                @endif
+                            </span>
+                            <span class="text-zinc-500">
+                                Wins: <span class="text-emerald-400">{{ (int) $series['wins'] }}</span>,
+                                Losses: <span class="text-rose-400">{{ (int) $series['losses'] }}</span>
+                            </span>
+                        </div>
                     </div>
                     {{-- Левая подпись оси Y: сверху 100% (максимальный winrate), снизу 0%. --}}
                     <div class="flex gap-2 min-w-[280px]">
@@ -59,30 +91,16 @@
                         </div>
                         {{-- Фиксированная высота — Chart.js заполняет контейнер --}}
                         <div class="relative h-56 flex-1 min-w-0">
-                            <canvas id="bot-chart-{{ $series['bot_id'] }}" aria-label="График win/loss"></canvas>
+                            <canvas id="bot-chart-{{ $series['bot_id'] }}" aria-label="График winrate бота {{ $series['name'] }}"></canvas>
                         </div>
                     </div>
                 </div>
             @endforeach
         </div>
     @else
-        {{-- Нет графиков (нет win/loss) — общий winrate остаётся под формой. --}}
-        @if($overallWinrate !== null || $overallWins > 0 || $overallLosses > 0)
-            <div class="flex flex-wrap items-center gap-3 text-sm">
-                <span class="rounded border border-zinc-700 bg-zinc-900/70 px-3 py-1.5 text-zinc-200">
-                    Общий winrate:
-                    @if($overallWinrate !== null)
-                        <span class="font-semibold text-emerald-400">{{ number_format((float) $overallWinrate, 2) }}%</span>
-                    @else
-                        <span class="font-semibold text-zinc-400">нет данных</span>
-                    @endif
-                </span>
-                <span class="text-xs text-zinc-500">
-                    Wins: <span class="text-emerald-400">{{ (int) $overallWins }}</span>,
-                    Losses: <span class="text-rose-400">{{ (int) $overallLosses }}</span>
-                </span>
-            </div>
-        @endif
+        <div class="rounded border border-zinc-800 bg-zinc-900/60 p-4 text-zinc-400">
+            Нет включённых ботов — включите бота на странице списка, чтобы увидеть графики.
+        </div>
     @endif
 
     @if($rows->isEmpty())
@@ -111,7 +129,7 @@
                             $wr = $total > 0 ? round(($wins * 100) / $total, 1) : 0;
                         @endphp
                         <tr class="hover:bg-zinc-900/50">
-                            <td class="px-4 py-3 text-zinc-300">{{ $r->bucket }}</td>
+                            <td class="px-4 py-3 text-zinc-300">{{ \Carbon\Carbon::createFromTimestamp((int) $r->bucket_ts)->timezone(config('app.timezone'))->format('d.m H:i') }}</td>
                             <td class="px-4 py-3 text-zinc-100">{{ $r->bot_name }}</td>
                             <td class="px-4 py-3 text-zinc-300">{{ $total }}</td>
                             <td class="px-4 py-3 text-emerald-400">{{ $wins }}</td>
@@ -145,6 +163,9 @@
                         datasets: [{
                             label: 'Winrate, %',
                             data: series.values,
+                            // Wins/Losses по каждому бакету — для tooltip при наведении на точку графика.
+                            bucketWins: series.bucket_wins,
+                            bucketLosses: series.bucket_losses,
                             // Пропуски (null) между интервалами с данными — рисуем линию без обрыва на пустых бакетах.
                             spanGaps: true,
                             borderColor: 'rgb(239, 68, 68)',
@@ -165,11 +186,25 @@
                             tooltip: {
                                 callbacks: {
                                     label: function (ctx) {
+                                        const idx = ctx.dataIndex;
+                                        const wins = ctx.dataset.bucketWins[idx] ?? 0;
+                                        const losses = ctx.dataset.bucketLosses[idx] ?? 0;
+                                        const total = wins + losses;
                                         const v = ctx.parsed.y;
-                                        if (v === null || typeof v === 'undefined') {
-                                            return 'Winrate: нет данных';
+
+                                        if (total === 0 || v === null || typeof v === 'undefined') {
+                                            return [
+                                                'Winrate: нет данных',
+                                                'Win: 0',
+                                                'Loss: 0',
+                                            ];
                                         }
-                                        return 'Winrate: ' + v + '%';
+
+                                        return [
+                                            'Winrate: ' + v + '%',
+                                            'Win: ' + wins,
+                                            'Loss: ' + losses,
+                                        ];
                                     },
                                 },
                             },

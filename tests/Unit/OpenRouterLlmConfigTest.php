@@ -44,4 +44,11 @@ class OpenRouterLlmConfigTest extends TestCase
             1 => 100,
         ], $map);
     }
+
+    #[Test]
+    public function analyst_smc_flow_enabled_reads_config_flag(): void
+    {
+        $this->assertFalse(OpenRouterLlmConfig::analystSmcFlowEnabled([]));
+        $this->assertTrue(OpenRouterLlmConfig::analystSmcFlowEnabled(['analyst_smc_flow_enabled' => true]));
+    }
 }

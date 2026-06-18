@@ -41,6 +41,8 @@ Route::middleware('auth')->group(function () {
         Route::get('/{bot}/indicators/price-action-dgt', [BotChartIndicatorController::class, 'editPriceActionDgt'])->name('indicators.price-action-dgt.edit');
         Route::put('/{bot}/indicators/price-action-dgt', [BotChartIndicatorController::class, 'updatePriceActionDgt'])->name('indicators.price-action-dgt.update');
         Route::get('/{bot}/indicators/order-blocks', [BotChartIndicatorController::class, 'editOrderBlocks'])->name('indicators.order-blocks.edit');
+        Route::put('/{bot}/indicators/order-blocks', [BotChartIndicatorController::class, 'updateOrderBlocks'])->name('indicators.order-blocks.update');
+        Route::get('/{bot}/structures/data', [BotController::class, 'structuresData'])->name('structures.data');
         Route::get('/{bot}/indicators/fvg', [BotChartIndicatorController::class, 'editFvg'])->name('indicators.fvg.edit');
         Route::get('/{bot}/indicators/liquidity-swings', [BotChartIndicatorController::class, 'editLiquiditySwings'])->name('indicators.liquidity-swings.edit');
         Route::put('/{bot}/indicators/liquidity-swings', [BotChartIndicatorController::class, 'updateLiquiditySwings'])->name('indicators.liquidity-swings.update');
@@ -78,4 +80,5 @@ Route::middleware('auth')->group(function () {
     Route::get('/settings/proxies/{proxy}/health-row-ajax', [SettingsController::class, 'proxyHealthRowAjax'])->name('settings.proxies.health-row-ajax');
     Route::get('/settings/proxies/health-live-ajax', [SettingsController::class, 'proxyHealthLiveAjax'])->name('settings.proxies.health-live-ajax');
     Route::post('/settings/payout/monitoring', [SettingsController::class, 'updatePayoutMonitoring'])->name('settings.payout.monitoring');
+    Route::post('/settings/data/purge', [SettingsController::class, 'purgeOldData'])->name('settings.data.purge');
 });

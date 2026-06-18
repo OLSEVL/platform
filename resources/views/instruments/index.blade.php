@@ -102,7 +102,6 @@
                         @php
                             $proxyStatusClass = match($i->proxyEndpoint->status) {
                                 'active' => 'text-emerald-400',
-                                'cooldown' => 'text-amber-400',
                                 'dead' => 'text-rose-400',
                                 default => 'text-zinc-400',
                             };

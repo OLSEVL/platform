@@ -293,7 +293,12 @@ class DashboardController extends Controller
         // без повторного timezone-преобразования.
         $rows = $candleService->seriesForDashboard($instrument, $timeframe, $since, null, null);
 
-        $zones = $detector->activeZones($rows);
+        $anchorBot = $this->chartIndicatorBotForUser();
+        $obParams = $anchorBot !== null
+            ? IndicatorSetting::mergedOrderBlocksParams($anchorBot)
+            : null;
+
+        $zones = $detector->activeZones($rows, $obParams);
 
         return response()->json(['zones' => $zones]);
     }

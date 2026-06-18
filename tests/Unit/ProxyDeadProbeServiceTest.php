@@ -193,6 +193,37 @@ class ProxyDeadProbeServiceTest extends TestCase
         $this->assertSame('probe_already_healthy_on_proxy', $result['reason']);
     }
 
+    public function test_run_single_probe_accepts_inactive_control_instrument(): void
+    {
+        $activeProxy = ProxyEndpoint::query()->create([
+            'url' => 'http://a:1@9.9.9.9:9',
+            'status' => ProxyEndpoint::STATUS_ACTIVE,
+        ]);
+        $deadProxy = ProxyEndpoint::query()->create([
+            'url' => 'http://dead:1@8.8.8.8:8',
+            'status' => ProxyEndpoint::STATUS_DEAD,
+        ]);
+
+        PocketInstrument::query()->create([
+            'instrument' => 'PROBE_ONLY_otc',
+            'is_active' => false,
+            'session_token' => 'test-session-token',
+            'proxy_endpoint_id' => $activeProxy->id,
+        ]);
+
+        DB::table('app_settings')->insert([
+            ['key' => ProxyDeadProbeService::SETTING_AUTO_TEST_ENABLED, 'value' => '1', 'created_at' => now(), 'updated_at' => now()],
+            ['key' => ProxyDeadProbeService::SETTING_PROBE_INSTRUMENT, 'value' => 'PROBE_ONLY_otc', 'created_at' => now(), 'updated_at' => now()],
+            ['key' => ProxyDeadProbeService::SETTING_PROBE_WINDOW_SEC, 'value' => '5', 'created_at' => now(), 'updated_at' => now()],
+        ]);
+
+        $probe = app(ProxyDeadProbeService::class);
+        $result = $probe->runSingleProbe($deadProxy);
+
+        $this->assertNotSame('probe_instrument_not_found', $result['reason'] ?? null);
+        $this->assertSame($activeProxy->id, PocketInstrument::query()->where('instrument', 'PROBE_ONLY_otc')->value('proxy_endpoint_id'));
+    }
+
     public function test_probe_lock_blocks_rotation_service(): void
     {
         $dead = ProxyEndpoint::query()->create([

@@ -695,6 +695,25 @@
         return range.to >= lastIdx - edgeEps;
     }
 
+    /**
+     * DOM-зоны рисуются поверх canvas LW Charts: если time_end = текущий бар,
+     * полупрозрачный прямоугольник перекрывает формирующуюся свечу.
+     * Обрезаем правый край до левой границы колонки последнего бара.
+     */
+    function zoneEndXClipped(ts, tEnd, candles) {
+        if (!candles?.length) return null;
+        const lastBarTime = candles[candles.length - 1].time;
+        const endTime = tEnd ?? lastBarTime;
+        let x2 = ts.timeToCoordinate(endTime);
+        if (x2 == null) return null;
+        if (endTime < lastBarTime || candles.length < 2) return x2;
+        const xLast = ts.timeToCoordinate(lastBarTime);
+        const xPrev = ts.timeToCoordinate(candles[candles.length - 2].time);
+        if (xLast == null || xPrev == null) return x2;
+        const halfBar = Math.max(2, Math.abs(xLast - xPrev) / 2);
+        return Math.min(x2, xLast - halfBar);
+    }
+
     function redrawStructureOverlay() {
         if (!chart || !candlestickSeries || !structureOverlay) return;
         if (!allChartData.length) {
@@ -715,12 +734,33 @@
 
         /* rgba — явные стили: Tailwind CDN не подхватывает классы из строк JS */
         const zonePaint = {
-            order_block_bull: { background: 'rgba(212, 184, 150, 0.35)', border: '1px solid rgba(180, 140, 100, 0.55)' },
-            order_block_bear: { background: 'rgba(212, 184, 150, 0.35)', border: '1px solid rgba(180, 140, 100, 0.55)' },
+            order_block_bull: { background: 'rgba(33, 87, 243, 0.2)', border: '1px solid rgba(33, 87, 243, 0.85)' },
+            order_block_bull_break: { background: 'rgba(255, 17, 0, 0.2)', border: '1px dashed rgba(255, 17, 0, 0.85)' },
+            order_block_bear: { background: 'rgba(255, 93, 0, 0.2)', border: '1px solid rgba(255, 93, 0, 0.85)' },
+            order_block_bear_break: { background: 'rgba(12, 181, 26, 0.2)', border: '1px dashed rgba(12, 181, 26, 0.85)' },
             imbalance_bull: { background: 'rgba(14, 165, 233, 0.2)', border: '1px solid rgba(2, 132, 199, 0.45)' },
             imbalance_bear: { background: 'rgba(14, 165, 233, 0.2)', border: '1px solid rgba(2, 132, 199, 0.45)' },
             default: { background: 'rgba(156, 163, 175, 0.15)', border: '1px solid rgba(107, 114, 128, 0.35)' }
         };
+
+        /** Подпись типа ордерблока внутри зоны (текст приходит с API на русском). */
+        function appendOrderBlockLabel(parent, z) {
+            if (!z.label || !String(z.type || '').startsWith('order_block')) return;
+            const lbl = document.createElement('span');
+            lbl.textContent = z.label;
+            lbl.style.position = 'absolute';
+            lbl.style.left = '4px';
+            lbl.style.top = '3px';
+            lbl.style.fontSize = '10px';
+            lbl.style.fontWeight = '600';
+            lbl.style.lineHeight = '1.2';
+            lbl.style.color = z.label_color || '#f4f4f5';
+            lbl.style.textShadow = '0 1px 2px rgba(0,0,0,0.9)';
+            lbl.style.pointerEvents = 'none';
+            lbl.style.whiteSpace = 'nowrap';
+            lbl.style.zIndex = '1';
+            parent.appendChild(lbl);
+        }
 
         lastZones.forEach(z => {
             const isOb = z.type.startsWith('order_block');
@@ -729,11 +769,12 @@
             if (isFvg && !showFvg) return;
 
             if (lastBarTime < z.time_start) return;
-            const tEnd = lastBarTime;
+            const tEnd = z.time_end ?? lastBarTime;
 
             const x1 = chart.timeScale().timeToCoordinate(z.time_start);
-            const x2 = chart.timeScale().timeToCoordinate(tEnd);
+            const x2 = zoneEndXClipped(chart.timeScale(), tEnd, allChartData);
             if (x1 == null || x2 == null) return;
+            if (Math.abs(x2 - x1) < 1) return;
 
             const y1 = candlestickSeries.priceToCoordinate(z.price_high);
             const y2 = candlestickSeries.priceToCoordinate(z.price_low);
@@ -753,8 +794,9 @@
             div.style.top = top + 'px';
             div.style.width = width + 'px';
             div.style.height = height + 'px';
-            div.style.background = paint.background;
-            div.style.border = paint.border;
+            div.style.background = z.fill || paint.background;
+            div.style.border = z.border || paint.border;
+            appendOrderBlockLabel(div, z);
             structureOverlay.appendChild(div);
         });
         requestAnimationFrame(redrawPriceActionOverlay);
@@ -1082,10 +1124,11 @@
                 if (rendered >= maxRenderable) return;
                 if (!ar || typeof ar !== 'object') return;
                 const x1 = ts.timeToCoordinate(Number(ar.time_start));
-                const x2 = ts.timeToCoordinate(Number(ar.time_end));
+                const x2 = zoneEndXClipped(ts, Number(ar.time_end), allChartData);
                 const y1 = candlestickSeries.priceToCoordinate(Number(ar.price_high));
                 const y2 = candlestickSeries.priceToCoordinate(Number(ar.price_low));
                 if (x1 == null || x2 == null || y1 == null || y2 == null) return;
+                if (Math.abs(x2 - x1) < 1) return;
                 if ([x1, x2, y1, y2].some((v) => Number.isNaN(v))) return;
                 if (Math.max(x1, x2) < -80 || Math.min(x1, x2) > viewportW + 80) return;
                 const div = document.createElement('div');

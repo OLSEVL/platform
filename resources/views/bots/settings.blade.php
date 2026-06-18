@@ -61,8 +61,9 @@ features (обязательно заполняй):
   "level_price": 0.0
 }
 PROMPT;
-    $openrouterAnalystDefaultPrompt = \App\Support\OpenRouterChartLevelsParser::defaultAnalystSystemPrompt();
+    $openrouterAnalystDefaultPrompt = \App\Support\OpenRouterChartLevelsParser::defaultAnalystSystemPromptForConfig($cfg);
     $isChartAnalystBot = $bot->type === 'openrouter_llm_analyst';
+    $analystSmcFlowEnabled = $isChartAnalystBot && \App\Support\OpenRouterLlmConfig::analystSmcFlowEnabled($cfg);
 @endphp
 <div class="mx-auto w-full max-w-2xl space-y-6">
     <div class="flex flex-wrap items-baseline justify-between gap-3">
@@ -358,38 +359,42 @@ PROMPT;
                     </div>
                 </div>
             </div>
-        @elseif ($bot->type === 'feshan')
+        @elseif ($bot->type === 'smc_flow')
             <div class="space-y-4 border-t border-zinc-800 pt-4">
-                <p class="text-sm text-zinc-400">Feshan v2: вход только по снятию ликвидности (liquidity sweep) на M1. Сделка открывается после ложного прокола локального high/low и возврата цены в диапазон.</p>
+                <p class="text-sm text-zinc-400">
+                    SMC Flow: вход при совпадении <strong>UT Bot</strong> (триггер на последней свече) +
+                    <strong>3BR confirm</strong> (в окне баров) + <strong>LuxAlgo OB</strong> (цена в зоне).
+                    Параметры индикатора (UT, 3BR, OB) — в
+                    <a href="{{ route('bots.indicators.smc-flow.edit', $bot) }}" class="text-blue-400 hover:underline">настройках SMC Flow</a>.
+                </p>
 
                 <div class="grid gap-4 sm:grid-cols-2">
                     <div class="space-y-1">
-                        <label for="count" class="block text-xs font-medium text-zinc-400">Свечей M1 в выборке (count)</label>
-                        <input type="number" name="count" id="count" min="10" max="5000" required
-                            value="{{ old('count', $cfg['count'] ?? 2500) }}"
+                        <label for="count" class="block text-xs font-medium text-zinc-400">Свечей M1 (count)</label>
+                        <input type="number" name="count" id="count" min="80" max="5000" required
+                            value="{{ old('count', $cfg['count'] ?? 500) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
                         @error('count')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
-                        <label for="expiry_sec" class="block text-xs font-medium text-zinc-400">Экспирация (сек), основная по ТЗ 300 (5 мин)</label>
-                        <input type="number" name="expiry_sec" id="expiry_sec" min="60" max="900" required
-                            value="{{ old('expiry_sec', $cfg['expiry_sec'] ?? 300) }}"
+                        <label for="expiry_sec" class="block text-xs font-medium text-zinc-400">Экспирация (сек), по умолчанию 180 = 3 мин</label>
+                        <input type="number" name="expiry_sec" id="expiry_sec" min="120" max="600" required
+                            value="{{ old('expiry_sec', $cfg['expiry_sec'] ?? 180) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
                         @error('expiry_sec')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
                         <label for="min_confidence" class="block text-xs font-medium text-zinc-400">Мин. confidence (0–1)</label>
                         <input type="number" name="min_confidence" id="min_confidence" min="0" max="1" step="0.01" required
-                            value="{{ old('min_confidence', $cfg['min_confidence'] ?? 0.60) }}"
+                            value="{{ old('min_confidence', $cfg['min_confidence'] ?? 0.58) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
                         @error('min_confidence')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
-                        <label for="min_payout" class="block text-xs font-medium text-zinc-400">Процент, ниже которого не делать анализ</label>
+                        <label for="min_payout" class="block text-xs font-medium text-zinc-400">Мин. payout (%)</label>
                         <input type="number" name="min_payout" id="min_payout" min="0" max="100" step="0.1" required
                             value="{{ old('min_payout', $cfg['min_payout'] ?? 80) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-                        <p class="text-[11px] text-zinc-500">Текущий payout пары на PO должен быть не ниже этого значения, иначе scan пропускает инструмент.</p>
                         @error('min_payout')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
@@ -400,32 +405,37 @@ PROMPT;
                         @error('stale_after_sec')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
-                        <label for="liquidity_lookback" class="block text-xs font-medium text-zinc-400">Окно liquidity sweep (M1 свечей)</label>
-                        <input type="number" name="liquidity_lookback" id="liquidity_lookback" min="5" max="50" required
-                            value="{{ old('liquidity_lookback', $cfg['liquidity_lookback'] ?? 20) }}"
+                        <label for="smc_three_br_confirm_max_bars" class="block text-xs font-medium text-zinc-400">3BR: окно (баров)</label>
+                        <input type="number" name="smc_three_br_confirm_max_bars" id="smc_three_br_confirm_max_bars" min="1" max="120" required
+                            value="{{ old('smc_three_br_confirm_max_bars', $cfg['smc_three_br_confirm_max_bars'] ?? 30) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-                        @error('liquidity_lookback')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                        <p class="text-[11px] text-zinc-500">Confirm или pattern (^/¡) не старше N баров от UT.</p>
+                        @error('smc_three_br_confirm_max_bars')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                    <div class="flex items-center gap-2 sm:col-span-2">
+                        <input type="hidden" name="smc_three_br_allow_pattern" value="0">
+                        <input type="checkbox" name="smc_three_br_allow_pattern" id="smc_three_br_allow_pattern" value="1"
+                            @checked(old('smc_three_br_allow_pattern', $cfg['smc_three_br_allow_pattern'] ?? true))
+                            class="rounded border-zinc-600 bg-zinc-900 text-blue-500">
+                        <label for="smc_three_br_allow_pattern" class="text-sm text-zinc-300">
+                            3BR: учитывать pattern (^/¡), не только confirm (?)
+                        </label>
+                    </div>
+                    <div class="flex items-center gap-2 sm:col-span-2">
+                        <input type="hidden" name="smc_require_ob" value="0">
+                        <input type="checkbox" name="smc_require_ob" id="smc_require_ob" value="1"
+                            @checked(old('smc_require_ob', $cfg['smc_require_ob'] ?? true))
+                            class="rounded border-zinc-600 bg-zinc-900 text-blue-500">
+                        <label for="smc_require_ob" class="text-sm text-zinc-300">
+                            Требовать LuxAlgo OB (если выкл. — вход только UT + 3BR)
+                        </label>
                     </div>
                     <div class="space-y-1">
-                        <label for="sweep_min_wick_ratio" class="block text-xs font-medium text-zinc-400">Мин. тень sweep (0.05–0.8)</label>
-                        <input type="number" name="sweep_min_wick_ratio" id="sweep_min_wick_ratio" min="0.05" max="0.8" step="0.01" required
-                            value="{{ old('sweep_min_wick_ratio', $cfg['sweep_min_wick_ratio'] ?? 0.35) }}"
+                        <label for="smc_ob_touch_max_bars" class="block text-xs font-medium text-zinc-400">OB: касание зоны (баров назад)</label>
+                        <input type="number" name="smc_ob_touch_max_bars" id="smc_ob_touch_max_bars" min="0" max="12"
+                            value="{{ old('smc_ob_touch_max_bars', $cfg['smc_ob_touch_max_bars'] ?? 3) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-                        @error('sweep_min_wick_ratio')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
-                    </div>
-                    <div class="space-y-1">
-                        <label for="sweep_min_reclaim_ratio" class="block text-xs font-medium text-zinc-400">Мин. глубина возврата (0.05–0.8)</label>
-                        <input type="number" name="sweep_min_reclaim_ratio" id="sweep_min_reclaim_ratio" min="0.05" max="0.8" step="0.01" required
-                            value="{{ old('sweep_min_reclaim_ratio', $cfg['sweep_min_reclaim_ratio'] ?? 0.12) }}"
-                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-                        @error('sweep_min_reclaim_ratio')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
-                    </div>
-                    <div class="space-y-1">
-                        <label for="entry_extrema_distance" class="block text-xs font-medium text-zinc-400">Близость к экстремуму (0.02–0.4)</label>
-                        <input type="number" name="entry_extrema_distance" id="entry_extrema_distance" min="0.02" max="0.4" step="0.01" required
-                            value="{{ old('entry_extrema_distance', $cfg['entry_extrema_distance'] ?? 0.12) }}"
-                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-                        @error('entry_extrema_distance')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                        <p class="text-[11px] text-zinc-500">0 = только текущий close; 3 = цена в зоне на любом из последних 4 баров.</p>
                     </div>
                 </div>
             </div>
@@ -546,7 +556,12 @@ PROMPT;
         @elseif ($bot->type === 'openrouter_llm_analyst')
             <div class="space-y-4 border-t border-zinc-800 pt-4">
                 <p class="text-sm text-zinc-400">
-                    OpenRouter Chart Analyst: анализ графика по кнопке «Сделать анализ». Сделки и плановый scan отключены.
+                    @if($analystSmcFlowEnabled)
+                        OpenRouter Chart Analyst SMC Flow: анализ с компактным снимком индикатора SMC Flow в LLM.
+                    @else
+                        OpenRouter Chart Analyst: анализ графика по кнопке «Сделать анализ» (без SMC Flow в LLM).
+                    @endif
+                    Сделки и плановый scan отключены.
                 </p>
 
                 <p class="text-[11px] text-zinc-500">По каждому таймфрейму одно число: столько последних баров загружается из БД и передаётся в модель.</p>

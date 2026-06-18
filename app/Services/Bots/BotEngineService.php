@@ -11,15 +11,16 @@ use App\Services\Mirror\MirrorTradeDispatcher;
 use App\Models\BotTrade;
 use App\Models\PocketInstrument;
 use App\Services\CandleService;
+use App\Services\Indicators\SmcFlowBotSignalAnalyzer;
 use App\Services\Indicators\SmcFlowIndicatorService;
 use App\Support\BotScanProgress;
 use App\Support\SmcFlowLlmSnapshot;
 use App\Services\Bots\Strategies\AkimTrade1MStrategy;
 use App\Services\Bots\Strategies\BotStrategyInterface;
 use App\Services\Bots\Strategies\CandleReversalMtfConfirmStrategy;
-use App\Services\Bots\Strategies\FeshanStrategy;
 use App\Services\Bots\Strategies\OpenRouterLlmAnalystStrategy;
 use App\Services\Bots\Strategies\OpenRouterLlmStrategy;
+use App\Services\Bots\Strategies\SmcFlowStrategy;
 use App\Services\Bots\Strategies\ThreeCandlesInRowStrategy;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -30,6 +31,7 @@ class BotEngineService
     public function __construct(
         private readonly BotDataService $botDataService,
         private readonly OpenRouterClient $openRouterClient,
+        private readonly SmcFlowBotSignalAnalyzer $smcFlowBotSignalAnalyzer,
     ) {}
 
     public function scanBot(Bot $bot): array
@@ -157,16 +159,8 @@ class BotEngineService
                 continue;
             }
             $partial = $series['partial'];
-            // Feshan: подмешиваем агрегаты из M1 (CandleService), ключи — минуты ТФ для FeshanStrategy.
             $mtf = [];
-            if ($bot->type === 'feshan') {
-                $mtf = $this->botDataService->mtfSeries($instrument, [
-                    60 => 56,
-                    30 => 72,
-                    15 => 96,
-                    5 => 160,
-                ]);
-            } elseif ($bot->type === 'candle_reversal_confirm') {
+            if ($bot->type === 'candle_reversal_confirm') {
                 // Для MTF-разворота обязательно подмешиваем M5: направление определяется сначала на M5,
                 // а вход подтверждается блоком из 3 закрытых M1 свечей в ту же сторону.
                 $mtf = $this->botDataService->mtfSeries($instrument, [
@@ -176,14 +170,18 @@ class BotEngineService
                 // OpenRouter: MTF-контекст из настроек (для analyst — M1/M5/M15/H1).
                 $mtf = $this->openRouterMtfSeries($instrument, $config, $bot->type === 'openrouter_llm_analyst');
             }
-            $decision = $strategy->analyze($closed, $partial, [
+            $analyzeContext = [
                 'bot_id' => $bot->id,
                 'analysis_run_id' => $analysisRun?->id,
                 'instrument' => $instrument,
                 'payout' => $currentPayout,
                 'config' => $config,
                 'mtf' => $mtf,
-            ]);
+            ];
+            if ($bot->type === 'smc_flow') {
+                $analyzeContext['smc_params'] = IndicatorSetting::mergedSmcFlowParams($bot);
+            }
+            $decision = $strategy->analyze($closed, $partial, $analyzeContext);
             if (! $decision) {
                 $this->finishAnalysisRun($analysisRun, BotAnalysisRun::STATUS_SKIPPED, 'strategy_no_signal', [
                     'market' => [
@@ -194,12 +192,10 @@ class BotEngineService
                 continue;
             }
 
-            // Базово используем expiry из runtime-настроек.
-            // Для Feshan разрешаем стратегии вернуть адаптивную экспирацию и
-            // безопасно ограничиваем её диапазоном 2..5 минут.
+            // SMC Flow: стратегия может вернуть адаптивную экспирацию (2..10 мин).
             $decisionExpirySec = $expirySec;
-            if ($bot->type === 'feshan' && isset($decision['expiry_sec'])) {
-                $decisionExpirySec = max(120, min(300, (int) $decision['expiry_sec']));
+            if ($bot->type === 'smc_flow' && isset($decision['expiry_sec'])) {
+                $decisionExpirySec = max(120, min(600, (int) $decision['expiry_sec']));
             }
 
             $confidence = (float) ($decision['confidence'] ?? 0);
@@ -223,7 +219,7 @@ class BotEngineService
 
             // Dedupe-окно привязываем к фактической экспирации конкретного сигнала,
             // чтобы логика "один сигнал на окно" корректно работала и для 2/3/4/5 минут.
-            $signalDedupeBucketSec = $bot->type === 'feshan'
+            $signalDedupeBucketSec = $bot->type === 'smc_flow'
                 ? max(60, min(900, $decisionExpirySec))
                 : $dedupeBucketSec;
             $bucket = intdiv(time(), $signalDedupeBucketSec) * $signalDedupeBucketSec;
@@ -426,9 +422,12 @@ class BotEngineService
         // S5 — сырой секундный поток ingest (4005), для тайминга внутри текущей M1.
         $s5Series = $this->botDataService->s5Series($instrument, $s5Count, true, 31536000);
         $mtf = $this->openRouterMtfSeries($instrument, $config, true);
-        $smcFlowPack = $this->buildAnalystSmcFlowPack($bot, $instrument, $count);
+        $analystSmcEnabled = \App\Support\OpenRouterLlmConfig::analystSmcFlowEnabled($config);
+        $smcFlowPack = $analystSmcEnabled
+            ? $this->buildAnalystSmcFlowPack($bot, $instrument, $count)
+            : null;
 
-        $decision = $strategy->analyze($closed, $partial, [
+        $analyzeContext = [
             'bot_id' => $bot->id,
             'instrument' => $instrument,
             'payout' => $instrumentRow->current_payout !== null ? (float) $instrumentRow->current_payout : null,
@@ -436,9 +435,14 @@ class BotEngineService
             'mtf' => $mtf,
             's5_closed' => $s5Series['closed'],
             's5_partial' => $s5Series['partial'],
-            'smc_flow_summary' => $smcFlowPack['snapshot'],
             'user_question' => mb_substr(trim($userQuestion), 0, 2000),
-        ]);
+            'analyst_smc_flow_enabled' => $analystSmcEnabled,
+        ];
+        if ($analystSmcEnabled && is_array($smcFlowPack)) {
+            $analyzeContext['smc_flow_summary'] = $smcFlowPack['snapshot'];
+        }
+
+        $decision = $strategy->analyze($closed, $partial, $analyzeContext);
 
         $billing = $this->buildOpenRouterBillingPayload($decision);
 
@@ -479,8 +483,11 @@ class BotEngineService
             'error' => null,
             'billing' => $billing,
             'billing_label' => OpenRouterClient::formatBillingLabel($billing),
-            'smc_flow' => $smcFlowPack['overlay'],
-            'smc_flow_modules' => $smcFlowPack['overlay']['modules'] ?? [],
+            'analyst_smc_flow_enabled' => $analystSmcEnabled,
+            'smc_flow' => $analystSmcEnabled && is_array($smcFlowPack) ? $smcFlowPack['overlay'] : null,
+            'smc_flow_modules' => $analystSmcEnabled && is_array($smcFlowPack)
+                ? ($smcFlowPack['overlay']['modules'] ?? [])
+                : [],
         ];
     }
 
@@ -639,15 +646,7 @@ class BotEngineService
         }
 
         $mtf = [];
-        if ($bot->type === 'feshan') {
-            // Передаём те же MTF-агрегаты, что и в реальном scan, чтобы объяснение совпадало с боевой логикой.
-            $mtf = $this->botDataService->mtfSeries($instrument, [
-                60 => 56,
-                30 => 72,
-                15 => 96,
-                5 => 160,
-            ]);
-        } elseif ($bot->type === 'candle_reversal_confirm') {
+        if ($bot->type === 'candle_reversal_confirm') {
             // В explain используем тот же M5-контекст, что и в scan, иначе диагностика не совпадет с боевым входом.
             $mtf = $this->botDataService->mtfSeries($instrument, [
                 5 => 60,
@@ -656,23 +655,70 @@ class BotEngineService
             $mtf = $this->openRouterMtfSeries($instrument, $runtime['config'], $bot->type === 'openrouter_llm_analyst');
         }
 
-        $decision = $strategy->analyze($closed, $series['partial'], [
+        $explainContext = [
             'instrument' => $instrument,
             'payout' => $instrumentRow->current_payout !== null ? (float) $instrumentRow->current_payout : null,
             'config' => $runtime['config'],
             'mtf' => $mtf,
-        ]);
+        ];
+        if ($bot->type === 'smc_flow') {
+            $explainContext['smc_params'] = IndicatorSetting::mergedSmcFlowParams($bot);
+        }
+        $decision = $strategy->analyze($closed, $series['partial'], $explainContext);
         if (! $decision) {
+            $smcFlowBlockers = [];
+            $smcFlowFeatures = [];
+            if ($bot->type === 'smc_flow') {
+                $cfg = $runtime['config'];
+                $confirmMaxBars = max(1, min(120, (int) ($cfg['smc_three_br_confirm_max_bars'] ?? 30)));
+                $entryOptions = [
+                    'smc_require_ob' => (bool) ($cfg['smc_require_ob'] ?? true),
+                    'smc_three_br_allow_pattern' => (bool) ($cfg['smc_three_br_allow_pattern'] ?? true),
+                    'smc_ob_touch_max_bars' => max(0, min(12, (int) ($cfg['smc_ob_touch_max_bars'] ?? 3))),
+                ];
+                $smcParams = IndicatorSetting::mergedSmcFlowParams($bot);
+                $smcParams['ut_enabled'] = true;
+                $smcParams['three_br_enabled'] = true;
+                $smcParams['lux_ob_enabled'] = true;
+                $signalContext = $this->smcFlowBotSignalAnalyzer->analyze($closed, $smcParams);
+                $utSide = $signalContext['ut']['side'] ?? null;
+                $smcFlowFeatures = ['signal_context' => $signalContext, 'entry_options' => $entryOptions];
+                if (! is_string($utSide) || ! in_array($utSide, ['CALL', 'PUT'], true)) {
+                    $smcFlowBlockers[] = 'UT: нет свежего Buy/Sell на последней закрытой свече.';
+                } else {
+                    $diag = $this->smcFlowBotSignalAnalyzer->diagnoseEntry(
+                        $signalContext,
+                        $utSide,
+                        $confirmMaxBars,
+                        $entryOptions
+                    );
+                    $smcFlowFeatures['entry_diagnosis'] = $diag;
+                    if (! $diag['three_br_ok']) {
+                        $smcFlowBlockers[] = sprintf(
+                            '3BR: нет confirm/pattern %s в окне %d баров.',
+                            $utSide === 'CALL' ? 'bull' : 'bear',
+                            $confirmMaxBars
+                        );
+                    }
+                    if (! $diag['ob_ok']) {
+                        $smcFlowBlockers[] = 'OB: цена вне активной LuxAlgo зоны нужной стороны.';
+                    }
+                }
+            }
+
             return [
                 'instrument' => $instrument,
                 'can_enter' => false,
                 'summary' => 'Стратегия не видит валидного сетапа на текущем баре.',
-                'analysis_text' => $bot->type === 'feshan'
-                    ? 'Feshan: активный режим liquidity sweep. На текущем баре не найдено валидного снятия ликвидности с возвратом в диапазон.'
-                    : '',
+                'analysis_text' => match ($bot->type) {
+                    'smc_flow' => 'SMC Flow: нет совпадения UT + 3BR + OB на последней закрытой свече.',
+                    default => '',
+                },
                 'reasons_short' => [],
-                'blockers' => ['Нет триггера входа по условиям стратегии.'],
-                'features' => [],
+                'blockers' => $smcFlowBlockers !== []
+                    ? $smcFlowBlockers
+                    : ['Нет триггера входа по условиям стратегии.'],
+                'features' => $smcFlowFeatures,
             ];
         }
 
@@ -749,7 +795,7 @@ class BotEngineService
     {
         $config = is_array($bot->config) ? $bot->config : [];
         $defaultCount = match ($bot->type) {
-            'feshan' => 2500,
+            'smc_flow' => 500,
             'candle_reversal_confirm' => 180,
             'openrouter_llm_analyst' => 120,
             default => 120,
@@ -763,17 +809,16 @@ class BotEngineService
         $expirySec = match ($bot->type) {
             'three_candles_in_row' => (int) ($config['expiry_sec'] ?? 60),
             'akim_trade_1m' => (int) ($config['expiry_sec'] ?? 60),
+            'smc_flow' => (int) ($config['expiry_sec'] ?? 180),
             // По ТЗ для MTF-разворота вход идёт на 5 минут независимо от рыночной фазы.
             'candle_reversal_confirm' => (int) ($config['expiry_sec'] ?? 300),
-            'feshan' => (int) ($config['expiry_sec'] ?? 300),
             default => (int) ($config['expiry_sec'] ?? 300),
         };
         // Разные типы ботов имеют разные дефолтные пороги confidence:
-        // - feshan: умеренно строгий вход;
         // - openrouter_llm: чуть выше порог по умолчанию, чтобы отсеять "неуверенные" ответы модели;
         // - остальные: базовый порог.
         $minConfidence = (float) ($config['min_confidence'] ?? match ($bot->type) {
-            'feshan' => 0.6,
+            'smc_flow' => 0.58,
             'openrouter_llm' => 0.65,
             'akim_trade_1m' => 0.58,
             'candle_reversal_confirm' => 0.56,
@@ -782,7 +827,6 @@ class BotEngineService
         // Минимальный payout как экономический фильтр качества входа.
         // Для LLM-бота ставим умеренный дефолтный порог, чтобы не брать пары с совсем слабой выплатой.
         $minPayout = (float) ($config['min_payout'] ?? match ($bot->type) {
-            'feshan' => 80.0,
             'openrouter_llm' => 70.0,
             'candle_reversal_confirm' => 80.0,
             'three_candles_in_row' => 80.0,
@@ -791,7 +835,7 @@ class BotEngineService
         });
         $staleAfterSec = (int) ($config['stale_after_sec'] ?? 30);
         $minClosedBars = match ($bot->type) {
-            'feshan' => 40,
+            'smc_flow' => 80,
             'akim_trade_1m' => 90,
             // Для MTF-разворота нужен запас истории M1 и стабильная M5-агрегация.
             'candle_reversal_confirm' => 60,
@@ -808,7 +852,7 @@ class BotEngineService
             default => 1,
         };
         $dedupeBucketSec = match ($bot->type) {
-            'feshan', 'openrouter_llm', 'candle_reversal_confirm' => max(60, min(900, $expirySec)),
+            'smc_flow', 'openrouter_llm', 'candle_reversal_confirm' => max(60, min(900, $expirySec)),
             default => 60,
         };
         return [
@@ -846,288 +890,17 @@ class BotEngineService
         return $this->botDataService->mtfSeries($instrument, $tfMap);
     }
 
-    /**
-     * Подробная диагностика Feshan без открытия сделки.
-     * Возвращает, какие условия CALL/PUT выполнены и какие именно блокируют вход сейчас.
-     *
-     * @param  list<array<string,mixed>>  $closed
-     * @param  array<string, list<array<string,mixed>>>  $mtf
-     * @return array{passed:list<string>,unmet:list<string>,features:array<string,mixed>}
-     */
-    private function feshanTriggerDiagnostics(array $closed, array $mtf, array $config): array
-    {
-        if ($closed === []) {
-            return [
-                'passed' => [],
-                'unmet' => ['Нет закрытых M1 свечей для диагностики Feshan.'],
-                'features' => [],
-            ];
-        }
-
-        $lastM1 = $closed[array_key_last($closed)];
-        $bars60 = $mtf['60'] ?? [];
-        $bars5 = $mtf['5'] ?? [];
-
-        $bias60 = $this->directionBiasByClose($bars60, 6);
-        $h1Last = $bars60 !== [] ? $bars60[array_key_last($bars60)] : null;
-        $h1Bull = is_array($h1Last) ? $this->isBullCandle($h1Last) : false;
-        $h1Bear = is_array($h1Last) ? $this->isBearCandle($h1Last) : false;
-        $m5AlignUp = $this->alignedCountByDirection($bars5, 3, true);
-        $m5AlignDown = $this->alignedCountByDirection($bars5, 3, false);
-        $m1Bull = $this->isBullCandle($lastM1);
-        $m1Bear = $this->isBearCandle($lastM1);
-        $prevM1 = count($closed) >= 2 ? $closed[array_key_last($closed) - 1] : $lastM1;
-        $absorbBull = $m1Bull && $this->lowerWickRatioByCandle($lastM1) >= 0.45;
-        $absorbBear = $m1Bear && $this->upperWickRatioByCandle($lastM1) >= 0.45;
-        $imb5Bull = $this->lastBullishImbalanceByBars($bars5);
-        $imb5Bear = $this->lastBearishImbalanceByBars($bars5);
-        $m1BodyRatio = $this->bodyRatioByCandle($lastM1);
-        $m1IsDoji = $m1BodyRatio < 0.2;
-        $m1MomentumBull = $m1Bull && $this->isBullCandle($prevM1);
-        $m1MomentumBear = $m1Bear && $this->isBearCandle($prevM1);
-
-        // Учитываем включатели из настроек бота, чтобы диагностика строго совпадала с рабочим входом.
-        $useBias60 = (bool) ($config['trigger_bias_60'] ?? true);
-        $useH1Candle = (bool) ($config['trigger_h1_candle'] ?? true);
-        $useM5Align = (bool) ($config['trigger_m5_align'] ?? true);
-        $useM1Candle = (bool) ($config['trigger_m1_candle'] ?? true);
-        $useAbsorb = (bool) ($config['trigger_absorption'] ?? false);
-        $useImbalance = (bool) ($config['trigger_imbalance'] ?? false);
-        $strictMode = (bool) ($config['strict_mode'] ?? true);
-
-        // Явно считаем оба триггера, чтобы пользователь видел, какой сценарий почти собран.
-        $callChecks = [
-            '1H bias = up' => ! $useBias60 || $bias60 === 'up',
-            'последняя 1H свеча bullish' => ! $useH1Candle || $h1Bull,
-            '5M aligned up >= '.($strictMode ? '3 из 3' : '2 из 3') => ! $useM5Align || $m5AlignUp >= ($strictMode ? 3 : 2),
-            'последняя M1 bullish' => ! $useM1Candle || $m1Bull,
-            'M1 absorption bullish' => ! $useAbsorb || $absorbBull,
-            '5M imbalance bullish' => ! $useImbalance || $imb5Bull,
-            'Strict M1 quality bullish' => ! $strictMode || (! $m1IsDoji && $m1BodyRatio >= 0.55 && $m1MomentumBull),
-        ];
-        $putChecks = [
-            '1H bias = down' => ! $useBias60 || $bias60 === 'down',
-            'последняя 1H свеча bearish' => ! $useH1Candle || $h1Bear,
-            '5M aligned down >= '.($strictMode ? '3 из 3' : '2 из 3') => ! $useM5Align || $m5AlignDown >= ($strictMode ? 3 : 2),
-            'последняя M1 bearish' => ! $useM1Candle || $m1Bear,
-            'M1 absorption bearish' => ! $useAbsorb || $absorbBear,
-            '5M imbalance bearish' => ! $useImbalance || $imb5Bear,
-            'Strict M1 quality bearish' => ! $strictMode || (! $m1IsDoji && $m1BodyRatio >= 0.55 && $m1MomentumBear),
-        ];
-        $callCoreOk = ! in_array(false, $callChecks, true);
-        $putCoreOk = ! in_array(false, $putChecks, true);
-
-        $passed = [];
-        foreach ($callChecks as $name => $ok) {
-            if ($ok) {
-                $passed[] = "CALL: {$name}";
-            }
-        }
-        foreach ($putChecks as $name => $ok) {
-            if ($ok) {
-                $passed[] = "PUT: {$name}";
-            }
-        }
-        if ($absorbBull) {
-            $passed[] = 'CALL: M1 поглощение продаж (нижняя тень >= 45%)';
-        }
-        if ($absorbBear) {
-            $passed[] = 'PUT: M1 поглощение покупок (верхняя тень >= 45%)';
-        }
-        if ($imb5Bull) {
-            $passed[] = 'CALL: 5M бычий имбаланс присутствует';
-        }
-        if ($imb5Bear) {
-            $passed[] = 'PUT: 5M медвежий имбаланс присутствует';
-        }
-
-        $unmet = [];
-        foreach ($callChecks as $name => $ok) {
-            if (! $ok) {
-                $unmet[] = "CALL не выполнен: {$name}";
-            }
-        }
-        foreach ($putChecks as $name => $ok) {
-            if (! $ok) {
-                $unmet[] = "PUT не выполнен: {$name}";
-            }
-        }
-        if (! $callCoreOk && ! $putCoreOk && ! $absorbBull && ! $absorbBear && ! $imb5Bull && ! $imb5Bear) {
-            $unmet[] = 'Нет подтверждающих доп.триггеров (поглощение/имбаланс) на текущем баре.';
-        }
-
-        return [
-            'passed' => $passed,
-            'unmet' => $unmet,
-            'features' => [
-                'bias_60' => $bias60,
-                'h1_bull' => $h1Bull,
-                'h1_bear' => $h1Bear,
-                'm5_align_up' => $m5AlignUp,
-                'm5_align_down' => $m5AlignDown,
-                'm1_bull' => $m1Bull,
-                'm1_bear' => $m1Bear,
-                'absorb_bull' => $absorbBull,
-                'absorb_bear' => $absorbBear,
-                'imb5_bull' => $imb5Bull,
-                'imb5_bear' => $imb5Bear,
-                'm1_body_ratio' => $m1BodyRatio,
-                'm1_is_doji' => $m1IsDoji,
-                'm1_momentum_bull' => $m1MomentumBull,
-                'm1_momentum_bear' => $m1MomentumBear,
-                'trigger_bias_60' => $useBias60,
-                'trigger_h1_candle' => $useH1Candle,
-                'trigger_m5_align' => $useM5Align,
-                'trigger_m1_candle' => $useM1Candle,
-                'trigger_absorption' => $useAbsorb,
-                'trigger_imbalance' => $useImbalance,
-                'strict_mode' => $strictMode,
-                'call_core_ok' => $callCoreOk,
-                'put_core_ok' => $putCoreOk,
-            ],
-        ];
-    }
-
-    /**
-     * @param  list<array<string,mixed>>  $bars
-     */
-    private function directionBiasByClose(array $bars, int $n): ?string
-    {
-        if (count($bars) < $n) {
-            return null;
-        }
-        $slice = array_slice($bars, -$n);
-        $first = (float) $slice[0]['close'];
-        $last = (float) $slice[array_key_last($slice)]['close'];
-        $eps = max($first * 0.00015, 1e-7);
-
-        if ($last > $first + $eps) {
-            return 'up';
-        }
-        if ($last < $first - $eps) {
-            return 'down';
-        }
-
-        return 'flat';
-    }
-
-    /**
-     * @param  list<array<string,mixed>>  $bars
-     */
-    private function alignedCountByDirection(array $bars, int $take, bool $bull): int
-    {
-        if (count($bars) < $take) {
-            return 0;
-        }
-        $slice = array_slice($bars, -$take);
-        $n = 0;
-        foreach ($slice as $c) {
-            if ($bull && $this->isBullCandle($c)) {
-                $n++;
-            }
-            if (! $bull && $this->isBearCandle($c)) {
-                $n++;
-            }
-        }
-
-        return $n;
-    }
-
-    /**
-     * @param  array<string,mixed>  $c
-     */
-    private function isBullCandle(array $c): bool
-    {
-        return (float) $c['close'] > (float) $c['open'];
-    }
-
-    /**
-     * @param  array<string,mixed>  $c
-     */
-    private function isBearCandle(array $c): bool
-    {
-        return (float) $c['close'] < (float) $c['open'];
-    }
-
-    /**
-     * @param  array<string,mixed>  $c
-     */
-    private function lowerWickRatioByCandle(array $c): float
-    {
-        $range = max(1e-8, (float) $c['high'] - (float) $c['low']);
-        $bodyTop = max((float) $c['open'], (float) $c['close']);
-        $lower = $bodyTop - (float) $c['low'];
-
-        return min(1.0, $lower / $range);
-    }
-
-    /**
-     * @param  array<string,mixed>  $c
-     */
-    private function upperWickRatioByCandle(array $c): float
-    {
-        $range = max(1e-8, (float) $c['high'] - (float) $c['low']);
-        $bodyBot = min((float) $c['open'], (float) $c['close']);
-        $upper = (float) $c['high'] - $bodyBot;
-
-        return min(1.0, $upper / $range);
-    }
-
-    /**
-     * Возвращает долю тела свечи в полном диапазоне (0..1).
-     * Используем для строгого фильтра импульса, чтобы отсеять "рваные" doji-бары.
-     *
-     * @param  array<string,mixed>  $c
-     */
-    private function bodyRatioByCandle(array $c): float
-    {
-        $range = max(1e-8, (float) $c['high'] - (float) $c['low']);
-        $body = abs((float) $c['close'] - (float) $c['open']);
-
-        return min(1.0, $body / $range);
-    }
-
-    /**
-     * @param  list<array<string,mixed>>  $bars
-     */
-    private function lastBullishImbalanceByBars(array $bars): bool
-    {
-        $n = count($bars);
-        if ($n < 3) {
-            return false;
-        }
-        $a = $bars[$n - 3];
-        $c = $bars[$n - 1];
-
-        return (float) $c['low'] > (float) $a['high'];
-    }
-
-    /**
-     * @param  list<array<string,mixed>>  $bars
-     */
-    private function lastBearishImbalanceByBars(array $bars): bool
-    {
-        $n = count($bars);
-        if ($n < 3) {
-            return false;
-        }
-        $a = $bars[$n - 3];
-        $c = $bars[$n - 1];
-
-        return (float) $c['high'] < (float) $a['low'];
-    }
-
     private function resolveStrategy(string $type): ?BotStrategyInterface
     {
         return match ($type) {
             'three_candles_in_row' => new ThreeCandlesInRowStrategy,
             'akim_trade_1m' => new AkimTrade1MStrategy,
             'candle_reversal_confirm' => new CandleReversalMtfConfirmStrategy,
-            'feshan' => new FeshanStrategy,
             // Новый бот полностью изолирован от старых эвристик:
             // торговое решение принимает только LLM через OpenRouter.
             'openrouter_llm' => new OpenRouterLlmStrategy($this->openRouterClient),
             'openrouter_llm_analyst' => new OpenRouterLlmAnalystStrategy($this->openRouterClient),
+            'smc_flow' => new SmcFlowStrategy($this->smcFlowBotSignalAnalyzer),
             default => null,
         };
     }

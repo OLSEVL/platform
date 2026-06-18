@@ -447,7 +447,7 @@ class ProxyDiagnosticsService
     {
         return match ($filter) {
             'all' => true,
-            'active' => in_array($row['status'], [ProxyEndpoint::STATUS_ACTIVE, ProxyEndpoint::STATUS_COOLDOWN], true),
+            'active' => $row['status'] === ProxyEndpoint::STATUS_ACTIVE,
             'false_dead' => (bool) ($row['is_false_dead'] ?? false),
             'problems' => $this->hasProblem($row),
             default => $this->hasProblem($row),
@@ -471,7 +471,7 @@ class ProxyDiagnosticsService
         }
 
         return ($row['active_instruments_count'] ?? 0) > 0
-            && in_array($row['status'], [ProxyEndpoint::STATUS_DEAD, ProxyEndpoint::STATUS_COOLDOWN], true);
+            && $row['status'] === ProxyEndpoint::STATUS_DEAD;
     }
 
     public function persistHttpCheckResult(

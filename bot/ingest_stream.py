@@ -28,6 +28,8 @@ from pocketoptionapi_async import AsyncPocketOptionClient
 PLATFORM_URL = os.environ.get("PLATFORM_URL", "").rstrip("/")
 MAX_CONNECTIONS = int(os.environ.get("INGEST_MAX_CONNECTIONS", "100"))
 INSTRUMENTS_REFRESH_SEC = int(os.environ.get("INSTRUMENTS_REFRESH_SEC", "300"))
+# Как часто проверять proxy_pool_version после «Обновить прокси» в настройках платформы.
+PROXY_POOL_VERSION_POLL_SEC = int(os.environ.get("PROXY_POOL_VERSION_POLL_SEC", "15"))
 # Базовый период свечи в секундах.
 # Для нового секундного режима по умолчанию используем S5.
 BASE_BAR_PERIOD_SEC = int(os.environ.get("INGEST_BASE_BAR_SECONDS", "5"))
@@ -195,6 +197,22 @@ def create_ssid(session_token: str, uid: str, is_demo: bool = True) -> str:
     uid_int = int(uid) if uid else 0
     demo = 1 if is_demo else 0
     return f'42["auth",{{"session":"{session_token}","uid":{uid_int},"isDemo":{demo},"platform":2,"isFastHistory":true,"isOptimized":true}}]'
+
+
+async def fetch_proxy_pool_version() -> int:
+    """GET /api/proxy/pool-version — меняется при полном refresh Webshare."""
+    if not PLATFORM_URL:
+        return 0
+    url = f"{PLATFORM_URL}/api/proxy/pool-version"
+    try:
+        session = await _ensure_ingest_http_session()
+        async with session.get(url, headers={"Accept": "application/json"}) as resp:
+            if resp.status != 200:
+                return 0
+            data = await resp.json()
+            return int(data.get("version") or 0)
+    except Exception:
+        return 0
 
 
 async def fetch_instruments() -> List[Dict[str, Any]]:
@@ -992,10 +1010,37 @@ async def run_ingest_forever() -> None:
     global instruments_cache
 
     startup_logged = False
+    last_pool_version = 0
+    last_instruments_fetch_at = 0.0
 
     try:
         while True:
-            fresh = await fetch_instruments()
+            current_pool_version = await fetch_proxy_pool_version()
+            pool_version_changed = (
+                current_pool_version > 0
+                and last_pool_version > 0
+                and current_pool_version != last_pool_version
+            )
+            if current_pool_version > 0:
+                last_pool_version = current_pool_version
+
+            need_fetch = (
+                not instruments_cache
+                or pool_version_changed
+                or (time.time() - last_instruments_fetch_at) >= INSTRUMENTS_REFRESH_SEC
+            )
+
+            fresh = None
+            if need_fetch:
+                if pool_version_changed:
+                    print(
+                        f"[INGEST] proxy pool version changed -> {current_pool_version}; "
+                        "forcing instrument refresh",
+                        flush=True,
+                    )
+                fresh = await fetch_instruments()
+                last_instruments_fetch_at = time.time()
+
             if fresh:
                 instruments_cache = fresh
                 instruments_cache.sort(
@@ -1089,7 +1134,8 @@ async def run_ingest_forever() -> None:
                 print(f"[INGEST] started worker for {instrument}")
                 await asyncio.sleep(1)
 
-            await asyncio.sleep(INSTRUMENTS_REFRESH_SEC)
+            # Короткий сон: чаще проверяем pool-version (после «Обновить прокси» в UI).
+            await asyncio.sleep(PROXY_POOL_VERSION_POLL_SEC)
     except asyncio.CancelledError:
         stop.set()
         for t in workers.values():

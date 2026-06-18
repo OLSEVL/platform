@@ -2,25 +2,35 @@
 
 namespace App\Services;
 
+use App\Services\Indicators\OrderBlocksIndicatorService;
+
 /**
- * Детекция активных (не смягчённых) ордерблоков и имбалансов (FVG) по M1 свечам.
- * Правила смягчения — как в спецификации для коротких экспираций на FX.
+ * Детекция ордерблоков (LuxAlgo OB & Breaker Blocks) и имбалансов (FVG) по свечам.
  */
 class CandleStructureZoneDetector
 {
-    private const TYPE_OB_BULL = 'order_block_bull';
-
-    private const TYPE_OB_BEAR = 'order_block_bear';
-
     private const TYPE_FVG_BULL = 'imbalance_bull';
 
     private const TYPE_FVG_BEAR = 'imbalance_bear';
 
+    public function __construct(
+        private ?OrderBlocksIndicatorService $orderBlocksService = null,
+        private ?LuxOrderBlockBreakerDetector $orderBlockDetector = null,
+        /** @var array<string, mixed>|null */
+        private ?array $orderBlockParams = null,
+    ) {}
+
+    private function orderBlocksService(): OrderBlocksIndicatorService
+    {
+        return $this->orderBlocksService ??= new OrderBlocksIndicatorService;
+    }
+
     /**
      * @param  array<int, array{time: int, open: float, high: float, low: float, close: float}>  $candles  по возрастанию time
+     * @param  array<string, mixed>|null  $orderBlockParams  настройки ордерблоков (из indicator_settings бота)
      * @return array<int, array{type: string, time_start: int, time_end: int, price_low: float, price_high: float, formed_at: int}>
      */
-    public function activeZones(array $candles): array
+    public function activeZones(array $candles, ?array $orderBlockParams = null): array
     {
         if (count($candles) < 3) {
             return [];
@@ -28,90 +38,21 @@ class CandleStructureZoneDetector
 
         $n = count($candles);
         $lastTime = (int) $candles[$n - 1]['time'];
+        $obParams = array_replace(
+            OrderBlocksIndicatorService::defaultParams(),
+            $this->orderBlockParams ?? [],
+            $orderBlockParams ?? [],
+        );
 
-        $zones = [];
-
-        for ($i = 1; $i < $n - 1; $i++) {
-            $zones = array_merge($zones, $this->orderBlocksAt($candles, $i, $lastTime));
-        }
+        $service = $this->orderBlocksService();
+        $detector = $this->orderBlockDetector ?? $service->createDetector($obParams);
+        $zones = $service->applyStylesToZones($detector->activeZones($candles), $obParams);
 
         for ($i = 2; $i < $n; $i++) {
             $zones = array_merge($zones, $this->fairValueGapsAt($candles, $i, $lastTime));
         }
 
         return $zones;
-    }
-
-    /**
-     * @param  array<int, array{time: int, open: float, high: float, low: float, close: float}>  $candles
-     * @return array<int, array{type: string, time_start: int, time_end: int, price_low: float, price_high: float, formed_at: int}>
-     */
-    private function orderBlocksAt(array $candles, int $impulseIdx, int $lastTime): array
-    {
-        $out = [];
-        $ob = $impulseIdx - 1;
-        $imp = $candles[$impulseIdx];
-        $base = $candles[$ob];
-
-        $bullishImpulse = $imp['close'] > $imp['open'] && $base['close'] < $base['open']
-            && $imp['close'] > $base['high'];
-        if ($bullishImpulse) {
-            $low = (float) $base['low'];
-            $high = (float) $base['high'];
-            if (! $this->isBullishObMitigated($candles, $ob + 2, $low, $high)) {
-                $out[] = $this->zonePayload(self::TYPE_OB_BULL, (int) $base['time'], $lastTime, $low, $high);
-            }
-        }
-
-        $bearishImpulse = $imp['close'] < $imp['open'] && $base['close'] > $base['open']
-            && $imp['close'] < $base['low'];
-        if ($bearishImpulse) {
-            $low = (float) $base['low'];
-            $high = (float) $base['high'];
-            if (! $this->isBearishObMitigated($candles, $ob + 2, $low, $high)) {
-                $out[] = $this->zonePayload(self::TYPE_OB_BEAR, (int) $base['time'], $lastTime, $low, $high);
-            }
-        }
-
-        return $out;
-    }
-
-    /**
-     * @param  array<int, array{time: int, open: float, high: float, low: float, close: float}>  $candles
-     */
-    private function isBullishObMitigated(array $candles, int $fromIdx, float $low, float $high): bool
-    {
-        $n = count($candles);
-        for ($j = $fromIdx; $j < $n; $j++) {
-            $c = (float) $candles[$j]['close'];
-            if ($c >= $low && $c <= $high) {
-                return true;
-            }
-            if ($c < $low) {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    /**
-     * @param  array<int, array{time: int, open: float, high: float, low: float, close: float}>  $candles
-     */
-    private function isBearishObMitigated(array $candles, int $fromIdx, float $low, float $high): bool
-    {
-        $n = count($candles);
-        for ($j = $fromIdx; $j < $n; $j++) {
-            $c = (float) $candles[$j]['close'];
-            if ($c >= $low && $c <= $high) {
-                return true;
-            }
-            if ($c > $high) {
-                return true;
-            }
-        }
-
-        return false;
     }
 
     /**

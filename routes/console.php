@@ -4,6 +4,7 @@ use App\Models\Bot;
 use App\Models\BotSignal;
 use App\Models\BotTrade;
 use App\Models\InstrumentCandle;
+use App\Services\DataCleanupService;
 use App\Models\PocketInstrument;
 use App\Models\ProxyEndpoint;
 use App\Models\User;
@@ -55,10 +56,9 @@ Artisan::command('inspire', function () {
     $this->comment(Inspiring::quote());
 })->purpose('Display an inspiring quote');
 
-Artisan::command('candles:prune-old', function () {
-    $threshold = time() - (24 * 3600); // старше 24 часов
-    $deleted = InstrumentCandle::where('time', '<', $threshold)->delete();
-    $this->info("Удалено устаревших свечей: {$deleted}.");
+Artisan::command('candles:prune-old', function (DataCleanupService $dataCleanup) {
+    $result = $dataCleanup->purgeCandlesOlderThan(DataCleanupService::DEFAULT_RETENTION_HOURS);
+    $this->info("Удалено устаревших свечей: {$result['candles']}.");
 })->purpose('Удалить свечи старше 24 часов');
 
 Artisan::command('candles:ingest-status', function () {
@@ -190,6 +190,10 @@ Artisan::command('proxies:probe-loop', function (ProxyDeadProbeService $probe) {
                 $result['status'] ?? '—',
                 $result['reason'] ?? '—',
             ));
+            // Мгновенный skip (нет инструмента и т.п.) — пауза, чтобы не забивать journal.
+            if (($result['status'] ?? '') === 'skip') {
+                sleep(2);
+            }
         } catch (\Throwable $e) {
             $probe->forceReleaseLock();
             $this->error('Probe error: '.$e->getMessage());
@@ -227,7 +231,7 @@ Artisan::command('bots:status', function () {
     $this->newLine();
     $this->comment('Автоскан: в .env-среде должен работать планировщик (cron каждую минуту: php artisan schedule:run) или локально: php artisan schedule:work');
     $this->comment('Вручную: php artisan bots:scan && php artisan bots:settle');
-    $this->comment('Нет новых сделок при повторном скане — нормально, если по инструменту уже есть открытая сделка, сработал dedupe (для Feshan — по окну экспирации), или стратегия не даёт сигнал (3 свечи / Feshan MTF).');
+    $this->comment('Нет новых сделок при повторном скане — нормально, если по инструменту уже есть открытая сделка, сработал dedupe, или стратегия не даёт сигнал.');
 })->purpose('Диагностика ботов: данные, открытые сделки, напоминание про планировщик');
 
 Artisan::command('bots:bootstrap', function () {
@@ -317,7 +321,7 @@ Artisan::command('bots:reversal-confirm-bootstrap', function () {
     $this->info("Бот разворота: #{$bot->id} {$bot->name} ({$bot->type}) — при необходимости включите в настройках.");
 })->purpose('Создать бота «M5 разворот + 3 свечи M1»');
 
-Artisan::command('bots:feshan-bootstrap', function () {
+Artisan::command('bots:smc-flow-bootstrap', function () {
     $user = User::query()->orderBy('id')->first();
     if (! $user) {
         $this->error('Нет пользователей. Сначала зарегистрируйте пользователя.');
@@ -326,27 +330,25 @@ Artisan::command('bots:feshan-bootstrap', function () {
     }
 
     $bot = Bot::query()->firstOrCreate(
-        ['user_id' => $user->id, 'name' => 'Feshan bot', 'type' => 'feshan'],
+        ['user_id' => $user->id, 'name' => 'SMC Flow bot', 'type' => 'smc_flow'],
         [
             'is_active' => false,
             'config' => [
-                'count' => 2500,
-                'expiry_sec' => 300,
-                // Базовый профиль под стратегию "liquidity sweep".
-                'min_confidence' => 0.60,
+                'count' => 500,
+                'expiry_sec' => 180,
+                'min_confidence' => 0.58,
                 'min_payout' => 80.0,
                 'stale_after_sec' => 45,
-                'liquidity_lookback' => 20,
-                'sweep_min_wick_ratio' => 0.35,
-                'sweep_min_reclaim_ratio' => 0.12,
-                'entry_extrema_distance' => 0.12,
-                'version' => 'feshan_liquidity_v2',
+                'smc_three_br_confirm_max_bars' => 30,
+                'smc_three_br_allow_pattern' => true,
+                'smc_require_ob' => true,
+                'version' => 'smc_flow_ut_3br_ob_v1',
             ],
         ]
     );
 
-    $this->info("Feshan бот: #{$bot->id} {$bot->name} ({$bot->type}) — включите в настройках при необходимости.");
-})->purpose('Создать бота Feshan (MTF-стратегия)');
+    $this->info("SMC Flow бот: #{$bot->id} {$bot->name} ({$bot->type}) — настройте SMC Flow индикатор и включите бота.");
+})->purpose('Создать бота SMC Flow (UT + 3BR + OB, 3 мин)');
 
 Artisan::command('bots:openrouter-bootstrap', function () {
     $user = User::query()->orderBy('id')->first();
@@ -390,7 +392,7 @@ Artisan::command('bots:openrouter-analyst-bootstrap', function () {
         return;
     }
 
-    $defaultPrompt = OpenRouterChartLevelsParser::defaultAnalystSystemPrompt();
+    $defaultPrompt = OpenRouterChartLevelsParser::defaultAnalystSystemPromptClassic();
 
     $bot = Bot::query()->firstOrCreate(
         ['user_id' => $user->id, 'name' => 'OpenRouter Chart Analyst', 'type' => 'openrouter_llm_analyst'],
@@ -407,6 +409,7 @@ Artisan::command('bots:openrouter-analyst-bootstrap', function () {
                 'm5_take' => 96,
                 'm15_take' => 64,
                 'h1_take' => 24,
+                'analyst_smc_flow_enabled' => false,
                 'system_prompt' => $defaultPrompt,
                 'version' => 'openrouter_llm_analyst_v1',
             ],
@@ -424,7 +427,6 @@ Artisan::command('bots:openrouter-analyst-bootstrap', function () {
 })->purpose('Создать бота OpenRouter Chart Analyst (ручной анализ)');
 
 Artisan::command('bots:openrouter-analyst-sync-prompt', function () {
-    $prompt = OpenRouterChartLevelsParser::defaultAnalystSystemPrompt();
     $bots = Bot::query()->where('type', 'openrouter_llm_analyst')->get();
 
     if ($bots->isEmpty()) {
@@ -435,16 +437,76 @@ Artisan::command('bots:openrouter-analyst-sync-prompt', function () {
 
     foreach ($bots as $bot) {
         $config = is_array($bot->config) ? $bot->config : [];
-        $config['system_prompt'] = $prompt;
+        $config['system_prompt'] = OpenRouterChartLevelsParser::defaultAnalystSystemPromptForConfig($config);
         $bot->config = $config;
         $bot->save();
-        $this->line("Обновлён #{$bot->id} {$bot->name}");
+        $smc = \App\Support\OpenRouterLlmConfig::analystSmcFlowEnabled($config) ? 'SMC' : 'classic';
+        $this->line("Обновлён #{$bot->id} {$bot->name} ({$smc})");
     }
 
-    $this->info('Готово: system_prompt с блоком chart_levels записан в '.count($bots).' бот(ов).');
+    $this->info('Готово: system_prompt записан в '.count($bots).' бот(ов).');
 
     return 0;
 })->purpose('Обновить system prompt у всех ботов OpenRouter Chart Analyst');
+
+Artisan::command('bots:openrouter-analyst-split-smc', function () {
+    $smcName = 'OpenRouter Chart Analyst SMC Flow';
+    $classicName = 'OpenRouter Chart Analyst';
+
+    $source = Bot::query()
+        ->where('type', 'openrouter_llm_analyst')
+        ->orderBy('id')
+        ->first();
+
+    if ($source === null) {
+        $this->error('Нет ботов openrouter_llm_analyst. Запустите: php artisan bots:openrouter-analyst-bootstrap');
+
+        return 1;
+    }
+
+    $baseConfig = is_array($source->config) ? $source->config : [];
+
+    // Текущий бот (часто #13) — версия с SMC Flow.
+    $smcConfig = $baseConfig;
+    $smcConfig['analyst_smc_flow_enabled'] = true;
+    $smcConfig['system_prompt'] = OpenRouterChartLevelsParser::defaultAnalystSystemPromptWithSmcFlow();
+    $source->name = $smcName;
+    $source->config = $smcConfig;
+    $source->save();
+    $this->info("SMC: #{$source->id} → {$smcName}");
+
+    $classic = Bot::query()
+        ->where('type', 'openrouter_llm_analyst')
+        ->where('name', $classicName)
+        ->where('id', '!=', $source->id)
+        ->first();
+
+    if ($classic === null) {
+        $classicConfig = $baseConfig;
+        $classicConfig['analyst_smc_flow_enabled'] = false;
+        $classicConfig['system_prompt'] = OpenRouterChartLevelsParser::defaultAnalystSystemPromptClassic();
+
+        $classic = Bot::query()->create([
+            'user_id' => $source->user_id,
+            'name' => $classicName,
+            'type' => 'openrouter_llm_analyst',
+            'is_active' => false,
+            'config' => $classicConfig,
+        ]);
+        $this->info("Создан classic: #{$classic->id} {$classicName}");
+    } else {
+        $classicConfig = is_array($classic->config) ? $classic->config : $baseConfig;
+        $classicConfig['analyst_smc_flow_enabled'] = false;
+        $classicConfig['system_prompt'] = OpenRouterChartLevelsParser::defaultAnalystSystemPromptClassic();
+        $classic->config = $classicConfig;
+        $classic->save();
+        $this->info("Обновлён classic: #{$classic->id} {$classicName}");
+    }
+
+    $this->line('Готово. Classic — без SMC в LLM; SMC Flow — со снимком индикатора.');
+
+    return 0;
+})->purpose('Переименовать аналитика в SMC Flow и создать классическую копию без SMC');
 
 Artisan::command('bots:openrouter-list-models', function (OpenRouterClient $client) {
     // Проверка доступности каталога OpenRouter (тот же запрос, что на странице настроек LLM-бота).

@@ -161,6 +161,8 @@ import aiohttp
 # --- Proxy Cache System for pocket-options-proxy ---
 _instruments_cache = []
 _last_cache_update = 0
+# Отпечаток proxy_url по session_token — чтобы сбрасывать WebSocket при смене endpoint.
+_client_proxy_by_session: Dict[str, Optional[str]] = {}
 
 async def get_proxy_for_session(session_token: str) -> Optional[str]:
     global _instruments_cache, _last_cache_update
@@ -196,21 +198,37 @@ async def get_or_create_client(session_token: str, uid: str) -> AsyncPocketOptio
     if proxy_url:
         print(f"[INFO] Using assigned proxy for session {session_token[:10]}...")
     
+    prev_proxy = _client_proxy_by_session.get(session_token)
+    if prev_proxy != proxy_url and client_key in _clients:
+        # После «Обновить прокси» в платформе нельзя переиспользовать старый WS-клиент.
+        old_client = _clients.pop(client_key)
+        try:
+            await old_client.disconnect()
+        except Exception:
+            pass
+        print(
+            f"[INFO] Dropped cached client for session {session_token[:10]}... "
+            f"(proxy changed)",
+        )
+
     # Проверяем, есть ли уже клиент для этого SSID
     if client_key in _clients:
         client = _clients[client_key]
         # Проверяем, подключен ли клиент
         if client.is_connected:
+            _client_proxy_by_session[session_token] = proxy_url
             return client
         else:
             # Пытаемся переподключиться
             try:
                 await client.connect()
+                _client_proxy_by_session[session_token] = proxy_url
                 return client
             except Exception as e:
                 print(f"[ERROR] Не удалось переподключиться: {e}")
                 # Удаляем неработающий клиент
                 del _clients[client_key]
+                _client_proxy_by_session.pop(session_token, None)
     
     # Создаем новый клиент (используем тот же подход, что в asset_scanner_websocket.py)
     print(f"[INFO] Создание нового клиента для sessionToken={session_token[:20]}... (demo={is_demo})")
@@ -247,7 +265,8 @@ async def get_or_create_client(session_token: str, uid: str) -> AsyncPocketOptio
     
     # Сохраняем клиент
     _clients[client_key] = client
-    
+    _client_proxy_by_session[session_token] = proxy_url
+
     return client
 
 
