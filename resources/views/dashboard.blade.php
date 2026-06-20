@@ -288,9 +288,8 @@
     // было быстрым, но при этом сохранялись lazy-догрузка истории и live-обновление.
     //
     // 1) INITIAL — что грузим при первом показе инструмента (selectInstrument / reloadChartData).
-    //    Два часа достаточно, чтобы заполнить дефолтный viewport (~110 баров), а сервер при
-    //    этом считывает из БД в разы меньше S5-строк (раньше всегда тянули до 15000 рядов
-    //    под окно 24 часа на каждый клик).
+    //    Минутные TF: 2 часа (~110 M1-баров). Секундные (S5/S15/S30): окно привязано к viewport
+    //    (~130 баров), чтобы не тянуть 1440 S5-свечей на каждый клик.
     // 2) MAX — максимальная глубина истории, до которой можно догружать через loadMoreCandles
     //    при скролле графика влево. Сохраняем прежние 24 часа как «потолок».
     // 3) POLL — узкое окно для регулярного auto-refresh: достаточно последних минут, чтобы
@@ -302,12 +301,31 @@
     const POLL_WINDOW_SEC = 5 * 60;
 
     // Лимиты баров в одном ответе:
-    // - INITIAL_LIMIT держим достаточным для секундных TF (S5 за 2ч = 1440 баров).
+    // - INITIAL_LIMIT — для минутных TF; секундные считаются через initialLimitForTf().
     // - LOAD_MORE_LIMIT используется при ленивой подгрузке старшей истории.
     // - POLL_LIMIT мал и нужен только для апдейта хвоста.
     const INITIAL_LIMIT = 1500;
     const LOAD_MORE_LIMIT = 1440;
     const POLL_LIMIT = 32;
+    /** Запас баров поверх CHART_DEFAULT_VISIBLE_BARS для initial-окна секундных TF. */
+    const INITIAL_VISIBLE_BUFFER_BARS = 20;
+
+    // Секундные ID (4005/4015/4030) и минутные (1,2,3...) — единая шкала для poll/таймера/PA.
+    function timeframeSeconds(tf) {
+        if (tf === 4005) return 5;
+        if (tf === 4015) return 15;
+        if (tf === 4030) return 30;
+        return Math.max(1, Number(tf) || 1) * 60;
+    }
+    function timeframeLabel(tf) {
+        if (tf === 4005) return 'S5';
+        if (tf === 4015) return 'S15';
+        if (tf === 4030) return 'S30';
+        return 'M' + String(tf);
+    }
+    function isSecondTimeframe(tf) {
+        return tf === 4005 || tf === 4015 || tf === 4030;
+    }
 
     const M1_COUNTDOWN_SECONDS = 60;
     /**
@@ -316,6 +334,8 @@
      */
     let m1CloseCountdownAnchorSec = null;
     let m1CloseCountdownAnchorPerfMs = null;
+    let tfCloseCountdownAnchorSec = null;
+    let tfCloseCountdownAnchorPerfMs = null;
 
     function applyM1CountdownFromPayload(payload) {
         if (!payload || typeof payload.m1_seconds_to_close !== 'number' || !Number.isFinite(payload.m1_seconds_to_close)) {
@@ -333,6 +353,42 @@
         }
         const elapsed = (performance.now() - m1CloseCountdownAnchorPerfMs) / 1000;
         return Math.max(0, Math.min(M1_COUNTDOWN_SECONDS, m1CloseCountdownAnchorSec - elapsed));
+    }
+
+    /** Обратный отсчёт до закрытия бара для S5/S15/S30 и прочих не-M1 TF (по server_unix из /candles). */
+    function applyGenericCountdownFromPayload(payload, tf) {
+        const periodSec = timeframeSeconds(tf);
+        if (
+            !payload ||
+            !Array.isArray(payload.candles) ||
+            payload.candles.length === 0 ||
+            typeof payload.server_unix !== 'number' ||
+            !Number.isFinite(payload.server_unix)
+        ) {
+            tfCloseCountdownAnchorSec = null;
+            tfCloseCountdownAnchorPerfMs = null;
+            return;
+        }
+        const last = payload.candles[payload.candles.length - 1];
+        const lastOpen = Number(last && last.time);
+        if (!Number.isFinite(lastOpen)) {
+            tfCloseCountdownAnchorSec = null;
+            tfCloseCountdownAnchorPerfMs = null;
+            return;
+        }
+        const closeTs = lastOpen + periodSec;
+        const left = Math.max(0, Math.min(periodSec, closeTs - Number(payload.server_unix)));
+        tfCloseCountdownAnchorSec = left;
+        tfCloseCountdownAnchorPerfMs = performance.now();
+    }
+
+    function genericCountdownLeftNow(tf) {
+        const periodSec = timeframeSeconds(tf);
+        if (tfCloseCountdownAnchorSec === null || tfCloseCountdownAnchorPerfMs === null) {
+            return null;
+        }
+        const elapsed = (performance.now() - tfCloseCountdownAnchorPerfMs) / 1000;
+        return Math.max(0, Math.min(periodSec, tfCloseCountdownAnchorSec - elapsed));
     }
     /**
      * Горизонталь таймера: xCenter = x0 + (x1 - x0) * t, где x0/x1 — якорь последнего бара и слот справа (≈ barSpacing).
@@ -461,10 +517,6 @@
     }
 
     function positionCandleTimerOverlay() {
-        if (currentTimeframeMinutes !== 1) {
-            if (candleTimerOverlay) candleTimerOverlay.classList.add('hidden');
-            return;
-        }
         if (!candleTimerOverlay || !chart || !candlestickSeries || !allChartData.length) {
             if (candleTimerOverlay) {
                 candleTimerOverlay.classList.add('hidden');
@@ -527,25 +579,22 @@
             candleCloseTimerEl.textContent = '';
             return;
         }
-        if (currentTimeframeMinutes !== 1) {
-            if (candleTimerOverlay) candleTimerOverlay.classList.add('hidden');
-            candleCloseTimerEl.textContent = '';
-            return;
-        }
         const lastT = Number(allChartData[allChartData.length - 1].time);
         if (!Number.isFinite(lastT)) {
             if (candleTimerOverlay) candleTimerOverlay.classList.add('hidden');
             candleCloseTimerEl.textContent = '';
             return;
         }
-        const left = m1CountdownLeftNow();
+        const left = currentTimeframeMinutes === 1
+            ? m1CountdownLeftNow()
+            : genericCountdownLeftNow(currentTimeframeMinutes);
         if (left === null) {
             if (candleTimerOverlay) candleTimerOverlay.classList.add('hidden');
             candleCloseTimerEl.textContent = '';
             return;
         }
         if (candleTfLabelEl) {
-            candleTfLabelEl.textContent = 'M' + String(currentTimeframeMinutes);
+            candleTfLabelEl.textContent = timeframeLabel(currentTimeframeMinutes);
         }
         candleCloseTimerEl.textContent = formatMmSs(left);
         requestAnimationFrame(positionCandleTimerOverlay);
@@ -667,6 +716,21 @@
     /** ~кол-во свечей по горизонтали и «воздух» справа (в долях бара), как на референсе */
     const CHART_DEFAULT_VISIBLE_BARS = 110;
     const CHART_RIGHT_GAP_BARS = 22;
+
+    /** Initial-окно для секундных TF: ~viewport + буфер, без 2ч / 1440 S5-баров. */
+    function initialWindowSecForTf(tf) {
+        if (!isSecondTimeframe(tf)) {
+            return INITIAL_WINDOW_SEC;
+        }
+        return timeframeSeconds(tf) * (CHART_DEFAULT_VISIBLE_BARS + INITIAL_VISIBLE_BUFFER_BARS);
+    }
+
+    function initialLimitForTf(tf) {
+        if (!isSecondTimeframe(tf)) {
+            return INITIAL_LIMIT;
+        }
+        return Math.ceil(initialWindowSecForTf(tf) / timeframeSeconds(tf)) + 10;
+    }
 
     function applyDefaultChartViewport() {
         if (!chart || allChartData.length === 0) return;
@@ -1364,7 +1428,7 @@
             }
             return;
         }
-        const barSec = Math.max(60, currentTimeframeMinutes * 60);
+        const barSec = timeframeSeconds(currentTimeframeMinutes);
         const tailFrom = allChartData[allChartData.length - 1].time - barSec * 2;
         for (const c of allChartData) {
             if (c.time >= tailFrom) {
@@ -1555,11 +1619,9 @@
             since = Math.floor(Date.now() / 1000) - POLL_WINDOW_SEC;
             limit = POLL_LIMIT;
         } else {
-            // Первичный показ: 2 часа дают комфортное заполнение viewport
-            // (CHART_DEFAULT_VISIBLE_BARS = 110 ~= 110 минут),
-            // а сервер читает в БД в разы меньше строк.
-            since = Math.floor(Date.now() / 1000) - INITIAL_WINDOW_SEC;
-            limit = INITIAL_LIMIT;
+            // Первичный показ: минутные TF — 2ч; секундные — окно под viewport (~130 баров).
+            since = Math.floor(Date.now() / 1000) - initialWindowSecForTf(currentTimeframeMinutes);
+            limit = initialLimitForTf(currentTimeframeMinutes);
         }
 
         const params = new URLSearchParams({
@@ -1569,7 +1631,8 @@
             since: String(since),
         });
         if (before != null) params.set('before', before);
-        if (currentTimeframeMinutes === 1 && before == null) {
+        // Live partial для всех TF (как на странице бота): S5/S15 обновляются каждые 500ms, не раз в 5с.
+        if (before == null) {
             params.set('include_partial', '1');
         }
         return fetch(CANDLES_URL + '?' + params.toString(), {
@@ -1578,6 +1641,12 @@
             .then((r) => r.json())
             .then((payload) => {
                 applyM1CountdownFromPayload(payload);
+                if (currentTimeframeMinutes !== 1) {
+                    applyGenericCountdownFromPayload(payload, currentTimeframeMinutes);
+                } else {
+                    tfCloseCountdownAnchorSec = null;
+                    tfCloseCountdownAnchorPerfMs = null;
+                }
                 return payload;
             });
     }

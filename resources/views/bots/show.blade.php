@@ -1474,7 +1474,7 @@
             }
             return;
         }
-        const barSec = Math.max(60, currentTimeframeMinutes * 60);
+        const barSec = timeframeSeconds(currentTimeframeMinutes);
         const tailFrom = allChartData[allChartData.length - 1].time - barSec * 2;
         for (const c of allChartData) {
             if (c.time >= tailFrom) {

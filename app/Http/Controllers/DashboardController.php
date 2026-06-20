@@ -63,6 +63,24 @@ class DashboardController extends Controller
             ->first();
     }
 
+    /**
+     * Окно и лимит баров для оверлеев (structures / PA / LS / SMC).
+     * На S5/S15/S30 не тянем 24ч — достаточно ~500 баров для зон и индикаторов.
+     *
+     * @return array{0: int, 1: int|null} [sinceUnix, maxBars]
+     */
+    private function overlayHistoryWindow(int $timeframe): array
+    {
+        if (in_array($timeframe, CandleService::DASHBOARD_SECOND_TIMEFRAMES, true)) {
+            $barSec = PriceActionDgtIndicatorService::barSecondsForTimeframe($timeframe);
+            $maxBars = 500;
+
+            return [time() - ($maxBars * $barSec), $maxBars];
+        }
+
+        return [time() - 86400, 5000];
+    }
+
     public function instrumentsSidebarData(): JsonResponse
     {
         $sidebar = $this->dashboardSidebarInstrumentsPayload((int) auth()->id());
@@ -287,11 +305,11 @@ class DashboardController extends Controller
         ]);
         $instrument = $request->input('instrument');
         $timeframe = (int) ($request->input('timeframe') ?? 1);
-        $since = time() - 86400;
+        [$since, $maxBars] = $this->overlayHistoryWindow($timeframe);
 
         // Структуры должны использовать ту же временную ось, что и candles endpoint:
         // без повторного timezone-преобразования.
-        $rows = $candleService->seriesForDashboard($instrument, $timeframe, $since, null, null);
+        $rows = $candleService->seriesForDashboard($instrument, $timeframe, $since, null, $maxBars);
 
         $anchorBot = $this->chartIndicatorBotForUser();
         $obParams = $anchorBot !== null
@@ -318,8 +336,8 @@ class DashboardController extends Controller
         ]);
         $instrument = (string) $request->input('instrument');
         $timeframe = (int) ($request->input('timeframe') ?? 1);
-        $since = time() - 86400;
-        $rows = $candleService->seriesForDashboard($instrument, $timeframe, $since, null, 5000);
+        [$since, $maxBars] = $this->overlayHistoryWindow($timeframe);
+        $rows = $candleService->seriesForDashboard($instrument, $timeframe, $since, null, $maxBars);
         $anchorBot = $this->chartIndicatorBotForUser();
         $params = $anchorBot !== null
             ? IndicatorSetting::mergedPriceActionDgtParams($anchorBot)
@@ -349,8 +367,8 @@ class DashboardController extends Controller
         ]);
         $instrument = (string) $request->input('instrument');
         $timeframe = (int) ($request->input('timeframe') ?? 1);
-        $since = time() - 86400;
-        $rows = $candleService->seriesForDashboard($instrument, $timeframe, $since, null, 5000);
+        [$since, $maxBars] = $this->overlayHistoryWindow($timeframe);
+        $rows = $candleService->seriesForDashboard($instrument, $timeframe, $since, null, $maxBars);
         $anchorBot = $this->chartIndicatorBotForUser();
         $lsParams = $anchorBot !== null
             ? IndicatorSetting::mergedLiquiditySwingsParams($anchorBot)
@@ -380,8 +398,8 @@ class DashboardController extends Controller
         ]);
         $instrument = (string) $request->input('instrument');
         $timeframe = (int) ($request->input('timeframe') ?? 1);
-        $since = time() - 86400;
-        $rows = $candleService->seriesForDashboard($instrument, $timeframe, $since, null, 5000);
+        [$since, $maxBars] = $this->overlayHistoryWindow($timeframe);
+        $rows = $candleService->seriesForDashboard($instrument, $timeframe, $since, null, $maxBars);
         $anchorBot = $this->chartIndicatorBotForUser();
         $smcParams = $anchorBot !== null
             ? IndicatorSetting::mergedSmcFlowParams($anchorBot)
