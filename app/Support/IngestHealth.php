@@ -29,6 +29,41 @@ final class IngestHealth
         return $eventAt !== null && $eventAt->lt($now->copy()->subMinutes(max(1, $staleMinutes)));
     }
 
+    /**
+     * Нужно ли переводить прокси в dead из-за stale PO (handleStalePoProxy).
+     * В отличие от isPayoutEventStale: игнорируем payout_is_stale и не dead-им,
+     * если POST ingest свежий, а устарел только last_payout_event_at.
+     */
+    public static function shouldMarkProxyDeadForStalePoEvent(
+        PocketInstrument $instrument,
+        int $staleMinutes,
+        ?Carbon $now = null,
+    ): bool {
+        $now = $now ?? now();
+        $staleMinutes = max(1, $staleMinutes);
+        $eventAt = $instrument->last_payout_event_at;
+
+        if ($eventAt !== null) {
+            if ($eventAt->gte($now->copy()->subMinutes($staleMinutes))) {
+                return false;
+            }
+
+            // Событие PO старое, но ingest шлёт heartbeat — не списываем прокси только из‑за event.
+            if (! self::isIngestSilent($instrument, $now)) {
+                return false;
+            }
+
+            return true;
+        }
+
+        $ingestAt = $instrument->last_payout_at;
+        if ($ingestAt === null) {
+            return false;
+        }
+
+        return $ingestAt->lt($now->copy()->subMinutes($staleMinutes));
+    }
+
     public static function isIngestSilent(PocketInstrument $instrument, ?Carbon $now = null): bool
     {
         $now = $now ?? now();

@@ -44,6 +44,8 @@ class ProxyInstrumentController extends Controller
                 // Во время авто-пробы dead-прокси инструмент временно на dead endpoint:
                 // авто-ротация не должна откатывать назначение до окончания окна ожидания PO/WS.
                 if ($autoRotationEnabled && ! $deadProbe->isInstrumentProbeLocked($r)) {
+                    // Сначала stale PO → dead+ротация (если включено в настройках), затем снятие с уже dead endpoint.
+                    $proxyRotation->handleStalePoProxy($r);
                     $proxyRotation->ensureInstrumentHasReadyProxy($r);
                     $r->load('proxyEndpoint');
                 }

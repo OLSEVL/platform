@@ -4,15 +4,16 @@ use App\Models\Bot;
 use App\Models\BotSignal;
 use App\Models\BotTrade;
 use App\Models\InstrumentCandle;
-use App\Services\DataCleanupService;
 use App\Models\PocketInstrument;
-use App\Models\ProxyEndpoint;
 use App\Models\User;
 use App\Services\Bots\BotEngineService;
 use App\Services\Bots\BotSettlementService;
 use App\Services\Bots\OpenRouterClient;
-use App\Support\OpenRouterChartLevelsParser;
+use App\Services\DataCleanupService;
 use App\Services\ProxyDeadProbeService;
+use App\Services\Telegram\TelegramAlertService;
+use App\Services\Telegram\TelegramAnalystHandler;
+use App\Support\OpenRouterChartLevelsParser;
 use Illuminate\Foundation\Inspiring;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Cache;
@@ -24,32 +25,32 @@ use Illuminate\Support\Facades\Schema;
  * Иначе «зависший» lock после kill не снимается — pgrep находит оболочки с текстом bots:scan.
  */
 if (! function_exists('bots_scan_process_running')) {
-function bots_scan_process_running(?int $exceptPid = null): bool
-{
-    $exceptPid ??= getmypid();
+    function bots_scan_process_running(?int $exceptPid = null): bool
+    {
+        $exceptPid ??= getmypid();
 
-    foreach (glob('/proc/[0-9]*/cmdline') ?: [] as $path) {
-        if (! preg_match('#/proc/(\d+)/cmdline#', $path, $matches)) {
-            continue;
+        foreach (glob('/proc/[0-9]*/cmdline') ?: [] as $path) {
+            if (! preg_match('#/proc/(\d+)/cmdline#', $path, $matches)) {
+                continue;
+            }
+            $pid = (int) $matches[1];
+            // Текущий artisan bots:scan ещё не держит lock — не считаем его «уже running».
+            if ($pid === $exceptPid) {
+                continue;
+            }
+            $cmdline = @file_get_contents($path);
+            if ($cmdline === false) {
+                continue;
+            }
+            $cmdline = str_replace("\0", ' ', $cmdline);
+            // php, php8.3 и т.п. — только реальный artisan bots:scan, не bash-оболочки.
+            if (preg_match('#(?:^|/)(php\d*(?:\.\d+)?)\s+artisan\s+bots:scan\b#', $cmdline)) {
+                return true;
+            }
         }
-        $pid = (int) $matches[1];
-        // Текущий artisan bots:scan ещё не держит lock — не считаем его «уже running».
-        if ($pid === $exceptPid) {
-            continue;
-        }
-        $cmdline = @file_get_contents($path);
-        if ($cmdline === false) {
-            continue;
-        }
-        $cmdline = str_replace("\0", ' ', $cmdline);
-        // php, php8.3 и т.п. — только реальный artisan bots:scan, не bash-оболочки.
-        if (preg_match('#(?:^|/)(php\d*(?:\.\d+)?)\s+artisan\s+bots:scan\b#', $cmdline)) {
-            return true;
-        }
+
+        return false;
     }
-
-    return false;
-}
 }
 
 Artisan::command('inspire', function () {
@@ -350,6 +351,83 @@ Artisan::command('bots:smc-flow-bootstrap', function () {
     $this->info("SMC Flow бот: #{$bot->id} {$bot->name} ({$bot->type}) — настройте SMC Flow индикатор и включите бота.");
 })->purpose('Создать бота SMC Flow (UT + 3BR + OB, 3 мин)');
 
+Artisan::command('bots:strong-trend-telegram-bootstrap', function () {
+    $user = User::query()->orderBy('id')->first();
+    if (! $user) {
+        $this->error('Нет пользователей. Сначала зарегистрируйте пользователя.');
+
+        return;
+    }
+
+    $bot = Bot::query()->firstOrCreate(
+        ['user_id' => $user->id, 'name' => 'Strong Trend Telegram', 'type' => 'strong_trend_telegram'],
+        [
+            'is_active' => false,
+            'config' => [
+                'count' => 30,
+                'streak_len' => 6,
+                'min_confidence' => 0.55,
+                'min_payout' => 80.0,
+                'stale_after_sec' => 45,
+                'dedupe_bucket_sec' => 300,
+                'candle_strictness' => 'strict',
+                'min_body_to_range_ratio' => 0.0,
+                'telegram_enabled' => true,
+                'telegram_bot_token' => '8814450509:AAFiq9p6GV5zo1e3ciSVAi1gHnrjMe8pFCA',
+                'telegram_chat_id' => '',
+                'notify_only' => true,
+                'version' => 'strong_trend_telegram_v1',
+            ],
+        ]
+    );
+
+    $this->info("Бот алертов: #{$bot->id} {$bot->name} ({$bot->type})");
+    $this->comment('1) Откройте https://t.me/trend1123_bot и нажмите Start');
+    $this->comment('2) В настройках бота нажмите «Получить chat_id из Telegram»');
+    $this->comment('3) Включите бота и убедитесь, что работает schedule:run / bots:scan');
+})->purpose('Создать бота «Сильный тренд M1 → Telegram»');
+
+Artisan::command('bots:strong-level-bootstrap', function () {
+    $user = User::query()->orderBy('id')->first();
+    if (! $user) {
+        $this->error('Нет пользователей. Сначала зарегистрируйте пользователя.');
+
+        return;
+    }
+
+    $bot = Bot::query()->firstOrCreate(
+        ['user_id' => $user->id, 'name' => 'Strong Level', 'type' => 'strong_level'],
+        [
+            'is_active' => false,
+            'config' => [
+                'count' => 500,
+                'min_closed_bars' => 200,
+                'min_confidence' => 0.62,
+                'min_payout' => 82.0,
+                'stale_after_sec' => 45,
+                'entry_mode' => 'both',
+                'min_level_strength' => 68.0,
+                'min_sources' => 2,
+                'cluster_atr_mult_m5' => 0.20,
+                'touch_atr_mult_m1' => 0.35,
+                'bounce_min_wick_ratio_m5' => 0.35,
+                'expiry_sec_bounce' => 180,
+                'expiry_sec_breakout' => 300,
+                'm5_take' => 120,
+                'm15_take' => 80,
+                'h1_take' => 48,
+                'require_h1_alignment' => true,
+                'breakout_require_retest' => true,
+                'breakout_vol_above_sma' => true,
+                'version' => 'strong_level_v1',
+            ],
+        ]
+    );
+
+    $this->info("Strong Level бот: #{$bot->id} {$bot->name} ({$bot->type})");
+    $this->comment('Настройте Price Action DGT и SMC Flow индикаторы, затем включите бота.');
+})->purpose('Создать бота Strong Level (отскок/пробой у сильных уровней)');
+
 Artisan::command('bots:openrouter-bootstrap', function () {
     $user = User::query()->orderBy('id')->first();
     if (! $user) {
@@ -548,6 +626,7 @@ Artisan::command('bots:scan {--bot_id=} {--active-only=1}', function (BotEngineS
             $lockExpired = $row && (int) ($row->expiration ?? 0) <= time();
             if ($row && (! $scanRunning || $lockExpired)) {
                 DB::table('cache_locks')->where('key', $lockKey)->delete();
+
                 continue;
             }
         }
@@ -561,47 +640,47 @@ Artisan::command('bots:scan {--bot_id=} {--active-only=1}', function (BotEngineS
     }
 
     try {
-    $botId = $this->option('bot_id');
-    $activeOnly = (string) $this->option('active-only') !== '0';
+        $botId = $this->option('bot_id');
+        $activeOnly = (string) $this->option('active-only') !== '0';
 
-    $q = Bot::query()->orderBy('id');
-    if ($botId) {
-        $q->where('id', (int) $botId);
-    }
-    if ($activeOnly) {
-        $q->where('is_active', true);
-    }
-    $bots = $q->get();
-    if ($bots->isEmpty()) {
-        $this->warn('Нет ботов для сканирования.');
-
-        return;
-    }
-
-    $summary = ['processed' => 0, 'signals' => 0, 'trades' => 0];
-    foreach ($bots as $bot) {
-        if (! $bot instanceof Bot) {
-            continue;
+        $q = Bot::query()->orderBy('id');
+        if ($botId) {
+            $q->where('id', (int) $botId);
         }
-        $r = $engine->scanBot($bot);
-        $summary['processed'] += (int) $r['processed'];
-        $summary['signals'] += (int) $r['signals'];
-        $summary['trades'] += (int) $r['trades'];
-        $this->line(sprintf(
-            '[bot:%d] processed=%d signals=%d trades=%d',
-            $bot->id,
-            $r['processed'],
-            $r['signals'],
-            $r['trades']
-        ));
-    }
+        if ($activeOnly) {
+            $q->where('is_active', true);
+        }
+        $bots = $q->get();
+        if ($bots->isEmpty()) {
+            $this->warn('Нет ботов для сканирования.');
 
-    $this->info(sprintf(
-        'Итог: processed=%d signals=%d trades=%d',
-        $summary['processed'],
-        $summary['signals'],
-        $summary['trades']
-    ));
+            return;
+        }
+
+        $summary = ['processed' => 0, 'signals' => 0, 'trades' => 0];
+        foreach ($bots as $bot) {
+            if (! $bot instanceof Bot) {
+                continue;
+            }
+            $r = $engine->scanBot($bot);
+            $summary['processed'] += (int) $r['processed'];
+            $summary['signals'] += (int) $r['signals'];
+            $summary['trades'] += (int) $r['trades'];
+            $this->line(sprintf(
+                '[bot:%d] processed=%d signals=%d trades=%d',
+                $bot->id,
+                $r['processed'],
+                $r['signals'],
+                $r['trades']
+            ));
+        }
+
+        $this->info(sprintf(
+            'Итог: processed=%d signals=%d trades=%d',
+            $summary['processed'],
+            $summary['signals'],
+            $summary['trades']
+        ));
     } finally {
         $lock->release();
     }
@@ -619,3 +698,79 @@ Artisan::command('bots:settle {--bot_id=} {--limit=1000}', function (BotSettleme
         $res['settled_fallback'] ?? 0
     ));
 })->purpose('Закрыть просроченные paper-сделки ботов');
+
+Artisan::command('telegram:analyst-poll {--bot= : ID бота openrouter_llm_analyst} {--timeout=30}', function (
+    TelegramAlertService $telegram,
+    TelegramAnalystHandler $handler,
+) {
+    $botId = (int) ($this->option('bot') ?: 0);
+    if ($botId <= 0) {
+        $candidates = Bot::query()->where('type', 'openrouter_llm_analyst')->orderBy('id')->get();
+        $bot = $candidates->first(function (Bot $b): bool {
+            return \App\Support\OpenRouterLlmConfig::analystSmcFlowEnabled(is_array($b->config) ? $b->config : []);
+        }) ?? $candidates->first();
+        if ($bot === null) {
+            $this->error('Нет бота openrouter_llm_analyst. Укажите --bot=ID');
+
+            return 1;
+        }
+    } else {
+        $bot = Bot::query()->find($botId);
+        if ($bot === null || $bot->type !== 'openrouter_llm_analyst') {
+            $this->error('Бот не найден или не openrouter_llm_analyst');
+
+            return 1;
+        }
+    }
+
+    /** @var array<string, mixed> $cfg */
+    $cfg = is_array($bot->config) ? $bot->config : [];
+    $token = trim((string) ($cfg['telegram_bot_token'] ?? ''));
+    if ($token === '') {
+        $this->error('В config бота не задан telegram_bot_token');
+
+        return 1;
+    }
+    if (! (bool) ($cfg['telegram_enabled'] ?? false)) {
+        $this->warn('telegram_enabled=false — polling всё равно стартует, включите флаг в настройках.');
+    }
+
+    $delete = $telegram->deleteWebhook($token);
+    if (! ($delete['ok'] ?? false)) {
+        $this->warn('deleteWebhook: '.($delete['error'] ?? 'unknown'));
+    }
+
+    $timeout = max(5, min(50, (int) $this->option('timeout')));
+    $offsetKey = 'telegram_analyst_poll_offset:'.$bot->id;
+    $offset = (int) Cache::get($offsetKey, 0);
+
+    $this->info("Telegram analyst poll: bot #{$bot->id} {$bot->name}, offset={$offset}, timeout={$timeout}s");
+    $this->line('Ctrl+C для остановки. Нужен queue worker: php artisan queue:work --queue=telegram-analyst --timeout=600');
+
+    while (true) {
+        $result = $telegram->getUpdates($token, $offset, $timeout);
+        if (! ($result['ok'] ?? false)) {
+            $this->error('getUpdates: '.($result['error'] ?? 'unknown'));
+            sleep(3);
+
+            continue;
+        }
+        $updates = $result['updates'] ?? [];
+        foreach ($updates as $update) {
+            if (! is_array($update)) {
+                continue;
+            }
+            if (isset($update['update_id'])) {
+                $offset = max($offset, (int) $update['update_id'] + 1);
+            }
+            try {
+                $handler->handleUpdate($bot, $update);
+            } catch (\Throwable $e) {
+                $this->error('handleUpdate: '.$e->getMessage());
+            }
+        }
+        if ($offset > 0) {
+            Cache::forever($offsetKey, $offset);
+        }
+    }
+})->purpose('Long polling Telegram для Chart Analyst (меню инструментов → анализ)');

@@ -177,6 +177,8 @@ class ProxyDiagnosticsService
             'status' => $proxy->status,
             'failure_count' => (int) $proxy->failure_count,
             'last_error' => $proxy->last_error,
+            'dead_reason_log' => is_array($proxy->dead_reason_log) ? $proxy->dead_reason_log : [],
+            'latest_dead_reason' => $proxy->latestDeadReasonEntry(),
             'active_instruments_count' => (int) ($proxy->active_instruments_count ?? 0),
             'http' => $http,
             'ws' => $ws,
@@ -471,7 +473,7 @@ class ProxyDiagnosticsService
         }
 
         return ($row['active_instruments_count'] ?? 0) > 0
-            && $row['status'] === ProxyEndpoint::STATUS_DEAD;
+            && in_array($row['status'], [ProxyEndpoint::STATUS_DEAD, ProxyEndpoint::STATUS_COOLDOWN], true);
     }
 
     public function persistHttpCheckResult(

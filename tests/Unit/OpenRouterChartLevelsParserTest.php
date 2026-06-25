@@ -113,4 +113,29 @@ JSON;
         $this->assertTrue($parsed['ok']);
         $this->assertSame(1.2, $parsed['data']['levels'][0]['price']);
     }
+
+    #[Test]
+    public function normalizes_labels_with_russian_text_and_price_digits(): void
+    {
+        $json = json_encode([
+            'levels' => [
+                ['price' => 1.08542, 'kind' => 'support', 'timeframe' => 'H1', 'label' => 'H1 поддержка · 1.08542'],
+                ['price' => 1.2, 'kind' => 'resistance', 'timeframe' => 'M5', 'label' => 'M5 сопротивление'],
+            ],
+            'zones' => [
+                ['price_high' => 1.15, 'price_low' => 1.05, 'timeframe' => 'M15', 'label' => 'M15 зона'],
+            ],
+            'entry' => ['price' => 1.08, 'side' => 'CALL', 'label' => 'Вход CALL'],
+        ], JSON_THROW_ON_ERROR);
+
+        $parsed = OpenRouterChartLevelsParser::normalize($json, true);
+
+        $this->assertTrue($parsed['ok']);
+        $this->assertSame('H1 поддержка · 1.08542', $parsed['data']['levels'][0]['label']);
+        $this->assertStringContainsString('1.2', $parsed['data']['levels'][1]['label']);
+        $this->assertStringContainsString('1.05', $parsed['data']['zones'][0]['label']);
+        $this->assertStringContainsString('1.15', $parsed['data']['zones'][0]['label']);
+        $this->assertStringContainsString('1.08', $parsed['data']['entry']['label']);
+        $this->assertStringContainsString('CALL', $parsed['data']['entry']['label']);
+    }
 }

@@ -32,6 +32,8 @@ class SettingsController extends Controller
 
         return view('settings.index', [
             'proxyAutoRotationEnabled' => $proxyRotation->isAutoRotationEnabled(),
+            'proxyDeadOnPoStaleEnabled' => $proxyRotation->isDeadOnPoStaleEnabled(),
+            'proxyDeadOnPoStaleMinutes' => $proxyRotation->getDeadOnPoStaleMinutes(),
             'proxyDeadStreakThreshold' => $proxyRotation->getDeadStreakThreshold(),
             'proxyMaxInstrumentsPerEndpoint' => $proxyRotation->getMaxInstrumentsPerProxy(),
             'payoutStaleMinutesThreshold' => $payoutStaleMinutesThreshold,
@@ -174,15 +176,20 @@ class SettingsController extends Controller
         $validated = $request->validate([
             'proxy_dead_streak_threshold' => 'nullable|integer|min:1|max:1000',
             'proxy_max_instruments_per_endpoint' => 'nullable|integer|min:1|max:100',
+            'proxy_dead_on_po_stale_minutes' => 'nullable|integer|min:1|max:1440',
             'proxy_reactivation_probe_instrument' => 'nullable|string|max:63',
             'proxy_probe_window_sec' => 'nullable|integer|min:5|max:180',
         ]);
 
         // Явная boolean-настройка через checkbox "on/off".
         $enabled = $request->boolean('proxy_auto_rotation_enabled');
+        $deadOnPoStaleEnabled = $request->boolean('proxy_dead_on_po_stale_enabled');
         $threshold = (int) ($validated['proxy_dead_streak_threshold'] ?? $proxyRotation->getDeadStreakThreshold());
+        $deadOnPoStaleMinutes = (int) ($validated['proxy_dead_on_po_stale_minutes'] ?? $proxyRotation->getDeadOnPoStaleMinutes());
         $maxInstrumentsPerProxy = (int) ($validated['proxy_max_instruments_per_endpoint'] ?? $proxyRotation->getMaxInstrumentsPerProxy());
         $proxyRotation->setAutoRotationEnabled($enabled);
+        $proxyRotation->setDeadOnPoStaleEnabled($deadOnPoStaleEnabled);
+        $proxyRotation->setDeadOnPoStaleMinutes($deadOnPoStaleMinutes);
         $proxyRotation->setDeadStreakThreshold($threshold);
         $proxyRotation->setMaxInstrumentsPerProxy($maxInstrumentsPerProxy);
         // Параметр "контрольного инструмента" для авто-реанимации dead:
@@ -224,11 +231,16 @@ class SettingsController extends Controller
             ]
         );
 
+        $poStalePart = $deadOnPoStaleEnabled
+            ? " Dead по stale PO: включено, порог {$deadOnPoStaleMinutes} мин."
+            : ' Dead по stale PO: выключено.';
+
         return back()->with(
             'success',
-            $enabled
+            ($enabled
                 ? "Автоматическая ротация прокси включена. Порог dead: streak >= {$threshold}, лимит нагрузки: до {$maxInstrumentsPerProxy} инструмент(ов) на 1 прокси."
-                : "Автоматическая ротация прокси выключена. Порог сохранён: streak >= {$threshold}, лимит нагрузки: до {$maxInstrumentsPerProxy} инструмент(ов) на 1 прокси."
+                : "Автоматическая ротация прокси выключена. Порог сохранён: streak >= {$threshold}, лимит нагрузки: до {$maxInstrumentsPerProxy} инструмент(ов) на 1 прокси.")
+            .$poStalePart
         );
     }
 
@@ -543,6 +555,7 @@ class SettingsController extends Controller
             'failure_count' => (int) ($row['failure_count'] ?? $proxy->failure_count),
             'last_error' => (string) ($row['last_error'] ?? ''),
             'last_failed_at' => $proxy->last_failed_at?->toIso8601String(),
+            'latest_dead_reason' => $row['latest_dead_reason'] ?? $proxy->latestDeadReasonEntry(),
             'recommendation' => (string) ($row['recommendation'] ?? ''),
             'is_false_dead' => (bool) ($row['is_false_dead'] ?? false),
             'http' => $row['http'] ?? null,

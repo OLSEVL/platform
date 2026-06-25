@@ -24,7 +24,10 @@ class ProxyEndpoint extends Model
         'last_http_check_result',
         'last_http_check_mode',
         'last_auto_test',
+        'dead_reason_log',
     ];
+
+    private const DEAD_REASON_LOG_MAX_ENTRIES = 50;
 
     protected function casts(): array
     {
@@ -36,7 +39,48 @@ class ProxyEndpoint extends Model
             'last_http_status' => 'integer',
             'last_http_latency_ms' => 'integer',
             'last_auto_test' => 'array',
+            'dead_reason_log' => 'array',
         ];
+    }
+
+    /**
+     * @param  array<string, mixed>  $meta
+     */
+    public function appendDeadReasonLog(
+        string $reason,
+        ?PocketInstrument $instrument = null,
+        array $meta = [],
+    ): void {
+        $entry = array_filter([
+            'reason' => $reason,
+            'instrument' => $instrument?->instrument,
+            'instrument_id' => $instrument?->id,
+            'at' => now()->toIso8601String(),
+            'meta' => $meta !== [] ? $meta : null,
+        ], static fn ($value) => $value !== null);
+
+        $log = is_array($this->dead_reason_log) ? $this->dead_reason_log : [];
+        $log[] = $entry;
+        if (count($log) > self::DEAD_REASON_LOG_MAX_ENTRIES) {
+            $log = array_slice($log, -self::DEAD_REASON_LOG_MAX_ENTRIES);
+        }
+
+        $this->dead_reason_log = $log;
+    }
+
+    /**
+     * @return array<string, mixed>|null
+     */
+    public function latestDeadReasonEntry(): ?array
+    {
+        $log = $this->dead_reason_log;
+        if (! is_array($log) || $log === []) {
+            return null;
+        }
+
+        $last = end($log);
+
+        return is_array($last) ? $last : null;
     }
 
     /**

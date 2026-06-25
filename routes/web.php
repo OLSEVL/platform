@@ -52,6 +52,10 @@ Route::middleware('auth')->group(function () {
         Route::get('/{bot}/logs', [BotController::class, 'logs'])->name('logs');
         Route::get('/{bot}/settings', [BotController::class, 'settings'])->name('settings');
         Route::put('/{bot}/settings', [BotController::class, 'updateSettings'])->name('settings.update');
+        Route::post('/{bot}/telegram/test', [BotController::class, 'telegramTest'])->name('telegram.test');
+        Route::post('/{bot}/telegram/discover-chat', [BotController::class, 'telegramDiscoverChat'])->name('telegram.discover-chat');
+        Route::get('/{bot}/telegram/analyst-status', [BotController::class, 'telegramAnalystStatus'])->name('telegram.analyst-status');
+        Route::post('/{bot}/telegram/analyst-restart', [BotController::class, 'telegramAnalystRestart'])->name('telegram.analyst-restart');
         Route::post('/{bot}/cleanup-recent', [BotController::class, 'cleanupRecent'])->name('cleanup-recent');
         Route::get('/{bot}', [BotController::class, 'show'])->name('show');
     });

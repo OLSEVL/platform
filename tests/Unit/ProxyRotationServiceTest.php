@@ -152,6 +152,155 @@ class ProxyRotationServiceTest extends TestCase
         $this->assertSame($goodProxy->id, $instrument->proxy_endpoint_id);
     }
 
+    public function test_handle_stale_po_proxy_marks_dead_and_rotates_when_enabled(): void
+    {
+        $rotation = app(ProxyRotationService::class);
+        $rotation->setAutoRotationEnabled(true);
+        $rotation->setDeadOnPoStaleEnabled(true);
+        $rotation->setDeadOnPoStaleMinutes(30);
+        $rotation->setMaxInstrumentsPerProxy(2);
+
+        $staleProxy = ProxyEndpoint::query()->create([
+            'url' => 'http://stale:1@1.1.1.1:1',
+            'status' => ProxyEndpoint::STATUS_ACTIVE,
+        ]);
+        $freshProxy = ProxyEndpoint::query()->create([
+            'url' => 'http://fresh:1@2.2.2.2:2',
+            'status' => ProxyEndpoint::STATUS_ACTIVE,
+        ]);
+
+        $instrument = PocketInstrument::query()->create([
+            'instrument' => 'EURUSD_otc',
+            'is_active' => true,
+            'proxy_endpoint_id' => $staleProxy->id,
+            'last_payout_event_at' => now()->subMinutes(45),
+            'last_payout_at' => now()->subMinutes(45),
+        ]);
+
+        $replacement = $rotation->handleStalePoProxy($instrument->fresh());
+
+        $staleProxy->refresh();
+        $instrument->refresh();
+
+        $this->assertSame(ProxyEndpoint::STATUS_DEAD, $staleProxy->status);
+        $this->assertSame('po_stale', $staleProxy->last_error);
+        $this->assertNotNull($replacement);
+        $this->assertSame($freshProxy->id, $instrument->proxy_endpoint_id);
+
+        $log = $staleProxy->fresh()->dead_reason_log;
+        $this->assertIsArray($log);
+        $this->assertSame('po_stale', $log[0]['reason'] ?? null);
+        $this->assertSame($instrument->id, $log[0]['instrument_id'] ?? null);
+    }
+
+    public function test_handle_stale_po_proxy_ignores_payout_is_stale_flag_when_event_fresh(): void
+    {
+        $rotation = app(ProxyRotationService::class);
+        $rotation->setAutoRotationEnabled(true);
+        $rotation->setDeadOnPoStaleEnabled(true);
+        $rotation->setDeadOnPoStaleMinutes(30);
+
+        $proxy = ProxyEndpoint::query()->create([
+            'url' => 'http://ok:1@1.1.1.1:1',
+            'status' => ProxyEndpoint::STATUS_ACTIVE,
+        ]);
+
+        $instrument = PocketInstrument::query()->create([
+            'instrument' => 'AUDUSD_otc',
+            'is_active' => true,
+            'proxy_endpoint_id' => $proxy->id,
+            'last_payout_event_at' => now()->subMinutes(2),
+            'last_payout_at' => now(),
+            'payout_is_stale' => true,
+        ]);
+
+        $rotation->handleStalePoProxy($instrument->fresh());
+
+        $this->assertSame(ProxyEndpoint::STATUS_ACTIVE, $proxy->fresh()->status);
+    }
+
+    public function test_handle_stale_po_proxy_noop_when_post_ingest_fresh_but_event_old(): void
+    {
+        $rotation = app(ProxyRotationService::class);
+        $rotation->setAutoRotationEnabled(true);
+        $rotation->setDeadOnPoStaleEnabled(true);
+        $rotation->setDeadOnPoStaleMinutes(30);
+
+        $proxy = ProxyEndpoint::query()->create([
+            'url' => 'http://ok:1@2.2.2.2:2',
+            'status' => ProxyEndpoint::STATUS_ACTIVE,
+        ]);
+
+        $instrument = PocketInstrument::query()->create([
+            'instrument' => 'NZDUSD_otc',
+            'is_active' => true,
+            'proxy_endpoint_id' => $proxy->id,
+            'last_payout_event_at' => now()->subHours(2),
+            'last_payout_at' => now(),
+            'payout_is_stale' => false,
+        ]);
+
+        $rotation->handleStalePoProxy($instrument->fresh());
+
+        $this->assertSame(ProxyEndpoint::STATUS_ACTIVE, $proxy->fresh()->status);
+    }
+
+    public function test_handle_stale_po_proxy_noop_when_disabled(): void
+    {
+        $rotation = app(ProxyRotationService::class);
+        $rotation->setAutoRotationEnabled(true);
+        $rotation->setDeadOnPoStaleEnabled(false);
+        $rotation->setDeadOnPoStaleMinutes(30);
+
+        $proxy = ProxyEndpoint::query()->create([
+            'url' => 'http://stale:1@1.1.1.1:1',
+            'status' => ProxyEndpoint::STATUS_ACTIVE,
+        ]);
+
+        $instrument = PocketInstrument::query()->create([
+            'instrument' => 'GBPUSD_otc',
+            'is_active' => true,
+            'proxy_endpoint_id' => $proxy->id,
+            'last_payout_event_at' => now()->subHours(2),
+        ]);
+
+        $rotation->handleStalePoProxy($instrument->fresh());
+
+        $proxy->refresh();
+        $instrument->refresh();
+
+        $this->assertSame(ProxyEndpoint::STATUS_ACTIVE, $proxy->status);
+        $this->assertSame($proxy->id, $instrument->proxy_endpoint_id);
+    }
+
+    public function test_handle_stale_po_proxy_noop_when_po_is_fresh(): void
+    {
+        $rotation = app(ProxyRotationService::class);
+        $rotation->setAutoRotationEnabled(true);
+        $rotation->setDeadOnPoStaleEnabled(true);
+        $rotation->setDeadOnPoStaleMinutes(30);
+
+        $proxy = ProxyEndpoint::query()->create([
+            'url' => 'http://ok:1@1.1.1.1:1',
+            'status' => ProxyEndpoint::STATUS_ACTIVE,
+        ]);
+
+        $instrument = PocketInstrument::query()->create([
+            'instrument' => 'USDJPY_otc',
+            'is_active' => true,
+            'proxy_endpoint_id' => $proxy->id,
+            'last_payout_event_at' => now()->subMinutes(5),
+        ]);
+
+        $rotation->handleStalePoProxy($instrument->fresh());
+
+        $proxy->refresh();
+        $instrument->refresh();
+
+        $this->assertSame(ProxyEndpoint::STATUS_ACTIVE, $proxy->status);
+        $this->assertSame($proxy->id, $instrument->proxy_endpoint_id);
+    }
+
     public function test_pool_capacity_reports_exhausted_when_no_free_slots(): void
     {
         $rotation = app(ProxyRotationService::class);
@@ -173,5 +322,46 @@ class ProxyRotationServiceTest extends TestCase
         $this->assertTrue($summary['is_exhausted']);
         $this->assertSame(0, $summary['free_slots']);
         $this->assertSame(1, $summary['total_slots']);
+    }
+
+    public function test_replacement_prefers_proxy_with_fewer_failures_over_empty_slot(): void
+    {
+        $rotation = app(ProxyRotationService::class);
+        $rotation->setMaxInstrumentsPerProxy(2);
+
+        $badProxy = ProxyEndpoint::query()->create([
+            'url' => 'http://bad:1@9.9.9.9:9',
+            'status' => ProxyEndpoint::STATUS_ACTIVE,
+            'failure_count' => 0,
+        ]);
+        $cleanButBusyProxy = ProxyEndpoint::query()->create([
+            'url' => 'http://clean:1@8.8.8.8:8',
+            'status' => ProxyEndpoint::STATUS_ACTIVE,
+            'failure_count' => 0,
+        ]);
+        $emptyButNoisyProxy = ProxyEndpoint::query()->create([
+            'url' => 'http://noisy:1@7.7.7.7:7',
+            'status' => ProxyEndpoint::STATUS_ACTIVE,
+            'failure_count' => 15,
+        ]);
+
+        PocketInstrument::query()->create([
+            'instrument' => 'EURUSD',
+            'is_active' => true,
+            'proxy_endpoint_id' => $cleanButBusyProxy->id,
+        ]);
+
+        $toRotate = PocketInstrument::query()->create([
+            'instrument' => 'GBPUSD',
+            'is_active' => true,
+            'proxy_endpoint_id' => $badProxy->id,
+        ]);
+
+        $replacement = $rotation->rotateInstrumentProxy($toRotate, false);
+
+        $this->assertNotNull($replacement);
+        // Пустой слот на noisy-прокси, но у clean меньше ошибок — выбираем clean.
+        $this->assertSame($cleanButBusyProxy->id, $replacement->id);
+        $this->assertSame($cleanButBusyProxy->id, $toRotate->fresh()->proxy_endpoint_id);
     }
 }

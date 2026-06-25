@@ -8,15 +8,16 @@ use App\Models\BotLlmLog;
 use App\Models\BotTrade;
 use App\Models\IndicatorSetting;
 use App\Models\PocketInstrument;
-use App\Support\BotScanProgress;
 use App\Services\Bots\BotEngineService;
-use App\Services\DataCleanupService;
 use App\Services\Bots\OpenRouterClient;
 use App\Services\CandleService;
 use App\Services\CandleStructureZoneDetector;
+use App\Services\DataCleanupService;
 use App\Services\Indicators\LiquiditySwingsIndicatorService;
 use App\Services\Indicators\PriceActionDgtIndicatorService;
 use App\Services\Indicators\SmcFlowIndicatorService;
+use App\Services\Telegram\TelegramAlertService;
+use App\Support\BotScanProgress;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
@@ -470,6 +471,81 @@ class BotController extends Controller
                 'smc_ob_touch_max_bars' => (int) ($extra['smc_ob_touch_max_bars'] ?? $request->input('smc_ob_touch_max_bars', 3)),
                 'version' => 'smc_flow_ut_3br_ob_v1',
             ]);
+        } elseif ($bot->type === 'strong_trend_telegram') {
+            // Алерт сильного тренда M1 → Telegram; без paper-сделок в платформе.
+            $extra = $request->validate([
+                'count' => ['required', 'integer', 'min:10', 'max:5000'],
+                'streak_len' => ['required', 'integer', 'min:2', 'max:30'],
+                'min_confidence' => ['required', 'numeric', 'min:0', 'max:1'],
+                'min_payout' => ['required', 'numeric', 'min:0', 'max:100'],
+                'stale_after_sec' => ['required', 'integer', 'min:5', 'max:600'],
+                'dedupe_bucket_sec' => ['required', 'integer', 'min:60', 'max:3600'],
+                'candle_strictness' => ['required', 'string', Rule::in(['strict', 'with_doji'])],
+                'min_body_to_range_ratio' => ['required', 'numeric', 'min:0', 'max:1'],
+                'telegram_enabled' => ['sometimes', 'boolean'],
+                'telegram_bot_token' => ['nullable', 'string', 'max:128'],
+                'telegram_chat_id' => ['nullable', 'string', 'max:64'],
+            ]);
+            $existingToken = trim((string) (($bot->config ?? [])['telegram_bot_token'] ?? ''));
+            $tokenInput = trim((string) ($extra['telegram_bot_token'] ?? ''));
+            $config = array_merge($bot->config ?? [], [
+                'count' => (int) $extra['count'],
+                'streak_len' => (int) $extra['streak_len'],
+                'min_confidence' => (float) $extra['min_confidence'],
+                'min_payout' => (float) $extra['min_payout'],
+                'stale_after_sec' => (int) $extra['stale_after_sec'],
+                'dedupe_bucket_sec' => (int) $extra['dedupe_bucket_sec'],
+                'candle_strictness' => (string) $extra['candle_strictness'],
+                'min_body_to_range_ratio' => (float) $extra['min_body_to_range_ratio'],
+                'telegram_enabled' => $request->boolean('telegram_enabled'),
+                // Пустое поле token при сохранении не затирает уже сохранённый token.
+                'telegram_bot_token' => $tokenInput !== '' ? $tokenInput : $existingToken,
+                'telegram_chat_id' => trim((string) ($extra['telegram_chat_id'] ?? '')),
+                'notify_only' => true,
+                'version' => 'strong_trend_telegram_v1',
+            ]);
+        } elseif ($bot->type === 'strong_level') {
+            // Strong Level: конфлюенс уровней DGT+SMC, вход на отскок или пробой.
+            $extra = $request->validate([
+                'count' => ['required', 'integer', 'min:200', 'max:5000'],
+                'min_closed_bars' => ['required', 'integer', 'min:80', 'max:2000'],
+                'min_confidence' => ['required', 'numeric', 'min:0', 'max:1'],
+                'min_payout' => ['required', 'numeric', 'min:0', 'max:100'],
+                'stale_after_sec' => ['required', 'integer', 'min:5', 'max:600'],
+                'entry_mode' => ['required', 'string', Rule::in(['bounce', 'breakout', 'both'])],
+                'min_level_strength' => ['required', 'numeric', 'min:40', 'max:95'],
+                'min_sources' => ['required', 'integer', 'min:1', 'max:6'],
+                'cluster_atr_mult_m5' => ['required', 'numeric', 'min:0.05', 'max:1'],
+                'touch_atr_mult_m1' => ['required', 'numeric', 'min:0.05', 'max:1.5'],
+                'bounce_min_wick_ratio_m5' => ['required', 'numeric', 'min:0.15', 'max:0.8'],
+                'expiry_sec_bounce' => ['required', 'integer', 'min:120', 'max:600'],
+                'expiry_sec_breakout' => ['required', 'integer', 'min:120', 'max:600'],
+                'm5_take' => ['required', 'integer', 'min:20', 'max:300'],
+                'm15_take' => ['required', 'integer', 'min:20', 'max:300'],
+                'h1_take' => ['required', 'integer', 'min:10', 'max:200'],
+            ]);
+            $config = array_merge($bot->config ?? [], [
+                'count' => (int) $extra['count'],
+                'min_closed_bars' => (int) $extra['min_closed_bars'],
+                'min_confidence' => (float) $extra['min_confidence'],
+                'min_payout' => (float) $extra['min_payout'],
+                'stale_after_sec' => (int) $extra['stale_after_sec'],
+                'entry_mode' => (string) $extra['entry_mode'],
+                'min_level_strength' => (float) $extra['min_level_strength'],
+                'min_sources' => (int) $extra['min_sources'],
+                'cluster_atr_mult_m5' => (float) $extra['cluster_atr_mult_m5'],
+                'touch_atr_mult_m1' => (float) $extra['touch_atr_mult_m1'],
+                'bounce_min_wick_ratio_m5' => (float) $extra['bounce_min_wick_ratio_m5'],
+                'expiry_sec_bounce' => (int) $extra['expiry_sec_bounce'],
+                'expiry_sec_breakout' => (int) $extra['expiry_sec_breakout'],
+                'm5_take' => (int) $extra['m5_take'],
+                'm15_take' => (int) $extra['m15_take'],
+                'h1_take' => (int) $extra['h1_take'],
+                'require_h1_alignment' => $request->boolean('require_h1_alignment'),
+                'breakout_require_retest' => $request->boolean('breakout_require_retest'),
+                'breakout_vol_above_sma' => $request->boolean('breakout_vol_above_sma'),
+                'version' => 'strong_level_v1',
+            ]);
         } elseif ($bot->type === 'openrouter_llm') {
             // OpenRouter LLM-бот: решение по сделке формируется нейросетью по свечному контексту.
             // Все параметры валидируем явно, чтобы конфиг оставался консистентным и безопасным.
@@ -516,7 +592,7 @@ class BotController extends Controller
                 'version' => 'openrouter_llm_v1',
             ]));
         } elseif ($bot->type === 'openrouter_llm_analyst') {
-            // Бот-аналитик: только параметры LLM и MTF, без торговых фильтров и экспирации.
+            // Бот-аналитик: LLM + MTF; Telegram polling для интерактивного анализа по кнопкам.
             $extra = $request->validate([
                 'count' => ['required', 'integer', 'min:1', 'max:500'],
                 's5_take' => ['required', 'integer', 'min:1', 'max:1500'],
@@ -534,7 +610,21 @@ class BotController extends Controller
                 'm5_take' => ['required', 'integer', 'min:1', 'max:300'],
                 'm15_take' => ['required', 'integer', 'min:1', 'max:300'],
                 'h1_take' => ['required', 'integer', 'min:1', 'max:200'],
+                'min_payout' => ['required', 'numeric', 'min:0', 'max:100'],
+                'allowed_instruments_text' => ['nullable', 'string', 'max:8000'],
+                'blocked_instruments_text' => ['nullable', 'string', 'max:8000'],
+                'telegram_enabled' => ['sometimes', 'boolean'],
+                'telegram_bot_token' => ['nullable', 'string', 'max:128'],
+                'telegram_chat_id' => ['nullable', 'string', 'max:64'],
             ]);
+            $existingToken = trim((string) (($bot->config ?? [])['telegram_bot_token'] ?? ''));
+            $tokenInput = trim((string) ($extra['telegram_bot_token'] ?? ''));
+            $allowedList = \App\Services\Telegram\TelegramAnalystInstrumentService::parseInstrumentListInput(
+                $extra['allowed_instruments_text'] ?? null
+            );
+            $blockedList = \App\Services\Telegram\TelegramAnalystInstrumentService::parseInstrumentListInput(
+                $extra['blocked_instruments_text'] ?? null
+            );
             $config = \App\Support\OpenRouterLlmConfig::withoutLegacyCandlesTake(array_merge($bot->config ?? [], [
                 'count' => (int) $extra['count'],
                 's5_take' => (int) $extra['s5_take'],
@@ -547,6 +637,12 @@ class BotController extends Controller
                 'm5_take' => (int) $extra['m5_take'],
                 'm15_take' => (int) $extra['m15_take'],
                 'h1_take' => (int) $extra['h1_take'],
+                'min_payout' => (float) $extra['min_payout'],
+                'allowed_instruments' => $allowedList,
+                'blocked_instruments' => $blockedList,
+                'telegram_enabled' => $request->boolean('telegram_enabled'),
+                'telegram_bot_token' => $tokenInput !== '' ? $tokenInput : $existingToken,
+                'telegram_chat_id' => trim((string) ($extra['telegram_chat_id'] ?? '')),
                 'version' => 'openrouter_llm_analyst_v1',
             ]));
             // Плановый scan для аналитика не используется — всегда выключаем флаг активности.
@@ -586,6 +682,89 @@ class BotController extends Controller
         ]);
 
         return redirect()->route('bots.settings', $bot)->with('status', 'Настройки сохранены.');
+    }
+
+    /**
+     * Тестовое сообщение в Telegram из настроек бота strong_trend_telegram.
+     */
+    public function telegramTest(Bot $bot, TelegramAlertService $telegram): JsonResponse
+    {
+        $this->ensureBotOwner($bot);
+        if (! in_array($bot->type, ['strong_trend_telegram', 'openrouter_llm_analyst'], true)) {
+            return response()->json(['ok' => false, 'error' => 'unsupported_bot_type'], 422);
+        }
+
+        $result = $telegram->sendTestMessage($bot);
+
+        return response()->json($result, ($result['ok'] ?? false) ? 200 : 422);
+    }
+
+    /**
+     * Получить chat_id из getUpdates (пользователь должен сначала написать боту /start).
+     */
+    public function telegramDiscoverChat(Bot $bot, TelegramAlertService $telegram): JsonResponse
+    {
+        $this->ensureBotOwner($bot);
+        if (! in_array($bot->type, ['strong_trend_telegram', 'openrouter_llm_analyst'], true)) {
+            return response()->json(['ok' => false, 'error' => 'unsupported_bot_type'], 422);
+        }
+
+        $cfg = is_array($bot->config) ? $bot->config : [];
+        $token = trim((string) ($cfg['telegram_bot_token'] ?? ''));
+        if ($token === '') {
+            return response()->json([
+                'ok' => false,
+                'error' => 'telegram_token_missing',
+                'hint' => 'Сохраните token бота в настройках, затем напишите боту /start в Telegram и повторите.',
+            ], 422);
+        }
+
+        $result = $telegram->discoverChatIds($token);
+        if (! ($result['ok'] ?? false)) {
+            return response()->json($result, 422);
+        }
+
+        $chats = $result['chats'] ?? [];
+        if ($chats === []) {
+            return response()->json([
+                'ok' => true,
+                'chats' => [],
+                'hint' => 'Список пуст. Откройте @trend1123_bot в Telegram, нажмите Start (/start) и повторите.',
+            ]);
+        }
+
+        return response()->json([
+            'ok' => true,
+            'chats' => $chats,
+        ]);
+    }
+
+    /**
+     * Статус фоновых процессов Telegram Chart Analyst (poll + queue worker).
+     */
+    public function telegramAnalystStatus(Bot $bot, \App\Services\Telegram\TelegramAnalystProcessManager $processes): JsonResponse
+    {
+        $this->ensureBotOwner($bot);
+        if ($bot->type !== 'openrouter_llm_analyst') {
+            return response()->json(['ok' => false, 'error' => 'unsupported_bot_type'], 422);
+        }
+
+        return response()->json($processes->status($bot->id));
+    }
+
+    /**
+     * Перезапуск poll и queue worker — подхватывают свежий config из БД.
+     */
+    public function telegramAnalystRestart(Bot $bot, \App\Services\Telegram\TelegramAnalystProcessManager $processes): JsonResponse
+    {
+        $this->ensureBotOwner($bot);
+        if ($bot->type !== 'openrouter_llm_analyst') {
+            return response()->json(['ok' => false, 'error' => 'unsupported_bot_type'], 422);
+        }
+
+        $result = $processes->restart($bot);
+
+        return response()->json($result, ($result['ok'] ?? false) ? 200 : 422);
     }
 
     public function cleanupRecent(Bot $bot, DataCleanupService $dataCleanup): RedirectResponse

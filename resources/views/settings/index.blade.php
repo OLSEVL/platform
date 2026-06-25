@@ -78,13 +78,43 @@
         <h2 class="text-lg font-semibold text-zinc-100 mb-2">Ротация прокси</h2>
         <p class="text-sm text-zinc-400 mb-4">
             Когда опция включена, API при выдаче инструментов автоматически переназначает прокси для инструментов
-            без рабочего endpoint (например, dead/не назначен).
+            без рабочего endpoint (например, dead/не назначен). Опционально можно помечать прокси dead,
+            если колонка «Событие PO» в «Инструментах» не обновлялась дольше заданного порога.
         </p>
         <form action="{{ route('settings.proxies.auto-rotation') }}" method="POST" class="flex flex-col items-start gap-3">
             @csrf
             <label class="inline-flex items-center gap-2 text-zinc-200 min-h-[40px]">
                 <input type="checkbox" name="proxy_auto_rotation_enabled" value="1" {{ !empty($proxyAutoRotationEnabled) ? 'checked' : '' }} class="rounded border-zinc-600 bg-zinc-800 text-blue-500">
                 Автоматическая ротация прокси
+            </label>
+            <label class="inline-flex items-center gap-2 text-zinc-200 min-h-[40px]">
+                <input
+                    type="checkbox"
+                    name="proxy_dead_on_po_stale_enabled"
+                    id="proxy_dead_on_po_stale_enabled"
+                    value="1"
+                    {{ !empty($proxyDeadOnPoStaleEnabled) ? 'checked' : '' }}
+                    class="rounded border-zinc-600 bg-zinc-800 text-blue-500"
+                >
+                Помечать dead при отсутствии события PO
+            </label>
+            <label
+                id="proxy_dead_on_po_stale_minutes_label"
+                class="flex flex-col gap-1 text-zinc-200 text-sm {{ empty($proxyDeadOnPoStaleEnabled) ? 'hidden' : '' }}"
+            >
+                <span>Порог stale «Событие PO» для dead (минут)</span>
+                <input
+                    type="number"
+                    name="proxy_dead_on_po_stale_minutes"
+                    min="1"
+                    max="1440"
+                    value="{{ (int) ($proxyDeadOnPoStaleMinutes ?? 30) }}"
+                    class="w-28 px-2 py-1 rounded border border-zinc-600 bg-zinc-950 text-zinc-100 focus:ring-2 focus:ring-indigo-600 focus:border-transparent"
+                >
+                <span class="text-xs text-zinc-500">
+                    Отдельно от порога подсветки в «Мониторинг Payout» ниже. Срабатывает только при включённой авто-ротации
+                    и по полю last_payout_event_at (когда брокер прислал payout_update), не по heartbeat POST ingest.
+                </span>
             </label>
             <label class="inline-flex items-center gap-2 text-zinc-200 min-h-[40px]">
                 <input
@@ -403,6 +433,9 @@
                                 </td>
                                 <td class="px-3 py-2 text-xs text-zinc-400 max-w-xs js-proxy-recommendation">{{ $row['recommendation'] }}</td>
                                 <td class="px-3 py-2 text-xs min-w-[10rem]">
+                                    @php
+                                        $latestDeadReason = $row['latest_dead_reason'] ?? null;
+                                    @endphp
                                     @if($row['last_error'])
                                         <div class="text-zinc-300 break-words js-proxy-last-error">{{ $row['last_error'] }}</div>
                                         <div class="text-zinc-500 text-[10px] mt-0.5 js-proxy-last-error-at">
@@ -411,6 +444,19 @@
                                     @else
                                         <div class="text-zinc-500 js-proxy-last-error">—</div>
                                         <div class="text-zinc-500 text-[10px] mt-0.5 js-proxy-last-error-at"></div>
+                                    @endif
+                                    @if(is_array($latestDeadReason))
+                                        <div class="text-amber-300/90 text-[10px] mt-1 break-words js-proxy-dead-reason">
+                                            dead: {{ $latestDeadReason['reason'] ?? '—' }}
+                                            @if(!empty($latestDeadReason['instrument']))
+                                                · {{ $latestDeadReason['instrument'] }} (#{{ $latestDeadReason['instrument_id'] ?? '—' }})
+                                            @endif
+                                            @if(!empty($latestDeadReason['at']))
+                                                · {{ \Illuminate\Support\Carbon::parse($latestDeadReason['at'])->timezone(config('app.timezone'))->format('d.m.Y H:i:s') }}
+                                            @endif
+                                        </div>
+                                    @else
+                                        <div class="js-proxy-dead-reason hidden"></div>
                                     @endif
                                 </td>
                                 <td class="px-3 py-2 text-right align-top" data-proxy-test-scope>
@@ -606,6 +652,17 @@
 </div>
 <script>
 document.addEventListener('DOMContentLoaded', () => {
+    const poStaleDeadCheckbox = document.getElementById('proxy_dead_on_po_stale_enabled');
+    const poStaleDeadMinutesLabel = document.getElementById('proxy_dead_on_po_stale_minutes_label');
+
+    const syncPoStaleDeadUi = () => {
+        if (!poStaleDeadCheckbox || !poStaleDeadMinutesLabel) return;
+        poStaleDeadMinutesLabel.classList.toggle('hidden', !poStaleDeadCheckbox.checked);
+    };
+
+    poStaleDeadCheckbox?.addEventListener('change', syncPoStaleDeadUi);
+    syncPoStaleDeadUi();
+
     const proxyTestAllCheckbox = document.getElementById('proxy_auto_test_all_enabled');
     const proxyTestDeadCheckbox = document.getElementById('proxy_auto_test_enabled');
     const proxyTestDeadLabel = document.getElementById('proxy_auto_test_dead_label');
@@ -632,7 +689,6 @@ document.addEventListener('DOMContentLoaded', () => {
     const currentProbeNode = document.getElementById('proxy-live-current');
     // Защита от наложения запросов и лишних перерисовок (иначе таблица «дёргается» каждые 3 с).
     let liveRefreshInFlight = false;
-    let lastHighlightedProbeProxyId = null;
     const liveRowSnapshot = new Map();
 
     const setTextIfChanged = (node, text) => {
@@ -749,6 +805,18 @@ document.addEventListener('DOMContentLoaded', () => {
         setClassIfChanged(metaNode, 'js-auto-test-meta text-zinc-500 text-[10px] break-words');
     };
 
+    const formatLatestDeadReason = (entry) => {
+        if (!entry || typeof entry !== 'object') return '';
+        const parts = [`dead: ${entry.reason || '—'}`];
+        if (entry.instrument) {
+            parts.push(`${entry.instrument} (#${entry.instrument_id ?? '—'})`);
+        }
+        if (entry.at) {
+            parts.push(formatDate(entry.at));
+        }
+        return parts.join(' · ');
+    };
+
     const rowLiveFingerprint = (row) => JSON.stringify({
         status: row.status,
         failure_count: row.failure_count,
@@ -756,6 +824,7 @@ document.addEventListener('DOMContentLoaded', () => {
         recommendation: row.recommendation,
         last_error: row.last_error,
         last_failed_at: row.last_failed_at,
+        latest_dead_reason: row.latest_dead_reason,
         http: row.http,
         ws: row.ws,
         payout: row.payout,
@@ -793,6 +862,12 @@ document.addEventListener('DOMContentLoaded', () => {
         setTextIfChanged(lastErrorNode, row.last_error || '—');
         const lastErrorAtNode = rowNode.querySelector('.js-proxy-last-error-at');
         setTextIfChanged(lastErrorAtNode, formatDate(row.last_failed_at));
+        const deadReasonNode = rowNode.querySelector('.js-proxy-dead-reason');
+        if (deadReasonNode) {
+            const deadReasonText = formatLatestDeadReason(row.latest_dead_reason);
+            deadReasonNode.classList.toggle('hidden', deadReasonText === '');
+            setTextIfChanged(deadReasonNode, deadReasonText);
+        }
     };
 
     const applyCurrentProbe = (probe) => {
@@ -830,7 +905,6 @@ document.addEventListener('DOMContentLoaded', () => {
         });
 
         if (!shouldHighlight) {
-            lastHighlightedProbeProxyId = null;
             return;
         }
 
@@ -838,11 +912,6 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!activeRow) return;
 
         activeRow.classList.add('ring-1', 'ring-indigo-500/50', 'bg-indigo-950/20', 'js-probe-highlight');
-        // Прокрутка только при смене тестируемого прокси, не на каждом poll.
-        if (lastHighlightedProbeProxyId !== probeId) {
-            lastHighlightedProbeProxyId = probeId;
-            activeRow.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-        }
     };
 
     const refreshLiveHealth = async () => {

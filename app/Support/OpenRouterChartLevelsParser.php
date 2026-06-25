@@ -81,6 +81,43 @@ PROMPT
    Торговая рекомендация (CALL/PUT) опциональна — только при явном согласованном сетапе.
 2) В самом конце ответа — отдельный блок для отрисовки на графике (после текста, без markdown вокруг JSON внутри блока):
 
+TXT
+            .self::chartLevelsFenceExample(includeZones: false, includeEntry: false)
+            .self::chartLevelsRulesBlock();
+    }
+
+    /**
+     * Пример JSON в fence и правила label — общие для classic и SMC Flow.
+     */
+    private static function chartLevelsFenceExample(bool $includeZones = true, bool $includeEntry = true): string
+    {
+        $zones = $includeZones
+            ? <<<'JSON'
+
+  "zones": [
+    {
+      "price_high": 1.08610,
+      "price_low": 1.08520,
+      "timeframe": "M15",
+      "label": "M15 зона · 1.08520–1.08610"
+    }
+  ],
+JSON
+            : "\n  \"zones\": [],\n";
+
+        $entry = $includeEntry
+            ? <<<'JSON'
+
+  "entry": {
+    "price": 1.08550,
+    "side": "CALL",
+    "label": "Вход CALL · 1.08550"
+  }
+JSON
+            : "\n  \"entry\": null";
+
+        return <<<TXT
+
 ```chart_levels
 {
   "levels": [
@@ -88,14 +125,19 @@ PROMPT
       "price": 1.08542,
       "kind": "support",
       "timeframe": "H1",
-      "label": "H1 support",
+      "label": "H1 поддержка · 1.08542",
       "style": "solid"
     }
-  ],
-  "zones": [],
-  "entry": null
+  ],{$zones}{$entry}
 }
 ```
+TXT;
+    }
+
+    /** Правила поля label и структуры chart_levels. */
+    private static function chartLevelsRulesBlock(): string
+    {
+        return <<<'TXT'
 
 Правила chart_levels:
 - Блок только внутри ```chart_levels ... ``` (закрывающие ``` обязательны).
@@ -105,7 +147,16 @@ PROMPT
 - timeframe: H1 | M15 | M5 | M1 (опционально)
 - style: solid | dashed (опционально)
 - levels и zones — все значимые уровни, которые упомянул в тексте; лимита по количеству нет.
-- entry — только если в тексте есть явная точка входа; иначе null или не указывай поле.
+- entry — при рекомендации CALL/PUT укажи price и side; при NONE — null или не указывай поле.
+
+Правила поля label (обязательно, для подписей на графике и в Telegram):
+- label всегда на русском языке (не на английском).
+- В label обязательно укажи те же числовые значения, что в price / price_low / price_high — цифры должны совпадать с полями JSON.
+- Формат levels: «{TF} {смысл} · {price}» — примеры: «H1 поддержка · 1.08542», «M1 сопротивление · 1.08710», «M5 пивот · 1.08600».
+- Смысл (поддержка / сопротивление / пивот / максимум диапазона / минимум диапазона) — кратко по-русски, согласованно с kind.
+- Формат zones: «{TF} зона · {price_low}–{price_high}» — пример: «M15 зона · 1.08520–1.08610».
+- Формат entry: «Вход CALL · {price}» или «Вход PUT · {price}».
+- Не дублируй price только в поле JSON без цифр в label — цифра в label обязательна.
 TXT;
     }
 
@@ -126,43 +177,9 @@ TXT;
    В конце текстового блока — строка «Рекомендация: CALL» или «Рекомендация: PUT» или «Рекомендация: NONE (причина)».
 2) В самом конце ответа — отдельный блок для отрисовки на графике (после текста, без markdown вокруг JSON внутри блока):
 
-```chart_levels
-{
-  "levels": [
-    {
-      "price": 1.08542,
-      "kind": "support",
-      "timeframe": "H1",
-      "label": "H1 support",
-      "style": "solid"
-    }
-  ],
-  "zones": [
-    {
-      "price_high": 1.08610,
-      "price_low": 1.08520,
-      "timeframe": "M15",
-      "label": "M15 range"
-    }
-  ],
-  "entry": {
-    "price": 1.08550,
-    "side": "CALL",
-    "label": "optional entry"
-  }
-}
-```
-
-Правила chart_levels:
-- Блок только внутри ```chart_levels ... ``` (закрывающие ``` обязательны).
-- Корень JSON — объект { ... }, не массив [ ... ]; первый символ после открытия блока — {.
-- price / price_high / price_low — числа из данных свечей (не выдумывай далёкие уровни).
-- kind: support | resistance | pivot | range_high | range_low | entry
-- timeframe: H1 | M15 | M5 | M1 (опционально)
-- style: solid | dashed (опционально)
-- levels и zones — все значимые уровни, которые упомянул в тексте; лимита по количеству нет.
-- entry — при рекомендации CALL/PUT укажи price и side; при NONE — null или не указывай поле.
-TXT;
+TXT
+            .self::chartLevelsFenceExample(includeZones: true, includeEntry: true)
+            .self::chartLevelsRulesBlock();
     }
 
     /**
@@ -488,7 +505,12 @@ TXT;
                 'price' => $price,
                 'kind' => $kind,
                 'timeframe' => self::normalizeTimeframe($item['timeframe'] ?? null),
-                'label' => self::normalizeLabel($item['label'] ?? $item['name'] ?? '', $kind, $price),
+                'label' => self::normalizeLevelLabel(
+                    (string) ($item['label'] ?? $item['name'] ?? ''),
+                    $kind,
+                    $price,
+                    self::normalizeTimeframe($item['timeframe'] ?? null),
+                ),
                 'style' => self::normalizeStyle((string) ($item['style'] ?? '')),
             ];
         }
@@ -522,7 +544,12 @@ TXT;
                 'price_high' => $high,
                 'price_low' => $low,
                 'timeframe' => self::normalizeTimeframe($item['timeframe'] ?? null),
-                'label' => self::normalizeLabel($item['label'] ?? $item['name'] ?? '', 'zone', ($high + $low) / 2),
+                'label' => self::normalizeZoneLabel(
+                    (string) ($item['label'] ?? $item['name'] ?? ''),
+                    self::normalizeTimeframe($item['timeframe'] ?? null),
+                    $low,
+                    $high,
+                ),
             ];
         }
 
@@ -547,7 +574,7 @@ TXT;
         return [
             'price' => $price,
             'side' => $side,
-            'label' => self::normalizeLabel($raw['label'] ?? $raw['name'] ?? '', 'entry', $price),
+            'label' => self::normalizeEntryLabel((string) ($raw['label'] ?? $raw['name'] ?? ''), $side, $price),
         ];
     }
 
@@ -600,13 +627,91 @@ TXT;
         return $map[$t] ?? (preg_match('/^(H1|M15|M5|M1)$/i', $t) ? strtoupper($t) : null);
     }
 
-    private static function normalizeLabel(string $label, string $kind, float $price): string
+    private static function normalizeLevelLabel(string $label, string $kind, float $price, ?string $timeframe): string
     {
         $label = trim($label);
-        if ($label !== '') {
-            return mb_substr($label, 0, 80);
+        $priceStr = self::formatPriceLabel($price);
+        if ($label === '') {
+            return mb_substr(self::defaultLevelLabelRu($kind, $timeframe, $priceStr), 0, 96);
+        }
+        if (! self::labelContainsPrice($label, $price)) {
+            $label = $label.' · '.$priceStr;
         }
 
-        return $kind.' @ '.rtrim(rtrim(number_format($price, 8, '.', ''), '0'), '.');
+        return mb_substr($label, 0, 96);
+    }
+
+    private static function normalizeZoneLabel(string $label, ?string $timeframe, float $low, float $high): string
+    {
+        $label = trim($label);
+        $lowStr = self::formatPriceLabel($low);
+        $highStr = self::formatPriceLabel($high);
+        $rangeStr = $lowStr.'–'.$highStr;
+        if ($label === '') {
+            $tf = $timeframe !== null && $timeframe !== '' ? $timeframe.' ' : '';
+
+            return mb_substr($tf.'зона · '.$rangeStr, 0, 96);
+        }
+        if (! str_contains($label, $lowStr) && ! str_contains($label, $highStr)) {
+            $label = $label.' · '.$rangeStr;
+        }
+
+        return mb_substr($label, 0, 96);
+    }
+
+    private static function normalizeEntryLabel(string $label, ?string $side, float $price): string
+    {
+        $label = trim($label);
+        $priceStr = self::formatPriceLabel($price);
+        if ($label === '') {
+            $sideLabel = $side === 'PUT' ? 'PUT' : ($side === 'CALL' ? 'CALL' : '');
+
+            return mb_substr('Вход'.($sideLabel !== '' ? ' '.$sideLabel : '').' · '.$priceStr, 0, 96);
+        }
+        if (! self::labelContainsPrice($label, $price)) {
+            $label = $label.' · '.$priceStr;
+        }
+
+        return mb_substr($label, 0, 96);
+    }
+
+    private static function defaultLevelLabelRu(string $kind, ?string $timeframe, string $priceStr): string
+    {
+        $tf = $timeframe !== null && $timeframe !== '' ? $timeframe.' ' : '';
+        $kindRu = match ($kind) {
+            'support' => 'поддержка',
+            'resistance' => 'сопротивление',
+            'pivot' => 'пивот',
+            'range_high' => 'макс. диапазона',
+            'range_low' => 'мин. диапазона',
+            'entry' => 'вход',
+            default => 'уровень',
+        };
+
+        return $tf.$kindRu.' · '.$priceStr;
+    }
+
+    private static function formatPriceLabel(float $price): string
+    {
+        if ($price >= 1000) {
+            return number_format($price, 2, '.', '');
+        }
+        if ($price >= 10) {
+            return rtrim(rtrim(number_format($price, 4, '.', ''), '0'), '.');
+        }
+
+        return rtrim(rtrim(number_format($price, 5, '.', ''), '0'), '.');
+    }
+
+    private static function labelContainsPrice(string $label, float $price): bool
+    {
+        $formatted = self::formatPriceLabel($price);
+        if (str_contains($label, $formatted)) {
+            return true;
+        }
+        // LLM иногда пишет лишние/меньше знаков — проверяем укороченный префикс.
+        $compact = rtrim(rtrim(number_format($price, 8, '.', ''), '0'), '.');
+
+        return $compact !== '' && str_contains($label, $compact);
     }
 }

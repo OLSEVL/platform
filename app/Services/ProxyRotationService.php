@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\PocketInstrument;
 use App\Models\ProxyEndpoint;
+use App\Support\IngestHealth;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 
@@ -18,6 +19,9 @@ class ProxyRotationService
     /** @deprecated читается как fallback при миграции с proxy_cooldown_streak_threshold */
     private const LEGACY_COOLDOWN_STREAK_THRESHOLD = 'proxy_cooldown_streak_threshold';
     private const SETTING_MAX_INSTRUMENTS_PER_PROXY = 'proxy_max_instruments_per_endpoint';
+    /** Включить dead+ротацию, если last_payout_event_at старше порога (мин). */
+    private const SETTING_DEAD_ON_PO_STALE_ENABLED = 'proxy_dead_on_po_stale_enabled';
+    private const SETTING_DEAD_ON_PO_STALE_MINUTES = 'proxy_dead_on_po_stale_minutes';
     /** Версия пула для ingest: меняется при «Обновить прокси», чтобы воркеры сразу подхватили новые URL. */
     public const SETTING_POOL_VERSION = 'proxy_pool_version';
     /** Метка полного refresh из Webshare — grace-период без перевода в dead (массовый reconnect). */
@@ -25,6 +29,7 @@ class ProxyRotationService
     private const POOL_REFRESH_GRACE_MINUTES = 15;
     private const DEFAULT_DEAD_STREAK_THRESHOLD = 10;
     private const DEFAULT_MAX_INSTRUMENTS_PER_PROXY = 1;
+    private const DEFAULT_DEAD_ON_PO_STALE_MINUTES = 30;
 
     public function isAutoRotationEnabled(): bool
     {
@@ -95,6 +100,52 @@ class ProxyRotationService
 
         DB::table('app_settings')->updateOrInsert(
             ['key' => self::SETTING_MAX_INSTRUMENTS_PER_PROXY],
+            [
+                'value' => (string) $normalized,
+                'updated_at' => now(),
+                'created_at' => now(),
+            ]
+        );
+    }
+
+    public function isDeadOnPoStaleEnabled(): bool
+    {
+        $value = DB::table('app_settings')
+            ->where('key', self::SETTING_DEAD_ON_PO_STALE_ENABLED)
+            ->value('value');
+
+        return (bool) (int) ($value ?? 0);
+    }
+
+    public function setDeadOnPoStaleEnabled(bool $enabled): void
+    {
+        DB::table('app_settings')->updateOrInsert(
+            ['key' => self::SETTING_DEAD_ON_PO_STALE_ENABLED],
+            [
+                'value' => $enabled ? '1' : '0',
+                'updated_at' => now(),
+                'created_at' => now(),
+            ]
+        );
+    }
+
+    public function getDeadOnPoStaleMinutes(): int
+    {
+        $value = DB::table('app_settings')
+            ->where('key', self::SETTING_DEAD_ON_PO_STALE_MINUTES)
+            ->value('value');
+
+        $minutes = (int) ($value ?? self::DEFAULT_DEAD_ON_PO_STALE_MINUTES);
+
+        return max(1, min(1440, $minutes));
+    }
+
+    public function setDeadOnPoStaleMinutes(int $minutes): void
+    {
+        $normalized = max(1, min(1440, $minutes));
+
+        DB::table('app_settings')->updateOrInsert(
+            ['key' => self::SETTING_DEAD_ON_PO_STALE_MINUTES],
             [
                 'value' => (string) $normalized,
                 'updated_at' => now(),
@@ -308,16 +359,64 @@ class ProxyRotationService
             ]);
 
             if ($markCurrentAsDead && $currentProxy) {
-                ProxyEndpoint::query()->whereKey($currentProxy->id)->increment('failure_count');
-                $currentProxy->update([
-                    'status' => ProxyEndpoint::STATUS_DEAD,
-                    'last_error' => 'manual_mark_dead',
-                    'last_failed_at' => now(),
-                ]);
+                $this->markProxyAsDead($currentProxy, $instrument, 'manual_mark_dead');
             }
 
             return $replacement;
         });
+    }
+
+    /**
+     * Если «Событие PO» устарело дольше порога — помечает прокси dead и переназначает инструмент.
+     * Вызывается из API /instruments при каждом опросе ingest (~15 с).
+     */
+    public function handleStalePoProxy(PocketInstrument $instrument): ?ProxyEndpoint
+    {
+        if (! $this->isAutoRotationEnabled() || ! $this->isDeadOnPoStaleEnabled()) {
+            $instrument->loadMissing('proxyEndpoint');
+
+            return $instrument->proxyEndpoint;
+        }
+
+        if ($this->deadProbe->isInstrumentProbeLocked($instrument)) {
+            $instrument->loadMissing('proxyEndpoint');
+
+            return $instrument->proxyEndpoint;
+        }
+
+        if ($this->isWithinPoolRefreshGracePeriod()) {
+            $instrument->loadMissing('proxyEndpoint');
+
+            return $instrument->proxyEndpoint;
+        }
+
+        $instrument->loadMissing('proxyEndpoint');
+        $proxy = $instrument->proxyEndpoint;
+
+        if ($proxy === null || $proxy->status !== ProxyEndpoint::STATUS_ACTIVE) {
+            return $proxy;
+        }
+
+        if ($this->deadProbe->isProxyUnderProbe($proxy->id)) {
+            return $proxy;
+        }
+
+        $staleMinutes = $this->getDeadOnPoStaleMinutes();
+        if (! IngestHealth::shouldMarkProxyDeadForStalePoEvent($instrument, $staleMinutes)) {
+            return $proxy;
+        }
+
+        $this->markProxyAsDead($proxy, $instrument, 'po_stale', [
+            'last_payout_event_at' => $instrument->last_payout_event_at?->toIso8601String(),
+            'last_payout_at' => $instrument->last_payout_at?->toIso8601String(),
+            'payout_is_stale' => (bool) $instrument->payout_is_stale,
+            'stale_minutes' => $staleMinutes,
+        ]);
+
+        $replacement = $this->rotateInstrumentProxy($instrument, false);
+        $instrument->load('proxyEndpoint');
+
+        return $replacement ?? $instrument->proxyEndpoint;
     }
 
     public function ensureInstrumentHasReadyProxy(PocketInstrument $instrument): ?ProxyEndpoint
@@ -371,10 +470,50 @@ class ProxyRotationService
         ]);
 
         if ($shouldMarkDead) {
+            $proxy->refresh();
+            $this->appendDeadReasonLogOnly($proxy, $instrument, mb_substr($error, 0, 1000), [
+                'streak' => $streakValue,
+                'dead_streak_threshold' => $deadThreshold,
+            ]);
             $this->rotateInstrumentProxy($instrument, false);
         }
     }
 
+    /**
+     * @param  array<string, mixed>  $meta
+     */
+    private function markProxyAsDead(
+        ProxyEndpoint $proxy,
+        PocketInstrument $instrument,
+        string $reason,
+        array $meta = [],
+    ): void {
+        ProxyEndpoint::query()->whereKey($proxy->id)->increment('failure_count');
+        $proxy->refresh();
+        $this->appendDeadReasonLogOnly($proxy, $instrument, $reason, $meta);
+        $proxy->update([
+            'status' => ProxyEndpoint::STATUS_DEAD,
+            'last_error' => $reason,
+            'last_failed_at' => now(),
+        ]);
+    }
+
+    /**
+     * @param  array<string, mixed>  $meta
+     */
+    private function appendDeadReasonLogOnly(
+        ProxyEndpoint $proxy,
+        PocketInstrument $instrument,
+        string $reason,
+        array $meta = [],
+    ): void {
+        $proxy->appendDeadReasonLog($reason, $instrument, $meta);
+        $proxy->save();
+    }
+
+    /**
+     * Выбор замены: сначала минимум ошибок (failure_count), затем свободная ёмкость слота.
+     */
     private function pickReplacementProxy(?int $excludeId = null): ?ProxyEndpoint
     {
         $maxPerProxy = $this->getMaxInstrumentsPerProxy();
@@ -398,8 +537,8 @@ class ProxyRotationService
                 'proxy_endpoints.updated_at'
             )
             ->havingRaw('COUNT(pocket_instruments.id) < ?', [$maxPerProxy])
-            ->orderByRaw('COUNT(pocket_instruments.id) asc')
             ->orderBy('proxy_endpoints.failure_count')
+            ->orderByRaw('COUNT(pocket_instruments.id) asc')
             ->orderByDesc('proxy_endpoints.last_success_at')
             ->orderBy('proxy_endpoints.id')
             ->select('proxy_endpoints.*')
