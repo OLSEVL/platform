@@ -57,7 +57,7 @@ final class BotScanProgress
     }
 
     /**
-     * @return array{run_id: ?string, scan_active: bool, current: ?string, analyzed: list<string>, total: int}
+     * @return array{run_id: ?string, scan_active: bool, current: ?string, current_since: ?int, analyzed: list<string>, total: int}
      */
     private static function defaultState(): array
     {
@@ -65,6 +65,7 @@ final class BotScanProgress
             'run_id' => null,
             'scan_active' => false,
             'current' => null,
+            'current_since' => null,
             'analyzed' => [],
             'total' => 0,
         ];
@@ -104,6 +105,7 @@ final class BotScanProgress
             'run_id' => is_string($runId) && $runId !== '' ? $runId : null,
             'scan_active' => (bool) ($raw['scan_active'] ?? false),
             'current' => is_string($current) && $current !== '' ? $current : null,
+            'current_since' => isset($raw['current_since']) ? (int) $raw['current_since'] : null,
             'analyzed' => $analyzed,
             'total' => max(0, (int) ($raw['total'] ?? 0)),
         ];
@@ -159,6 +161,7 @@ final class BotScanProgress
             'run_id' => $runId,
             'scan_active' => true,
             'current' => null,
+            'current_since' => null,
             'analyzed' => [],
             'total' => max(0, $totalInstruments),
         ], true);
@@ -186,6 +189,9 @@ final class BotScanProgress
     {
         $state = self::readState($botId);
         $state['scan_active'] = true;
+        if ($state['current'] !== $instrument) {
+            $state['current_since'] = time();
+        }
         $state['current'] = $instrument;
         self::writeState($botId, $state);
     }
@@ -197,6 +203,7 @@ final class BotScanProgress
         $state['scan_active'] = true;
         if ($state['current'] === $instrument) {
             $state['current'] = null;
+            $state['current_since'] = null;
         }
         if (! in_array($instrument, $state['analyzed'], true)) {
             $state['analyzed'][] = $instrument;
@@ -272,7 +279,8 @@ final class BotScanProgress
      *     analyzed_instruments: list<string>,
      *     scan_total: int,
      *     scan_remaining: ?int,
-     *     scan_min_payout: ?float
+     *     scan_min_payout: ?float,
+     *     analyzing_since: ?int
      * }
      */
     public static function snapshot(int $botId, ?float $minPayout = null): array
@@ -288,6 +296,7 @@ final class BotScanProgress
         return [
             'scan_active' => $scanActive,
             'analyzing_instrument' => $state['current'],
+            'analyzing_since' => $state['current_since'] ?? null,
             'analyzed_instruments' => $state['analyzed'],
             'scan_total' => $total,
             'scan_remaining' => $remaining,

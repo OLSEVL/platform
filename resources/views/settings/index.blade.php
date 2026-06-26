@@ -8,6 +8,13 @@
 <div class="w-full min-w-0 px-3 sm:px-4 md:px-6 py-4">
     <h1 class="text-2xl font-bold text-zinc-100 mb-6">Настройки</h1>
 
+    <div class="mb-6">
+        <a href="{{ route('settings.processes.index') }}" class="inline-flex items-center gap-2 rounded-lg border border-indigo-800/60 bg-indigo-950/30 px-4 py-2 text-sm text-indigo-200 hover:bg-indigo-950/50 transition-colors">
+            Диагностика процессов
+            <span class="text-indigo-400/70 text-xs">scan, queue, proxy, ingest</span>
+        </a>
+    </div>
+
     @if(session('success'))
         <p class="mb-4 p-3 bg-emerald-950/60 border border-emerald-800 text-emerald-200 rounded">{{ session('success') }}</p>
     @endif

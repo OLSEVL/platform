@@ -6,6 +6,7 @@ use App\Http\Controllers\BotChartIndicatorController;
 use App\Http\Controllers\BotController;
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\InstrumentController;
+use App\Http\Controllers\PlatformDiagnosticsController;
 use App\Http\Controllers\ProfileMirrorQueueController;
 use App\Http\Controllers\ProfileTradingController;
 use App\Http\Controllers\SettingsController;
@@ -74,6 +75,10 @@ Route::middleware('auth')->group(function () {
     Route::get('/profile/mirror-queue', [ProfileMirrorQueueController::class, 'index'])->name('profile.mirror-queue.index');
     Route::get('/profile/mirror-queue/data', [ProfileMirrorQueueController::class, 'data'])->name('profile.mirror-queue.data');
 
+    Route::get('/settings/processes', [PlatformDiagnosticsController::class, 'index'])->name('settings.processes.index');
+    Route::get('/settings/processes/live-ajax', [PlatformDiagnosticsController::class, 'liveAjax'])->name('settings.processes.live-ajax');
+    Route::post('/settings/processes/{key}/kill', [PlatformDiagnosticsController::class, 'kill'])->name('settings.processes.kill');
+    Route::post('/settings/processes/{key}/restart', [PlatformDiagnosticsController::class, 'restart'])->name('settings.processes.restart');
     Route::get('/settings', [SettingsController::class, 'index'])->name('settings.index');
     Route::post('/settings/proxies/refresh', [SettingsController::class, 'refreshProxies'])->name('settings.proxies.refresh');
     Route::post('/settings/proxies/auto-rotation', [SettingsController::class, 'updateProxyRotation'])->name('settings.proxies.auto-rotation');
