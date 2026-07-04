@@ -79,6 +79,23 @@ class TelegramAnalystInstrumentService
     }
 
     /**
+     * Активный инструмент по имени без фильтров payout/whitelist (deep link из Strong Level).
+     */
+    public function resolveActiveInstrument(string $instrument): ?string
+    {
+        $key = trim($instrument);
+        if ($key === '') {
+            return null;
+        }
+
+        $row = PocketInstrument::active()
+            ->where('instrument', $key)
+            ->first(['instrument']);
+
+        return $row ? (string) $row->instrument : null;
+    }
+
+    /**
      * @return array<string, true>
      */
     private function instrumentSet(mixed $raw): array

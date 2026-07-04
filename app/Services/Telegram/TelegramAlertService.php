@@ -3,6 +3,7 @@
 namespace App\Services\Telegram;
 
 use App\Models\Bot;
+use App\Services\Bots\Levels\StrongLevelCardPresenter;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
@@ -101,6 +102,190 @@ class TelegramAlertService
         $lines[] = 'Время: '.now()->utc()->format('d.m.Y H:i').' UTC';
 
         return $this->sendMessage($token, $chatId, implode("\n", $lines));
+    }
+
+    /**
+     * Алерт Strong Level: новый сигнал + paper-сделка у сильного уровня.
+     *
+     * @param  array<string, mixed>  $decision
+     * @return array{ok:bool,error?:string,message_id?:int}
+     */
+    public function sendStrongLevelAlert(
+        Bot $bot,
+        string $instrument,
+        array $decision,
+        ?float $payout,
+        int $expirySec,
+        ?float $entryPrice = null,
+        array $m1Candles = [],
+    ): array {
+        /** @var array<string, mixed> $cfg */
+        $cfg = is_array($bot->config) ? $bot->config : [];
+        if (! (bool) ($cfg['telegram_enabled'] ?? false)) {
+            return ['ok' => false, 'error' => 'telegram_disabled'];
+        }
+
+        // По умолчанию — уведомление при создании сигнала и сделки (не «только сигнал в БД»).
+        $notifyOn = (string) ($cfg['telegram_notify_on'] ?? 'signal_trade');
+        if ($notifyOn !== 'signal_trade') {
+            return ['ok' => false, 'error' => 'telegram_notify_disabled'];
+        }
+
+        $token = trim((string) ($cfg['telegram_bot_token'] ?? ''));
+        $chatId = trim((string) ($cfg['telegram_chat_id'] ?? ''));
+        if ($token === '' || $chatId === '') {
+            return ['ok' => false, 'error' => 'telegram_token_or_chat_id_missing'];
+        }
+
+        $format = (string) ($cfg['telegram_alert_format'] ?? 'brief');
+        if (! in_array($format, ['brief', 'detailed', 'card'], true)) {
+            $format = 'brief';
+        }
+
+        $sendChart = (bool) ($cfg['telegram_send_chart'] ?? true);
+        $photoOk = null;
+        $photoError = null;
+
+        // PNG: M1 + линия уровня + зона касания + маркер входа (как у Chart Analyst).
+        if ($sendChart && $m1Candles !== [] && extension_loaded('gd')) {
+            $chartLevels = app(StrongLevelTelegramChartBuilder::class)
+                ->chartLevelsFromDecision($decision, $entryPrice);
+            $pngPath = app(TelegramChartImageRenderer::class)->render($instrument, $m1Candles, $chartLevels);
+            if ($pngPath !== null) {
+                $side = strtoupper((string) ($decision['side'] ?? ''));
+                $caption = '📊 <b>'.htmlspecialchars($instrument, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8').'</b>';
+                if ($side !== '') {
+                    $caption .= ' · '.$side;
+                }
+                $photoResult = $this->sendPhoto($token, $chatId, $pngPath, $caption);
+                $photoOk = (bool) ($photoResult['ok'] ?? false);
+                if (! $photoOk) {
+                    $photoError = (string) ($photoResult['error'] ?? 'telegram_photo_failed');
+                    Log::warning('strong_level_telegram_photo_failed', [
+                        'bot_id' => $bot->id,
+                        'instrument' => $instrument,
+                        'error' => $photoError,
+                    ]);
+                }
+                @unlink($pngPath);
+            } else {
+                $photoOk = false;
+                $photoError = 'chart_render_failed';
+                Log::warning('strong_level_telegram_photo_skipped', [
+                    'bot_id' => $bot->id,
+                    'instrument' => $instrument,
+                    'reason' => 'render_returned_null',
+                ]);
+            }
+        } elseif ($sendChart && ! extension_loaded('gd')) {
+            $photoOk = false;
+            $photoError = 'gd_extension_missing';
+        }
+
+        $text = $this->formatStrongLevelAlertText(
+            $instrument,
+            $decision,
+            $payout,
+            $expirySec,
+            $entryPrice,
+            $format
+        );
+
+        $llmMarkup = StrongLevelTelegramLlmButton::inlineKeyboardMarkup($cfg, $bot, $instrument);
+        if ($llmMarkup !== null) {
+            app(StrongLevelTelegramProcessManager::class)->ensurePollRunning($bot->id);
+        }
+        $messageResult = $llmMarkup !== null
+            ? $this->sendMessageWithMarkup($token, $chatId, $text, $llmMarkup)
+            : $this->sendMessage($token, $chatId, $text);
+        if (! ($messageResult['ok'] ?? false)) {
+            return array_merge($messageResult, array_filter([
+                'photo_ok' => $photoOk,
+                'photo_error' => $photoError,
+            ]));
+        }
+
+        return array_merge($messageResult, array_filter([
+            'photo_ok' => $photoOk,
+            'photo_error' => $photoError,
+        ]));
+    }
+
+    /**
+     * HTML-текст алерта Strong Level (краткий или развёрнутый).
+     *
+     * @param  array<string, mixed>  $decision
+     */
+    public function formatStrongLevelAlertText(
+        string $instrument,
+        array $decision,
+        ?float $payout,
+        int $expirySec,
+        ?float $entryPrice,
+        string $format = 'brief',
+    ): string {
+        if ($format === 'card') {
+            return app(StrongLevelCardPresenter::class)->formatTelegramCardAlert(
+                $instrument,
+                $decision,
+                $payout,
+                $expirySec,
+                $entryPrice,
+            );
+        }
+
+        $side = (string) ($decision['side'] ?? '');
+        $sideLabel = $side === 'CALL' ? 'CALL ▲' : ($side === 'PUT' ? 'PUT ▼' : $side);
+        $features = is_array($decision['features'] ?? null) ? $decision['features'] : [];
+        $levelPrice = isset($features['level_price']) ? (float) $features['level_price'] : 0.0;
+        $strength = isset($features['level_strength']) ? (float) $features['level_strength'] : 0.0;
+        $regime = (string) ($features['entry_regime'] ?? 'bounce');
+        $regimeLabel = $regime === 'breakout' ? 'пробой' : 'отскок';
+        $confidence = isset($decision['confidence']) ? (float) $decision['confidence'] : 0.0;
+        $h1Bias = (string) ($features['h1_bias'] ?? '');
+
+        $instrumentEsc = htmlspecialchars($instrument, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+        $lines = [
+            '🎯 <b>Strong Level — '.htmlspecialchars($sideLabel, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8').'</b>',
+            '',
+            'Пара: <b>'.$instrumentEsc.'</b>',
+            sprintf('Уровень: <b>%.5f</b> | сила %.0f', $levelPrice, $strength),
+            sprintf('Режим: %s | экспирация %d с', $regimeLabel, max(1, $expirySec)),
+        ];
+
+        if ($payout !== null) {
+            $lines[] = 'Payout: '.number_format($payout, 1, '.', '').'%';
+        }
+
+        if ($format === 'detailed') {
+            $lines[] = sprintf('Confidence: %.2f', $confidence);
+            if ($entryPrice !== null) {
+                $lines[] = sprintf('Вход: %.5f', $entryPrice);
+            }
+            if ($h1Bias !== '') {
+                $lines[] = 'H1 bias: '.$h1Bias;
+            }
+            $sources = $features['level_sources'] ?? [];
+            if (is_array($sources) && $sources !== []) {
+                $srcEsc = array_map(
+                    static fn ($s): string => htmlspecialchars((string) $s, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'),
+                    $sources
+                );
+                $lines[] = 'Источники: '.implode(', ', $srcEsc);
+            }
+            $reasons = $decision['reasons_short'] ?? [];
+            if (is_array($reasons) && $reasons !== []) {
+                $lines[] = '';
+                $lines[] = '<b>Причины:</b>';
+                foreach ($reasons as $reason) {
+                    $lines[] = '• '.htmlspecialchars((string) $reason, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+                }
+            }
+        }
+
+        $lines[] = 'Время: '.now()->utc()->format('d.m.Y H:i').' UTC';
+
+        return implode("\n", $lines);
     }
 
     /**

@@ -61,7 +61,11 @@ class StrongLevelAnalyzer
         $clusterAtrMult = max(0.05, min(1.0, (float) ($cfg['cluster_atr_mult_m5'] ?? 0.20)));
         $touchAtrMult = max(0.05, min(1.5, (float) ($cfg['touch_atr_mult_m1'] ?? 0.35)));
         $requireH1Alignment = (bool) ($cfg['require_h1_alignment'] ?? true);
-        $bounceMinWickM5 = max(0.15, min(0.80, (float) ($cfg['bounce_min_wick_ratio_m5'] ?? 0.35)));
+        $bounceMinWickM5 = max(0.15, min(0.80, (float) ($cfg['bounce_min_wick_ratio_m5'] ?? 0.28)));
+        // При false — для отскока достаточно M5 rejection, M1 может быть нейтральной (больше сигналов на OTC).
+        $bounceRequireM1Confirm = (bool) ($cfg['bounce_require_m1_confirm'] ?? true);
+        // Доп. порог силы уровня во флэте H1 (раньше жёстко +8 — почти всегда отсекало 2-source кластеры).
+        $h1FlatStrengthExtra = max(0.0, min(15.0, (float) ($cfg['h1_flat_strength_extra'] ?? 5.0)));
         $breakoutRequireRetest = (bool) ($cfg['breakout_require_retest'] ?? true);
         $breakoutVolAboveSma = (bool) ($cfg['breakout_vol_above_sma'] ?? true);
         $expiryBounce = max(120, min(600, (int) ($cfg['expiry_sec_bounce'] ?? 180)));
@@ -134,8 +138,8 @@ class StrongLevelAnalyzer
 
         $h1Bias = $this->detectH1Bias($h1);
         if ($requireH1Alignment && $h1Bias === 'flat' && count($h1) >= 10) {
-            // Во флэте H1 торгуем только при очень сильном уровне.
-            if ($nearest['strength'] < $minStrength + 8.0) {
+            // Во флэте H1 — только уровни чуть сильнее порога (настраивается h1_flat_strength_extra).
+            if ($nearest['strength'] < $minStrength + $h1FlatStrengthExtra) {
                 return null;
             }
         }
@@ -147,7 +151,15 @@ class StrongLevelAnalyzer
 
         $entry = null;
         if ($regime === 'bounce') {
-            $entry = $this->tryBounceEntry($m5, $m1Closed, $nearest, $h1Bias, $bounceMinWickM5, $requireH1Alignment);
+            $entry = $this->tryBounceEntry(
+                $m5,
+                $m1Closed,
+                $nearest,
+                $h1Bias,
+                $bounceMinWickM5,
+                $requireH1Alignment,
+                $bounceRequireM1Confirm
+            );
         } elseif ($regime === 'breakout') {
             $entry = $this->tryBreakoutEntry(
                 $m5,
@@ -406,11 +418,12 @@ class StrongLevelAnalyzer
                 ? 'support'
                 : ($cluster['resistance_votes'] > $cluster['support_votes'] ? 'resistance' : 'neutral');
             $cluster['sources'] = array_keys($cluster['sources']);
+            // Два разных источника (DGT+SMC) должны реально набирать 55–65 до бонуса за касания.
             $cluster['strength'] = min(100.0,
-                25.0 * ($sourceCount / max(1, $maxSources))
-                + 20.0 * min(1.0, $cluster['weight_sum'] / 2.5)
-                + 15.0 * min(1.0, $sourceCount / 3.0)
-                + 40.0 * min(1.0, $cluster['count'] / 4.0)
+                28.0 * ($sourceCount / max(1, $maxSources))
+                + 24.0 * min(1.0, $cluster['weight_sum'] / 2.0)
+                + 20.0 * min(1.0, $sourceCount / 2.0)
+                + 28.0 * min(1.0, $cluster['count'] / 3.0)
             );
         }
         unset($cluster);
@@ -516,6 +529,7 @@ class StrongLevelAnalyzer
         string $h1Bias,
         float $minWickM5,
         bool $requireH1Alignment,
+        bool $requireM1Confirm,
     ): ?array {
         $lastM5 = $m5[count($m5) - 1];
         $lastM1 = $m1[count($m1) - 1];
@@ -557,13 +571,15 @@ class StrongLevelAnalyzer
             return null;
         }
 
-        $m1Bull = (float) $lastM1['close'] >= (float) $lastM1['open'];
-        $m1Bear = (float) $lastM1['close'] <= (float) $lastM1['open'];
-        if ($side === 'CALL' && ! $m1Bull) {
-            return null;
-        }
-        if ($side === 'PUT' && ! $m1Bear) {
-            return null;
+        if ($requireM1Confirm) {
+            $m1Bull = (float) $lastM1['close'] >= (float) $lastM1['open'];
+            $m1Bear = (float) $lastM1['close'] <= (float) $lastM1['open'];
+            if ($side === 'CALL' && ! $m1Bull) {
+                return null;
+            }
+            if ($side === 'PUT' && ! $m1Bear) {
+                return null;
+            }
         }
 
         $reasons = [

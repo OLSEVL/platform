@@ -84,6 +84,10 @@ PROMPT;
                 class="inline-flex items-center rounded border border-zinc-600 bg-zinc-800 px-2.5 py-1 text-xs font-medium text-zinc-200 shadow-sm transition-colors hover:bg-zinc-700 hover:border-zinc-500 hover:text-zinc-50 focus:outline-none focus:ring-2 focus:ring-blue-500/50">Liquidity Swings</a>
             <a href="{{ route('bots.indicators.smc-flow.edit', $bot) }}"
                 class="inline-flex items-center rounded border border-zinc-600 bg-zinc-800 px-2.5 py-1 text-xs font-medium text-zinc-200 shadow-sm transition-colors hover:bg-zinc-700 hover:border-zinc-500 hover:text-zinc-50 focus:outline-none focus:ring-2 focus:ring-blue-500/50">SMC Flow</a>
+            @if($bot->type === 'strong_level')
+            <a href="{{ route('bots.cards', $bot) }}"
+                class="inline-flex items-center rounded border border-zinc-600 bg-zinc-800 px-2.5 py-1 text-xs font-medium text-zinc-200 shadow-sm transition-colors hover:bg-zinc-700 hover:border-zinc-500 hover:text-zinc-50 focus:outline-none focus:ring-2 focus:ring-blue-500/50">Карточки</a>
+            @endif
             @unless($isChartAnalystBot)
             <a href="{{ route('bots.activity', $bot) }}"
                 class="inline-flex items-center rounded border border-zinc-600 bg-zinc-800 px-2.5 py-1 text-xs font-medium text-zinc-200 shadow-sm transition-colors hover:bg-zinc-700 hover:border-zinc-500 hover:text-zinc-50 focus:outline-none focus:ring-2 focus:ring-blue-500/50">Сигналы и сделки</a>
@@ -987,7 +991,7 @@ PROMPT;
                     <div class="space-y-1">
                         <label for="min_confidence" class="block text-xs font-medium text-zinc-400">Мин. confidence (0–1)</label>
                         <input type="number" name="min_confidence" id="min_confidence" min="0" max="1" step="0.01" required
-                            value="{{ old('min_confidence', $cfg['min_confidence'] ?? 0.62) }}"
+                            value="{{ old('min_confidence', $cfg['min_confidence'] ?? 0.58) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
                         <p class="text-[11px] text-zinc-500">Внутренняя оценка качества сетапа (сила уровня, касания, режим, H1, payout). Сигнал ниже порога не создаёт сделку, даже если стратегия вернула CALL/PUT.</p>
                         @error('min_confidence')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
@@ -999,23 +1003,23 @@ PROMPT;
                     <div class="space-y-1">
                         <label for="min_level_strength" class="block text-xs font-medium text-zinc-400">Мин. сила уровня (0–100)</label>
                         <input type="number" name="min_level_strength" id="min_level_strength" min="40" max="95" step="1" required
-                            value="{{ old('min_level_strength', $cfg['min_level_strength'] ?? 68) }}"
+                            value="{{ old('min_level_strength', $cfg['min_level_strength'] ?? 58) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-                        <p class="text-[11px] text-zinc-500">Скоринг кластера: число источников (DGT, SMC, swing…), их вес, сколько линий склеилось, история касаний. 68+ — строго (редкие сигналы). 55–62 — чаще сделки, больше шума.</p>
+                        <p class="text-[11px] text-zinc-500">Скоринг кластера: число источников (DGT, SMC, swing…), их вес, склейка линий, касания. 58 — сбалансировано. 68+ — редко (нужен 3+ источник). 52–55 — чаще сделки.</p>
                         @error('min_level_strength')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
                         <label for="min_sources" class="block text-xs font-medium text-zinc-400">Мин. источников конфлюенса</label>
                         <input type="number" name="min_sources" id="min_sources" min="1" max="6" required
-                            value="{{ old('min_sources', $cfg['min_sources'] ?? 2) }}"
+                            value="{{ old('min_sources', $cfg['min_sources'] ?? 1) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-                        <p class="text-[11px] text-zinc-500">Сколько <em>разных</em> типов уровней должны совпасть в одной ценовой зоне (напр. DGT S/R + rolling 4H + 3BR). 2 — классический конфлюенс; 1 — любой один сильный источник.</p>
+                        <p class="text-[11px] text-zinc-500">Сколько <em>разных</em> типов уровней должны совпасть в одной ценовой зоне. <strong>1</strong> — один сильный источник (чаще). <strong>2</strong> — классический конфлюенс (реже).</p>
                         @error('min_sources')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
                         <label for="cluster_atr_mult_m5" class="block text-xs font-medium text-zinc-400">Кластер уровней (× ATR M5)</label>
                         <input type="number" name="cluster_atr_mult_m5" id="cluster_atr_mult_m5" min="0.05" max="1" step="0.01" required
-                            value="{{ old('cluster_atr_mult_m5', $cfg['cluster_atr_mult_m5'] ?? 0.2) }}"
+                            value="{{ old('cluster_atr_mult_m5', $cfg['cluster_atr_mult_m5'] ?? 0.28) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
                         <p class="text-[11px] text-zinc-500">Радиус склейки близких цен в один кластер: distance ≤ ATR(M5) × множитель. Меньше — точнее уровень, сложнее набрать конфлюенс. Больше — шире зона, чаще совпадения.</p>
                         @error('cluster_atr_mult_m5')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
@@ -1023,9 +1027,9 @@ PROMPT;
                     <div class="space-y-1">
                         <label for="touch_atr_mult_m1" class="block text-xs font-medium text-zinc-400">Зона касания (× ATR M1)</label>
                         <input type="number" name="touch_atr_mult_m1" id="touch_atr_mult_m1" min="0.05" max="1.5" step="0.01" required
-                            value="{{ old('touch_atr_mult_m1', $cfg['touch_atr_mult_m1'] ?? 0.35) }}"
+                            value="{{ old('touch_atr_mult_m1', $cfg['touch_atr_mult_m1'] ?? 0.55) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-                        <p class="text-[11px] text-zinc-500">Насколько близко текущая цена (close последней M1) должна быть к уровню. 0.35 × ATR(M1) ≈ 1–3 пункта на форексе. Увеличьте до 0.5–0.6, если сигналов слишком мало.</p>
+                        <p class="text-[11px] text-zinc-500">Насколько близко текущая цена (close последней M1) должна быть к уровню. 0.55 × ATR(M1) ≈ 2–4 пункта на форексе. Главный рычаг частоты сигналов.</p>
                         @error('touch_atr_mult_m1')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                 </div>
@@ -1051,7 +1055,7 @@ PROMPT;
                     <div class="space-y-1">
                         <label for="bounce_min_wick_ratio_m5" class="block text-xs font-medium text-zinc-400">Отскок: мин. тень M5 (0–1)</label>
                         <input type="number" name="bounce_min_wick_ratio_m5" id="bounce_min_wick_ratio_m5" min="0.15" max="0.8" step="0.01" required
-                            value="{{ old('bounce_min_wick_ratio_m5', $cfg['bounce_min_wick_ratio_m5'] ?? 0.35) }}"
+                            value="{{ old('bounce_min_wick_ratio_m5', $cfg['bounce_min_wick_ratio_m5'] ?? 0.28) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
                         <p class="text-[11px] text-zinc-500">Доля тени rejection-свечи M5 в диапазоне свечи. CALL — нижняя тень у support, PUT — верхняя у resistance. 0.35 = 35% (строго). 0.22–0.25 — мягче, больше входов.</p>
                         @error('bounce_min_wick_ratio_m5')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
@@ -1072,6 +1076,14 @@ PROMPT;
                         <p class="text-[11px] text-zinc-500">Длительность опциона при сетапе «пробой». Обычно 4–5 мин — пробою нужно больше времени на продолжение движения.</p>
                         @error('expiry_sec_breakout')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
+                    <div class="space-y-1">
+                        <label for="h1_flat_strength_extra" class="block text-xs font-medium text-zinc-400">H1 флэт: доп. сила уровня</label>
+                        <input type="number" name="h1_flat_strength_extra" id="h1_flat_strength_extra" min="0" max="15" step="1" required
+                            value="{{ old('h1_flat_strength_extra', $cfg['h1_flat_strength_extra'] ?? 4) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        <p class="text-[11px] text-zinc-500">Когда H1 во флэте, к min_level_strength добавляется этот запас. 0 = торговать флэт как обычно. 4–5 — умеренно. 8+ — почти нет сигналов во флэте.</p>
+                        @error('h1_flat_strength_extra')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
                 </div>
 
                 <div class="space-y-3 rounded border border-zinc-800 bg-zinc-900/40 p-4">
@@ -1079,15 +1091,23 @@ PROMPT;
                     <div class="space-y-3 text-sm text-zinc-300">
                         <label class="flex items-start gap-2">
                             <input type="checkbox" name="require_h1_alignment" value="1" class="mt-0.5 rounded border-zinc-600 bg-zinc-800 text-blue-500"
-                                @checked(old('require_h1_alignment', ($cfg['require_h1_alignment'] ?? true) ? '1' : '') === '1' || (old('require_h1_alignment') === null && ($cfg['require_h1_alignment'] ?? true)))>
+                                @checked(old('require_h1_alignment', ($cfg['require_h1_alignment'] ?? false) ? '1' : '') === '1' || (old('require_h1_alignment') === null && ($cfg['require_h1_alignment'] ?? false)))>
                             <span>
                                 <span class="font-medium text-zinc-200">H1 bias не против входа</span>
-                                <span class="mt-0.5 block text-[11px] font-normal text-zinc-500">CALL запрещён при явном H1 down, PUT — при H1 up. Во флэте H1 нужна ещё более высокая сила уровня (+8 к min_level_strength). Снимите галочку для большей частоты сигналов.</span>
+                                <span class="mt-0.5 block text-[11px] font-normal text-zinc-500">CALL запрещён при явном H1 down, PUT — при H1 up. Во флэте H1 нужна доп. сила (поле выше). По умолчанию выкл. — больше сигналов.</span>
+                            </span>
+                        </label>
+                        <label class="flex items-start gap-2">
+                            <input type="checkbox" name="bounce_require_m1_confirm" value="1" class="mt-0.5 rounded border-zinc-600 bg-zinc-800 text-blue-500"
+                                @checked(old('bounce_require_m1_confirm', ($cfg['bounce_require_m1_confirm'] ?? false) ? '1' : '') === '1' || (old('bounce_require_m1_confirm') === null && ($cfg['bounce_require_m1_confirm'] ?? false)))>
+                            <span>
+                                <span class="font-medium text-zinc-200">Отскок: M1 в сторону входа</span>
+                                <span class="mt-0.5 block text-[11px] font-normal text-zinc-500">CALL требует бычью M1, PUT — медвежью. Снимите для OTC: достаточно rejection на M5, M1 может быть нейтральной.</span>
                             </span>
                         </label>
                         <label class="flex items-start gap-2">
                             <input type="checkbox" name="breakout_require_retest" value="1" class="mt-0.5 rounded border-zinc-600 bg-zinc-800 text-blue-500"
-                                @checked(old('breakout_require_retest', ($cfg['breakout_require_retest'] ?? true) ? '1' : '') === '1' || (old('breakout_require_retest') === null && ($cfg['breakout_require_retest'] ?? true)))>
+                                @checked(old('breakout_require_retest', ($cfg['breakout_require_retest'] ?? false) ? '1' : '') === '1' || (old('breakout_require_retest') === null && ($cfg['breakout_require_retest'] ?? false)))>
                             <span>
                                 <span class="font-medium text-zinc-200">Пробой: требовать ретест уровня</span>
                                 <span class="mt-0.5 block text-[11px] font-normal text-zinc-500">После пробоя цена должна вернуться касанием к уровню на M5 и снова уйти в сторону пробоя. Отсекает «голые» пробои без подтверждения.</span>
@@ -1095,7 +1115,7 @@ PROMPT;
                         </label>
                         <label class="flex items-start gap-2">
                             <input type="checkbox" name="breakout_vol_above_sma" value="1" class="mt-0.5 rounded border-zinc-600 bg-zinc-800 text-blue-500"
-                                @checked(old('breakout_vol_above_sma', ($cfg['breakout_vol_above_sma'] ?? true) ? '1' : '') === '1' || (old('breakout_vol_above_sma') === null && ($cfg['breakout_vol_above_sma'] ?? true)))>
+                                @checked(old('breakout_vol_above_sma', ($cfg['breakout_vol_above_sma'] ?? false) ? '1' : '') === '1' || (old('breakout_vol_above_sma') === null && ($cfg['breakout_vol_above_sma'] ?? false)))>
                             <span>
                                 <span class="font-medium text-zinc-200">Пробой: объём M5 ≥ 90% от SMA(20)</span>
                                 <span class="mt-0.5 block text-[11px] font-normal text-zinc-500">Свеча пробоя на M5 должна быть не слабее среднего объёма за 20 баров. Слабые пробои на низком объёме отфильтровываются.</span>
@@ -1132,11 +1152,258 @@ PROMPT;
                     </div>
                 </div>
 
+                <div class="space-y-3 rounded border border-zinc-800 bg-zinc-900/40 p-4">
+                    <p class="text-sm font-medium text-zinc-300">Telegram</p>
+                    <p class="text-[11px] text-zinc-500">Push при новом сигнале и paper-сделке (cron <code class="text-zinc-400">bots:scan</code>). Token и chat_id — как у других ботов, один получатель.</p>
+                    <label class="flex items-start gap-2">
+                        <input type="checkbox" name="telegram_enabled" id="telegram_enabled_strong_level" value="1"
+                            class="mt-0.5 rounded border-zinc-600 bg-zinc-800 text-blue-500"
+                            @checked(old('telegram_enabled', $cfg['telegram_enabled'] ?? false))>
+                        <span>
+                            <span class="text-sm font-medium text-zinc-300">Отправлять алерты в Telegram</span>
+                            <span class="mt-0.5 block text-[11px] font-normal text-zinc-500">Без галочки сделки создаются в платформе, но сообщения в Telegram не уходят.</span>
+                        </span>
+                    </label>
+                    <div class="grid gap-4 sm:grid-cols-2">
+                        <div class="space-y-1">
+                            <label for="telegram_notify_on" class="block text-xs font-medium text-zinc-400">Когда уведомлять</label>
+                            @php $telegramNotifyOn = old('telegram_notify_on', $cfg['telegram_notify_on'] ?? 'signal_trade'); @endphp
+                            <select name="telegram_notify_on" id="telegram_notify_on" required
+                                class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                                <option value="signal_trade" @selected($telegramNotifyOn === 'signal_trade')>Новый сигнал + paper-сделка</option>
+                                <option value="off" @selected($telegramNotifyOn === 'off')>Не уведомлять (даже если Telegram включён)</option>
+                            </select>
+                            <p class="text-[11px] text-zinc-500">По умолчанию — при каждой созданной сделке Strong Level. «Не уведомлять» — для отладки без спама.</p>
+                            @error('telegram_notify_on')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                        </div>
+                        <div class="space-y-1">
+                            <label for="telegram_alert_format" class="block text-xs font-medium text-zinc-400">Формат сообщения</label>
+                            @php $telegramAlertFormat = old('telegram_alert_format', $cfg['telegram_alert_format'] ?? 'brief'); @endphp
+                            <select name="telegram_alert_format" id="telegram_alert_format" required
+                                class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                                <option value="brief" @selected($telegramAlertFormat === 'brief')>Краткий</option>
+                                <option value="detailed" @selected($telegramAlertFormat === 'detailed')>Развёрнутый</option>
+                                <option value="card" @selected($telegramAlertFormat === 'card')>Как на карточке</option>
+                            </select>
+                            <p class="text-[11px] text-zinc-500">Краткий: пара, уровень, режим, экспирация. Развёрнутый: + confidence, H1, источники, причины. «Как на карточке»: шаблонный абзац стратегии + статистика + тех. детали (как в модалке карточек).</p>
+                            @error('telegram_alert_format')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                        </div>
+                        <div class="space-y-1">
+                            <label for="telegram_send_chart" class="block text-xs font-medium text-zinc-400">График в алерте</label>
+                            @php
+                                $telegramSendChart = old('telegram_send_chart');
+                                if ($telegramSendChart === null) {
+                                    $telegramSendChart = ($cfg['telegram_send_chart'] ?? true) ? '1' : '0';
+                                }
+                            @endphp
+                            <select name="telegram_send_chart" id="telegram_send_chart" required
+                                class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                                <option value="1" @selected((string) $telegramSendChart === '1')>Текст + график M1 (PNG)</option>
+                                <option value="0" @selected((string) $telegramSendChart === '0')>Только текст (без картинки)</option>
+                            </select>
+                            <p class="text-[11px] text-zinc-500">С графиком: свечи M1, линия уровня, зона касания и маркер входа. Без графика — одно текстовое сообщение (быстрее, меньше трафика).</p>
+                            @error('telegram_send_chart')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                        </div>
+                        <div class="space-y-1 sm:col-span-2">
+                            <label class="flex items-start gap-2">
+                                <input type="checkbox" name="telegram_analyst_llm_enabled" id="telegram_analyst_llm_enabled" value="1"
+                                    class="mt-0.5 rounded border-zinc-600 bg-zinc-800 text-blue-500"
+                                    @checked(old('telegram_analyst_llm_enabled', $cfg['telegram_analyst_llm_enabled'] ?? true))>
+                                <span>
+                                    <span class="text-sm font-medium text-zinc-300">Кнопка «{{ \App\Services\Telegram\StrongLevelTelegramLlmButton::BUTTON_LABEL }}»</span>
+                                    <span class="mt-0.5 block text-[11px] font-normal text-zinc-500">Inline-кнопка под алертом: callback в Strong Level → LLM-анализ Chart Analyst в этом же чате. Нужен poll (кнопка ниже).</span>
+                                </span>
+                            </label>
+                            @error('telegram_analyst_llm_enabled')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                        </div>
+                        <div class="space-y-1">
+                            <label for="telegram_analyst_bot_id" class="block text-xs font-medium text-zinc-400">Бот Chart Analyst</label>
+                            @php $selectedAnalystId = old('telegram_analyst_bot_id', $cfg['telegram_analyst_bot_id'] ?? ''); @endphp
+                            <select name="telegram_analyst_bot_id" id="telegram_analyst_bot_id"
+                                class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                                <option value="">Авто (первый Chart Analyst)</option>
+                                @foreach ($chartAnalystBots ?? [] as $analystBot)
+                                    <option value="{{ $analystBot->id }}" @selected((string) $selectedAnalystId === (string) $analystBot->id)>
+                                        #{{ $analystBot->id }} — {{ $analystBot->name }}@if(!$analystBot->is_active) (выкл.)@endif
+                                    </option>
+                                @endforeach
+                            </select>
+                            @error('telegram_analyst_bot_id')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                        </div>
+                        <div class="space-y-1 sm:col-span-2">
+                            <label for="telegram_analyst_llm_question" class="block text-xs font-medium text-zinc-400">Вопрос к LLM по кнопке</label>
+                            <textarea name="telegram_analyst_llm_question" id="telegram_analyst_llm_question" rows="2"
+                                class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">{{ old('telegram_analyst_llm_question', $cfg['telegram_analyst_llm_question'] ?? \App\Services\Telegram\StrongLevelTelegramLlmButton::DEFAULT_LLM_QUESTION) }}</textarea>
+                            <p class="text-[11px] text-zinc-500">Подставляется в RunTelegramAnalystAnalysisJob вместо шага «ваш вопрос».</p>
+                            @error('telegram_analyst_llm_question')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                        </div>
+                        {{-- Статус poll растягиваем на всю строку, чтобы он не смешивался с полями ниже в двухколоночной сетке. --}}
+                        <div class="space-y-1 sm:col-span-2">
+                            <p id="telegram-process-status-strong-level" class="text-xs text-zinc-500">Проверка poll…</p>
+                        </div>
+                        {{-- У каждого элемента в grid должен быть свой контейнер, иначе соседняя колонка с action-кнопками «съезжает». --}}
+                        <div class="space-y-1">
+                            <label for="telegram_bot_token_strong_level" class="block text-xs font-medium text-zinc-400">Bot token</label>
+                            <input type="password" name="telegram_bot_token" id="telegram_bot_token_strong_level" autocomplete="new-password"
+                                placeholder="{{ !empty($cfg['telegram_bot_token']) ? '•••••••• (сохранён — оставьте пустым, чтобы не менять)' : '8689786598:AAE...' }}"
+                                class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 font-mono">
+                            <p class="text-[11px] text-zinc-500">Токен от @BotFather (напр. @strong_level_bot). Пустое поле при сохранении — оставить текущий.</p>
+                            @error('telegram_bot_token')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                        </div>
+                        <div class="space-y-1">
+                            <label for="telegram_chat_id_strong_level" class="block text-xs font-medium text-zinc-400">Chat ID</label>
+                            <input type="text" name="telegram_chat_id" id="telegram_chat_id_strong_level"
+                                value="{{ old('telegram_chat_id', $cfg['telegram_chat_id'] ?? '') }}"
+                                placeholder="123456789"
+                                class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 font-mono">
+                            <p class="text-[11px] text-zinc-500">Один chat_id — личный чат, группа или канал.</p>
+                            @error('telegram_chat_id')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                        </div>
+                        <div class="space-y-1 flex flex-col justify-end gap-2">
+                            <button type="button" id="telegram-discover-btn-strong-level"
+                                class="rounded border border-zinc-600 bg-zinc-800 px-3 py-2 text-xs font-medium text-zinc-200 hover:bg-zinc-700">
+                                Получить chat_id
+                            </button>
+                            <button type="button" id="telegram-test-btn-strong-level"
+                                class="rounded border border-blue-700 bg-blue-950/50 px-3 py-2 text-xs font-medium text-blue-200 hover:bg-blue-900/50">
+                                Отправить тест
+                            </button>
+                            <button type="button" id="telegram-restart-btn-strong-level"
+                                class="rounded border border-amber-700 bg-amber-950/40 px-3 py-2 text-xs font-medium text-amber-200 hover:bg-amber-900/50">
+                                Перезапустить poll + queue
+                            </button>
+                        </div>
+                    </div>
+                    <p id="telegram-action-status-strong-level" class="text-xs text-zinc-500"></p>
+                    <p class="text-[11px] text-zinc-500">
+                        Напишите боту
+                        <a href="https://t.me/strong_level_bot" target="_blank" rel="noopener" class="text-blue-400 hover:underline">@strong_level_bot</a>
+                        → /start, сохраните token, затем «Получить chat_id».
+                    </p>
+                </div>
+
                 <div class="rounded border border-amber-900/40 bg-amber-950/20 px-4 py-3 text-[11px] text-amber-100/80">
                     <p class="font-medium text-amber-200/90">Почему сигналов мало?</p>
-                    <p class="mt-1">Все фильтры работают одновременно: цена должна быть у сильного уровня <em>в момент scan</em>, плюс паттерн на M5 и M1. Ослабить частоту: снизить min_level_strength (58–62), min_sources (1), touch_atr_mult_m1 (0.5+), bounce_min_wick_ratio_m5 (0.25), отключить ретест/объём пробоя.</p>
+                    <p class="mt-1">Раньше формула силы не давала 68 при 2 источниках — это исправлено. Для частоты: min_level_strength 55–58, min_sources 1, touch 0.55+, bounce wick 0.25–0.28, снять H1/M1/ретест/объём.</p>
                 </div>
             </div>
+            <script>
+            (function () {
+                const discoverBtn = document.getElementById('telegram-discover-btn-strong-level');
+                const testBtn = document.getElementById('telegram-test-btn-strong-level');
+                const restartBtn = document.getElementById('telegram-restart-btn-strong-level');
+                const statusEl = document.getElementById('telegram-action-status-strong-level');
+                const processStatusEl = document.getElementById('telegram-process-status-strong-level');
+                const chatInput = document.getElementById('telegram_chat_id_strong_level');
+                const csrf = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '';
+                const discoverUrl = @json(route('bots.telegram.discover-chat', $bot));
+                const testUrl = @json(route('bots.telegram.test', $bot));
+                const slStatusUrl = @json(route('bots.telegram.strong-level-status', $bot));
+                const slRestartUrl = @json(route('bots.telegram.strong-level-restart', $bot));
+
+                function setStatus(text, isError) {
+                    if (!statusEl) return;
+                    statusEl.textContent = text || '';
+                    statusEl.className = 'text-xs ' + (isError ? 'text-rose-400' : 'text-emerald-300');
+                }
+
+                function renderProcessStatus(data) {
+                    if (!processStatusEl || !data) return;
+                    const poll = data.poll_running ? 'poll ✓' : 'poll ✗';
+                    const queue = data.queue_running ? 'queue ✓' : 'queue ✗';
+                    const color = data.poll_running && data.queue_running ? 'text-emerald-300' : 'text-amber-300';
+                    processStatusEl.textContent = 'Процессы: ' + poll + ', ' + queue;
+                    processStatusEl.className = 'text-xs ' + color;
+                }
+
+                async function refreshProcessStatus() {
+                    if (!processStatusEl) return;
+                    try {
+                        const res = await fetch(slStatusUrl, { headers: { 'Accept': 'application/json' } });
+                        const data = await res.json();
+                        if (res.ok && data.ok) renderProcessStatus(data);
+                        else processStatusEl.textContent = 'Не удалось проверить процессы';
+                    } catch (e) {
+                        processStatusEl.textContent = 'Ошибка проверки процессов';
+                    }
+                }
+
+                refreshProcessStatus();
+
+                if (restartBtn) {
+                    restartBtn.addEventListener('click', async function () {
+                        setStatus('Перезапуск poll и queue worker…', false);
+                        restartBtn.disabled = true;
+                        try {
+                            const res = await fetch(slRestartUrl, {
+                                method: 'POST',
+                                headers: { 'X-CSRF-TOKEN': csrf, 'Accept': 'application/json' },
+                            });
+                            const data = await res.json();
+                            if (!res.ok || !data.ok) {
+                                setStatus(data.error || data.message || 'Не удалось перезапустить', true);
+                                if (data.status) renderProcessStatus(data.status);
+                                return;
+                            }
+                            setStatus(data.message || 'Перезапущено', false);
+                            renderProcessStatus(data.status);
+                        } catch (e) {
+                            setStatus('Сеть: ' + e.message, true);
+                        } finally {
+                            restartBtn.disabled = false;
+                        }
+                    });
+                }
+
+                if (discoverBtn) {
+                    discoverBtn.addEventListener('click', async function () {
+                        setStatus('Запрос getUpdates…', false);
+                        try {
+                            const res = await fetch(discoverUrl, {
+                                method: 'POST',
+                                headers: { 'X-CSRF-TOKEN': csrf, 'Accept': 'application/json' },
+                            });
+                            const data = await res.json();
+                            if (!res.ok || !data.ok) {
+                                setStatus(data.error || data.hint || 'Ошибка getUpdates', true);
+                                return;
+                            }
+                            const chats = data.chats || [];
+                            if (chats.length === 0) {
+                                setStatus(data.hint || 'Чатов не найдено — напишите @strong_level_bot /start', true);
+                                return;
+                            }
+                            const first = chats[0];
+                            if (chatInput && first.id) chatInput.value = first.id;
+                            const label = first.username ? '@' + first.username : (first.first_name || first.title || first.id);
+                            setStatus('Найден chat_id: ' + first.id + ' (' + label + ')', false);
+                        } catch (e) {
+                            setStatus('Сеть: ' + e.message, true);
+                        }
+                    });
+                }
+
+                if (testBtn) {
+                    testBtn.addEventListener('click', async function () {
+                        setStatus('Отправка теста… (сначала сохраните настройки, если меняли token/chat_id)', false);
+                        try {
+                            const res = await fetch(testUrl, {
+                                method: 'POST',
+                                headers: { 'X-CSRF-TOKEN': csrf, 'Accept': 'application/json' },
+                            });
+                            const data = await res.json();
+                            if (!res.ok || !data.ok) {
+                                setStatus(data.error || 'Не удалось отправить', true);
+                                return;
+                            }
+                            setStatus('Тестовое сообщение отправлено', false);
+                        } catch (e) {
+                            setStatus('Сеть: ' + e.message, true);
+                        }
+                    });
+                }
+            })();
+            </script>
         @elseif ($bot->type === 'strong_trend_telegram')
             <div class="space-y-5 border-t border-zinc-800 pt-4">
                 <div class="space-y-2 text-sm text-zinc-400">

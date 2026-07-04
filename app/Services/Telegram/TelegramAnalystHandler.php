@@ -221,7 +221,6 @@ class TelegramAnalystHandler
         }
 
         $keyboard = $this->buildInstrumentKeyboard($menuData);
-        // Внизу списка — обновление без ввода /menu.
         $keyboard[] = TelegramAnalystReplyKeyboard::inlineInstrumentFooterRow();
         $text = '📋 <b>Выберите инструмент</b> (всего '.$menuData['total'].")\n".
             TelegramAnalystReplyKeyboard::menuHint().' — обновить список';
@@ -282,7 +281,6 @@ class TelegramAnalystHandler
         /** @var array<string, mixed> $cfg */
         $cfg = is_array($bot->config) ? $bot->config : [];
         $allowedChat = trim((string) ($cfg['telegram_chat_id'] ?? ''));
-        // Пустой chat_id — принимаем любой чат (удобно для первичной настройки через discover).
         if ($allowedChat === '') {
             return true;
         }

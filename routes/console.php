@@ -27,29 +27,13 @@ use Illuminate\Support\Facades\Schema;
 if (! function_exists('bots_scan_process_running')) {
     function bots_scan_process_running(?int $exceptPid = null): bool
     {
-        $exceptPid ??= getmypid();
+        // Тот же фильтр, что в ArtisanProcessFinder: без bash/cursor-оболочек с текстом «bots:scan» в cmdline.
+        $pids = \App\Support\ArtisanProcessFinder::findArtisanPids(
+            static fn (string $cmd): bool => (bool) preg_match('#(?:^|/)(php\d*(?:\.\d+)?)\s+artisan\s+bots:scan\b#', $cmd),
+            $exceptPid
+        );
 
-        foreach (glob('/proc/[0-9]*/cmdline') ?: [] as $path) {
-            if (! preg_match('#/proc/(\d+)/cmdline#', $path, $matches)) {
-                continue;
-            }
-            $pid = (int) $matches[1];
-            // Текущий artisan bots:scan ещё не держит lock — не считаем его «уже running».
-            if ($pid === $exceptPid) {
-                continue;
-            }
-            $cmdline = @file_get_contents($path);
-            if ($cmdline === false) {
-                continue;
-            }
-            $cmdline = str_replace("\0", ' ', $cmdline);
-            // php, php8.3 и т.п. — только реальный artisan bots:scan, не bash-оболочки.
-            if (preg_match('#(?:^|/)(php\d*(?:\.\d+)?)\s+artisan\s+bots:scan\b#', $cmdline)) {
-                return true;
-            }
-        }
-
-        return false;
+        return $pids !== [];
     }
 }
 
@@ -406,19 +390,25 @@ Artisan::command('bots:strong-level-bootstrap', function () {
                 'min_payout' => 82.0,
                 'stale_after_sec' => 45,
                 'entry_mode' => 'both',
-                'min_level_strength' => 68.0,
-                'min_sources' => 2,
-                'cluster_atr_mult_m5' => 0.20,
-                'touch_atr_mult_m1' => 0.35,
-                'bounce_min_wick_ratio_m5' => 0.35,
+                'min_level_strength' => 58.0,
+                'min_sources' => 1,
+                'cluster_atr_mult_m5' => 0.28,
+                'touch_atr_mult_m1' => 0.55,
+                'bounce_min_wick_ratio_m5' => 0.28,
+                'bounce_require_m1_confirm' => false,
+                'h1_flat_strength_extra' => 4.0,
                 'expiry_sec_bounce' => 180,
                 'expiry_sec_breakout' => 300,
                 'm5_take' => 120,
                 'm15_take' => 80,
                 'h1_take' => 48,
-                'require_h1_alignment' => true,
-                'breakout_require_retest' => true,
-                'breakout_vol_above_sma' => true,
+                'require_h1_alignment' => false,
+                'breakout_require_retest' => false,
+                'breakout_vol_above_sma' => false,
+                'telegram_enabled' => false,
+                'telegram_notify_on' => 'signal_trade',
+                'telegram_alert_format' => 'brief',
+                'telegram_send_chart' => true,
                 'version' => 'strong_level_v1',
             ],
         ]
@@ -608,23 +598,37 @@ Artisan::command('bots:openrouter-list-models', function (OpenRouterClient $clie
 })->purpose('Проверить загрузку каталога моделей OpenRouter');
 
 Artisan::command('bots:scan {--bot_id=} {--active-only=1}', function (BotEngineService $engine) {
+    // Если другой PHP-процесс scan уже работает — не стартуем второй (даже при протухшем lock в БД).
+    if (bots_scan_process_running(getmypid())) {
+        $this->warn('bots:scan уже выполняется — пропуск.');
+
+        return;
+    }
+
     // Жёсткий global lock: withoutOverlapping на file cache не держит параллельные bots:scan,
     // из-за чего endScan() одного процесса гасил счётчик sidebar mid-scan.
     $lockStore = Schema::hasTable('cache') ? Cache::store('database') : Cache::store();
     $lockKey = config('cache.prefix').'bots:scan:global';
+    // Scan всех ботов может идти несколько часов — lock должен пережить длинный проход.
+    $lockTtlSec = 21600;
     $lock = null;
     $lockAcquired = false;
     for ($attempt = 0; $attempt < 2; $attempt++) {
-        $lock = $lockStore->lock('bots:scan:global', 3600);
+        $lock = $lockStore->lock('bots:scan:global', $lockTtlSec);
         if ($lock->get()) {
             $lockAcquired = true;
             break;
         }
         if ($attempt === 0 && Schema::hasTable('cache_locks')) {
             $row = DB::table('cache_locks')->where('key', $lockKey)->first();
-            $scanRunning = bots_scan_process_running();
+            $scanRunning = bots_scan_process_running(getmypid());
+            if ($scanRunning) {
+                // Живой scan без валидного lock — не снимаем mutex и не запускаем дубликат.
+                $lock = null;
+                break;
+            }
             $lockExpired = $row && (int) ($row->expiration ?? 0) <= time();
-            if ($row && (! $scanRunning || $lockExpired)) {
+            if ($row && $lockExpired) {
                 DB::table('cache_locks')->where('key', $lockKey)->delete();
 
                 continue;
@@ -685,6 +689,50 @@ Artisan::command('bots:scan {--bot_id=} {--active-only=1}', function (BotEngineS
         $lock->release();
     }
 })->purpose('Сканировать пары активными ботами и создавать сигналы/сделки');
+
+Artisan::command('bots:scan-dedupe {--no-restart : Не запускать новый scan после остановки}', function () {
+    $pids = \App\Support\ArtisanProcessFinder::findArtisanPids(
+        static fn (string $cmd): bool => (bool) preg_match('#(?:^|/)(php\d*(?:\.\d+)?)\s+artisan\s+bots:scan\b#', $cmd)
+    );
+
+    if (count($pids) <= 1) {
+        $this->info(count($pids) === 1
+            ? 'Один процесс bots:scan (PID '.$pids[0].') — дубликатов нет.'
+            : 'Процесс bots:scan не запущен.');
+
+        return;
+    }
+
+    // Параллельные scan почти всегда мешают друг другу; «старейший» часто зависший — гасим всех.
+    $killed = \App\Support\ArtisanProcessFinder::terminatePids($pids);
+    usleep(300_000);
+
+    if (Schema::hasTable('cache_locks')) {
+        $lockKey = config('cache.prefix').'bots:scan:global';
+        DB::table('cache_locks')->where('key', $lockKey)->delete();
+    }
+
+    $this->warn(sprintf(
+        'Параллельных scan: %d. Остановлено: %d (%s). Lock сброшен.',
+        count($pids),
+        $killed,
+        implode(', ', $pids)
+    ));
+
+    if ($this->option('no-restart')) {
+        $this->comment('Новый scan не запущен (--no-restart). Cron запустит при следующем schedule:run.');
+
+        return;
+    }
+
+    $log = storage_path('logs/bots-scan.log');
+    $started = \App\Support\ArtisanProcessFinder::spawnBackground([PHP_BINARY, 'artisan', 'bots:scan'], $log);
+    if ($started) {
+        $this->info('Запущен новый bots:scan в фоне. Лог: '.$log);
+    } else {
+        $this->error('Не удалось запустить bots:scan. Попробуйте: php artisan bots:scan');
+    }
+})->purpose('Остановить все параллельные bots:scan, сбросить lock и запустить один новый');
 
 Artisan::command('bots:settle {--bot_id=} {--limit=1000}', function (BotSettlementService $settlement) {
     $botId = $this->option('bot_id') ? (int) $this->option('bot_id') : null;
@@ -774,3 +822,76 @@ Artisan::command('telegram:analyst-poll {--bot= : ID бота openrouter_llm_ana
         }
     }
 })->purpose('Long polling Telegram для Chart Analyst (меню инструментов → анализ)');
+
+Artisan::command('telegram:strong-level-poll {--bot= : ID бота strong_level} {--timeout=30}', function (
+    TelegramAlertService $telegram,
+    \App\Services\Telegram\StrongLevelTelegramHandler $handler,
+) {
+    $botId = (int) ($this->option('bot') ?: 0);
+    if ($botId <= 0) {
+        $bot = Bot::query()->where('type', 'strong_level')->where('is_active', true)->orderBy('id')->first();
+        if ($bot === null) {
+            $bot = Bot::query()->where('type', 'strong_level')->orderBy('id')->first();
+        }
+        if ($bot === null) {
+            $this->error('Нет бота strong_level. Укажите --bot=ID');
+
+            return 1;
+        }
+    } else {
+        $bot = Bot::query()->find($botId);
+        if ($bot === null || $bot->type !== 'strong_level') {
+            $this->error('Бот не найден или не strong_level');
+
+            return 1;
+        }
+    }
+
+    /** @var array<string, mixed> $cfg */
+    $cfg = is_array($bot->config) ? $bot->config : [];
+    $token = trim((string) ($cfg['telegram_bot_token'] ?? ''));
+    if ($token === '') {
+        $this->error('В config бота не задан telegram_bot_token');
+
+        return 1;
+    }
+
+    $delete = $telegram->deleteWebhook($token);
+    if (! ($delete['ok'] ?? false)) {
+        $this->warn('deleteWebhook: '.($delete['error'] ?? 'unknown'));
+    }
+
+    $timeout = max(5, min(50, (int) $this->option('timeout')));
+    $offsetKey = 'telegram_strong_level_poll_offset:'.$bot->id;
+    $offset = (int) Cache::get($offsetKey, 0);
+
+    $this->info("Telegram strong-level poll: bot #{$bot->id} {$bot->name}, offset={$offset}, timeout={$timeout}s");
+    $this->line('Ctrl+C для остановки. Нужны: queue:work --queue=telegram-analyst --timeout=600');
+
+    while (true) {
+        $result = $telegram->getUpdates($token, $offset, $timeout);
+        if (! ($result['ok'] ?? false)) {
+            $this->error('getUpdates: '.($result['error'] ?? 'unknown'));
+            sleep(3);
+
+            continue;
+        }
+        $updates = $result['updates'] ?? [];
+        foreach ($updates as $update) {
+            if (! is_array($update)) {
+                continue;
+            }
+            if (isset($update['update_id'])) {
+                $offset = max($offset, (int) $update['update_id'] + 1);
+            }
+            try {
+                $handler->handleUpdate($bot, $update);
+            } catch (\Throwable $e) {
+                $this->error('handleUpdate: '.$e->getMessage());
+            }
+        }
+        if ($offset > 0) {
+            Cache::forever($offsetKey, $offset);
+        }
+    }
+})->purpose('Long polling Telegram для Strong Level (кнопка LLM-анализа)');

@@ -17,9 +17,8 @@ return Application::configure(basePath: dirname(__DIR__))
     })
     ->withSchedule(function (Schedule $schedule): void {
         $schedule->command('candles:prune-old')->hourly();
-        // Scan всех ботов может идти 10–30+ минут; mutex 5 мин позволял второму bots:scan
-        // стартовать параллельно и сбрасывать BotScanProgress (счётчик «исчезал» mid-scan).
-        $schedule->command('bots:scan')->everyMinute()->withoutOverlapping(45);
+        // Scan всех ботов может идти 1–4+ часа; mutex 45 мин давал параллельные bots:scan после рестарта.
+        $schedule->command('bots:scan')->everyMinute()->withoutOverlapping(360);
         $schedule->command('bots:settle')->everyMinute()->withoutOverlapping(10);
         // Авто-проба dead: постоянный цикл — отдельный процесс `php artisan proxies:probe-loop`.
         // Пакетный fallback (редко): proxies:probe-dead --limit=5

@@ -667,7 +667,7 @@ class PlatformProcessMonitorService
      */
     private function startBotsScan(): array
     {
-        if (ArtisanProcessFinder::findArtisanPids(static fn (string $cmd): bool => (bool) preg_match('#\sartisan\s+bots:scan\b#', $cmd)) !== []) {
+        if (ArtisanProcessFinder::findArtisanPids(static fn (string $cmd): bool => (bool) preg_match('#(?:^|/)(php\d*(?:\.\d+)?)\s+artisan\s+bots:scan\b#', $cmd)) !== []) {
             return ['ok' => false, 'error' => 'already_running'];
         }
 

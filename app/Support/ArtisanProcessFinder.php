@@ -176,10 +176,76 @@ final class ArtisanProcessFinder
     }
 
     /**
+     * PHP CLI для фоновых artisan-процессов. В php-fpm PHP_BINARY указывает на php-fpm — не подходит.
+     */
+    public static function cliPhpBinary(): string
+    {
+        $binary = PHP_BINARY;
+        if (! str_contains(strtolower($binary), 'fpm')) {
+            return $binary;
+        }
+
+        foreach (['/usr/bin/php8.3', '/usr/bin/php8.2', '/usr/bin/php'] as $candidate) {
+            if (is_executable($candidate) && ! str_contains($candidate, 'fpm')) {
+                return $candidate;
+            }
+        }
+
+        $which = trim((string) shell_exec('command -v php8.3 2>/dev/null'));
+        if ($which !== '' && is_executable($which) && ! str_contains($which, 'fpm')) {
+            return $which;
+        }
+
+        $which = trim((string) shell_exec('command -v php 2>/dev/null'));
+        if ($which !== '' && is_executable($which) && ! str_contains($which, 'fpm')) {
+            return $which;
+        }
+
+        return 'php';
+    }
+
+    /**
+     * Лог daemon-процесса: создаём/дописываем через PHP, чтобы shell-redirect не падал
+     * с «Permission denied», если файл создан другим пользователем (www-data vs CLI).
+     */
+    public static function ensureDaemonLogWritable(string $logPath): string
+    {
+        $dir = dirname($logPath);
+        if (! is_dir($dir)) {
+            @mkdir($dir, 0775, true);
+        }
+
+        if (! is_file($logPath)) {
+            @file_put_contents($logPath, '');
+        }
+
+        if (is_writable($logPath)) {
+            return $logPath;
+        }
+
+        @chmod($logPath, 0666);
+        if (is_writable($logPath)) {
+            return $logPath;
+        }
+
+        $uid = function_exists('posix_getuid') ? (int) posix_getuid() : 0;
+        $fallback = preg_replace('/\.log$/', '-u'.$uid.'.log', $logPath) ?: $logPath.'.u'.$uid;
+
+        if (! is_file($fallback)) {
+            @file_put_contents($fallback, '');
+            @chmod($fallback, 0666);
+        }
+
+        return is_writable($fallback) ? $fallback : $logPath;
+    }
+
+    /**
      * @param  list<string>  $command
      */
     public static function spawnBackground(array $command, string $logPath): bool
     {
+        $logPath = self::ensureDaemonLogWritable($logPath);
+
         $escaped = array_map('escapeshellarg', $command);
         $line = 'cd '.escapeshellarg(base_path()).' && nohup '.implode(' ', $escaped)
             .' >> '.escapeshellarg($logPath).' 2>&1 & echo $!';

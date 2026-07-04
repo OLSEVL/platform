@@ -4,6 +4,7 @@ namespace App\Services\Telegram;
 
 use App\Jobs\RunTelegramAnalystAnalysisJob;
 use App\Models\Bot;
+use App\Support\ArtisanProcessFinder;
 use Illuminate\Support\Facades\File;
 
 /**
@@ -149,7 +150,7 @@ class TelegramAnalystProcessManager
         File::ensureDirectoryExists(dirname($log));
 
         return $this->spawnBackground([
-            PHP_BINARY,
+            ArtisanProcessFinder::cliPhpBinary(),
             'artisan',
             'telegram:analyst-poll',
             '--bot='.$botId,
@@ -166,7 +167,7 @@ class TelegramAnalystProcessManager
         File::ensureDirectoryExists(dirname($log));
 
         return $this->spawnBackground([
-            PHP_BINARY,
+            ArtisanProcessFinder::cliPhpBinary(),
             'artisan',
             'queue:work',
             '--queue='.RunTelegramAnalystAnalysisJob::QUEUE_NAME,
@@ -179,20 +180,7 @@ class TelegramAnalystProcessManager
      */
     private function spawnBackground(array $command, string $logPath): bool
     {
-        $escaped = array_map('escapeshellarg', $command);
-        $line = 'cd '.escapeshellarg(base_path()).' && nohup '.implode(' ', $escaped)
-            .' >> '.escapeshellarg($logPath).' 2>&1 & echo $!';
-        $output = [];
-        $exitCode = 1;
-        exec($line, $output, $exitCode);
-
-        if ($exitCode !== 0) {
-            return false;
-        }
-
-        $pid = isset($output[0]) ? (int) trim((string) $output[0]) : 0;
-
-        return $pid > 0 || $output !== [];
+        return ArtisanProcessFinder::spawnBackground($command, $logPath);
     }
 
     /**

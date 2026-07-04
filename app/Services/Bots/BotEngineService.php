@@ -416,11 +416,35 @@ class BotEngineService
                         }
                         $mirrorTradeIds = [];
                     });
+
+                    // Strong Level: push в Telegram после успешного создания сигнала и paper-сделки.
+                    $telegramResult = null;
+                    if ($bot->type === 'strong_level') {
+                        $telegramResult = app(TelegramAlertService::class)->sendStrongLevelAlert(
+                            $bot,
+                            $instrument,
+                            $decision,
+                            $payoutSnapshot,
+                            $decisionExpirySec,
+                            $entryPrice,
+                            $closed
+                        );
+                        if (! ($telegramResult['ok'] ?? false)
+                            && ! in_array($telegramResult['error'] ?? '', ['telegram_disabled', 'telegram_notify_disabled'], true)) {
+                            Log::warning('strong_level_telegram_alert_failed', [
+                                'bot_id' => $bot->id,
+                                'instrument' => $instrument,
+                                'error' => $telegramResult['error'] ?? 'unknown',
+                            ]);
+                        }
+                    }
+
                     $this->finishAnalysisRun($analysisRun, BotAnalysisRun::STATUS_OK, null, [
                         'decision' => $decision,
                         'entry_price' => $entryPrice,
                         'entry_time' => $entryAt->toIso8601String(),
                         'expiry_time' => $expiryAt->toIso8601String(),
+                        'telegram' => $telegramResult,
                     ]);
                 } finally {
                     // Пара проверена: red → green в sidebar текущего scan.
@@ -922,7 +946,7 @@ class BotEngineService
         // - остальные: базовый порог.
         $minConfidence = (float) ($config['min_confidence'] ?? match ($bot->type) {
             'smc_flow' => 0.58,
-            'strong_level' => 0.62,
+            'strong_level' => 0.58,
             'openrouter_llm' => 0.65,
             'akim_trade_1m' => 0.58,
             'candle_reversal_confirm' => 0.56,

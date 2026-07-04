@@ -52,6 +52,10 @@
                                 <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
                                     <a href="{{ route('bots.show', $bot) }}" class="text-zinc-100 hover:text-blue-300">{{ $bot->name }}</a>
                                     <div class="flex flex-wrap items-center gap-1">
+                                        @if($bot->type === 'strong_level')
+                                        <a href="{{ route('bots.cards', $bot) }}"
+                                            class="inline-flex items-center rounded border border-zinc-600 bg-zinc-800/80 px-2 py-0.5 text-[11px] font-medium text-zinc-300 transition-colors hover:bg-zinc-700 hover:border-zinc-500 hover:text-zinc-50 focus:outline-none focus:ring-2 focus:ring-blue-500/40">Карточки</a>
+                                        @endif
                                         @if($bot->type !== 'openrouter_llm_analyst')
                                         <a href="{{ route('bots.activity', $bot) }}"
                                             class="inline-flex items-center rounded border border-zinc-600 bg-zinc-800/80 px-2 py-0.5 text-[11px] font-medium text-zinc-300 transition-colors hover:bg-zinc-700 hover:border-zinc-500 hover:text-zinc-50 focus:outline-none focus:ring-2 focus:ring-blue-500/40">Сигналы и сделки</a>

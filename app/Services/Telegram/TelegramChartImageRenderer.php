@@ -40,12 +40,25 @@ class TelegramChartImageRenderer
     /**
      * @param  list<array<string,mixed>>  $candles
      * @param  array{levels?:list<array<string,mixed>>,zones?:list<array<string,mixed>>,entry?:?array<string,mixed>}  $chartLevels
+     * @param  array{width?:int,height?:int,margin_left?:int,margin_right?:int,margin_top?:int,margin_bottom?:int,max_bars?:int,timeframe_label?:string,font_size_title?:float,font_size_axis?:float,font_size_label?:float}  $options
      */
-    public function render(string $instrument, array $candles, array $chartLevels): ?string
+    public function render(string $instrument, array $candles, array $chartLevels, array $options = []): ?string
     {
         if (! extension_loaded('gd')) {
             return null;
         }
+
+        $width = max(160, (int) ($options['width'] ?? self::WIDTH));
+        $height = max(120, (int) ($options['height'] ?? self::HEIGHT));
+        $marginLeft = max(8, (int) ($options['margin_left'] ?? self::MARGIN_LEFT));
+        $marginRight = max(4, (int) ($options['margin_right'] ?? self::MARGIN_RIGHT));
+        $marginTop = max(8, (int) ($options['margin_top'] ?? self::MARGIN_TOP));
+        $marginBottom = max(8, (int) ($options['margin_bottom'] ?? self::MARGIN_BOTTOM));
+        $maxBars = max(10, (int) ($options['max_bars'] ?? 90));
+        $fontTitle = (float) ($options['font_size_title'] ?? self::FONT_SIZE_TITLE);
+        $fontAxis = (float) ($options['font_size_axis'] ?? self::FONT_SIZE_AXIS);
+        $fontLabel = (float) ($options['font_size_label'] ?? self::FONT_SIZE_LABEL);
+        $timeframeLabel = (string) ($options['timeframe_label'] ?? 'M1');
 
         $fontPath = $this->resolveFontPath();
 
@@ -54,7 +67,6 @@ class TelegramChartImageRenderer
             return null;
         }
 
-        $maxBars = 90;
         if (count($series) > $maxBars) {
             $series = array_slice($series, -$maxBars);
         }
@@ -91,7 +103,7 @@ class TelegramChartImageRenderer
         $priceMin -= $pad;
         $priceMax += $pad;
 
-        $img = imagecreatetruecolor(self::WIDTH, self::HEIGHT);
+        $img = imagecreatetruecolor($width, $height);
         if ($img === false) {
             return null;
         }
@@ -101,22 +113,22 @@ class TelegramChartImageRenderer
         $text = imagecolorallocate($img, 180, 186, 198);
         $bull = imagecolorallocate($img, 34, 197, 94);
         $bear = imagecolorallocate($img, 239, 68, 68);
-        imagefilledrectangle($img, 0, 0, self::WIDTH, self::HEIGHT, $bg);
+        imagefilledrectangle($img, 0, 0, $width, $height, $bg);
 
-        $plotW = self::WIDTH - self::MARGIN_LEFT - self::MARGIN_RIGHT;
-        $plotH = self::HEIGHT - self::MARGIN_TOP - self::MARGIN_BOTTOM;
-        $plotX0 = self::MARGIN_LEFT;
-        $plotY0 = self::MARGIN_TOP;
+        $plotW = $width - $marginLeft - $marginRight;
+        $plotH = $height - $marginTop - $marginBottom;
+        $plotX0 = $marginLeft;
+        $plotY0 = $marginTop;
 
-        $title = $instrument.' · M1 · '.now()->utc()->format('d.m.Y H:i').' UTC';
-        $this->drawText($img, $fontPath, self::FONT_SIZE_TITLE, $plotX0, 22, $text, $title);
+        $title = $instrument.' · '.$timeframeLabel.' · '.now()->utc()->format('d.m.Y H:i').' UTC';
+        $this->drawText($img, $fontPath, $fontTitle, $plotX0, max(14, (int) round($marginTop * 0.5)), $text, $title);
 
         for ($i = 0; $i <= 5; $i++) {
             $ratio = $i / 5;
             $price = $priceMax - ($priceMax - $priceMin) * $ratio;
             $y = (int) round($plotY0 + $plotH * $ratio);
-            imageline($img, $plotX0, $y, self::WIDTH - self::MARGIN_RIGHT, $y, $grid);
-            $this->drawText($img, $fontPath, self::FONT_SIZE_AXIS, 4, $y + 4, $text, $this->formatPrice($price));
+            imageline($img, $plotX0, $y, $width - $marginRight, $y, $grid);
+            $this->drawText($img, $fontPath, $fontAxis, 4, $y + 4, $text, $this->formatPrice($price));
         }
 
         $barCount = count($series);
@@ -131,7 +143,7 @@ class TelegramChartImageRenderer
             $yTop = $this->priceToY($high, $priceMin, $priceMax, $plotY0, $plotH);
             $yBot = $this->priceToY($low, $priceMin, $priceMax, $plotY0, $plotH);
             $zoneColor = imagecolorallocatealpha($img, 59, 130, 246, 100);
-            imagefilledrectangle($img, $plotX0, min($yTop, $yBot), self::WIDTH - self::MARGIN_RIGHT, max($yTop, $yBot), $zoneColor);
+            imagefilledrectangle($img, $plotX0, min($yTop, $yBot), $width - $marginRight, max($yTop, $yBot), $zoneColor);
         }
 
         foreach ($series as $idx => $bar) {
@@ -162,15 +174,15 @@ class TelegramChartImageRenderer
             $lineColor = $this->levelColor($img, (string) ($lvl['timeframe'] ?? ''));
             $style = strtolower((string) ($lvl['style'] ?? 'solid'));
             if ($style === 'dashed') {
-                for ($x = $plotX0; $x < self::WIDTH - self::MARGIN_RIGHT; $x += 8) {
-                    imageline($img, $x, $y, min($x + 4, self::WIDTH - self::MARGIN_RIGHT), $y, $lineColor);
+                for ($x = $plotX0; $x < $width - $marginRight; $x += 8) {
+                    imageline($img, $x, $y, min($x + 4, $width - $marginRight), $y, $lineColor);
                 }
             } else {
-                imageline($img, $plotX0, $y, self::WIDTH - self::MARGIN_RIGHT, $y, $lineColor);
+                imageline($img, $plotX0, $y, $width - $marginRight, $y, $lineColor);
             }
             $label = mb_substr((string) ($lvl['label'] ?? $lvl['kind'] ?? 'level'), 0, 48);
-            $labelY = $this->laneY($labelLanes, $y, 14);
-            $this->drawTextRight($img, $fontPath, self::FONT_SIZE_LABEL, self::WIDTH - self::MARGIN_RIGHT - 4, $labelY + 4, $lineColor, $label);
+            $labelY = $this->laneY($labelLanes, $y, 14, $height);
+            $this->drawTextRight($img, $fontPath, $fontLabel, $width - $marginRight - 4, $labelY + 4, $lineColor, $label);
         }
 
         if ($entry && isset($entry['price']) && is_numeric($entry['price'])) {
@@ -184,16 +196,27 @@ class TelegramChartImageRenderer
             if ($entryLabel === '') {
                 $entryLabel = $side !== '' ? 'Вход '.$side : 'Вход';
             }
-            $this->drawText($img, $fontPath, self::FONT_SIZE_LABEL, $xMid + 12, $y + 4, $entryColor, mb_substr($entryLabel, 0, 40));
+            $this->drawText($img, $fontPath, $fontLabel, $xMid + 12, $y + 4, $entryColor, mb_substr($entryLabel, 0, 40));
         }
 
-        $dir = storage_path('app/telegram/charts');
+        $dir = storage_path('app/card-charts/tmp');
         File::ensureDirectoryExists($dir);
+        if (! is_writable($dir)) {
+            @chmod($dir, 0777);
+        }
         $path = $dir.'/'.Str::uuid()->toString().'.png';
-        $ok = imagepng($img, $path);
+        try {
+            $ok = @imagepng($img, $path);
+        } catch (\Throwable) {
+            $ok = false;
+        }
         imagedestroy($img);
 
-        return $ok ? $path : null;
+        if (! $ok || ! is_readable($path)) {
+            return null;
+        }
+
+        return $path;
     }
 
     /**
@@ -225,13 +248,11 @@ class TelegramChartImageRenderer
         imagestring($img, 2, max(0, $rightX - strlen($fallback) * 6), max(0, $yBaseline - 10), $fallback, $color);
     }
 
-    /** Разносим подписи по вертикали, чтобы не накладывались.
-     * @param  array<int, int>  $lanes
-     */
-    private function laneY(array &$lanes, int $y, int $step): int
+    /** @param  array<int, int>  $lanes  */
+    private function laneY(array &$lanes, int $y, int $step, int $imageHeight = self::HEIGHT): int
     {
         $bucket = (int) round($y / $step);
-        $top = max(2, min(self::HEIGHT - 14, $y - 6));
+        $top = max(2, min($imageHeight - 14, $y - 6));
         if (isset($lanes[$bucket]) && abs($lanes[$bucket] - $top) < $step - 2) {
             $top = max(2, $top - $step);
         }

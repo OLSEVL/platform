@@ -50,6 +50,9 @@ Route::middleware('auth')->group(function () {
         Route::get('/{bot}/indicators/smc-flow', [BotChartIndicatorController::class, 'editSmcFlow'])->name('indicators.smc-flow.edit');
         Route::put('/{bot}/indicators/smc-flow', [BotChartIndicatorController::class, 'updateSmcFlow'])->name('indicators.smc-flow.update');
         Route::get('/{bot}/activity', [BotController::class, 'activity'])->name('activity');
+        Route::get('/{bot}/cards', [BotController::class, 'cards'])->name('cards');
+        Route::get('/{bot}/cards/data', [BotController::class, 'cardsData'])->name('cards.data');
+        Route::get('/{bot}/cards/{trade}/chart', [BotController::class, 'cardsChart'])->name('cards.chart');
         Route::get('/{bot}/logs', [BotController::class, 'logs'])->name('logs');
         Route::get('/{bot}/settings', [BotController::class, 'settings'])->name('settings');
         Route::put('/{bot}/settings', [BotController::class, 'updateSettings'])->name('settings.update');
@@ -57,6 +60,8 @@ Route::middleware('auth')->group(function () {
         Route::post('/{bot}/telegram/discover-chat', [BotController::class, 'telegramDiscoverChat'])->name('telegram.discover-chat');
         Route::get('/{bot}/telegram/analyst-status', [BotController::class, 'telegramAnalystStatus'])->name('telegram.analyst-status');
         Route::post('/{bot}/telegram/analyst-restart', [BotController::class, 'telegramAnalystRestart'])->name('telegram.analyst-restart');
+        Route::get('/{bot}/telegram/strong-level-status', [BotController::class, 'telegramStrongLevelStatus'])->name('telegram.strong-level-status');
+        Route::post('/{bot}/telegram/strong-level-restart', [BotController::class, 'telegramStrongLevelRestart'])->name('telegram.strong-level-restart');
         Route::post('/{bot}/cleanup-recent', [BotController::class, 'cleanupRecent'])->name('cleanup-recent');
         Route::get('/{bot}', [BotController::class, 'show'])->name('show');
     });

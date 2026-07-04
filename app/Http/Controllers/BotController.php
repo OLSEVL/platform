@@ -9,6 +9,7 @@ use App\Models\BotTrade;
 use App\Models\IndicatorSetting;
 use App\Models\PocketInstrument;
 use App\Services\Bots\BotEngineService;
+use App\Services\Bots\Levels\StrongLevelCardPresenter;
 use App\Services\Bots\OpenRouterClient;
 use App\Services\CandleService;
 use App\Services\CandleStructureZoneDetector;
@@ -16,12 +17,15 @@ use App\Services\DataCleanupService;
 use App\Services\Indicators\LiquiditySwingsIndicatorService;
 use App\Services\Indicators\PriceActionDgtIndicatorService;
 use App\Services\Indicators\SmcFlowIndicatorService;
+use App\Services\Telegram\StrongLevelTelegramLlmButton;
+use App\Services\Telegram\StrongLevelTelegramProcessManager;
 use App\Services\Telegram\TelegramAlertService;
 use App\Support\BotScanProgress;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Http\Response;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
@@ -344,6 +348,116 @@ class BotController extends Controller
         ]);
     }
 
+    /**
+     * Сетка карточек открытых сделок Strong Level (poll + модалка с анализом).
+     */
+    public function cards(Bot $bot): View
+    {
+        $this->ensureBotOwner($bot);
+        abort_unless($bot->type === 'strong_level', 404);
+
+        return view('bots.cards', ['bot' => $bot]);
+    }
+
+    /**
+     * JSON для live-обновления карточек: только open-сделки с неистёкшей экспирацией.
+     */
+    public function cardsData(Bot $bot, StrongLevelCardPresenter $presenter): JsonResponse
+    {
+        $this->ensureBotOwner($bot);
+        abort_unless($bot->type === 'strong_level', 404);
+
+        $now = now();
+
+        $trades = $bot->trades()
+            ->where('status', BotTrade::STATUS_OPEN)
+            ->where('expiry_time', '>', $now)
+            ->with('signal')
+            ->orderByDesc('created_at')
+            ->limit(50)
+            ->get();
+
+        $instruments = $trades->pluck('instrument')->unique()->values()->all();
+        $payouts = PocketInstrument::query()
+            ->whereIn('instrument', $instruments)
+            ->pluck('current_payout', 'instrument');
+
+        $priceCache = [];
+        $cards = $trades->map(function (BotTrade $trade) use ($presenter, $payouts, &$priceCache, $bot, $now) {
+            $instrument = (string) $trade->instrument;
+            if (! array_key_exists($instrument, $priceCache)) {
+                $priceCache[$instrument] = $presenter->currentPriceForInstrument($instrument);
+            }
+            $payout = $payouts->get($instrument);
+            $currentPayout = $payout !== null ? (float) $payout : null;
+
+            $payload = $presenter->cardPayload($trade, $priceCache[$instrument], $currentPayout, $now);
+            $payload = array_merge($payload, $presenter->chartUrlsForTrade($bot, $trade));
+            try {
+                $payload['chart_thumb_data_uri'] = $presenter->chartThumbDataUri($trade);
+            } catch (\Throwable $e) {
+                Log::warning('cards_chart_thumb_failed', [
+                    'trade_id' => $trade->id,
+                    'instrument' => $trade->instrument,
+                    'error' => $e->getMessage(),
+                ]);
+                $payload['chart_thumb_data_uri'] = null;
+            }
+            $payload['show_url'] = route('bots.show', ['bot' => $bot->id, 'trade_id' => $trade->id], absolute: false);
+
+            return $payload;
+        })->values();
+
+        return response()->json([
+            'bot_id' => $bot->id,
+            'bot_name' => $bot->name,
+            'count' => $cards->count(),
+            'cards' => $cards,
+            'server_time' => $now->toIso8601String(),
+        ])->header('Cache-Control', 'no-store, no-cache, must-revalidate');
+    }
+
+    /**
+     * PNG-график для модалки карточки (тот же рендер, что в Telegram-алерте Strong Level).
+     */
+    public function cardsChart(Bot $bot, BotTrade $trade, Request $request, StrongLevelCardPresenter $presenter): Response
+    {
+        $this->ensureBotOwner($bot);
+        abort_unless($bot->type === 'strong_level', 404);
+        abort_unless((int) $trade->bot_id === (int) $bot->id, 404);
+
+        $timeframe = (int) $request->query('tf', 1);
+        if (! in_array($timeframe, [1, 15], true)) {
+            abort(400, 'invalid_timeframe');
+        }
+
+        $size = (string) $request->query('size', 'full');
+        if (! in_array($size, ['full', 'thumb'], true)) {
+            $size = 'full';
+        }
+
+        try {
+            $pngContents = $presenter->chartPngContents($trade, $timeframe, $size);
+        } catch (\Throwable $e) {
+            Log::warning('cards_chart_failed', [
+                'trade_id' => $trade->id,
+                'tf' => $timeframe,
+                'size' => $size,
+                'error' => $e->getMessage(),
+            ]);
+            abort(404, 'chart_unavailable');
+        }
+
+        if ($pngContents === null || $pngContents === '') {
+            abort(404, 'chart_unavailable');
+        }
+
+        return response($pngContents, 200, [
+            'Content-Type' => 'image/png',
+            'Cache-Control' => 'private, max-age=30',
+        ]);
+    }
+
     public function settings(Bot $bot, OpenRouterClient $openRouterClient): View
     {
         $this->ensureBotOwner($bot);
@@ -356,6 +470,13 @@ class BotController extends Controller
         return view('bots.settings', [
             'bot' => $bot,
             'openrouterModels' => $openrouterModels,
+            'chartAnalystBots' => $bot->type === 'strong_level'
+                ? Bot::query()
+                    ->where('user_id', $bot->user_id)
+                    ->where('type', 'openrouter_llm_analyst')
+                    ->orderBy('id')
+                    ->get(['id', 'name', 'is_active'])
+                : collect(),
         ]);
     }
 
@@ -518,12 +639,24 @@ class BotController extends Controller
                 'cluster_atr_mult_m5' => ['required', 'numeric', 'min:0.05', 'max:1'],
                 'touch_atr_mult_m1' => ['required', 'numeric', 'min:0.05', 'max:1.5'],
                 'bounce_min_wick_ratio_m5' => ['required', 'numeric', 'min:0.15', 'max:0.8'],
+                'h1_flat_strength_extra' => ['required', 'numeric', 'min:0', 'max:15'],
                 'expiry_sec_bounce' => ['required', 'integer', 'min:120', 'max:600'],
                 'expiry_sec_breakout' => ['required', 'integer', 'min:120', 'max:600'],
                 'm5_take' => ['required', 'integer', 'min:20', 'max:300'],
                 'm15_take' => ['required', 'integer', 'min:20', 'max:300'],
                 'h1_take' => ['required', 'integer', 'min:10', 'max:200'],
+                'telegram_enabled' => ['sometimes', 'boolean'],
+                'telegram_bot_token' => ['nullable', 'string', 'max:128'],
+                'telegram_chat_id' => ['nullable', 'string', 'max:64'],
+                'telegram_notify_on' => ['required', 'string', Rule::in(['signal_trade', 'off'])],
+                'telegram_alert_format' => ['required', 'string', Rule::in(['brief', 'detailed', 'card'])],
+                'telegram_send_chart' => ['required', 'string', Rule::in(['1', '0'])],
+                'telegram_analyst_llm_enabled' => ['sometimes', 'boolean'],
+                'telegram_analyst_bot_id' => ['nullable', 'integer', 'min:1'],
+                'telegram_analyst_llm_question' => ['nullable', 'string', 'max:500'],
             ]);
+            $existingToken = trim((string) (($bot->config ?? [])['telegram_bot_token'] ?? ''));
+            $tokenInput = trim((string) ($extra['telegram_bot_token'] ?? ''));
             $config = array_merge($bot->config ?? [], [
                 'count' => (int) $extra['count'],
                 'min_closed_bars' => (int) $extra['min_closed_bars'],
@@ -536,14 +669,29 @@ class BotController extends Controller
                 'cluster_atr_mult_m5' => (float) $extra['cluster_atr_mult_m5'],
                 'touch_atr_mult_m1' => (float) $extra['touch_atr_mult_m1'],
                 'bounce_min_wick_ratio_m5' => (float) $extra['bounce_min_wick_ratio_m5'],
+                'h1_flat_strength_extra' => (float) $extra['h1_flat_strength_extra'],
                 'expiry_sec_bounce' => (int) $extra['expiry_sec_bounce'],
                 'expiry_sec_breakout' => (int) $extra['expiry_sec_breakout'],
                 'm5_take' => (int) $extra['m5_take'],
                 'm15_take' => (int) $extra['m15_take'],
                 'h1_take' => (int) $extra['h1_take'],
                 'require_h1_alignment' => $request->boolean('require_h1_alignment'),
+                'bounce_require_m1_confirm' => $request->boolean('bounce_require_m1_confirm'),
                 'breakout_require_retest' => $request->boolean('breakout_require_retest'),
                 'breakout_vol_above_sma' => $request->boolean('breakout_vol_above_sma'),
+                'telegram_enabled' => $request->boolean('telegram_enabled'),
+                'telegram_bot_token' => $tokenInput !== '' ? $tokenInput : $existingToken,
+                'telegram_chat_id' => trim((string) ($extra['telegram_chat_id'] ?? '')),
+                'telegram_notify_on' => (string) $extra['telegram_notify_on'],
+                'telegram_alert_format' => (string) $extra['telegram_alert_format'],
+                'telegram_send_chart' => ($extra['telegram_send_chart'] ?? '1') === '1',
+                'telegram_analyst_llm_enabled' => $request->boolean('telegram_analyst_llm_enabled'),
+                'telegram_analyst_bot_id' => ! empty($extra['telegram_analyst_bot_id'])
+                    ? (int) $extra['telegram_analyst_bot_id']
+                    : null,
+                'telegram_analyst_llm_question' => StrongLevelTelegramLlmButton::llmQuestionFromConfig([
+                    'telegram_analyst_llm_question' => $extra['telegram_analyst_llm_question'] ?? null,
+                ]),
                 'version' => 'strong_level_v1',
             ]);
         } elseif ($bot->type === 'openrouter_llm') {
@@ -685,12 +833,12 @@ class BotController extends Controller
     }
 
     /**
-     * Тестовое сообщение в Telegram из настроек бота strong_trend_telegram.
+     * Тестовое сообщение в Telegram из настроек бота (strong_trend_telegram, strong_level, analyst).
      */
     public function telegramTest(Bot $bot, TelegramAlertService $telegram): JsonResponse
     {
         $this->ensureBotOwner($bot);
-        if (! in_array($bot->type, ['strong_trend_telegram', 'openrouter_llm_analyst'], true)) {
+        if (! in_array($bot->type, ['strong_trend_telegram', 'strong_level', 'openrouter_llm_analyst'], true)) {
             return response()->json(['ok' => false, 'error' => 'unsupported_bot_type'], 422);
         }
 
@@ -705,7 +853,7 @@ class BotController extends Controller
     public function telegramDiscoverChat(Bot $bot, TelegramAlertService $telegram): JsonResponse
     {
         $this->ensureBotOwner($bot);
-        if (! in_array($bot->type, ['strong_trend_telegram', 'openrouter_llm_analyst'], true)) {
+        if (! in_array($bot->type, ['strong_trend_telegram', 'strong_level', 'openrouter_llm_analyst'], true)) {
             return response()->json(['ok' => false, 'error' => 'unsupported_bot_type'], 422);
         }
 
@@ -725,11 +873,16 @@ class BotController extends Controller
         }
 
         $chats = $result['chats'] ?? [];
+        $botUsernameHint = match ($bot->type) {
+            'strong_level' => '@strong_level_bot',
+            'openrouter_llm_analyst' => '@chart_analyct_smc_flow_bot',
+            default => '@trend1123_bot',
+        };
         if ($chats === []) {
             return response()->json([
                 'ok' => true,
                 'chats' => [],
-                'hint' => 'Список пуст. Откройте @trend1123_bot в Telegram, нажмите Start (/start) и повторите.',
+                'hint' => 'Список пуст. Откройте '.$botUsernameHint.' в Telegram, нажмите Start (/start) и повторите.',
             ]);
         }
 
@@ -759,6 +912,34 @@ class BotController extends Controller
     {
         $this->ensureBotOwner($bot);
         if ($bot->type !== 'openrouter_llm_analyst') {
+            return response()->json(['ok' => false, 'error' => 'unsupported_bot_type'], 422);
+        }
+
+        $result = $processes->restart($bot);
+
+        return response()->json($result, ($result['ok'] ?? false) ? 200 : 422);
+    }
+
+    /**
+     * Статус poll Strong Level + queue telegram-analyst.
+     */
+    public function telegramStrongLevelStatus(Bot $bot, StrongLevelTelegramProcessManager $processes): JsonResponse
+    {
+        $this->ensureBotOwner($bot);
+        if ($bot->type !== 'strong_level') {
+            return response()->json(['ok' => false, 'error' => 'unsupported_bot_type'], 422);
+        }
+
+        return response()->json($processes->status($bot->id));
+    }
+
+    /**
+     * Перезапуск poll Strong Level и queue worker Chart Analyst.
+     */
+    public function telegramStrongLevelRestart(Bot $bot, StrongLevelTelegramProcessManager $processes): JsonResponse
+    {
+        $this->ensureBotOwner($bot);
+        if ($bot->type !== 'strong_level') {
             return response()->json(['ok' => false, 'error' => 'unsupported_bot_type'], 422);
         }
 
