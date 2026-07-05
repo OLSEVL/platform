@@ -155,6 +155,9 @@ class MirrorQueueDashboardService
                 'pocket_order_id' => $meta['pocket_order_id'] ?? null,
                 'mirror_is_demo' => isset($meta['mirror_is_demo']) ? (bool) $meta['mirror_is_demo'] : null,
                 'mirror_error' => isset($meta['mirror_error']) ? mb_substr((string) $meta['mirror_error'], 0, 300) : null,
+                'mirror_proxy_host' => isset($meta['mirror_proxy_host']) ? (string) $meta['mirror_proxy_host'] : null,
+                'mirror_proxy_url' => isset($meta['mirror_proxy_url']) ? (string) $meta['mirror_proxy_url'] : null,
+                'mirror_proxy_direct' => (bool) ($meta['mirror_proxy_direct'] ?? false),
                 'mirrored_at' => $meta['mirrored_at'] ?? null,
                 'confirmed' => ($meta['mirror_proxy_response']['confirmed'] ?? null),
             ];

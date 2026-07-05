@@ -34,6 +34,7 @@ class ProfileTradingTest extends TestCase
                 'order_amounts' => '5.5, 10, 20',
                 'is_demo' => '1',
                 'mirror_trades_enabled' => '1',
+                'mirror_wait_previous_settled' => '1',
             ])
             ->assertRedirect(route('profile.trading.edit'))
             ->assertSessionHas('status');
@@ -51,6 +52,7 @@ class ProfileTradingTest extends TestCase
         $this->assertEquals(5.5, $settings->order_amount);
         $this->assertSame([5.5, 10.0, 20.0], $settings->orderAmountsList());
         $this->assertSame(0, $settings->martingale_step);
+        $this->assertTrue($settings->mirror_wait_previous_settled);
         $this->assertStringContainsString('42["auth"', (string) $settings->pocket_ssid);
         $this->assertTrue($settings->canMirrorTrades());
     }

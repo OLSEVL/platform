@@ -108,6 +108,19 @@
                         Сбросить на первую сумму
                     </button>
                 </div>
+                <label class="flex items-start gap-2 text-sm text-zinc-200 cursor-pointer sm:col-span-2">
+                    <input type="hidden" name="mirror_wait_previous_settled" value="0">
+                    <input type="checkbox" name="mirror_wait_previous_settled" value="1"
+                        class="mt-0.5 rounded border-zinc-600 bg-zinc-950 text-blue-600 focus:ring-blue-500"
+                        @checked(old('mirror_wait_previous_settled', $settings->mirror_wait_previous_settled))>
+                    <span>
+                        <span class="font-medium">Одна сделка на PO</span>
+                        <span class="mt-0.5 block text-[11px] font-normal text-zinc-500">
+                            Перед новым ордером платформа спрашивает Pocket Option (активные сделки через proxy).
+                            Пока на PO есть незавершённая сделка — сигнал пропускается (без отложенного входа).
+                        </span>
+                    </span>
+                </label>
             </div>
             <div class="space-y-3 pt-2">
                 <label class="flex items-center gap-2 text-sm text-zinc-200 cursor-pointer">

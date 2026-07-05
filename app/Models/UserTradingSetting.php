@@ -16,6 +16,7 @@ class UserTradingSetting extends Model
         'order_amounts',
         'martingale_step',
         'mirror_trades_enabled',
+        'mirror_wait_previous_settled',
     ];
 
     protected function casts(): array
@@ -27,6 +28,7 @@ class UserTradingSetting extends Model
             'order_amounts' => 'array',
             'martingale_step' => 'integer',
             'mirror_trades_enabled' => 'boolean',
+            'mirror_wait_previous_settled' => 'boolean',
         ];
     }
 

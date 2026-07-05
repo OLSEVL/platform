@@ -5,6 +5,8 @@ namespace App\Services\Bots;
 use App\Models\BotTrade;
 use App\Models\UserTradingSetting;
 use App\Services\PocketOptionsProxyClient;
+use App\Services\Mirror\MirrorWaitPreviousService;
+use App\Support\MirrorProxyMeta;
 use App\Support\PocketMirrorProxy;
 use App\Support\PocketSsidNormalizer;
 use Illuminate\Support\Carbon;
@@ -70,6 +72,24 @@ class BotTradeMirrorService
             return;
         }
 
+        $profileSsid = PocketSsidNormalizer::normalize((string) $settings->pocket_ssid, (bool) $settings->is_demo);
+        if ($profileSsid === null) {
+            $this->markMirror($trade, $meta, 'failed', null, 'Invalid SSID format in profile settings');
+
+            return;
+        }
+
+        $proxyUrl = PocketMirrorProxy::resolveForInstrument((string) $trade->instrument);
+        // Фиксируем, через какой endpoint шли на PO (host + маскированный URL; без пароля).
+        $meta = array_merge($meta, MirrorProxyMeta::forTradeMeta($proxyUrl));
+
+        $waitPrevious = app(MirrorWaitPreviousService::class);
+        if ($waitPrevious->shouldSkipMirror($settings, (int) $user->id, (int) $trade->id, $profileSsid, $proxyUrl)) {
+            $this->markMirror($trade, $meta, MirrorWaitPreviousService::SKIP_STATUS, null, null);
+
+            return;
+        }
+
         $durationSec = $this->resolveDurationSec($trade, $meta);
         if ($durationSec <= 0) {
             $this->markMirror($trade, $meta, 'failed', null, 'Invalid trade duration');
@@ -84,17 +104,8 @@ class BotTradeMirrorService
             return;
         }
 
-        $profileSsid = PocketSsidNormalizer::normalize((string) $settings->pocket_ssid, (bool) $settings->is_demo);
-        if ($profileSsid === null) {
-            $this->markMirror($trade, $meta, 'failed', null, 'Invalid SSID format in profile settings');
-
-            return;
-        }
-
         // Только SSID из профиля пользователя — session_token инструментов для ingest, другой кабинет PO.
         // PO с сервера часто доступен только через тот же HTTP-прокси, что и ingest.
-        $proxyUrl = PocketMirrorProxy::resolveForInstrument((string) $trade->instrument);
-
         $mirrorStarted = microtime(true);
         $meta['mirror_dispatch'] = config('services.mirror.dispatch', 'sync');
         // Мартингейл: сумма по текущему шагу цепочки (фиксируем в meta для истории).

@@ -44,7 +44,8 @@ class ProfileTradingController extends Controller
                 $proxyOk = is_array($body);
                 $endpoints = json_encode($body['endpoints'] ?? [], JSON_UNESCAPED_UNICODE);
                 $hasPlaceOrder = str_contains($endpoints, 'place-order')
-                    && str_contains($endpoints, 'test-auth');
+                    && str_contains($endpoints, 'test-auth')
+                    && str_contains($endpoints, 'active-orders');
             } catch (\Throwable) {
                 $proxyOk = false;
             }
@@ -85,6 +86,7 @@ class ProfileTradingController extends Controller
             'order_amounts' => ['required', 'string', 'max:65535'],
             'is_demo' => ['sometimes', 'boolean'],
             'mirror_trades_enabled' => ['sometimes', 'boolean'],
+            'mirror_wait_previous_settled' => ['sometimes', 'boolean'],
         ]);
 
         $settings = $this->settingsForUser($request->user()->id);
@@ -139,6 +141,7 @@ class ProfileTradingController extends Controller
         $settings->syncPrimaryOrderAmountFromList();
         $settings->is_demo = $isDemo;
         $settings->mirror_trades_enabled = $mirrorEnabled;
+        $settings->mirror_wait_previous_settled = $request->boolean('mirror_wait_previous_settled');
 
         // Сброс шага мартингейла: новый список, вкл. зеркала, смена Demo/Real.
         if ($listChanged || (! $previousMirror && $mirrorEnabled) || $isDemo !== $previousDemo) {
@@ -293,6 +296,7 @@ class ProfileTradingController extends Controller
                 'order_amounts' => [1.0],
                 'martingale_step' => 0,
                 'mirror_trades_enabled' => false,
+                'mirror_wait_previous_settled' => false,
             ]
         );
 

@@ -122,4 +122,45 @@ class PocketOptionsProxyClient
             'duration' => isset($data['duration']) ? (int) $data['duration'] : $durationSec,
         ];
     }
+
+    /**
+     * Активные (ещё не истёкшие) ордера на PO — тот же WebSocket-клиент, что и place-order.
+     *
+     * @return array{ok:bool,count:int,orders?:list<array<string,mixed>>,error?:string}
+     */
+    public function getActiveOrders(string $ssid, bool $isDemo = true, ?string $proxyUrl = null): array
+    {
+        $payload = [
+            'ssid' => $ssid,
+            'is_demo' => $isDemo,
+        ];
+        if ($proxyUrl !== null && $proxyUrl !== '') {
+            $payload['proxy_url'] = $proxyUrl;
+        }
+
+        try {
+            $response = Http::timeout(30)->post("{$this->baseUrl}/api/active-orders", $payload);
+        } catch (\Throwable $e) {
+            return ['ok' => false, 'count' => 0, 'error' => $e->getMessage()];
+        }
+
+        if (! $response->successful()) {
+            $detail = $response->json('detail') ?? $response->body();
+
+            return [
+                'ok' => false,
+                'count' => 0,
+                'error' => is_string($detail) ? $detail : json_encode($detail),
+            ];
+        }
+
+        $data = $response->json();
+
+        return [
+            'ok' => (bool) ($data['ok'] ?? false),
+            'count' => (int) ($data['count'] ?? 0),
+            'orders' => is_array($data['orders'] ?? null) ? $data['orders'] : [],
+            'error' => isset($data['error']) ? (string) $data['error'] : null,
+        ];
+    }
 }

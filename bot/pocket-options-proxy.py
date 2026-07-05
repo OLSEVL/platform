@@ -120,6 +120,11 @@ _clients: Dict[str, AsyncPocketOptionClient] = {}
 # Ingest + HTTP в одном loop: не больше 2 одновременных place-order.
 _place_order_semaphore = asyncio.Semaphore(2)
 
+# Ожидание successopenOrder / json_data после openOrder (без доп. запросов к PO).
+MIRROR_ORDER_CONFIRM_TIMEOUT_SEC = 25.0
+# Доп. grace: PO иногда отвечает с задержкой, когда ingest грузит event loop.
+MIRROR_ORDER_CONFIRM_GRACE_SEC = 5.0
+
 
 def convert_ui_asset_to_websocket(ui_asset: str) -> str:
     """Конвертирует имя актива из UI в формат WebSocket API"""
@@ -1236,8 +1241,14 @@ async def place_mirror_order(
         request_id=request_id,
     )
     await client._send_order(order)
-    # 25 с достаточно при прогретом WS; 60 с блокировало sync-зеркало и копило очередь.
-    result = await client._wait_for_order_result(request_id, order, timeout=25.0)
+    result = await client._wait_for_order_result(
+        request_id, order, timeout=MIRROR_ORDER_CONFIRM_TIMEOUT_SEC
+    )
+    if not _mirror_order_confirmed(result):
+        # Ещё несколько секунд ждём ответ PO в том же WS — без active-orders и без нового openOrder.
+        result = await client._wait_for_order_result(
+            request_id, order, timeout=MIRROR_ORDER_CONFIRM_GRACE_SEC
+        )
     if not _mirror_order_confirmed(result):
         raise HTTPException(
             status_code=502,
@@ -1268,6 +1279,51 @@ async def test_auth_api(payload: Dict[str, Any] = Body(...)):
         return {"ok": False, "error": exc.detail}
     except Exception as exc:
         return {"ok": False, "error": str(exc)}
+
+
+@app.post("/api/active-orders")
+async def active_orders_api(payload: Dict[str, Any] = Body(...)):
+    """
+    Активные ордера на PO (ещё не истекли по таймеру сделки).
+    Использует тот же persistent WebSocket-клиент, что и place-order.
+    """
+    ssid = str(payload.get("ssid") or "").strip()
+    is_demo = bool(payload.get("is_demo", True))
+    proxy_url = payload.get("proxy_url")
+    if proxy_url is not None:
+        proxy_url = str(proxy_url).strip() or None
+
+    if not ssid:
+        raise HTTPException(status_code=400, detail="Required: ssid")
+
+    try:
+        client = await get_or_create_client_by_ssid(ssid, is_demo=is_demo, proxy_url=proxy_url)
+        raw_orders = await client.get_active_orders()
+        now = datetime.now()
+        active: List[Dict[str, Any]] = []
+        for order in raw_orders:
+            expires_at = order.expires_at
+            if expires_at <= now:
+                continue
+            direction = order.direction
+            direction_str = direction.value if hasattr(direction, "value") else str(direction)
+            active.append(
+                {
+                    "order_id": str(order.order_id),
+                    "asset": str(order.asset),
+                    "amount": float(order.amount),
+                    "direction": direction_str,
+                    "duration": int(order.duration),
+                    "expires_at": expires_at.isoformat(),
+                    "seconds_remaining": max(0, int((expires_at - now).total_seconds())),
+                }
+            )
+        return JSONResponse(content={"ok": True, "count": len(active), "orders": active})
+    except HTTPException:
+        raise
+    except Exception as exc:
+        print(f"[ERROR] active-orders: {exc}", flush=True)
+        return JSONResponse(content={"ok": False, "count": 0, "error": str(exc)}, status_code=502)
 
 
 @app.post("/api/place-order")
@@ -1346,6 +1402,7 @@ async def root():
             "/api/candles": "GET - Получить данные свечей (может возвращать график PNG при include_chart=true и timeframe=1)",
             "/api/chart": "GET - Получить свечной график (PNG изображение)",
             "/api/test-auth": "POST - Проверить SSID (без ордера)",
+            "/api/active-orders": "POST - Активные ордера на PO (для мартингейла)",
             "/api/place-order": "POST - Разместить ордер (зеркало сделки бота)",
         }
     }
