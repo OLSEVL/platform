@@ -57,8 +57,10 @@ class TelegramAlertService
      * Алерт о сильном тренде по результату стратегии strong_trend_telegram.
      *
      * @param  array<string, mixed>  $decision
+     * @param  list<array<string, mixed>>  $m1Candles
+     * @return array{ok:bool,error?:string,message_id?:int,photo_ok?:bool,photo_error?:string}
      */
-    public function sendTrendAlert(Bot $bot, string $instrument, array $decision, ?float $payout): array
+    public function sendTrendAlert(Bot $bot, string $instrument, array $decision, ?float $payout, array $m1Candles = []): array
     {
         /** @var array<string, mixed> $cfg */
         $cfg = is_array($bot->config) ? $bot->config : [];
@@ -101,7 +103,78 @@ class TelegramAlertService
         }
         $lines[] = 'Время: '.now()->utc()->format('d.m.Y H:i').' UTC';
 
-        return $this->sendMessage($token, $chatId, implode("\n", $lines));
+        $text = implode("\n", $lines);
+
+        // Миниатюра M1: компактный PNG + зона серии + маркер последнего close (как у Strong Level, но меньше).
+        $sendChart = (bool) ($cfg['telegram_send_chart'] ?? true);
+        $photoOk = null;
+        $photoError = null;
+        if ($sendChart && $m1Candles !== [] && extension_loaded('gd')) {
+            $chartLevels = app(StrongTrendTelegramChartBuilder::class)
+                ->chartLevelsFromDecision($decision, $m1Candles);
+            $maxBars = max(24, $streakLen + 12);
+            $pngPath = app(TelegramChartImageRenderer::class)->render($instrument, $m1Candles, $chartLevels, [
+                'width' => 640,
+                'height' => 360,
+                'max_bars' => $maxBars,
+                'margin_left' => 56,
+                'margin_top' => 32,
+                'margin_bottom' => 28,
+                'font_size_title' => 10,
+                'font_size_axis' => 8,
+                'font_size_label' => 8,
+            ]);
+            if ($pngPath !== null) {
+                $side = strtoupper((string) ($decision['side'] ?? ''));
+                $caption = $icon.' <b>'.htmlspecialchars($instrument, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8').'</b>';
+                if ($side !== '') {
+                    $caption .= ' · '.$side;
+                }
+                $caption .= ' · M1';
+                $photoResult = $this->sendPhoto($token, $chatId, $pngPath, $caption);
+                $photoOk = (bool) ($photoResult['ok'] ?? false);
+                if (! $photoOk) {
+                    $photoError = (string) ($photoResult['error'] ?? 'telegram_photo_failed');
+                    Log::warning('strong_trend_telegram_photo_failed', [
+                        'bot_id' => $bot->id,
+                        'instrument' => $instrument,
+                        'error' => $photoError,
+                    ]);
+                }
+                @unlink($pngPath);
+            } else {
+                $photoOk = false;
+                $photoError = 'chart_render_failed';
+                Log::warning('strong_trend_telegram_photo_skipped', [
+                    'bot_id' => $bot->id,
+                    'instrument' => $instrument,
+                    'reason' => 'render_returned_null',
+                ]);
+            }
+        } elseif ($sendChart && ! extension_loaded('gd')) {
+            $photoOk = false;
+            $photoError = 'gd_extension_missing';
+        }
+
+        $llmMarkup = StrongLevelTelegramLlmButton::inlineKeyboardMarkup($cfg, $bot, $instrument);
+        if ($llmMarkup !== null) {
+            app(StrongLevelTelegramProcessManager::class)->ensurePollRunning($bot->id);
+        }
+
+        $messageResult = $llmMarkup !== null
+            ? $this->sendMessageWithMarkup($token, $chatId, $text, $llmMarkup)
+            : $this->sendMessage($token, $chatId, $text);
+        if (! ($messageResult['ok'] ?? false)) {
+            return array_merge($messageResult, array_filter([
+                'photo_ok' => $photoOk,
+                'photo_error' => $photoError,
+            ]));
+        }
+
+        return array_merge($messageResult, array_filter([
+            'photo_ok' => $photoOk,
+            'photo_error' => $photoError,
+        ]));
     }
 
     /**

@@ -7,7 +7,7 @@ use App\Models\Bot;
 use Illuminate\Support\Facades\Log;
 
 /**
- * Обработчик callback_query для Strong Level: кнопка LLM-анализа → job Chart Analyst.
+ * Обработчик callback_query для Strong Level / Strong Trend Telegram: кнопка LLM → Chart Analyst.
  */
 class StrongLevelTelegramHandler
 {
@@ -18,7 +18,7 @@ class StrongLevelTelegramHandler
 
     public function handleUpdate(Bot $bot, array $update): void
     {
-        if ($bot->type !== 'strong_level') {
+        if (! StrongLevelTelegramLlmButton::supportsBotType($bot->type)) {
             return;
         }
 
@@ -49,15 +49,16 @@ class StrongLevelTelegramHandler
         $chatId = isset($chat['id']) ? (string) $chat['id'] : '';
 
         if ($chatId === '' || ! $this->isChatAllowed($cfg, $chatId)) {
-            Log::warning('strong_level_telegram_callback_chat_denied', [
+            Log::warning('telegram_llm_callback_chat_denied', [
                 'bot_id' => $bot->id,
                 'chat_id' => $chatId,
                 'allowed' => trim((string) ($cfg['telegram_chat_id'] ?? '')),
                 'data' => $data,
             ]);
             if ($callbackId !== '') {
+                $botLabel = $bot->type === 'strong_trend_telegram' ? 'Strong Trend Telegram' : 'Strong Level';
                 $hint = trim((string) ($cfg['telegram_chat_id'] ?? '')) !== ''
-                    ? 'Чат не совпадает с chat_id в настройках Strong Level'
+                    ? 'Чат не совпадает с chat_id в настройках '.$botLabel
                     : 'Доступ запрещён';
                 $this->telegram->answerCallbackQuery($token, $callbackId, $hint);
             }
@@ -67,7 +68,7 @@ class StrongLevelTelegramHandler
 
         $parsed = StrongLevelTelegramLlmButton::parseCallbackData($data);
         if ($parsed === null) {
-            Log::warning('strong_level_telegram_callback_unknown', ['bot_id' => $bot->id, 'data' => $data]);
+            Log::warning('telegram_llm_callback_unknown', ['bot_id' => $bot->id, 'data' => $data]);
             if ($callbackId !== '') {
                 $this->telegram->answerCallbackQuery($token, $callbackId, 'Неизвестная кнопка');
             }
@@ -82,10 +83,13 @@ class StrongLevelTelegramHandler
             || $analyst->user_id !== $bot->user_id
         ) {
             $this->telegram->answerCallbackQuery($token, $callbackId, 'Chart Analyst не найден');
+            $settingsHint = $bot->type === 'strong_trend_telegram'
+                ? 'Strong Trend Telegram → Telegram'
+                : 'Strong Level → Telegram';
             $this->telegram->sendMessage(
                 $token,
                 $chatId,
-                '❌ Бот Chart Analyst не настроен. Укажите его в настройках Strong Level → Telegram.'
+                '❌ Бот Chart Analyst не настроен. Укажите его в настройках '.$settingsHint.'.'
             );
 
             return;
@@ -116,8 +120,8 @@ class StrongLevelTelegramHandler
         try {
             RunTelegramAnalystAnalysisJob::dispatch($analyst->id, $chatId, $instrument, $question);
         } catch (\Throwable $e) {
-            Log::error('strong_level_llm_dispatch_failed', [
-                'strong_level_bot_id' => $bot->id,
+            Log::error('telegram_llm_dispatch_failed', [
+                'source_bot_id' => $bot->id,
                 'analyst_bot_id' => $analyst->id,
                 'instrument' => $instrument,
                 'error' => $e->getMessage(),

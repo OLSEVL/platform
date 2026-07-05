@@ -8,6 +8,7 @@ use App\Models\User;
 use App\Services\Telegram\StrongLevelTelegramHandler;
 use App\Services\Telegram\StrongLevelTelegramLlmButton;
 use App\Services\Telegram\StrongLevelTelegramChartBuilder;
+use App\Services\Telegram\StrongTrendTelegramChartBuilder;
 use App\Services\Telegram\TelegramAlertService;
 use App\Services\Telegram\TelegramAnalystInstrumentService;
 use App\Services\Telegram\TelegramAnalystReplyKeyboard;
@@ -196,6 +197,40 @@ class TelegramAnalystServicesTest extends TestCase
         $this->assertSame('CALL', $chart['entry']['side']);
     }
 
+    public function test_strong_trend_chart_levels_builder(): void
+    {
+        $builder = app(StrongTrendTelegramChartBuilder::class);
+        $candles = [];
+        $price = 1.1;
+        for ($i = 0; $i < 10; $i++) {
+            $open = $price;
+            $close = $price + 0.00015;
+            $candles[] = [
+                'open' => $open,
+                'high' => $close + 0.00005,
+                'low' => $open - 0.00003,
+                'close' => $close,
+            ];
+            $price = $close;
+        }
+
+        $decision = [
+            'side' => 'CALL',
+            'trend' => 'up',
+            'features' => [
+                'streak_len' => 6,
+                'trend' => 'up',
+            ],
+        ];
+
+        $chart = $builder->chartLevelsFromDecision($decision, $candles);
+        $this->assertCount(1, $chart['levels']);
+        $this->assertStringContainsString('Старт 6×↑', (string) $chart['levels'][0]['label']);
+        $this->assertNotEmpty($chart['zones']);
+        $this->assertSame('CALL', $chart['entry']['side']);
+        $this->assertStringContainsString('6×↑', (string) $chart['entry']['label']);
+    }
+
     public function test_chart_renderer_produces_png_when_gd_available(): void
     {
         if (! extension_loaded('gd')) {
@@ -260,6 +295,37 @@ class TelegramAnalystServicesTest extends TestCase
         $this->assertNotNull($parsed);
         $this->assertSame($analyst->id, $parsed['analyst_bot_id']);
         $this->assertSame('EURUSD_otc', $parsed['instrument']);
+    }
+
+    public function test_strong_trend_telegram_llm_button_callback_markup(): void
+    {
+        $user = User::factory()->create();
+        $analyst = Bot::query()->create([
+            'user_id' => $user->id,
+            'name' => 'Chart Analyst',
+            'type' => 'openrouter_llm_analyst',
+            'is_active' => true,
+            'config' => [],
+        ]);
+        $trend = Bot::query()->create([
+            'user_id' => $user->id,
+            'name' => 'Strong Trend Telegram',
+            'type' => 'strong_trend_telegram',
+            'is_active' => true,
+            'config' => ['telegram_analyst_llm_enabled' => true],
+        ]);
+
+        $markup = StrongLevelTelegramLlmButton::inlineKeyboardMarkup(
+            $trend->config,
+            $trend,
+            'GBPUSD_otc',
+        );
+
+        $this->assertNotNull($markup);
+        $parsed = StrongLevelTelegramLlmButton::parseCallbackData($markup['inline_keyboard'][0][0]['callback_data']);
+        $this->assertNotNull($parsed);
+        $this->assertSame($analyst->id, $parsed['analyst_bot_id']);
+        $this->assertSame('GBPUSD_otc', $parsed['instrument']);
     }
 
     public function test_resolve_active_instrument_ignores_analyst_filters(): void
@@ -341,6 +407,57 @@ class TelegramAnalystServicesTest extends TestCase
                 && $job->chatId === '12345'
                 && $job->instrument === 'EURUSD_otc'
                 && $job->userQuestion === 'Кастомный вопрос для LLM';
+        });
+    }
+
+    public function test_strong_trend_handler_dispatches_analyst_job_on_callback(): void
+    {
+        Queue::fake();
+
+        PocketInstrument::query()->create([
+            'instrument' => 'EURUSD_otc',
+            'display_name' => 'EUR/USD OTC',
+            'is_active' => true,
+            'current_payout' => 90,
+            'priority' => 1,
+        ]);
+
+        $user = User::factory()->create();
+        $analyst = Bot::query()->create([
+            'user_id' => $user->id,
+            'name' => 'Chart Analyst',
+            'type' => 'openrouter_llm_analyst',
+            'is_active' => true,
+            'config' => [
+                'telegram_bot_token' => 'analyst-token',
+            ],
+        ]);
+        $trend = Bot::query()->create([
+            'user_id' => $user->id,
+            'name' => 'Strong Trend Telegram',
+            'type' => 'strong_trend_telegram',
+            'is_active' => true,
+            'config' => [
+                'telegram_bot_token' => 'trend-token',
+                'telegram_chat_id' => '99999',
+            ],
+        ]);
+
+        $callbackData = StrongLevelTelegramLlmButton::encodeCallbackData($analyst->id, 'EURUSD_otc');
+        $this->assertNotNull($callbackData);
+
+        app(StrongLevelTelegramHandler::class)->handleUpdate($trend, [
+            'callback_query' => [
+                'id' => 'cb2',
+                'data' => $callbackData,
+                'message' => ['chat' => ['id' => 99999]],
+            ],
+        ]);
+
+        Queue::assertPushed(\App\Jobs\RunTelegramAnalystAnalysisJob::class, function ($job) use ($analyst): bool {
+            return $job->botId === $analyst->id
+                && $job->chatId === '99999'
+                && $job->instrument === 'EURUSD_otc';
         });
     }
 }

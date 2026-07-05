@@ -1502,6 +1502,58 @@ PROMPT;
                     </label>
                     <div class="grid gap-4 sm:grid-cols-2">
                         <div class="space-y-1 sm:col-span-2">
+                            <label class="flex items-start gap-2">
+                                <input type="checkbox" name="telegram_analyst_llm_enabled" id="telegram_analyst_llm_enabled_trend" value="1"
+                                    class="mt-0.5 rounded border-zinc-600 bg-zinc-800 text-blue-500"
+                                    @checked(old('telegram_analyst_llm_enabled', $cfg['telegram_analyst_llm_enabled'] ?? true))>
+                                <span>
+                                    <span class="text-sm font-medium text-zinc-300">Кнопка «{{ \App\Services\Telegram\StrongLevelTelegramLlmButton::BUTTON_LABEL }}»</span>
+                                    <span class="mt-0.5 block text-[11px] font-normal text-zinc-500">Inline-кнопка под алертом: callback в @trend1123_bot → LLM-анализ Chart Analyst в этом же чате. Нужен poll (кнопка ниже).</span>
+                                </span>
+                            </label>
+                            @error('telegram_analyst_llm_enabled')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                        </div>
+                        <div class="space-y-1">
+                            <label for="telegram_analyst_bot_id_trend" class="block text-xs font-medium text-zinc-400">Бот Chart Analyst</label>
+                            @php $selectedAnalystIdTrend = old('telegram_analyst_bot_id', $cfg['telegram_analyst_bot_id'] ?? ''); @endphp
+                            <select name="telegram_analyst_bot_id" id="telegram_analyst_bot_id_trend"
+                                class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                                <option value="">Авто (первый Chart Analyst)</option>
+                                @foreach ($chartAnalystBots ?? [] as $analystBot)
+                                    <option value="{{ $analystBot->id }}" @selected((string) $selectedAnalystIdTrend === (string) $analystBot->id)>
+                                        #{{ $analystBot->id }} — {{ $analystBot->name }}@if(!$analystBot->is_active) (выкл.)@endif
+                                    </option>
+                                @endforeach
+                            </select>
+                            @error('telegram_analyst_bot_id')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                        </div>
+                        <div class="space-y-1 sm:col-span-2">
+                            <label for="telegram_analyst_llm_question_trend" class="block text-xs font-medium text-zinc-400">Вопрос к LLM по кнопке</label>
+                            <textarea name="telegram_analyst_llm_question" id="telegram_analyst_llm_question_trend" rows="2"
+                                class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">{{ old('telegram_analyst_llm_question', $cfg['telegram_analyst_llm_question'] ?? \App\Services\Telegram\StrongLevelTelegramLlmButton::DEFAULT_LLM_QUESTION) }}</textarea>
+                            <p class="text-[11px] text-zinc-500">Подставляется в RunTelegramAnalystAnalysisJob вместо шага «ваш вопрос».</p>
+                            @error('telegram_analyst_llm_question')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                        </div>
+                        <div class="space-y-1 sm:col-span-2">
+                            <p id="telegram-process-status-trend" class="text-xs text-zinc-500">Проверка poll…</p>
+                        </div>
+                        <div class="space-y-1 sm:col-span-2">
+                            <label for="telegram_send_chart_trend" class="block text-xs font-medium text-zinc-400">Миниатюра M1 в алерте</label>
+                            @php
+                                $telegramSendChartTrend = old('telegram_send_chart');
+                                if ($telegramSendChartTrend === null) {
+                                    $telegramSendChartTrend = ($cfg['telegram_send_chart'] ?? true) ? '1' : '0';
+                                }
+                            @endphp
+                            <select name="telegram_send_chart" id="telegram_send_chart_trend" required
+                                class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                                <option value="1" @selected((string) $telegramSendChartTrend === '1')>Текст + миниатюра M1 (PNG)</option>
+                                <option value="0" @selected((string) $telegramSendChartTrend === '0')>Только текст (без графика)</option>
+                            </select>
+                            <p class="text-[11px] text-zinc-500">PNG 640×360: последние свечи M1, зона серии, маркер последнего close. Отправляется отдельным сообщением перед текстом алерта.</p>
+                            @error('telegram_send_chart')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                        </div>
+                        <div class="space-y-1 sm:col-span-2">
                             <label for="telegram_bot_token" class="block text-xs font-medium text-zinc-400">Bot token</label>
                             <input type="password" name="telegram_bot_token" id="telegram_bot_token" autocomplete="new-password"
                                 placeholder="{{ !empty($cfg['telegram_bot_token']) ? '•••••••• (сохранён — оставьте пустым, чтобы не менять)' : '8814450509:AAF...' }}"
@@ -1527,6 +1579,10 @@ PROMPT;
                                 class="rounded border border-blue-700 bg-blue-950/50 px-3 py-2 text-xs font-medium text-blue-200 hover:bg-blue-900/50">
                                 Отправить тест
                             </button>
+                            <button type="button" id="telegram-restart-btn-trend"
+                                class="rounded border border-amber-700 bg-amber-950/40 px-3 py-2 text-xs font-medium text-amber-200 hover:bg-amber-900/50">
+                                Перезапустить poll + queue
+                            </button>
                         </div>
                     </div>
                     <p id="telegram-action-status" class="text-xs text-zinc-500"></p>
@@ -1541,16 +1597,68 @@ PROMPT;
             (function () {
                 const discoverBtn = document.getElementById('telegram-discover-btn');
                 const testBtn = document.getElementById('telegram-test-btn');
+                const restartBtn = document.getElementById('telegram-restart-btn-trend');
                 const statusEl = document.getElementById('telegram-action-status');
+                const processStatusEl = document.getElementById('telegram-process-status-trend');
                 const chatInput = document.getElementById('telegram_chat_id');
                 const csrf = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '';
                 const discoverUrl = @json(route('bots.telegram.discover-chat', $bot));
                 const testUrl = @json(route('bots.telegram.test', $bot));
+                const pollStatusUrl = @json(route('bots.telegram.strong-level-status', $bot));
+                const pollRestartUrl = @json(route('bots.telegram.strong-level-restart', $bot));
 
                 function setStatus(text, isError) {
                     if (!statusEl) return;
                     statusEl.textContent = text || '';
                     statusEl.className = 'text-xs ' + (isError ? 'text-rose-400' : 'text-emerald-300');
+                }
+
+                function renderProcessStatus(data) {
+                    if (!processStatusEl || !data) return;
+                    const poll = data.poll_running ? 'poll ✓' : 'poll ✗';
+                    const queue = data.queue_running ? 'queue ✓' : 'queue ✗';
+                    const color = data.poll_running && data.queue_running ? 'text-emerald-300' : 'text-amber-300';
+                    processStatusEl.textContent = 'Процессы: ' + poll + ', ' + queue;
+                    processStatusEl.className = 'text-xs ' + color;
+                }
+
+                async function refreshProcessStatus() {
+                    if (!processStatusEl) return;
+                    try {
+                        const res = await fetch(pollStatusUrl, { headers: { 'Accept': 'application/json' } });
+                        const data = await res.json();
+                        if (res.ok && data.ok) renderProcessStatus(data);
+                        else processStatusEl.textContent = 'Не удалось проверить процессы';
+                    } catch (e) {
+                        processStatusEl.textContent = 'Ошибка проверки процессов';
+                    }
+                }
+
+                refreshProcessStatus();
+
+                if (restartBtn) {
+                    restartBtn.addEventListener('click', async function () {
+                        setStatus('Перезапуск poll и queue worker…', false);
+                        restartBtn.disabled = true;
+                        try {
+                            const res = await fetch(pollRestartUrl, {
+                                method: 'POST',
+                                headers: { 'X-CSRF-TOKEN': csrf, 'Accept': 'application/json' },
+                            });
+                            const data = await res.json();
+                            if (!res.ok || !data.ok) {
+                                setStatus(data.error || data.message || 'Не удалось перезапустить', true);
+                                if (data.status) renderProcessStatus(data.status);
+                                return;
+                            }
+                            setStatus(data.message || 'Перезапущено', false);
+                            renderProcessStatus(data.status);
+                        } catch (e) {
+                            setStatus('Сеть: ' + e.message, true);
+                        } finally {
+                            restartBtn.disabled = false;
+                        }
+                    });
                 }
 
                 if (discoverBtn) {

@@ -9,7 +9,7 @@ use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Log;
 
 /**
- * Long polling getUpdates для Strong Level (inline-кнопка LLM-анализа).
+ * Long polling getUpdates для Strong Level / Strong Trend Telegram (inline-кнопка LLM-анализа).
  */
 class StrongLevelTelegramProcessManager
 {
@@ -55,7 +55,7 @@ class StrongLevelTelegramProcessManager
      */
     public function restart(Bot $bot): array
     {
-        if ($bot->type !== 'strong_level') {
+        if (! StrongLevelTelegramLlmButton::supportsBotType($bot->type)) {
             return ['ok' => false, 'error' => 'unsupported_bot_type'];
         }
 
@@ -86,10 +86,12 @@ class StrongLevelTelegramProcessManager
             ];
         }
 
+        $botLabel = $bot->type === 'strong_trend_telegram' ? 'Strong Trend Telegram' : 'Strong Level';
+
         return [
             'ok' => true,
             'status' => $status,
-            'message' => 'Poll Strong Level и queue telegram-analyst перезапущены.',
+            'message' => 'Poll '.$botLabel.' и queue telegram-analyst перезапущены.',
         ];
     }
 

@@ -302,7 +302,8 @@ class BotEngineService
                             $bot,
                             $instrument,
                             $decision,
-                            $payoutSnapshot
+                            $payoutSnapshot,
+                            $closed,
                         );
                         if (! ($telegramResult['ok'] ?? false)) {
                             Log::warning('strong_trend_telegram_alert_failed', [

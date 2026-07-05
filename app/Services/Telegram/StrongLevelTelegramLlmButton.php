@@ -5,10 +5,13 @@ namespace App\Services\Telegram;
 use App\Models\Bot;
 
 /**
- * Inline-кнопка «Доп. анализ SMC Flow» на алертах Strong Level (вариант A: callback_query).
+ * Inline-кнопка «Доп. анализ SMC Flow» на алертах Strong Level и Strong Trend Telegram.
  */
 class StrongLevelTelegramLlmButton
 {
+    /** @var list<string> */
+    public const SUPPORTED_BOT_TYPES = ['strong_level', 'strong_trend_telegram'];
+
     public const BUTTON_LABEL = '📊 Доп. анализ SMC Flow';
 
     public const CALLBACK_PREFIX = 'sllm:';
@@ -37,17 +40,22 @@ class StrongLevelTelegramLlmButton
         return $question !== '' ? $question : self::DEFAULT_LLM_QUESTION;
     }
 
+    public static function supportsBotType(string $type): bool
+    {
+        return in_array($type, self::SUPPORTED_BOT_TYPES, true);
+    }
+
     /**
      * Бот Chart Analyst для LLM-анализа (явный id или первый openrouter_llm_analyst пользователя).
      */
-    public static function resolveAnalystBot(Bot $strongLevelBot): ?Bot
+    public static function resolveAnalystBot(Bot $sourceBot): ?Bot
     {
-        if ($strongLevelBot->type !== 'strong_level') {
+        if (! self::supportsBotType($sourceBot->type)) {
             return null;
         }
 
         /** @var array<string, mixed> $cfg */
-        $cfg = is_array($strongLevelBot->config) ? $strongLevelBot->config : [];
+        $cfg = is_array($sourceBot->config) ? $sourceBot->config : [];
         $configuredId = (int) ($cfg['telegram_analyst_bot_id'] ?? 0);
 
         if ($configuredId > 0) {
@@ -55,14 +63,14 @@ class StrongLevelTelegramLlmButton
             if (
                 $configured
                 && $configured->type === 'openrouter_llm_analyst'
-                && $configured->user_id === $strongLevelBot->user_id
+                && $configured->user_id === $sourceBot->user_id
             ) {
                 return $configured;
             }
         }
 
         return Bot::query()
-            ->where('user_id', $strongLevelBot->user_id)
+            ->where('user_id', $sourceBot->user_id)
             ->where('type', 'openrouter_llm_analyst')
             ->orderByDesc('is_active')
             ->orderBy('id')
@@ -113,16 +121,16 @@ class StrongLevelTelegramLlmButton
     }
 
     /**
-     * @param  array<string, mixed>  $strongLevelCfg
+     * @param  array<string, mixed>  $sourceCfg
      * @return array{inline_keyboard:list<list<array{text:string,callback_data:string}>>}|null
      */
-    public static function inlineKeyboardMarkup(array $strongLevelCfg, Bot $strongLevelBot, string $instrument): ?array
+    public static function inlineKeyboardMarkup(array $sourceCfg, Bot $sourceBot, string $instrument): ?array
     {
-        if (! self::isEnabled($strongLevelCfg)) {
+        if (! self::isEnabled($sourceCfg)) {
             return null;
         }
 
-        $analyst = self::resolveAnalystBot($strongLevelBot);
+        $analyst = self::resolveAnalystBot($sourceBot);
         if ($analyst === null) {
             return null;
         }

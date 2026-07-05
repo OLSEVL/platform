@@ -823,25 +823,26 @@ Artisan::command('telegram:analyst-poll {--bot= : ID бота openrouter_llm_ana
     }
 })->purpose('Long polling Telegram для Chart Analyst (меню инструментов → анализ)');
 
-Artisan::command('telegram:strong-level-poll {--bot= : ID бота strong_level} {--timeout=30}', function (
+Artisan::command('telegram:strong-level-poll {--bot= : ID бота strong_level или strong_trend_telegram} {--timeout=30}', function (
     TelegramAlertService $telegram,
     \App\Services\Telegram\StrongLevelTelegramHandler $handler,
 ) {
+    $supportedTypes = \App\Services\Telegram\StrongLevelTelegramLlmButton::SUPPORTED_BOT_TYPES;
     $botId = (int) ($this->option('bot') ?: 0);
     if ($botId <= 0) {
-        $bot = Bot::query()->where('type', 'strong_level')->where('is_active', true)->orderBy('id')->first();
+        $bot = Bot::query()->whereIn('type', $supportedTypes)->where('is_active', true)->orderBy('id')->first();
         if ($bot === null) {
-            $bot = Bot::query()->where('type', 'strong_level')->orderBy('id')->first();
+            $bot = Bot::query()->whereIn('type', $supportedTypes)->orderBy('id')->first();
         }
         if ($bot === null) {
-            $this->error('Нет бота strong_level. Укажите --bot=ID');
+            $this->error('Нет бота strong_level / strong_trend_telegram. Укажите --bot=ID');
 
             return 1;
         }
     } else {
         $bot = Bot::query()->find($botId);
-        if ($bot === null || $bot->type !== 'strong_level') {
-            $this->error('Бот не найден или не strong_level');
+        if ($bot === null || ! \App\Services\Telegram\StrongLevelTelegramLlmButton::supportsBotType($bot->type)) {
+            $this->error('Бот не найден или тип не поддерживает LLM-кнопку (strong_level / strong_trend_telegram)');
 
             return 1;
         }
@@ -865,7 +866,7 @@ Artisan::command('telegram:strong-level-poll {--bot= : ID бота strong_level}
     $offsetKey = 'telegram_strong_level_poll_offset:'.$bot->id;
     $offset = (int) Cache::get($offsetKey, 0);
 
-    $this->info("Telegram strong-level poll: bot #{$bot->id} {$bot->name}, offset={$offset}, timeout={$timeout}s");
+    $this->info("Telegram LLM-button poll: bot #{$bot->id} {$bot->name} ({$bot->type}), offset={$offset}, timeout={$timeout}s");
     $this->line('Ctrl+C для остановки. Нужны: queue:work --queue=telegram-analyst --timeout=600');
 
     while (true) {
@@ -894,4 +895,4 @@ Artisan::command('telegram:strong-level-poll {--bot= : ID бота strong_level}
             Cache::forever($offsetKey, $offset);
         }
     }
-})->purpose('Long polling Telegram для Strong Level (кнопка LLM-анализа)');
+})->purpose('Long polling Telegram для Strong Level / Strong Trend (кнопка LLM-анализа)');

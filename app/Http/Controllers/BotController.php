@@ -470,7 +470,7 @@ class BotController extends Controller
         return view('bots.settings', [
             'bot' => $bot,
             'openrouterModels' => $openrouterModels,
-            'chartAnalystBots' => $bot->type === 'strong_level'
+            'chartAnalystBots' => in_array($bot->type, ['strong_level', 'strong_trend_telegram'], true)
                 ? Bot::query()
                     ->where('user_id', $bot->user_id)
                     ->where('type', 'openrouter_llm_analyst')
@@ -606,6 +606,10 @@ class BotController extends Controller
                 'telegram_enabled' => ['sometimes', 'boolean'],
                 'telegram_bot_token' => ['nullable', 'string', 'max:128'],
                 'telegram_chat_id' => ['nullable', 'string', 'max:64'],
+                'telegram_analyst_llm_enabled' => ['sometimes', 'boolean'],
+                'telegram_analyst_bot_id' => ['nullable', 'integer', 'min:1'],
+                'telegram_analyst_llm_question' => ['nullable', 'string', 'max:500'],
+                'telegram_send_chart' => ['required', 'string', Rule::in(['1', '0'])],
             ]);
             $existingToken = trim((string) (($bot->config ?? [])['telegram_bot_token'] ?? ''));
             $tokenInput = trim((string) ($extra['telegram_bot_token'] ?? ''));
@@ -622,6 +626,14 @@ class BotController extends Controller
                 // Пустое поле token при сохранении не затирает уже сохранённый token.
                 'telegram_bot_token' => $tokenInput !== '' ? $tokenInput : $existingToken,
                 'telegram_chat_id' => trim((string) ($extra['telegram_chat_id'] ?? '')),
+                'telegram_analyst_llm_enabled' => $request->boolean('telegram_analyst_llm_enabled'),
+                'telegram_analyst_bot_id' => ! empty($extra['telegram_analyst_bot_id'])
+                    ? (int) $extra['telegram_analyst_bot_id']
+                    : null,
+                'telegram_analyst_llm_question' => StrongLevelTelegramLlmButton::llmQuestionFromConfig([
+                    'telegram_analyst_llm_question' => $extra['telegram_analyst_llm_question'] ?? null,
+                ]),
+                'telegram_send_chart' => ($extra['telegram_send_chart'] ?? '1') === '1',
                 'notify_only' => true,
                 'version' => 'strong_trend_telegram_v1',
             ]);
@@ -921,12 +933,12 @@ class BotController extends Controller
     }
 
     /**
-     * Статус poll Strong Level + queue telegram-analyst.
+     * Статус poll Strong Level / Strong Trend Telegram + queue telegram-analyst.
      */
     public function telegramStrongLevelStatus(Bot $bot, StrongLevelTelegramProcessManager $processes): JsonResponse
     {
         $this->ensureBotOwner($bot);
-        if ($bot->type !== 'strong_level') {
+        if (! StrongLevelTelegramLlmButton::supportsBotType($bot->type)) {
             return response()->json(['ok' => false, 'error' => 'unsupported_bot_type'], 422);
         }
 
@@ -934,12 +946,12 @@ class BotController extends Controller
     }
 
     /**
-     * Перезапуск poll Strong Level и queue worker Chart Analyst.
+     * Перезапуск poll Strong Level / Strong Trend Telegram и queue worker Chart Analyst.
      */
     public function telegramStrongLevelRestart(Bot $bot, StrongLevelTelegramProcessManager $processes): JsonResponse
     {
         $this->ensureBotOwner($bot);
-        if ($bot->type !== 'strong_level') {
+        if (! StrongLevelTelegramLlmButton::supportsBotType($bot->type)) {
             return response()->json(['ok' => false, 'error' => 'unsupported_bot_type'], 422);
         }
 
