@@ -6,6 +6,7 @@ use App\Jobs\RunTelegramAnalystAnalysisJob;
 use App\Models\Bot;
 use App\Support\ArtisanProcessFinder;
 use Illuminate\Support\Facades\File;
+use Illuminate\Support\Facades\Log;
 
 /**
  * Запуск/остановка фоновых процессов Telegram Chart Analyst:
@@ -39,6 +40,90 @@ class TelegramAnalystProcessManager
             'poll_pids' => $pollPids,
             'queue_pids' => $queuePids,
         ];
+    }
+
+    /**
+     * Поднять poll Chart Analyst, если не запущен (/menu, callback инструментов).
+     */
+    public function ensurePollRunning(int $botId): bool
+    {
+        if ($this->pollPids($botId) !== []) {
+            return true;
+        }
+
+        $started = $this->startPoll($botId);
+        if (! $started) {
+            Log::warning('telegram_analyst_poll_start_failed', ['bot_id' => $botId]);
+
+            return false;
+        }
+
+        usleep(300_000);
+
+        return $this->pollPids($botId) !== [];
+    }
+
+    /**
+     * Поднять queue worker telegram-analyst, если не запущен.
+     */
+    public function ensureQueueRunning(): bool
+    {
+        if ($this->queueWorkerPids() !== []) {
+            return true;
+        }
+
+        $started = $this->startQueueWorker();
+        if (! $started) {
+            Log::warning('telegram_analyst_queue_start_failed');
+
+            return false;
+        }
+
+        usleep(300_000);
+
+        return $this->queueWorkerPids() !== [];
+    }
+
+    /**
+     * Poll + queue для всех openrouter_llm_analyst с telegram_bot_token (cron watchdog).
+     *
+     * @return array{queue_running:bool,bots:list<array{bot_id:int,poll_running:bool}>}
+     */
+    public function ensureConfiguredServices(): array
+    {
+        $queueRunning = $this->ensureQueueRunning();
+        $bots = [];
+
+        foreach ($this->analystBotsWithTelegramToken() as $bot) {
+            $pollRunning = $this->ensurePollRunning($bot->id);
+            $bots[] = [
+                'bot_id' => $bot->id,
+                'poll_running' => $pollRunning,
+            ];
+        }
+
+        return [
+            'queue_running' => $queueRunning,
+            'bots' => $bots,
+        ];
+    }
+
+    /**
+     * @return \Illuminate\Support\Collection<int, Bot>
+     */
+    private function analystBotsWithTelegramToken()
+    {
+        return Bot::query()
+            ->where('type', 'openrouter_llm_analyst')
+            ->orderBy('id')
+            ->get()
+            ->filter(function (Bot $bot): bool {
+                /** @var array<string, mixed> $cfg */
+                $cfg = is_array($bot->config) ? $bot->config : [];
+
+                return trim((string) ($cfg['telegram_bot_token'] ?? '')) !== '';
+            })
+            ->values();
     }
 
     /**

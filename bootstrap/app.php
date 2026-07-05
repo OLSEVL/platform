@@ -20,6 +20,8 @@ return Application::configure(basePath: dirname(__DIR__))
         // Scan всех ботов может идти 1–4+ часа; mutex 45 мин давал параллельные bots:scan после рестарта.
         $schedule->command('bots:scan')->everyMinute()->withoutOverlapping(360);
         $schedule->command('bots:settle')->everyMinute()->withoutOverlapping(10);
+        // Chart Analyst: /menu и inline-список пар требуют long polling + queue worker.
+        $schedule->command('telegram:ensure-analyst-services')->everyMinute()->withoutOverlapping(2);
         // Авто-проба dead: постоянный цикл — отдельный процесс `php artisan proxies:probe-loop`.
         // Пакетный fallback (редко): proxies:probe-dead --limit=5
     })

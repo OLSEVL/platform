@@ -72,6 +72,8 @@ class StrongLevelTelegramProcessManager
 
         $queueStarted = $analystQueue->startQueueWorker();
         $pollStarted = $this->startPoll($bot->id);
+        // Chart Analyst poll (/menu) общий для LLM-кнопок — после перезапуска queue поднимаем и его.
+        $analystQueue->ensureConfiguredServices();
         usleep(300_000);
         $status = $this->status($bot->id);
 

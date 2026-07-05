@@ -13,6 +13,7 @@ use App\Services\DataCleanupService;
 use App\Services\ProxyDeadProbeService;
 use App\Services\Telegram\TelegramAlertService;
 use App\Services\Telegram\TelegramAnalystHandler;
+use App\Services\Telegram\TelegramAnalystProcessManager;
 use App\Support\OpenRouterChartLevelsParser;
 use Illuminate\Foundation\Inspiring;
 use Illuminate\Support\Facades\Artisan;
@@ -746,6 +747,21 @@ Artisan::command('bots:settle {--bot_id=} {--limit=1000}', function (BotSettleme
         $res['settled_fallback'] ?? 0
     ));
 })->purpose('Закрыть просроченные paper-сделки ботов');
+
+Artisan::command('telegram:ensure-analyst-services', function (
+    TelegramAnalystProcessManager $processes,
+) {
+    $result = $processes->ensureConfiguredServices();
+    $pollCount = count(array_filter($result['bots'], static fn (array $row): bool => (bool) ($row['poll_running'] ?? false)));
+    $this->info(sprintf(
+        'telegram-analyst: queue=%s, poll bots=%d/%d',
+        ($result['queue_running'] ?? false) ? 'ok' : 'fail',
+        $pollCount,
+        count($result['bots'] ?? []),
+    ));
+
+    return (($result['queue_running'] ?? false) && $pollCount === count($result['bots'] ?? [])) ? 0 : 1;
+})->purpose('Watchdog: poll + queue для Chart Analyst SMC Flow (/menu)');
 
 Artisan::command('telegram:analyst-poll {--bot= : ID бота openrouter_llm_analyst} {--timeout=30}', function (
     TelegramAlertService $telegram,
