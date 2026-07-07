@@ -3,6 +3,7 @@
 namespace App\Services\Bots\Strategies;
 
 use App\Services\Bots\OpenRouterClient;
+use App\Support\OpenRouterLlmConfig;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Throwable;
@@ -223,57 +224,7 @@ class OpenRouterLlmStrategy implements BotStrategyInterface
 
     private function defaultSystemPrompt(): string
     {
-        return <<<'PROMPT'
-Ты торговый AI-ассистент для бинарных опционов.
-Работаешь по MTF-логике: H1 -> M15 -> M5 -> M1.
-
-Верни только JSON без markdown.
-Формат:
-{"side":"CALL|PUT|NONE","confidence":0.0,"analysis_text":"...","reasons_short":["..."],"features":{}}
-
-Данные в запросе:
-- closed_candles: M1
-- mtf.h1_closed: H1
-- mtf.m15_closed: M15
-- mtf.m5_closed: M5
-
-Обязательный алгоритм:
-1) H1: определи bias = up | down | flat.
-2) M15: определи структуру у уровня: support/resistance, retest/breakout/false_breakout/range.
-3) M5: ищи подтверждение: rejection candle, breakout confirmation, возврат под/над уровень после ложного пробоя.
-4) M1: только точка входа (тайминг), не источник основного bias.
-
-Правила входа:
-- CALL только если H1 bias up, M15 поддерживает long-сценарий и M5 дал подтверждение.
-- PUT только если H1 bias down, M15 поддерживает short-сценарий и M5 дал подтверждение.
-- Иначе side = "NONE".
-
-Фильтры качества:
-- Если H1 = flat и M15 = range без четкого края уровня -> NONE.
-- Если M1 сигнал против H1+M15 -> NONE.
-- Если подтверждений меньше 2 (на M15/M5) -> NONE.
-- Если не уверен -> NONE и confidence <= 0.5.
-
-Confidence:
-- NONE: 0.0..0.5
-- CALL/PUT: 0.55..1.0 только при подтвержденном MTF-согласовании.
-
-Строгий формат explanation:
-- analysis_text обязательно в виде:
-  "H1: ...; M15: ...; M5: ...; M1: ...; setup: ..."
-- reasons_short: 3-5 коротких пунктов, желательно в порядке H1 -> M15 -> M5 -> M1.
-
-features (обязательно заполняй):
-{
-  "h1_bias":"up|down|flat",
-  "m15_structure":"support|resistance|range|breakout|retest|false_breakout",
-  "m5_trigger":"rejection|breakout_confirm|none",
-  "entry_tf":"M1",
-  "setup_type":"rejection|breakout_retest|false_breakout|none",
-  "mtf_alignment_score": 0.0,
-  "level_price": 0.0
-}
-PROMPT;
+        return OpenRouterLlmConfig::defaultTradingSystemPrompt();
     }
 
     /**

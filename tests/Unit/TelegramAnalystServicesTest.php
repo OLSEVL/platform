@@ -10,6 +10,7 @@ use App\Services\Telegram\StrongLevelTelegramLlmButton;
 use App\Services\Telegram\StrongLevelTelegramChartBuilder;
 use App\Services\Telegram\StrongTrendTelegramChartBuilder;
 use App\Services\Telegram\TelegramAlertService;
+use App\Services\Telegram\TelegramAnalystHandler;
 use App\Services\Telegram\TelegramAnalystInstrumentService;
 use App\Services\Telegram\TelegramAnalystReplyKeyboard;
 use App\Services\Telegram\TelegramChartImageRenderer;
@@ -171,6 +172,31 @@ class TelegramAnalystServicesTest extends TestCase
 
         $this->assertFalse($result['ok']);
         $this->assertSame('telegram_disabled', $result['error']);
+    }
+
+    public function test_candle_reversal_alert_format_and_chart_builder(): void
+    {
+        $decision = [
+            'side' => 'CALL',
+            'confidence' => 0.72,
+            'reasons_short' => ['M5 разворот', 'M1 confirm'],
+            'features' => ['m5_reversal_wick' => 0.42, 'm1_avg_wick' => 0.28],
+        ];
+        $service = app(TelegramAlertService::class);
+        $text = $service->formatCandleReversalConfirmAlertText('EURUSD_otc', $decision, 88.0, 300, 1.0845, 'detailed');
+        $this->assertStringContainsString('Candle Reversal', $text);
+        $this->assertStringContainsString('M5 разворот', $text);
+
+        $candles = [];
+        $price = 1.0840;
+        for ($i = 0; $i < 12; $i++) {
+            $price += 0.0001;
+            $candles[] = ['open' => $price, 'high' => $price + 0.0002, 'low' => $price - 0.0001, 'close' => $price + 0.0001];
+        }
+        $chart = app(\App\Services\Telegram\CandleReversalTelegramChartBuilder::class)
+            ->chartLevelsFromDecision($decision, $candles, 1.0850);
+        $this->assertNotEmpty($chart['zones']);
+        $this->assertSame('CALL', $chart['entry']['side'] ?? null);
     }
 
     public function test_strong_level_chart_levels_builder(): void
@@ -458,6 +484,48 @@ class TelegramAnalystServicesTest extends TestCase
             return $job->botId === $analyst->id
                 && $job->chatId === '99999'
                 && $job->instrument === 'EURUSD_otc';
+        });
+    }
+
+    public function test_analyst_handler_skips_question_step_when_configured(): void
+    {
+        Queue::fake();
+
+        PocketInstrument::query()->create([
+            'instrument' => 'EURUSD_otc',
+            'display_name' => 'EUR/USD OTC',
+            'is_active' => true,
+            'current_payout' => 90,
+            'priority' => 1,
+        ]);
+
+        $user = User::factory()->create();
+        $bot = Bot::query()->create([
+            'user_id' => $user->id,
+            'name' => 'Chart Analyst SMC Flow',
+            'type' => 'openrouter_llm_analyst',
+            'is_active' => false,
+            'config' => [
+                'telegram_enabled' => true,
+                'telegram_bot_token' => 'analyst-token',
+                'telegram_skip_user_question' => true,
+                'min_payout' => 0,
+            ],
+        ]);
+
+        app(TelegramAnalystHandler::class)->handleUpdate($bot, [
+            'callback_query' => [
+                'id' => 'cb-skip',
+                'data' => 'ins:0',
+                'message' => ['chat' => ['id' => 55555]],
+            ],
+        ]);
+
+        Queue::assertPushed(\App\Jobs\RunTelegramAnalystAnalysisJob::class, function ($job) use ($bot): bool {
+            return $job->botId === $bot->id
+                && $job->chatId === '55555'
+                && $job->instrument === 'EURUSD_otc'
+                && $job->userQuestion === '';
         });
     }
 }

@@ -88,7 +88,11 @@ class StrongLevelTelegramProcessManager
             ];
         }
 
-        $botLabel = $bot->type === 'strong_trend_telegram' ? 'Strong Trend Telegram' : 'Strong Level';
+        $botLabel = match ($bot->type) {
+            'strong_trend_telegram' => 'Strong Trend Telegram',
+            'candle_reversal_confirm' => 'Candle Reversal + Confirm',
+            default => 'Strong Level',
+        };
 
         return [
             'ok' => true,

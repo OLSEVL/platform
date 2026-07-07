@@ -15,6 +15,7 @@ use App\Services\Telegram\TelegramAlertService;
 use App\Services\Telegram\TelegramAnalystHandler;
 use App\Services\Telegram\TelegramAnalystProcessManager;
 use App\Support\OpenRouterChartLevelsParser;
+use App\Support\OpenRouterLlmConfig;
 use Illuminate\Foundation\Inspiring;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Cache;
@@ -443,7 +444,7 @@ Artisan::command('bots:openrouter-bootstrap', function () {
                 'temperature' => 0.0,
                 'max_tokens' => 350,
                 'openrouter_timeout_sec' => 120,
-                'system_prompt' => "Ты торговый AI-ассистент для бинарных опционов.\nРаботаешь по MTF-логике: H1 -> M15 -> M5 -> M1.\n\nВерни только JSON без markdown.\nФормат:\n{\"side\":\"CALL|PUT|NONE\",\"confidence\":0.0,\"analysis_text\":\"...\",\"reasons_short\":[\"...\"],\"features\":{}}\n\nДанные в запросе:\n- closed_candles: M1\n- mtf.h1_closed: H1\n- mtf.m15_closed: M15\n- mtf.m5_closed: M5\n\nОбязательный алгоритм:\n1) H1: определи bias = up | down | flat.\n2) M15: определи структуру у уровня: support/resistance, retest/breakout/false_breakout/range.\n3) M5: ищи подтверждение: rejection candle, breakout confirmation, возврат под/над уровень после ложного пробоя.\n4) M1: только точка входа (тайминг), не источник основного bias.\n\nПравила входа:\n- CALL только если H1 bias up, M15 поддерживает long-сценарий и M5 дал подтверждение.\n- PUT только если H1 bias down, M15 поддерживает short-сценарий и M5 дал подтверждение.\n- Иначе side = \"NONE\".\n\nФильтры качества:\n- Если H1 = flat и M15 = range без четкого края уровня -> NONE.\n- Если M1 сигнал против H1+M15 -> NONE.\n- Если подтверждений меньше 2 (на M15/M5) -> NONE.\n- Если не уверен -> NONE и confidence <= 0.5.\n\nConfidence:\n- NONE: 0.0..0.5\n- CALL/PUT: 0.55..1.0 только при подтвержденном MTF-согласовании.\n\nСтрогий формат explanation:\n- analysis_text обязательно в виде:\n  \"H1: ...; M15: ...; M5: ...; M1: ...; setup: ...\"\n- reasons_short: 3-5 коротких пунктов, желательно в порядке H1 -> M15 -> M5 -> M1.\n\nfeatures (обязательно заполняй):\n{\n  \"h1_bias\":\"up|down|flat\",\n  \"m15_structure\":\"support|resistance|range|breakout|retest|false_breakout\",\n  \"m5_trigger\":\"rejection|breakout_confirm|none\",\n  \"entry_tf\":\"M1\",\n  \"setup_type\":\"rejection|breakout_retest|false_breakout|none\",\n  \"mtf_alignment_score\": 0.0,\n  \"level_price\": 0.0\n}",
+                'system_prompt' => OpenRouterLlmConfig::defaultTradingSystemPrompt(),
                 'version' => 'openrouter_llm_v1',
             ],
         ]
@@ -812,6 +813,18 @@ Artisan::command('telegram:analyst-poll {--bot= : ID бота openrouter_llm_ana
     $this->line('Ctrl+C для остановки. Нужен queue worker: php artisan queue:work --queue=telegram-analyst --timeout=600');
 
     while (true) {
+        // Long-poll живёт часами — перечитываем config/token из БД на каждой итерации getUpdates.
+        $bot->refresh();
+        /** @var array<string, mixed> $cfg */
+        $cfg = is_array($bot->config) ? $bot->config : [];
+        $token = trim((string) ($cfg['telegram_bot_token'] ?? ''));
+        if ($token === '') {
+            $this->error('telegram_bot_token пуст — проверьте настройки бота');
+            sleep(5);
+
+            continue;
+        }
+
         $result = $telegram->getUpdates($token, $offset, $timeout);
         if (! ($result['ok'] ?? false)) {
             $this->error('getUpdates: '.($result['error'] ?? 'unknown'));
@@ -839,7 +852,7 @@ Artisan::command('telegram:analyst-poll {--bot= : ID бота openrouter_llm_ana
     }
 })->purpose('Long polling Telegram для Chart Analyst (меню инструментов → анализ)');
 
-Artisan::command('telegram:strong-level-poll {--bot= : ID бота strong_level или strong_trend_telegram} {--timeout=30}', function (
+Artisan::command('telegram:strong-level-poll {--bot= : ID бота strong_level, strong_trend_telegram или candle_reversal_confirm} {--timeout=30}', function (
     TelegramAlertService $telegram,
     \App\Services\Telegram\StrongLevelTelegramHandler $handler,
 ) {
@@ -851,14 +864,14 @@ Artisan::command('telegram:strong-level-poll {--bot= : ID бота strong_level 
             $bot = Bot::query()->whereIn('type', $supportedTypes)->orderBy('id')->first();
         }
         if ($bot === null) {
-            $this->error('Нет бота strong_level / strong_trend_telegram. Укажите --bot=ID');
+            $this->error('Нет бота с LLM-кнопкой (strong_level / strong_trend_telegram / candle_reversal_confirm). Укажите --bot=ID');
 
             return 1;
         }
     } else {
         $bot = Bot::query()->find($botId);
         if ($bot === null || ! \App\Services\Telegram\StrongLevelTelegramLlmButton::supportsBotType($bot->type)) {
-            $this->error('Бот не найден или тип не поддерживает LLM-кнопку (strong_level / strong_trend_telegram)');
+            $this->error('Бот не найден или тип не поддерживает LLM-кнопку (strong_level / strong_trend_telegram / candle_reversal_confirm)');
 
             return 1;
         }
@@ -886,6 +899,18 @@ Artisan::command('telegram:strong-level-poll {--bot= : ID бота strong_level 
     $this->line('Ctrl+C для остановки. Нужны: queue:work --queue=telegram-analyst --timeout=600');
 
     while (true) {
+        // Long-poll живёт часами — перечитываем config/token из БД на каждой итерации getUpdates.
+        $bot->refresh();
+        /** @var array<string, mixed> $cfg */
+        $cfg = is_array($bot->config) ? $bot->config : [];
+        $token = trim((string) ($cfg['telegram_bot_token'] ?? ''));
+        if ($token === '') {
+            $this->error('telegram_bot_token пуст — проверьте настройки бота');
+            sleep(5);
+
+            continue;
+        }
+
         $result = $telegram->getUpdates($token, $offset, $timeout);
         if (! ($result['ok'] ?? false)) {
             $this->error('getUpdates: '.($result['error'] ?? 'unknown'));

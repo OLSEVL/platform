@@ -418,7 +418,7 @@ class BotEngineService
                         $mirrorTradeIds = [];
                     });
 
-                    // Strong Level: push в Telegram после успешного создания сигнала и paper-сделки.
+                    // Strong Level / Candle Reversal: push в Telegram после paper-сделки.
                     $telegramResult = null;
                     if ($bot->type === 'strong_level') {
                         $telegramResult = app(TelegramAlertService::class)->sendStrongLevelAlert(
@@ -433,6 +433,24 @@ class BotEngineService
                         if (! ($telegramResult['ok'] ?? false)
                             && ! in_array($telegramResult['error'] ?? '', ['telegram_disabled', 'telegram_notify_disabled'], true)) {
                             Log::warning('strong_level_telegram_alert_failed', [
+                                'bot_id' => $bot->id,
+                                'instrument' => $instrument,
+                                'error' => $telegramResult['error'] ?? 'unknown',
+                            ]);
+                        }
+                    } elseif ($bot->type === 'candle_reversal_confirm') {
+                        $telegramResult = app(TelegramAlertService::class)->sendCandleReversalConfirmAlert(
+                            $bot,
+                            $instrument,
+                            $decision,
+                            $payoutSnapshot,
+                            $decisionExpirySec,
+                            $entryPrice,
+                            $closed
+                        );
+                        if (! ($telegramResult['ok'] ?? false)
+                            && ! in_array($telegramResult['error'] ?? '', ['telegram_disabled', 'telegram_notify_disabled'], true)) {
+                            Log::warning('candle_reversal_telegram_alert_failed', [
                                 'bot_id' => $bot->id,
                                 'instrument' => $instrument,
                                 'error' => $telegramResult['error'] ?? 'unknown',

@@ -138,4 +138,14 @@ JSON;
         $this->assertStringContainsString('1.08', $parsed['data']['entry']['label']);
         $this->assertStringContainsString('CALL', $parsed['data']['entry']['label']);
     }
+
+    #[Test]
+    public function analyst_default_prompts_require_success_probability_percent(): void
+    {
+        $classic = OpenRouterChartLevelsParser::defaultAnalystSystemPromptClassic();
+        $smc = OpenRouterChartLevelsParser::defaultAnalystSystemPromptWithSmcFlow();
+
+        $this->assertStringContainsString('Вероятность успеха: NN%', $classic);
+        $this->assertStringContainsString('Вероятность успеха: NN%', $smc);
+    }
 }

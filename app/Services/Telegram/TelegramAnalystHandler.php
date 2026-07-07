@@ -4,6 +4,7 @@ namespace App\Services\Telegram;
 
 use App\Jobs\RunTelegramAnalystAnalysisJob;
 use App\Models\Bot;
+use App\Support\OpenRouterLlmConfig;
 use Illuminate\Support\Facades\Log;
 
 /**
@@ -139,6 +140,17 @@ class TelegramAnalystHandler
 
                 return;
             }
+
+            /** @var array<string, mixed> $cfg */
+            $cfg = is_array($bot->config) ? $bot->config : [];
+            // Опция в настройках бота: сразу анализ без шага «ваш вопрос?».
+            if (OpenRouterLlmConfig::telegramSkipUserQuestion($cfg)) {
+                $this->startAnalysis($bot, $token, $chatId, $instrument, '');
+                $this->telegram->answerCallbackQuery($token, $callbackId, $instrument);
+
+                return;
+            }
+
             $this->state->put($bot->id, $chatId, [
                 'step' => TelegramAnalystStateStore::STEP_AWAIT_QUESTION,
                 'instrument' => $instrument,

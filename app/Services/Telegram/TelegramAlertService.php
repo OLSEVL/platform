@@ -285,6 +285,189 @@ class TelegramAlertService
     }
 
     /**
+     * Алерт Candle Reversal + Confirm: новый MTF-сигнал + paper-сделка (как Strong Level).
+     *
+     * @param  array<string, mixed>  $decision
+     * @return array{ok:bool,error?:string,message_id?:int}
+     */
+    public function sendCandleReversalConfirmAlert(
+        Bot $bot,
+        string $instrument,
+        array $decision,
+        ?float $payout,
+        int $expirySec,
+        ?float $entryPrice = null,
+        array $m1Candles = [],
+    ): array {
+        /** @var array<string, mixed> $cfg */
+        $cfg = is_array($bot->config) ? $bot->config : [];
+        if (! (bool) ($cfg['telegram_enabled'] ?? false)) {
+            return ['ok' => false, 'error' => 'telegram_disabled'];
+        }
+
+        $notifyOn = (string) ($cfg['telegram_notify_on'] ?? 'signal_trade');
+        if ($notifyOn !== 'signal_trade') {
+            return ['ok' => false, 'error' => 'telegram_notify_disabled'];
+        }
+
+        $token = trim((string) ($cfg['telegram_bot_token'] ?? ''));
+        $chatId = trim((string) ($cfg['telegram_chat_id'] ?? ''));
+        if ($token === '' || $chatId === '') {
+            return ['ok' => false, 'error' => 'telegram_token_or_chat_id_missing'];
+        }
+
+        $format = (string) ($cfg['telegram_alert_format'] ?? 'brief');
+        if (! in_array($format, ['brief', 'detailed', 'card'], true)) {
+            $format = 'brief';
+        }
+
+        $sendChart = (bool) ($cfg['telegram_send_chart'] ?? true);
+        $photoOk = null;
+        $photoError = null;
+
+        if ($sendChart && $m1Candles !== [] && extension_loaded('gd')) {
+            $chartLevels = app(CandleReversalTelegramChartBuilder::class)
+                ->chartLevelsFromDecision($decision, $m1Candles, $entryPrice);
+            $pngPath = app(TelegramChartImageRenderer::class)->render($instrument, $m1Candles, $chartLevels, [
+                'width' => 640,
+                'height' => 360,
+                'max_bars' => 48,
+                'margin_left' => 56,
+                'margin_top' => 32,
+                'margin_bottom' => 28,
+                'font_size_title' => 10,
+                'font_size_axis' => 8,
+                'font_size_label' => 8,
+            ]);
+            if ($pngPath !== null) {
+                $side = strtoupper((string) ($decision['side'] ?? ''));
+                $caption = '📊 <b>'.htmlspecialchars($instrument, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8').'</b>';
+                if ($side !== '') {
+                    $caption .= ' · '.$side;
+                }
+                $photoResult = $this->sendPhoto($token, $chatId, $pngPath, $caption);
+                $photoOk = (bool) ($photoResult['ok'] ?? false);
+                if (! $photoOk) {
+                    $photoError = (string) ($photoResult['error'] ?? 'telegram_photo_failed');
+                    Log::warning('candle_reversal_telegram_photo_failed', [
+                        'bot_id' => $bot->id,
+                        'instrument' => $instrument,
+                        'error' => $photoError,
+                    ]);
+                }
+                @unlink($pngPath);
+            } else {
+                $photoOk = false;
+                $photoError = 'chart_render_failed';
+            }
+        } elseif ($sendChart && ! extension_loaded('gd')) {
+            $photoOk = false;
+            $photoError = 'gd_extension_missing';
+        }
+
+        $text = $this->formatCandleReversalConfirmAlertText(
+            $instrument,
+            $decision,
+            $payout,
+            $expirySec,
+            $entryPrice,
+            $format
+        );
+
+        $llmMarkup = StrongLevelTelegramLlmButton::inlineKeyboardMarkup($cfg, $bot, $instrument);
+        if ($llmMarkup !== null) {
+            app(StrongLevelTelegramProcessManager::class)->ensurePollRunning($bot->id);
+        }
+        $messageResult = $llmMarkup !== null
+            ? $this->sendMessageWithMarkup($token, $chatId, $text, $llmMarkup)
+            : $this->sendMessage($token, $chatId, $text);
+        if (! ($messageResult['ok'] ?? false)) {
+            return array_merge($messageResult, array_filter([
+                'photo_ok' => $photoOk,
+                'photo_error' => $photoError,
+            ]));
+        }
+
+        return array_merge($messageResult, array_filter([
+            'photo_ok' => $photoOk,
+            'photo_error' => $photoError,
+        ]));
+    }
+
+    /**
+     * HTML-текст алерта Candle Reversal + Confirm.
+     *
+     * @param  array<string, mixed>  $decision
+     */
+    public function formatCandleReversalConfirmAlertText(
+        string $instrument,
+        array $decision,
+        ?float $payout,
+        int $expirySec,
+        ?float $entryPrice,
+        string $format = 'brief',
+    ): string {
+        $side = (string) ($decision['side'] ?? '');
+        $sideLabel = $side === 'CALL' ? 'CALL ▲' : ($side === 'PUT' ? 'PUT ▼' : $side);
+        $features = is_array($decision['features'] ?? null) ? $decision['features'] : [];
+        $confidence = isset($decision['confidence']) ? (float) $decision['confidence'] : 0.0;
+        $m5Wick = isset($features['m5_reversal_wick']) ? (float) $features['m5_reversal_wick'] : 0.0;
+        $m1Wick = isset($features['m1_avg_wick']) ? (float) $features['m1_avg_wick'] : 0.0;
+
+        $instrumentEsc = htmlspecialchars($instrument, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+
+        if ($format === 'card') {
+            $lines = [
+                '🔄 <b>'.$instrumentEsc.' · '.htmlspecialchars($sideLabel, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8').'</b>',
+                '',
+                'MTF-разворот: M5 (3 свечи) → подтверждение M1 (3 свечи).',
+                sprintf('Экспирация %d с · confidence %.0f%%', max(1, $expirySec), $confidence * 100),
+            ];
+            if ($payout !== null) {
+                $lines[] = 'Payout: '.number_format($payout, 1, '.', '').'%';
+            }
+            if ($entryPrice !== null) {
+                $lines[] = sprintf('Вход: %.5f', $entryPrice);
+            }
+            $lines[] = 'Время: '.now()->utc()->format('d.m.Y H:i').' UTC';
+
+            return implode("\n", $lines);
+        }
+
+        $lines = [
+            '🔄 <b>Candle Reversal — '.htmlspecialchars($sideLabel, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8').'</b>',
+            '',
+            'Пара: <b>'.$instrumentEsc.'</b>',
+            'Сетап: M5 разворот + M1 confirm (3×3)',
+            sprintf('Экспирация %d с', max(1, $expirySec)),
+        ];
+
+        if ($payout !== null) {
+            $lines[] = 'Payout: '.number_format($payout, 1, '.', '').'%';
+        }
+
+        if ($format === 'detailed') {
+            $lines[] = sprintf('Confidence: %.2f', $confidence);
+            if ($entryPrice !== null) {
+                $lines[] = sprintf('Вход: %.5f', $entryPrice);
+            }
+            $lines[] = sprintf('M5 reversal wick: %.0f%% | M1 avg wick: %.0f%%', $m5Wick * 100, $m1Wick * 100);
+            $reasons = $decision['reasons_short'] ?? [];
+            if (is_array($reasons) && $reasons !== []) {
+                $lines[] = '';
+                $lines[] = '<b>Причины:</b>';
+                foreach ($reasons as $reason) {
+                    $lines[] = '• '.htmlspecialchars((string) $reason, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+                }
+            }
+        }
+
+        $lines[] = 'Время: '.now()->utc()->format('d.m.Y H:i').' UTC';
+
+        return implode("\n", $lines);
+    }
+
+    /**
      * HTML-текст алерта Strong Level (краткий или развёрнутый).
      *
      * @param  array<string, mixed>  $decision
@@ -378,59 +561,72 @@ class TelegramAlertService
 
     /**
      * Читает getUpdates и возвращает уникальные chat_id пользователей, написавших боту.
+     * Перед запросом снимает webhook. При $waitSec > 0 ждёт новое сообщение (long poll).
      *
-     * @return array{ok:bool,error?:string,chats?:list<array{id:string,title?:string,username?:string,type?:string}>}
+     * @return array{ok:bool,error?:string,chats?:list<array{id:string,title?:string,username?:string,type?:string,first_name?:string}>}
      */
-    public function discoverChatIds(string $token): array
+    public function discoverChatIds(string $token, int $waitSec = 0): array
     {
         $token = trim($token);
         if ($token === '') {
             return ['ok' => false, 'error' => 'telegram_token_missing'];
         }
 
-        try {
-            $response = Http::timeout(15)->get("https://api.telegram.org/bot{$token}/getUpdates", [
-                'limit' => 100,
-                'timeout' => 0,
-            ]);
-        } catch (\Throwable $e) {
-            return ['ok' => false, 'error' => $e->getMessage()];
-        }
+        // Webhook блокирует getUpdates; poll-процессы тоже забирают очередь — вызывающий код должен их остановить.
+        $this->deleteWebhook($token);
 
-        if (! $response->successful()) {
-            $body = $response->json();
-            $desc = is_array($body) ? (string) ($body['description'] ?? $response->body()) : $response->body();
-
-            return ['ok' => false, 'error' => $desc !== '' ? $desc : 'telegram_http_'.$response->status()];
-        }
-
-        $payload = $response->json();
-        $result = is_array($payload) ? ($payload['result'] ?? []) : [];
-        if (! is_array($result)) {
-            return ['ok' => true, 'chats' => []];
-        }
-
+        $deadline = $waitSec > 0 ? time() + max(1, min(30, $waitSec)) : time();
         $chats = [];
-        foreach ($result as $update) {
-            if (! is_array($update)) {
-                continue;
+
+        do {
+            $timeout = $waitSec > 0 ? min(10, max(1, $deadline - time())) : 0;
+            try {
+                $response = Http::timeout(max(15, $timeout + 5))->get("https://api.telegram.org/bot{$token}/getUpdates", array_filter([
+                    'limit' => 100,
+                    'timeout' => $timeout,
+                ]));
+            } catch (\Throwable $e) {
+                return ['ok' => false, 'error' => $e->getMessage()];
             }
-            $chat = $update['message']['chat']
-                ?? $update['edited_message']['chat']
-                ?? $update['callback_query']['message']['chat']
-                ?? null;
-            if (! is_array($chat) || ! isset($chat['id'])) {
-                continue;
+
+            if (! $response->successful()) {
+                $body = $response->json();
+                $desc = is_array($body) ? (string) ($body['description'] ?? $response->body()) : $response->body();
+
+                return ['ok' => false, 'error' => $desc !== '' ? $desc : 'telegram_http_'.$response->status()];
             }
-            $id = (string) $chat['id'];
-            $chats[$id] = [
-                'id' => $id,
-                'type' => isset($chat['type']) ? (string) $chat['type'] : null,
-                'title' => isset($chat['title']) ? (string) $chat['title'] : null,
-                'username' => isset($chat['username']) ? (string) $chat['username'] : null,
-                'first_name' => isset($chat['first_name']) ? (string) $chat['first_name'] : null,
-            ];
-        }
+
+            $payload = $response->json();
+            $result = is_array($payload) ? ($payload['result'] ?? []) : [];
+            if (! is_array($result)) {
+                break;
+            }
+
+            foreach ($result as $update) {
+                if (! is_array($update)) {
+                    continue;
+                }
+                $chat = $update['message']['chat']
+                    ?? $update['edited_message']['chat']
+                    ?? $update['callback_query']['message']['chat']
+                    ?? null;
+                if (! is_array($chat) || ! isset($chat['id'])) {
+                    continue;
+                }
+                $id = (string) $chat['id'];
+                $chats[$id] = [
+                    'id' => $id,
+                    'type' => isset($chat['type']) ? (string) $chat['type'] : null,
+                    'title' => isset($chat['title']) ? (string) $chat['title'] : null,
+                    'username' => isset($chat['username']) ? (string) $chat['username'] : null,
+                    'first_name' => isset($chat['first_name']) ? (string) $chat['first_name'] : null,
+                ];
+            }
+
+            if ($chats !== [] || $waitSec <= 0) {
+                break;
+            }
+        } while (time() < $deadline);
 
         return ['ok' => true, 'chats' => array_values($chats)];
     }

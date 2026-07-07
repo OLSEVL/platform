@@ -51,4 +51,20 @@ class OpenRouterLlmConfigTest extends TestCase
         $this->assertFalse(OpenRouterLlmConfig::analystSmcFlowEnabled([]));
         $this->assertTrue(OpenRouterLlmConfig::analystSmcFlowEnabled(['analyst_smc_flow_enabled' => true]));
     }
+
+    #[Test]
+    public function telegram_skip_user_question_reads_config_flag(): void
+    {
+        $this->assertFalse(OpenRouterLlmConfig::telegramSkipUserQuestion([]));
+        $this->assertTrue(OpenRouterLlmConfig::telegramSkipUserQuestion(['telegram_skip_user_question' => true]));
+    }
+
+    #[Test]
+    public function default_trading_system_prompt_requires_success_probability_percent(): void
+    {
+        $prompt = OpenRouterLlmConfig::defaultTradingSystemPrompt();
+
+        $this->assertStringContainsString('Вероятность успеха: NN%', $prompt);
+        $this->assertStringContainsString('success_probability_percent', $prompt);
+    }
 }

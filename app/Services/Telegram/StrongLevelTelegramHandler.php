@@ -56,7 +56,7 @@ class StrongLevelTelegramHandler
                 'data' => $data,
             ]);
             if ($callbackId !== '') {
-                $botLabel = $bot->type === 'strong_trend_telegram' ? 'Strong Trend Telegram' : 'Strong Level';
+                $botLabel = self::settingsLabelForBotType($bot->type);
                 $hint = trim((string) ($cfg['telegram_chat_id'] ?? '')) !== ''
                     ? 'Чат не совпадает с chat_id в настройках '.$botLabel
                     : 'Доступ запрещён';
@@ -83,9 +83,7 @@ class StrongLevelTelegramHandler
             || $analyst->user_id !== $bot->user_id
         ) {
             $this->telegram->answerCallbackQuery($token, $callbackId, 'Chart Analyst не найден');
-            $settingsHint = $bot->type === 'strong_trend_telegram'
-                ? 'Strong Trend Telegram → Telegram'
-                : 'Strong Level → Telegram';
+            $settingsHint = self::settingsLabelForBotType($bot->type).' → Telegram';
             $this->telegram->sendMessage(
                 $token,
                 $chatId,
@@ -152,5 +150,14 @@ class StrongLevelTelegramHandler
         }
 
         return $allowedChat === $chatId;
+    }
+
+    public static function settingsLabelForBotType(string $type): string
+    {
+        return match ($type) {
+            'strong_trend_telegram' => 'Strong Trend Telegram',
+            'candle_reversal_confirm' => 'Candle Reversal + Confirm',
+            default => 'Strong Level',
+        };
     }
 }

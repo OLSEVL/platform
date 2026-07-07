@@ -10,57 +10,7 @@
     $selectedOpenRouterModel = old('model', $cfg['model'] ?? 'openai/gpt-5.2');
     // Отдельно выносим дефолтный prompt в переменную, чтобы не ломать Blade
     // сложной строкой с JSON-скобками внутри inline-выражения.
-    $openrouterDefaultPrompt = <<<'PROMPT'
-Ты торговый AI-ассистент для бинарных опционов.
-Работаешь по MTF-логике: H1 -> M15 -> M5 -> M1.
-
-Верни только JSON без markdown.
-Формат:
-{"side":"CALL|PUT|NONE","confidence":0.0,"analysis_text":"...","reasons_short":["..."],"features":{}}
-
-Данные в запросе:
-- closed_candles: M1
-- mtf.h1_closed: H1
-- mtf.m15_closed: M15
-- mtf.m5_closed: M5
-
-Обязательный алгоритм:
-1) H1: определи bias = up | down | flat.
-2) M15: определи структуру у уровня: support/resistance, retest/breakout/false_breakout/range.
-3) M5: ищи подтверждение: rejection candle, breakout confirmation, возврат под/над уровень после ложного пробоя.
-4) M1: только точка входа (тайминг), не источник основного bias.
-
-Правила входа:
-- CALL только если H1 bias up, M15 поддерживает long-сценарий и M5 дал подтверждение.
-- PUT только если H1 bias down, M15 поддерживает short-сценарий и M5 дал подтверждение.
-- Иначе side = "NONE".
-
-Фильтры качества:
-- Если H1 = flat и M15 = range без четкого края уровня -> NONE.
-- Если M1 сигнал против H1+M15 -> NONE.
-- Если подтверждений меньше 2 (на M15/M5) -> NONE.
-- Если не уверен -> NONE и confidence <= 0.5.
-
-Confidence:
-- NONE: 0.0..0.5
-- CALL/PUT: 0.55..1.0 только при подтвержденном MTF-согласовании.
-
-Строгий формат explanation:
-- analysis_text обязательно в виде:
-  "H1: ...; M15: ...; M5: ...; M1: ...; setup: ..."
-- reasons_short: 3-5 коротких пунктов, желательно в порядке H1 -> M15 -> M5 -> M1.
-
-features (обязательно заполняй):
-{
-  "h1_bias":"up|down|flat",
-  "m15_structure":"support|resistance|range|breakout|retest|false_breakout",
-  "m5_trigger":"rejection|breakout_confirm|none",
-  "entry_tf":"M1",
-  "setup_type":"rejection|breakout_retest|false_breakout|none",
-  "mtf_alignment_score": 0.0,
-  "level_price": 0.0
-}
-PROMPT;
+    $openrouterDefaultPrompt = \App\Support\OpenRouterLlmConfig::defaultTradingSystemPrompt();
     $openrouterAnalystDefaultPrompt = \App\Support\OpenRouterChartLevelsParser::defaultAnalystSystemPromptForConfig($cfg);
     $isChartAnalystBot = $bot->type === 'openrouter_llm_analyst';
     $analystSmcFlowEnabled = $isChartAnalystBot && \App\Support\OpenRouterLlmConfig::analystSmcFlowEnabled($cfg);
@@ -406,6 +356,12 @@ PROMPT;
                         </span>
                     </label>
                 </div>
+
+                @include('bots._telegram-signal-bot-settings', [
+                    'telegramUiKey' => 'crc',
+                    'telegramBotUsername' => 'candle_reversal_confirm_bot',
+                    'telegramNotifyHint' => 'По умолчанию — при каждой созданной сделке Candle Reversal.',
+                ])
             </div>
         @elseif ($bot->type === 'smc_flow')
             <div class="space-y-5 border-t border-zinc-800 pt-4">
@@ -778,14 +734,21 @@ PROMPT;
                             <span class="mt-0.5 block text-[11px] font-normal text-zinc-500">Интерактивное меню пар + запрос анализа по кнопке. Без галочки polling не стартует даже при сохранённом token.</span>
                         </span>
                     </label>
+                    <label class="flex items-start gap-2">
+                        <input type="checkbox" name="telegram_skip_user_question" id="telegram_skip_user_question_analyst" value="1"
+                            class="mt-0.5 rounded border-zinc-600 bg-zinc-800 text-blue-500"
+                            @checked(old('telegram_skip_user_question', $cfg['telegram_skip_user_question'] ?? false))>
+                        <span>
+                            <span class="text-sm font-medium text-zinc-300">Сразу анализ без вопроса</span>
+                            <span class="mt-0.5 block text-[11px] font-normal text-zinc-500">После выбора инструмента не спрашивать дополнительный вопрос — сразу ставить анализ в очередь. Применяется сразу после сохранения (poll перечитывает config из БД). Перезапуск poll нужен только если опция не сработала.</span>
+                        </span>
+                    </label>
                     <div class="grid gap-4 sm:grid-cols-2">
                         <div class="space-y-1 sm:col-span-2">
-                            <label for="telegram_bot_token_analyst" class="block text-xs font-medium text-zinc-400">Bot token</label>
-                            <input type="password" name="telegram_bot_token" id="telegram_bot_token_analyst" autocomplete="new-password"
-                                placeholder="{{ !empty($cfg['telegram_bot_token']) ? '•••••••• (сохранён)' : '8822018763:AAH...' }}"
-                                class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 font-mono">
-                            <p class="text-[11px] text-zinc-500">Токен от @BotFather. Пустое поле при сохранении — оставить текущий. После смены token нажмите «Перезапустить poll + queue».</p>
-                            @error('telegram_bot_token')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                            @include('bots._telegram-bot-token-field', [
+                                'inputId' => 'telegram_bot_token_analyst',
+                                'hint' => 'Токен от @BotFather. Пустое поле при сохранении — оставить текущий. После смены token нажмите «Перезапустить poll + queue».',
+                            ])
                         </div>
                         <div class="space-y-1">
                             <label for="telegram_chat_id_analyst" class="block text-xs font-medium text-zinc-400">Chat ID</label>
@@ -1243,12 +1206,10 @@ PROMPT;
                         </div>
                         {{-- У каждого элемента в grid должен быть свой контейнер, иначе соседняя колонка с action-кнопками «съезжает». --}}
                         <div class="space-y-1">
-                            <label for="telegram_bot_token_strong_level" class="block text-xs font-medium text-zinc-400">Bot token</label>
-                            <input type="password" name="telegram_bot_token" id="telegram_bot_token_strong_level" autocomplete="new-password"
-                                placeholder="{{ !empty($cfg['telegram_bot_token']) ? '•••••••• (сохранён — оставьте пустым, чтобы не менять)' : '8689786598:AAE...' }}"
-                                class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 font-mono">
-                            <p class="text-[11px] text-zinc-500">Токен от @BotFather (напр. @strong_level_bot). Пустое поле при сохранении — оставить текущий.</p>
-                            @error('telegram_bot_token')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                            @include('bots._telegram-bot-token-field', [
+                                'inputId' => 'telegram_bot_token_strong_level',
+                                'hint' => 'Токен от @BotFather (напр. @strong_level_bot). Пустое поле при сохранении — оставить текущий.',
+                            ])
                         </div>
                         <div class="space-y-1">
                             <label for="telegram_chat_id_strong_level" class="block text-xs font-medium text-zinc-400">Chat ID</label>
@@ -1357,7 +1318,8 @@ PROMPT;
 
                 if (discoverBtn) {
                     discoverBtn.addEventListener('click', async function () {
-                        setStatus('Запрос getUpdates…', false);
+                        setStatus('Останавливаем poll и ждём /start (до 15 сек)…', false);
+                        discoverBtn.disabled = true;
                         try {
                             const res = await fetch(discoverUrl, {
                                 method: 'POST',
@@ -1370,15 +1332,17 @@ PROMPT;
                             }
                             const chats = data.chats || [];
                             if (chats.length === 0) {
-                                setStatus(data.hint || 'Чатов не найдено — напишите @strong_level_bot /start', true);
+                                setStatus(data.hint || 'Чатов не найдено — нажмите кнопку и сразу /start @strong_level_bot', true);
                                 return;
                             }
                             const first = chats[0];
                             if (chatInput && first.id) chatInput.value = first.id;
                             const label = first.username ? '@' + first.username : (first.first_name || first.title || first.id);
-                            setStatus('Найден chat_id: ' + first.id + ' (' + label + ')', false);
+                            setStatus('Найден chat_id: ' + first.id + ' (' + label + '). Сохраните настройки.', false);
                         } catch (e) {
                             setStatus('Сеть: ' + e.message, true);
+                        } finally {
+                            discoverBtn.disabled = false;
                         }
                     });
                 }
@@ -1554,12 +1518,11 @@ PROMPT;
                             @error('telegram_send_chart')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                         </div>
                         <div class="space-y-1 sm:col-span-2">
-                            <label for="telegram_bot_token" class="block text-xs font-medium text-zinc-400">Bot token</label>
-                            <input type="password" name="telegram_bot_token" id="telegram_bot_token" autocomplete="new-password"
-                                placeholder="{{ !empty($cfg['telegram_bot_token']) ? '•••••••• (сохранён — оставьте пустым, чтобы не менять)' : '8814450509:AAF...' }}"
-                                class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 font-mono">
-                            <p class="text-[11px] text-zinc-500">Токен от @BotFather для бота-нотификатора. Пустое поле при сохранении — оставить текущий.</p>
-                            @error('telegram_bot_token')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                            @include('bots._telegram-bot-token-field', [
+                                'inputId' => 'telegram_bot_token',
+                                'placeholder' => '8814450509:AAF...',
+                                'hint' => 'Токен от @BotFather для бота-нотификатора. Пустое поле при сохранении — оставить текущий.',
+                            ])
                         </div>
                         <div class="space-y-1">
                             <label for="telegram_chat_id" class="block text-xs font-medium text-zinc-400">Chat ID</label>

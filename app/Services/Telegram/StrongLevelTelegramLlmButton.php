@@ -10,7 +10,7 @@ use App\Models\Bot;
 class StrongLevelTelegramLlmButton
 {
     /** @var list<string> */
-    public const SUPPORTED_BOT_TYPES = ['strong_level', 'strong_trend_telegram'];
+    public const SUPPORTED_BOT_TYPES = ['strong_level', 'strong_trend_telegram', 'candle_reversal_confirm'];
 
     public const BUTTON_LABEL = '📊 Доп. анализ SMC Flow';
 

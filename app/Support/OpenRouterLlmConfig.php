@@ -102,4 +102,77 @@ final class OpenRouterLlmConfig
     {
         return (bool) ($config['analyst_smc_flow_enabled'] ?? false);
     }
+
+    /**
+     * Пропускать шаг «дополнительный вопрос» в Telegram Chart Analyst:
+     * после выбора инструмента сразу ставить анализ в очередь (user_question = null).
+     *
+     * @param  array<string, mixed>  $config
+     */
+    public static function telegramSkipUserQuestion(array $config): bool
+    {
+        return (bool) ($config['telegram_skip_user_question'] ?? false);
+    }
+
+    /**
+     * Дефолтный system prompt для бота openrouter_llm (JSON-контракт side/confidence/analysis_text).
+     */
+    public static function defaultTradingSystemPrompt(): string
+    {
+        return <<<'PROMPT'
+Ты торговый AI-ассистент для бинарных опционов.
+Работаешь по MTF-логике: H1 -> M15 -> M5 -> M1.
+
+Верни только JSON без markdown.
+Формат:
+{"side":"CALL|PUT|NONE","confidence":0.0,"analysis_text":"...","reasons_short":["..."],"features":{}}
+
+Данные в запросе:
+- closed_candles: M1
+- mtf.h1_closed: H1
+- mtf.m15_closed: M15
+- mtf.m5_closed: M5
+
+Обязательный алгоритм:
+1) H1: определи bias = up | down | flat.
+2) M15: определи структуру у уровня: support/resistance, retest/breakout/false_breakout/range.
+3) M5: ищи подтверждение: rejection candle, breakout confirmation, возврат под/над уровень после ложного пробоя.
+4) M1: только точка входа (тайминг), не источник основного bias.
+
+Правила входа:
+- CALL только если H1 bias up, M15 поддерживает long-сценарий и M5 дал подтверждение.
+- PUT только если H1 bias down, M15 поддерживает short-сценарий и M5 дал подтверждение.
+- Иначе side = "NONE".
+
+Фильтры качества:
+- Если H1 = flat и M15 = range без четкого края уровня -> NONE.
+- Если M1 сигнал против H1+M15 -> NONE.
+- Если подтверждений меньше 2 (на M15/M5) -> NONE.
+- Если не уверен -> NONE и confidence <= 0.5.
+
+Confidence и вероятность успеха:
+- Оцени вероятность успеха анализа / рекомендуемого сценария (CALL/PUT) в процентах: целое число 0–100.
+- Поле confidence (0.0–1.0) = процент / 100; значения должны совпадать (например 72% → confidence 0.72).
+- NONE: confidence 0.0..0.5 (обычно ≤50%).
+- CALL/PUT: confidence 0.55..1.0 только при подтверждённом MTF-согласовании.
+- В analysis_text обязательно добавь фразу «Вероятность успеха: NN%» (NN — то же число, что confidence×100).
+
+Строгий формат explanation:
+- analysis_text обязательно в виде:
+  "H1: ...; M15: ...; M5: ...; M1: ...; setup: ...; Вероятность успеха: NN%"
+- reasons_short: 3-5 коротких пунктов, желательно в порядке H1 -> M15 -> M5 -> M1.
+
+features (обязательно заполняй):
+{
+  "h1_bias":"up|down|flat",
+  "m15_structure":"support|resistance|range|breakout|retest|false_breakout",
+  "m5_trigger":"rejection|breakout_confirm|none",
+  "entry_tf":"M1",
+  "setup_type":"rejection|breakout_retest|false_breakout|none",
+  "mtf_alignment_score": 0.0,
+  "level_price": 0.0,
+  "success_probability_percent": 0
+}
+PROMPT;
+    }
 }

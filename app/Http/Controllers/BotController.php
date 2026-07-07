@@ -470,7 +470,7 @@ class BotController extends Controller
         return view('bots.settings', [
             'bot' => $bot,
             'openrouterModels' => $openrouterModels,
-            'chartAnalystBots' => in_array($bot->type, ['strong_level', 'strong_trend_telegram'], true)
+            'chartAnalystBots' => in_array($bot->type, ['strong_level', 'strong_trend_telegram', 'candle_reversal_confirm'], true)
                 ? Bot::query()
                     ->where('user_id', $bot->user_id)
                     ->where('type', 'openrouter_llm_analyst')
@@ -550,7 +550,18 @@ class BotController extends Controller
                 'm1_min_body_ratio' => ['required', 'numeric', 'min:0.05', 'max:0.80'],
                 // last = тени только у последней из 3 M1 (рекомендуется); all = у всех трёх (очень редкие сигналы).
                 'm1_wick_requirement_scope' => ['required', 'string', Rule::in(['all', 'last'])],
+                'telegram_enabled' => ['sometimes', 'boolean'],
+                'telegram_bot_token' => ['nullable', 'string', 'max:128'],
+                'telegram_chat_id' => ['nullable', 'string', 'max:64'],
+                'telegram_notify_on' => ['required', 'string', Rule::in(['signal_trade', 'off'])],
+                'telegram_alert_format' => ['required', 'string', Rule::in(['brief', 'detailed', 'card'])],
+                'telegram_send_chart' => ['required', 'string', Rule::in(['1', '0'])],
+                'telegram_analyst_llm_enabled' => ['sometimes', 'boolean'],
+                'telegram_analyst_bot_id' => ['nullable', 'integer', 'min:1'],
+                'telegram_analyst_llm_question' => ['nullable', 'string', 'max:500'],
             ]);
+            $existingToken = trim((string) (($bot->config ?? [])['telegram_bot_token'] ?? ''));
+            $tokenInput = trim((string) ($extra['telegram_bot_token'] ?? ''));
             $config = array_merge($bot->config ?? [], [
                 'count' => (int) $extra['count'],
                 // По ТЗ фиксируем вход на 5 минут.
@@ -565,6 +576,19 @@ class BotController extends Controller
                 'm1_min_body_ratio' => (float) $extra['m1_min_body_ratio'],
                 'm1_require_wick_dominance' => $request->boolean('m1_require_wick_dominance'),
                 'm1_wick_requirement_scope' => (string) $extra['m1_wick_requirement_scope'],
+                'telegram_enabled' => $request->boolean('telegram_enabled'),
+                'telegram_bot_token' => $tokenInput !== '' ? $tokenInput : $existingToken,
+                'telegram_chat_id' => trim((string) ($extra['telegram_chat_id'] ?? '')),
+                'telegram_notify_on' => (string) $extra['telegram_notify_on'],
+                'telegram_alert_format' => (string) $extra['telegram_alert_format'],
+                'telegram_send_chart' => ($extra['telegram_send_chart'] ?? '1') === '1',
+                'telegram_analyst_llm_enabled' => $request->boolean('telegram_analyst_llm_enabled'),
+                'telegram_analyst_bot_id' => ! empty($extra['telegram_analyst_bot_id'])
+                    ? (int) $extra['telegram_analyst_bot_id']
+                    : null,
+                'telegram_analyst_llm_question' => StrongLevelTelegramLlmButton::llmQuestionFromConfig([
+                    'telegram_analyst_llm_question' => $extra['telegram_analyst_llm_question'] ?? null,
+                ]),
                 'version' => 'candle_reversal_confirm_v2_mtf',
             ]);
         } elseif ($bot->type === 'smc_flow') {
@@ -774,6 +798,7 @@ class BotController extends Controller
                 'allowed_instruments_text' => ['nullable', 'string', 'max:8000'],
                 'blocked_instruments_text' => ['nullable', 'string', 'max:8000'],
                 'telegram_enabled' => ['sometimes', 'boolean'],
+                'telegram_skip_user_question' => ['sometimes', 'boolean'],
                 'telegram_bot_token' => ['nullable', 'string', 'max:128'],
                 'telegram_chat_id' => ['nullable', 'string', 'max:64'],
             ]);
@@ -801,6 +826,7 @@ class BotController extends Controller
                 'allowed_instruments' => $allowedList,
                 'blocked_instruments' => $blockedList,
                 'telegram_enabled' => $request->boolean('telegram_enabled'),
+                'telegram_skip_user_question' => $request->boolean('telegram_skip_user_question'),
                 'telegram_bot_token' => $tokenInput !== '' ? $tokenInput : $existingToken,
                 'telegram_chat_id' => trim((string) ($extra['telegram_chat_id'] ?? '')),
                 'version' => 'openrouter_llm_analyst_v1',
@@ -850,7 +876,7 @@ class BotController extends Controller
     public function telegramTest(Bot $bot, TelegramAlertService $telegram): JsonResponse
     {
         $this->ensureBotOwner($bot);
-        if (! in_array($bot->type, ['strong_trend_telegram', 'strong_level', 'openrouter_llm_analyst'], true)) {
+        if (! in_array($bot->type, ['strong_trend_telegram', 'strong_level', 'openrouter_llm_analyst', 'candle_reversal_confirm'], true)) {
             return response()->json(['ok' => false, 'error' => 'unsupported_bot_type'], 422);
         }
 
@@ -865,7 +891,7 @@ class BotController extends Controller
     public function telegramDiscoverChat(Bot $bot, TelegramAlertService $telegram): JsonResponse
     {
         $this->ensureBotOwner($bot);
-        if (! in_array($bot->type, ['strong_trend_telegram', 'strong_level', 'openrouter_llm_analyst'], true)) {
+        if (! in_array($bot->type, ['strong_trend_telegram', 'strong_level', 'openrouter_llm_analyst', 'candle_reversal_confirm'], true)) {
             return response()->json(['ok' => false, 'error' => 'unsupported_bot_type'], 422);
         }
 
@@ -879,7 +905,16 @@ class BotController extends Controller
             ], 422);
         }
 
-        $result = $telegram->discoverChatIds($token);
+        // Фоновый poll забирает getUpdates — на время discover останавливаем его.
+        if (StrongLevelTelegramLlmButton::supportsBotType($bot->type)) {
+            app(StrongLevelTelegramProcessManager::class)->stopPoll($bot->id);
+        }
+        if ($bot->type === 'openrouter_llm_analyst') {
+            app(\App\Services\Telegram\TelegramAnalystProcessManager::class)->stopPoll($bot->id);
+        }
+
+        // Ждём до 15 с новое /start после нажатия кнопки (poll уже остановлен).
+        $result = $telegram->discoverChatIds($token, 15);
         if (! ($result['ok'] ?? false)) {
             return response()->json($result, 422);
         }
@@ -887,6 +922,7 @@ class BotController extends Controller
         $chats = $result['chats'] ?? [];
         $botUsernameHint = match ($bot->type) {
             'strong_level' => '@strong_level_bot',
+            'candle_reversal_confirm' => '@candle_reversal_confirm_bot',
             'openrouter_llm_analyst' => '@chart_analyct_smc_flow_bot',
             default => '@trend1123_bot',
         };
@@ -894,7 +930,7 @@ class BotController extends Controller
             return response()->json([
                 'ok' => true,
                 'chats' => [],
-                'hint' => 'Список пуст. Откройте '.$botUsernameHint.' в Telegram, нажмите Start (/start) и повторите.',
+                'hint' => 'Не дождались сообщения. Нажмите «Получить chat_id» и в течение 15 секунд отправьте /start боту '.$botUsernameHint.' (poll на это время останавливается).',
             ]);
         }
 
