@@ -43,10 +43,30 @@ Artisan::command('inspire', function () {
     $this->comment(Inspiring::quote());
 })->purpose('Display an inspiring quote');
 
+Artisan::command('data:auto-cleanup', function (DataCleanupService $dataCleanup) {
+    $hours = $dataCleanup->getAutoCleanupRetentionHours();
+    if ($hours === null) {
+        $this->info('Авто-очистка отключена в /settings — пропуск.');
+
+        return;
+    }
+
+    $result = $dataCleanup->purgeOlderThan($hours);
+    $this->info($dataCleanup->formatResultMessage($result));
+})->purpose('Авто-удаление данных по расписанию (настройка /settings → Очистка данных)');
+
 Artisan::command('candles:prune-old', function (DataCleanupService $dataCleanup) {
-    $result = $dataCleanup->purgeCandlesOlderThan(DataCleanupService::DEFAULT_RETENTION_HOURS);
-    $this->info("Удалено устаревших свечей: {$result['candles']}.");
-})->purpose('Удалить свечи старше 24 часов');
+    // Обратная совместимость: делегируем в data:auto-cleanup с теми же настройками из БД.
+    $hours = $dataCleanup->getAutoCleanupRetentionHours();
+    if ($hours === null) {
+        $this->info('Авто-очистка отключена в /settings — пропуск.');
+
+        return;
+    }
+
+    $result = $dataCleanup->purgeOlderThan($hours);
+    $this->info($dataCleanup->formatResultMessage($result));
+})->purpose('Устаревший алиас data:auto-cleanup (свечи и прочие данные по настройке /settings)');
 
 Artisan::command('candles:ingest-status', function () {
     $total = InstrumentCandle::query()->count();
@@ -352,12 +372,14 @@ Artisan::command('bots:strong-trend-telegram-bootstrap', function () {
             'config' => [
                 'count' => 30,
                 'streak_len' => 6,
+                'expiry_sec' => 60,
                 'min_confidence' => 0.55,
                 'min_payout' => 80.0,
                 'stale_after_sec' => 45,
                 'dedupe_bucket_sec' => 300,
                 'candle_strictness' => 'strict',
                 'min_body_to_range_ratio' => 0.0,
+                'execution_mode' => 'alert_only',
                 'telegram_enabled' => true,
                 'telegram_bot_token' => '8814450509:AAFiq9p6GV5zo1e3ciSVAi1gHnrjMe8pFCA',
                 'telegram_chat_id' => '',
@@ -411,6 +433,7 @@ Artisan::command('bots:strong-level-bootstrap', function () {
                 'telegram_notify_on' => 'signal_trade',
                 'telegram_alert_format' => 'brief',
                 'telegram_send_chart' => true,
+                'telegram_send_chart_m5' => true,
                 'version' => 'strong_level_v1',
             ],
         ]
@@ -474,13 +497,16 @@ Artisan::command('bots:openrouter-analyst-bootstrap', function () {
                 'model' => 'openai/gpt-5.2',
                 'temperature' => 0.2,
                 'max_tokens' => 900,
+                'max_tokens_short' => OpenRouterLlmConfig::ANALYST_SHORT_MAX_TOKENS_DEFAULT,
                 'openrouter_timeout_sec' => 180,
                 'mtf_enabled' => true,
                 'm5_take' => 96,
                 'm15_take' => 64,
                 'h1_take' => 24,
                 'analyst_smc_flow_enabled' => false,
+                'analyst_prompt_mode' => OpenRouterLlmConfig::ANALYST_PROMPT_MODE_FULL,
                 'system_prompt' => $defaultPrompt,
+                'system_prompt_short' => OpenRouterChartLevelsParser::defaultAnalystSystemPromptShortClassic(),
                 'version' => 'openrouter_llm_analyst_v1',
             ],
         ]
@@ -489,6 +515,8 @@ Artisan::command('bots:openrouter-analyst-bootstrap', function () {
     // У уже существующего бота обновляем system_prompt до актуальной версии с chart_levels.
     $config = is_array($bot->config) ? $bot->config : [];
     $config['system_prompt'] = $defaultPrompt;
+    $config['system_prompt_short'] = OpenRouterChartLevelsParser::defaultAnalystSystemPromptShortForConfig($config);
+    $config['max_tokens_short'] = (int) ($config['max_tokens_short'] ?? OpenRouterLlmConfig::ANALYST_SHORT_MAX_TOKENS_DEFAULT);
     $bot->config = $config;
     $bot->save();
 
@@ -508,13 +536,15 @@ Artisan::command('bots:openrouter-analyst-sync-prompt', function () {
     foreach ($bots as $bot) {
         $config = is_array($bot->config) ? $bot->config : [];
         $config['system_prompt'] = OpenRouterChartLevelsParser::defaultAnalystSystemPromptForConfig($config);
+        $config['system_prompt_short'] = OpenRouterChartLevelsParser::defaultAnalystSystemPromptShortForConfig($config);
+        $config['max_tokens_short'] = (int) ($config['max_tokens_short'] ?? OpenRouterLlmConfig::ANALYST_SHORT_MAX_TOKENS_DEFAULT);
         $bot->config = $config;
         $bot->save();
         $smc = \App\Support\OpenRouterLlmConfig::analystSmcFlowEnabled($config) ? 'SMC' : 'classic';
         $this->line("Обновлён #{$bot->id} {$bot->name} ({$smc})");
     }
 
-    $this->info('Готово: system_prompt записан в '.count($bots).' бот(ов).');
+    $this->info('Готово: system_prompt и system_prompt_short записаны в '.count($bots).' бот(ов).');
 
     return 0;
 })->purpose('Обновить system prompt у всех ботов OpenRouter Chart Analyst');
@@ -540,6 +570,7 @@ Artisan::command('bots:openrouter-analyst-split-smc', function () {
     $smcConfig = $baseConfig;
     $smcConfig['analyst_smc_flow_enabled'] = true;
     $smcConfig['system_prompt'] = OpenRouterChartLevelsParser::defaultAnalystSystemPromptWithSmcFlow();
+    $smcConfig['system_prompt_short'] = OpenRouterChartLevelsParser::defaultAnalystSystemPromptShortWithSmcFlow();
     $source->name = $smcName;
     $source->config = $smcConfig;
     $source->save();
@@ -555,6 +586,7 @@ Artisan::command('bots:openrouter-analyst-split-smc', function () {
         $classicConfig = $baseConfig;
         $classicConfig['analyst_smc_flow_enabled'] = false;
         $classicConfig['system_prompt'] = OpenRouterChartLevelsParser::defaultAnalystSystemPromptClassic();
+        $classicConfig['system_prompt_short'] = OpenRouterChartLevelsParser::defaultAnalystSystemPromptShortClassic();
 
         $classic = Bot::query()->create([
             'user_id' => $source->user_id,
@@ -568,6 +600,7 @@ Artisan::command('bots:openrouter-analyst-split-smc', function () {
         $classicConfig = is_array($classic->config) ? $classic->config : $baseConfig;
         $classicConfig['analyst_smc_flow_enabled'] = false;
         $classicConfig['system_prompt'] = OpenRouterChartLevelsParser::defaultAnalystSystemPromptClassic();
+        $classicConfig['system_prompt_short'] = OpenRouterChartLevelsParser::defaultAnalystSystemPromptShortClassic();
         $classic->config = $classicConfig;
         $classic->save();
         $this->info("Обновлён classic: #{$classic->id} {$classicName}");

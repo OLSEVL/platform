@@ -12,6 +12,8 @@
     // сложной строкой с JSON-скобками внутри inline-выражения.
     $openrouterDefaultPrompt = \App\Support\OpenRouterLlmConfig::defaultTradingSystemPrompt();
     $openrouterAnalystDefaultPrompt = \App\Support\OpenRouterChartLevelsParser::defaultAnalystSystemPromptForConfig($cfg);
+    $openrouterAnalystShortDefaultPrompt = \App\Support\OpenRouterChartLevelsParser::defaultAnalystSystemPromptShortForConfig($cfg);
+    $analystPromptMode = old('analyst_prompt_mode', $cfg['analyst_prompt_mode'] ?? \App\Support\OpenRouterLlmConfig::ANALYST_PROMPT_MODE_FULL);
     $isChartAnalystBot = $bot->type === 'openrouter_llm_analyst';
     $analystSmcFlowEnabled = $isChartAnalystBot && \App\Support\OpenRouterLlmConfig::analystSmcFlowEnabled($cfg);
 @endphp
@@ -682,14 +684,40 @@
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
                         <p class="text-[11px] text-zinc-500">Аналитик пишет развёрнутый текст + уровни. 900+ токенов. Мало — обрезанный ответ без chart_levels.</p>
                     </div>
+                    <div class="space-y-1">
+                        <label for="max_tokens_short" class="block text-xs font-medium text-zinc-400">Max tokens (краткий режим)</label>
+                        <input type="number" name="max_tokens_short" id="max_tokens_short" min="1" required
+                            value="{{ old('max_tokens_short', $cfg['max_tokens_short'] ?? \App\Support\OpenRouterLlmConfig::ANALYST_SHORT_MAX_TOKENS_DEFAULT) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        <p class="text-[11px] text-zinc-500">Лимит генерации только для краткого режима (CALL/PUT/NONE + вероятность). Меньше токенов — быстрее ответ.</p>
+                    </div>
                     @include('bots._openrouter-timeout-field', ['cfg' => $cfg, 'defaultTimeout' => 180])
                 </div>
+
+                <p class="text-xs font-semibold uppercase tracking-wide text-zinc-500 border-t border-zinc-800 pt-4">System prompt</p>
                 <div class="space-y-1">
-                    <label for="system_prompt" class="block text-xs font-medium text-zinc-400">System prompt</label>
+                    <label for="analyst_prompt_mode" class="block text-xs font-medium text-zinc-400">Режим ответа</label>
+                    <select name="analyst_prompt_mode" id="analyst_prompt_mode" required
+                        class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500">
+                        <option value="full" @selected($analystPromptMode === 'full')>Полный — MTF-разбор + chart_levels</option>
+                        <option value="short" @selected($analystPromptMode === 'short')>Краткий — CALL/PUT/NONE + вероятность успеха</option>
+                    </select>
+                    <p class="text-[11px] text-zinc-500">Краткий режим быстрее: короткий ответ без уровней на графике. Оба промпта сохраняются — переключение без потери текста.</p>
+                    @error('analyst_prompt_mode')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                </div>
+                <div class="space-y-1">
+                    <label for="system_prompt" class="block text-xs font-medium text-zinc-400">System prompt (полный)</label>
                     <textarea name="system_prompt" id="system_prompt" rows="12" required
                         class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 font-mono text-xs text-zinc-100 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500">{{ old('system_prompt', $cfg['system_prompt'] ?? $openrouterAnalystDefaultPrompt) }}</textarea>
-                    <p class="text-[11px] text-zinc-500">Задаёт формат: MTF-разбор, рекомендация CALL/PUT/NONE, блок chart_levels. При включённом SMC Flow в конфиге подставляется расширенный промпт автоматически при сбросе.</p>
+                    <p class="text-[11px] text-zinc-500">MTF-разбор, рекомендация CALL/PUT/NONE, блок chart_levels. При SMC Flow — расширенный промпт при сбросе через artisan sync-prompt.</p>
                     @error('system_prompt')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                </div>
+                <div class="space-y-1">
+                    <label for="system_prompt_short" class="block text-xs font-medium text-zinc-400">System prompt (краткий)</label>
+                    <textarea name="system_prompt_short" id="system_prompt_short" rows="10" required
+                        class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 font-mono text-xs text-zinc-100 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500">{{ old('system_prompt_short', $cfg['system_prompt_short'] ?? $openrouterAnalystShortDefaultPrompt) }}</textarea>
+                    <p class="text-[11px] text-zinc-500">Только вердикт: «Рекомендация: CALL/PUT/NONE», «Вероятность успеха: NN%», короткая причина. Без chart_levels. Лимит токенов берётся из поля «Max tokens (краткий режим)».</p>
+                    @error('system_prompt_short')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                 </div>
 
                 <p class="text-xs font-semibold uppercase tracking-wide text-zinc-500 border-t border-zinc-800 pt-4">Telegram-меню пар</p>
@@ -1167,6 +1195,22 @@
                             <p class="text-[11px] text-zinc-500">С графиком: свечи M1, линия уровня, зона касания и маркер входа. Без графика — одно текстовое сообщение (быстрее, меньше трафика).</p>
                             @error('telegram_send_chart')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                         </div>
+                        <div class="space-y-1">
+                            <label for="telegram_send_chart_m5" class="block text-xs font-medium text-zinc-400">Доп. график M5</label>
+                            @php
+                                $telegramSendChartM5 = old('telegram_send_chart_m5');
+                                if ($telegramSendChartM5 === null) {
+                                    $telegramSendChartM5 = ($cfg['telegram_send_chart_m5'] ?? true) ? '1' : '0';
+                                }
+                            @endphp
+                            <select name="telegram_send_chart_m5" id="telegram_send_chart_m5" required
+                                class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                                <option value="1" @selected((string) $telegramSendChartM5 === '1')>Отправлять второй PNG M5</option>
+                                <option value="0" @selected((string) $telegramSendChartM5 === '0')>Только M1 (без M5)</option>
+                            </select>
+                            <p class="text-[11px] text-zinc-500">Работает только при включённом «График в алерте». Показывает старший контекст на M5 отдельным сообщением.</p>
+                            @error('telegram_send_chart_m5')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                        </div>
                         <div class="space-y-1 sm:col-span-2">
                             <label class="flex items-start gap-2">
                                 <input type="checkbox" name="telegram_analyst_llm_enabled" id="telegram_analyst_llm_enabled" value="1"
@@ -1376,13 +1420,25 @@
                         <strong>N закрытых свечей подряд</strong> в одну сторону → push-алерт в Telegram.
                     </p>
                     <p class="text-[11px] text-zinc-500">
-                        Только уведомления (<code class="text-zinc-400">notify_only</code>). Paper-сделки и зеркало на Pocket Options <strong>не создаются</strong>.
-                        CALL = серия бычьих свечей (тренд вверх), PUT = медвежья серия — это метка направления, не торговая рекомендация.
+                        Режим исполнения задаётся в настройке ниже: <code class="text-zinc-400">Только алерты</code>
+                        или <code class="text-zinc-400">Сделки + алерты</code>.
+                        CALL = серия бычьих свечей (тренд вверх), PUT = медвежья серия.
                     </p>
                 </div>
 
                 <p class="text-xs font-semibold uppercase tracking-wide text-zinc-500">Детектор серии</p>
                 <div class="grid gap-4 sm:grid-cols-2">
+                    <div class="space-y-1">
+                        <label for="execution_mode" class="block text-xs font-medium text-zinc-400">Режим исполнения</label>
+                        @php $trendExecutionMode = old('execution_mode', $cfg['execution_mode'] ?? (($cfg['notify_only'] ?? true) ? 'alert_only' : 'signal_trade')); @endphp
+                        <select name="execution_mode" id="execution_mode" required
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                            <option value="alert_only" @selected($trendExecutionMode === 'alert_only')>Только алерты (без сделок)</option>
+                            <option value="signal_trade" @selected($trendExecutionMode === 'signal_trade')>Сделки + алерты (как strong_level)</option>
+                        </select>
+                        <p class="text-[11px] text-zinc-500">В режиме сделок бот создаёт paper-сделки и запускает mirror по обычному пайплайну движка.</p>
+                        @error('execution_mode')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
                     <div class="space-y-1">
                         <label for="count" class="block text-xs font-medium text-zinc-400">Свечей в выборке (count)</label>
                         <input type="number" name="count" id="count" min="10" max="5000" required
@@ -1398,6 +1454,14 @@
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
                         <p class="text-[11px] text-zinc-500">Длина серии для алерта. 4–5 — чаще сигналы, больше шума. 6–8 — реже, но «чище» импульс. Минимум 2.</p>
                         @error('streak_len')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                    <div class="space-y-1">
+                        <label for="expiry_sec" class="block text-xs font-medium text-zinc-400">Экспирация сделки (сек)</label>
+                        <input type="number" name="expiry_sec" id="expiry_sec" min="30" max="86400" required
+                            value="{{ old('expiry_sec', $cfg['expiry_sec'] ?? 60) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        <p class="text-[11px] text-zinc-500">Используется только в режиме «Сделки + алерты». Для M1 обычно 60 секунд.</p>
+                        @error('expiry_sec')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
                         <label for="min_confidence" class="block text-xs font-medium text-zinc-400">Мин. confidence (0–1)</label>

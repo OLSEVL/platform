@@ -28,6 +28,7 @@ use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
@@ -556,6 +557,7 @@ class BotController extends Controller
                 'telegram_notify_on' => ['required', 'string', Rule::in(['signal_trade', 'off'])],
                 'telegram_alert_format' => ['required', 'string', Rule::in(['brief', 'detailed', 'card'])],
                 'telegram_send_chart' => ['required', 'string', Rule::in(['1', '0'])],
+                'telegram_send_chart_m5' => ['required', 'string', Rule::in(['1', '0'])],
                 'telegram_analyst_llm_enabled' => ['sometimes', 'boolean'],
                 'telegram_analyst_bot_id' => ['nullable', 'integer', 'min:1'],
                 'telegram_analyst_llm_question' => ['nullable', 'string', 'max:500'],
@@ -582,6 +584,7 @@ class BotController extends Controller
                 'telegram_notify_on' => (string) $extra['telegram_notify_on'],
                 'telegram_alert_format' => (string) $extra['telegram_alert_format'],
                 'telegram_send_chart' => ($extra['telegram_send_chart'] ?? '1') === '1',
+                'telegram_send_chart_m5' => ($extra['telegram_send_chart_m5'] ?? '1') === '1',
                 'telegram_analyst_llm_enabled' => $request->boolean('telegram_analyst_llm_enabled'),
                 'telegram_analyst_bot_id' => ! empty($extra['telegram_analyst_bot_id'])
                     ? (int) $extra['telegram_analyst_bot_id']
@@ -617,16 +620,20 @@ class BotController extends Controller
                 'version' => 'smc_flow_ut_3br_ob_v1',
             ]);
         } elseif ($bot->type === 'strong_trend_telegram') {
-            // Алерт сильного тренда M1 → Telegram; без paper-сделок в платформе.
+            // Strong Trend Telegram: режим configurable
+            // - alert_only: только Telegram-алерты,
+            // - signal_trade: Telegram + paper-сделки + зеркало (как у торговых ботов).
             $extra = $request->validate([
                 'count' => ['required', 'integer', 'min:10', 'max:5000'],
                 'streak_len' => ['required', 'integer', 'min:2', 'max:30'],
+                'expiry_sec' => ['required', 'integer', 'min:30', 'max:86400'],
                 'min_confidence' => ['required', 'numeric', 'min:0', 'max:1'],
                 'min_payout' => ['required', 'numeric', 'min:0', 'max:100'],
                 'stale_after_sec' => ['required', 'integer', 'min:5', 'max:600'],
                 'dedupe_bucket_sec' => ['required', 'integer', 'min:60', 'max:3600'],
                 'candle_strictness' => ['required', 'string', Rule::in(['strict', 'with_doji'])],
                 'min_body_to_range_ratio' => ['required', 'numeric', 'min:0', 'max:1'],
+                'execution_mode' => ['required', 'string', Rule::in(['alert_only', 'signal_trade'])],
                 'telegram_enabled' => ['sometimes', 'boolean'],
                 'telegram_bot_token' => ['nullable', 'string', 'max:128'],
                 'telegram_chat_id' => ['nullable', 'string', 'max:64'],
@@ -640,12 +647,14 @@ class BotController extends Controller
             $config = array_merge($bot->config ?? [], [
                 'count' => (int) $extra['count'],
                 'streak_len' => (int) $extra['streak_len'],
+                'expiry_sec' => (int) $extra['expiry_sec'],
                 'min_confidence' => (float) $extra['min_confidence'],
                 'min_payout' => (float) $extra['min_payout'],
                 'stale_after_sec' => (int) $extra['stale_after_sec'],
                 'dedupe_bucket_sec' => (int) $extra['dedupe_bucket_sec'],
                 'candle_strictness' => (string) $extra['candle_strictness'],
                 'min_body_to_range_ratio' => (float) $extra['min_body_to_range_ratio'],
+                'execution_mode' => (string) $extra['execution_mode'],
                 'telegram_enabled' => $request->boolean('telegram_enabled'),
                 // Пустое поле token при сохранении не затирает уже сохранённый token.
                 'telegram_bot_token' => $tokenInput !== '' ? $tokenInput : $existingToken,
@@ -658,7 +667,8 @@ class BotController extends Controller
                     'telegram_analyst_llm_question' => $extra['telegram_analyst_llm_question'] ?? null,
                 ]),
                 'telegram_send_chart' => ($extra['telegram_send_chart'] ?? '1') === '1',
-                'notify_only' => true,
+                // Для обратной совместимости и удобства движка дублируем режим в bool-ключ.
+                'notify_only' => (string) $extra['execution_mode'] === 'alert_only',
                 'version' => 'strong_trend_telegram_v1',
             ]);
         } elseif ($bot->type === 'strong_level') {
@@ -783,6 +793,7 @@ class BotController extends Controller
                 'model' => ['required', 'string', 'min:3', 'max:128'],
                 'temperature' => ['required', 'numeric', 'min:0', 'max:2'],
                 'max_tokens' => ['required', 'integer', 'min:64', 'max:8192'],
+                'max_tokens_short' => ['required', 'integer'],
                 'openrouter_timeout_sec' => [
                     'required',
                     'integer',
@@ -790,6 +801,8 @@ class BotController extends Controller
                     'max:'.(int) config('services.openrouter.timeout_sec_max', 600),
                 ],
                 'system_prompt' => ['required', 'string', 'min:20', 'max:12000'],
+                'analyst_prompt_mode' => ['required', 'string', 'in:full,short'],
+                'system_prompt_short' => ['required', 'string', 'min:20', 'max:12000'],
                 'mtf_enabled' => ['sometimes', 'boolean'],
                 'm5_take' => ['required', 'integer', 'min:1', 'max:300'],
                 'm15_take' => ['required', 'integer', 'min:1', 'max:300'],
@@ -816,8 +829,11 @@ class BotController extends Controller
                 'model' => trim((string) $extra['model']),
                 'temperature' => (float) $extra['temperature'],
                 'max_tokens' => (int) $extra['max_tokens'],
+                'max_tokens_short' => (int) $extra['max_tokens_short'],
                 'openrouter_timeout_sec' => (int) $extra['openrouter_timeout_sec'],
                 'system_prompt' => trim((string) $extra['system_prompt']),
+                'analyst_prompt_mode' => (string) $extra['analyst_prompt_mode'],
+                'system_prompt_short' => trim((string) $extra['system_prompt_short']),
                 'mtf_enabled' => $request->boolean('mtf_enabled'),
                 'm5_take' => (int) $extra['m5_take'],
                 'm15_take' => (int) $extra['m15_take'],
@@ -866,6 +882,20 @@ class BotController extends Controller
             'is_active' => $isActive,
             'config' => $config,
         ]);
+
+        // После изменения конфигурации бота отправляем общий сигнал queue:restart:
+        // все queue worker-процессы должны перечитать код/конфиг и подняться с новыми правилами.
+        // Важно: это мягкий сигнал через cache, запрос пользователя не должен падать,
+        // поэтому любые ошибки рестарта только логируем и продолжаем redirect.
+        try {
+            Artisan::call('queue:restart');
+        } catch (Throwable $e) {
+            Log::warning('bot_settings_queue_restart_failed', [
+                'bot_id' => $bot->id,
+                'bot_type' => $bot->type,
+                'error' => $e->getMessage(),
+            ]);
+        }
 
         return redirect()->route('bots.settings', $bot)->with('status', 'Настройки сохранены.');
     }

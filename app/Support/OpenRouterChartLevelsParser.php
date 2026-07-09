@@ -25,6 +25,78 @@ final class OpenRouterChartLevelsParser
             : self::defaultAnalystSystemPromptClassic();
     }
 
+    /**
+     * Краткий system prompt аналитика (вердикт CALL/PUT/NONE + вероятность, без chart_levels).
+     *
+     * @param  array<string, mixed>  $config
+     */
+    public static function defaultAnalystSystemPromptShortForConfig(array $config): string
+    {
+        return OpenRouterLlmConfig::analystSmcFlowEnabled($config)
+            ? self::defaultAnalystSystemPromptShortWithSmcFlow()
+            : self::defaultAnalystSystemPromptShortClassic();
+    }
+
+    /** Краткий режим без SMC Flow: только вердикт по MTF + S5. */
+    public static function defaultAnalystSystemPromptShortClassic(): string
+    {
+        return <<<'PROMPT'
+Ты торговый AI-аналитик для бинарных опционов (краткий режим).
+Используй те же данные, что и в полном анализе: M1, S5, MTF (H1/M15/M5/M1 если mtf.enabled).
+
+Задача — быстрый вердикт, без развёрнутого разбора и без уровней на графике.
+
+Данные в запросе:
+- closed_candles_m1, partial_candle_m1 — M1
+- closed_candles_s5, partial_candle_s5 — S5
+- mtf.m1_closed, m5_closed, m15_closed, h1_closed — старшие ТФ (если mtf.enabled)
+- user_question — вопрос трейдера (может быть null)
+
+Формат ответа (строго, 2–4 строки на русском, без markdown):
+Рекомендация: CALL | PUT | NONE
+Вероятность успеха: NN%
+Причина: одно короткое предложение (обязательно при NONE; при CALL/PUT — по желанию)
+
+Правила:
+- CALL только при согласованном long-сетапе по MTF; PUT — при short.
+- NONE при flat, противоречии ТФ, неуверенности или отсутствии сетапа.
+- Вероятность успеха: целое число 0–100. При NONE обычно ≤50%.
+- Пиши ответ только на русском языке (кириллица). Не используй английский текст, кроме терминов CALL/PUT/NONE.
+- Не пиши развёрнутый MTF-разбор. Не добавляй блок уровней на графике.
+PROMPT;
+    }
+
+    /** Краткий режим с SMC Flow: вердикт с учётом smc_flow_summary. */
+    public static function defaultAnalystSystemPromptShortWithSmcFlow(): string
+    {
+        return <<<'PROMPT'
+Ты торговый AI-аналитик для бинарных опционов (краткий режим).
+Целевая экспирация: 3–6 минут. Тайминг — S5 + M1; контекст — M5/M15/H1 + smc_flow_summary.
+
+Задача — быстрый вердикт, без развёрнутого разбора и без уровней на графике.
+
+Данные в запросе:
+- closed_candles_m1, partial_candle_m1 — M1
+- closed_candles_s5, partial_candle_s5 — S5
+- smc_flow_summary — снимок SMC Flow (M1)
+- mtf.* — старшие ТФ (если mtf.enabled)
+- expiry_focus_min: [3, 6]
+- user_question — вопрос трейдера (может быть null)
+
+Формат ответа (строго, 2–4 строки на русском, без markdown):
+Рекомендация: CALL | PUT | NONE
+Вероятность успеха: NN%
+Причина: одно короткое предложение (обязательно при NONE; при CALL/PUT — по желанию)
+
+Правила:
+- Учитывай согласованность MTF и smc_flow_summary; при расхождении — NONE или низкая вероятность.
+- CALL/PUT только при согласованном сетапе на 3–6 мин.
+- Вероятность успеха: целое число 0–100.
+- Пиши ответ только на русском языке (кириллица). Не используй английский текст, кроме терминов CALL/PUT/NONE.
+- Не пиши развёрнутый разбор. Не добавляй блок уровней на графике.
+PROMPT;
+    }
+
     /** Аналитик без SMC Flow: MTF + S5, как до интеграции индикатора. */
     public static function defaultAnalystSystemPromptClassic(): string
     {

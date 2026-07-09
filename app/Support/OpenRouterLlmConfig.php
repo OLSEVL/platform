@@ -93,6 +93,13 @@ final class OpenRouterLlmConfig
         return $map;
     }
 
+    public const ANALYST_PROMPT_MODE_FULL = 'full';
+
+    public const ANALYST_PROMPT_MODE_SHORT = 'short';
+
+    /** Лимит max_tokens в кратком режиме (ускоряет ответ модели). */
+    public const ANALYST_SHORT_MAX_TOKENS_DEFAULT = 200;
+
     /**
      * Включён ли SMC Flow в ручном анализе openrouter_llm_analyst (snapshot в LLM + overlay после анализа).
      *
@@ -101,6 +108,50 @@ final class OpenRouterLlmConfig
     public static function analystSmcFlowEnabled(array $config): bool
     {
         return (bool) ($config['analyst_smc_flow_enabled'] ?? false);
+    }
+
+    /**
+     * Режим system prompt аналитика: полный разбор или краткий вердикт.
+     *
+     * @param  array<string, mixed>  $config
+     */
+    public static function analystPromptMode(array $config): string
+    {
+        $mode = (string) ($config['analyst_prompt_mode'] ?? self::ANALYST_PROMPT_MODE_FULL);
+
+        return in_array($mode, [self::ANALYST_PROMPT_MODE_FULL, self::ANALYST_PROMPT_MODE_SHORT], true)
+            ? $mode
+            : self::ANALYST_PROMPT_MODE_FULL;
+    }
+
+    /**
+     * @param  array<string, mixed>  $config
+     */
+    public static function isAnalystShortPromptMode(array $config): bool
+    {
+        return self::analystPromptMode($config) === self::ANALYST_PROMPT_MODE_SHORT;
+    }
+
+    /**
+     * Активный system prompt аналитика по настройке analyst_prompt_mode.
+     *
+     * @param  array<string, mixed>  $config
+     */
+    public static function resolveAnalystSystemPrompt(array $config): string
+    {
+        if (self::isAnalystShortPromptMode($config)) {
+            $custom = trim((string) ($config['system_prompt_short'] ?? ''));
+
+            return $custom !== ''
+                ? $custom
+                : OpenRouterChartLevelsParser::defaultAnalystSystemPromptShortForConfig($config);
+        }
+
+        $custom = trim((string) ($config['system_prompt'] ?? ''));
+
+        return $custom !== ''
+            ? $custom
+            : OpenRouterChartLevelsParser::defaultAnalystSystemPromptForConfig($config);
     }
 
     /**

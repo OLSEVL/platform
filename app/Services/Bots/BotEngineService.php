@@ -261,8 +261,14 @@ class BotEngineService
                         continue;
                     }
 
-                    // strong_trend_telegram: только алерт в Telegram, без paper-сделок и зеркала PO.
-                    if ($bot->type === 'strong_trend_telegram' || (bool) ($decision['notify_only'] ?? false)) {
+                    // Режим alert-only: пишем сигнал + Telegram, но не создаём paper-сделку.
+                    // Для strong_trend_telegram режим берём из config.execution_mode/notify_only.
+                    $isAlertOnlyMode = (bool) ($decision['notify_only'] ?? false);
+                    if ($bot->type === 'strong_trend_telegram') {
+                        $executionMode = (string) (($config['execution_mode'] ?? '') ?: ((bool) ($config['notify_only'] ?? true) ? 'alert_only' : 'signal_trade'));
+                        $isAlertOnlyMode = $executionMode === 'alert_only';
+                    }
+                    if ($isAlertOnlyMode) {
                         $entryAt = now();
                         $payoutSnapshot = $instrumentRow->current_payout !== null ? (float) $instrumentRow->current_payout : null;
                         $telegramResult = null;
@@ -315,7 +321,7 @@ class BotEngineService
 
                         $this->finishAnalysisRun($analysisRun, BotAnalysisRun::STATUS_OK, null, [
                             'decision' => $decision,
-                            'notify_only' => true,
+                            'notify_only' => $isAlertOnlyMode,
                             'telegram' => $telegramResult,
                         ]);
 
@@ -451,6 +457,23 @@ class BotEngineService
                         if (! ($telegramResult['ok'] ?? false)
                             && ! in_array($telegramResult['error'] ?? '', ['telegram_disabled', 'telegram_notify_disabled'], true)) {
                             Log::warning('candle_reversal_telegram_alert_failed', [
+                                'bot_id' => $bot->id,
+                                'instrument' => $instrument,
+                                'error' => $telegramResult['error'] ?? 'unknown',
+                            ]);
+                        }
+                    } elseif ($bot->type === 'strong_trend_telegram') {
+                        // Режим signal_trade: сделка уже создана выше — шлём тот же trend-алерт, что и в alert_only.
+                        $telegramResult = app(TelegramAlertService::class)->sendTrendAlert(
+                            $bot,
+                            $instrument,
+                            $decision,
+                            $payoutSnapshot,
+                            $closed,
+                        );
+                        if (! ($telegramResult['ok'] ?? false)
+                            && ! in_array($telegramResult['error'] ?? '', ['telegram_disabled'], true)) {
+                            Log::warning('strong_trend_telegram_alert_failed', [
                                 'bot_id' => $bot->id,
                                 'instrument' => $instrument,
                                 'error' => $telegramResult['error'] ?? 'unknown',
@@ -615,6 +638,7 @@ class BotEngineService
             'billing' => $billing,
             'billing_label' => OpenRouterClient::formatBillingLabel($billing),
             'analyst_smc_flow_enabled' => $analystSmcEnabled,
+            'analyst_prompt_mode' => (string) ($features['analyst_prompt_mode'] ?? \App\Support\OpenRouterLlmConfig::analystPromptMode($config)),
             'smc_flow' => $analystSmcEnabled && is_array($smcFlowPack) ? $smcFlowPack['overlay'] : null,
             'smc_flow_modules' => $analystSmcEnabled && is_array($smcFlowPack)
                 ? ($smcFlowPack['overlay']['modules'] ?? [])
@@ -955,6 +979,7 @@ class BotEngineService
             'three_candles_in_row' => (int) ($config['expiry_sec'] ?? 60),
             'akim_trade_1m' => (int) ($config['expiry_sec'] ?? 60),
             'smc_flow' => (int) ($config['expiry_sec'] ?? 180),
+            'strong_trend_telegram' => (int) ($config['expiry_sec'] ?? 60),
             'strong_level' => (int) ($config['expiry_sec_bounce'] ?? 180),
             // По ТЗ для MTF-разворота вход идёт на 5 минут независимо от рыночной фазы.
             'candle_reversal_confirm' => (int) ($config['expiry_sec'] ?? 300),

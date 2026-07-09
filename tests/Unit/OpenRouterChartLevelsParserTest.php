@@ -144,8 +144,15 @@ JSON;
     {
         $classic = OpenRouterChartLevelsParser::defaultAnalystSystemPromptClassic();
         $smc = OpenRouterChartLevelsParser::defaultAnalystSystemPromptWithSmcFlow();
+        $shortClassic = OpenRouterChartLevelsParser::defaultAnalystSystemPromptShortClassic();
+        $shortSmc = OpenRouterChartLevelsParser::defaultAnalystSystemPromptShortWithSmcFlow();
 
         $this->assertStringContainsString('Вероятность успеха: NN%', $classic);
         $this->assertStringContainsString('Вероятность успеха: NN%', $smc);
+        $this->assertStringContainsString('Рекомендация: CALL', $shortClassic);
+        $this->assertStringContainsString('Вероятность успеха: NN%', $shortClassic);
+        $this->assertStringContainsString('chart_levels', $classic);
+        $this->assertStringNotContainsString('```chart_levels', $shortClassic);
+        $this->assertStringContainsString('smc_flow_summary', $shortSmc);
     }
 }

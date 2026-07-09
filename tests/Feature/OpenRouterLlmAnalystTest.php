@@ -181,6 +181,53 @@ class OpenRouterLlmAnalystTest extends TestCase
         $this->assertArrayNotHasKey('smc_flow_summary', $payload);
     }
 
+    public function test_short_prompt_mode_returns_verdict_without_chart_levels(): void
+    {
+        if (! Schema::hasTable('bot_llm_logs')) {
+            $this->markTestSkipped('bot_llm_logs table missing');
+        }
+
+        Http::fake([
+            'https://openrouter.ai/api/v1/chat/completions' => Http::response([
+                'choices' => [['message' => ['content' => "Рекомендация: CALL\nВероятность успеха: 68%\nПричина: MTF согласован."]]],
+                'usage' => ['prompt_tokens' => 5, 'completion_tokens' => 2, 'total_tokens' => 7, 'cost' => 0.0001],
+            ], 200),
+            'https://openrouter.ai/api/v1/credits' => Http::response([
+                'data' => ['total_credits' => 10, 'total_usage' => 0],
+            ], 200),
+        ]);
+
+        $user = User::factory()->create();
+        $bot = $this->makeAnalystBot($user, false);
+        $config = is_array($bot->config) ? $bot->config : [];
+        $config['analyst_prompt_mode'] = 'short';
+        $config['system_prompt_short'] = \App\Support\OpenRouterChartLevelsParser::defaultAnalystSystemPromptShortClassic();
+        $bot->config = $config;
+        $bot->save();
+
+        PocketInstrument::query()->create([
+            'instrument' => 'EURUSD',
+            'display_name' => 'EUR/USD',
+            'is_active' => true,
+            'priority' => 1,
+            'current_payout' => 85.0,
+        ]);
+
+        $this->actingAs($user)->getJson(route('bots.analysis.data', $bot).'?instrument=EURUSD')
+            ->assertOk()
+            ->assertJsonPath('analyst_prompt_mode', 'short')
+            ->assertJsonPath('chart_levels_ok', false)
+            ->assertJsonPath('analysis_text', "Рекомендация: CALL\nВероятность успеха: 68%\nПричина: MTF согласован.");
+
+        $log = \Illuminate\Support\Facades\DB::table('bot_llm_logs')
+            ->where('bot_id', $bot->id)
+            ->latest('id')
+            ->first();
+        $request = json_decode((string) ($log->request_json ?? ''), true);
+        $this->assertSame('short', $request['analyst_prompt_mode'] ?? null);
+        $this->assertStringContainsString('краткий вердикт', (string) ($log->request_text ?? ''));
+    }
+
     private function makeAnalystBot(?User $user = null, bool $smcFlowEnabled = true): Bot
     {
         $user ??= User::factory()->create();
@@ -201,6 +248,10 @@ class OpenRouterLlmAnalystTest extends TestCase
                 'system_prompt' => $smcFlowEnabled
                     ? \App\Support\OpenRouterChartLevelsParser::defaultAnalystSystemPromptWithSmcFlow()
                     : \App\Support\OpenRouterChartLevelsParser::defaultAnalystSystemPromptClassic(),
+                'system_prompt_short' => $smcFlowEnabled
+                    ? \App\Support\OpenRouterChartLevelsParser::defaultAnalystSystemPromptShortWithSmcFlow()
+                    : \App\Support\OpenRouterChartLevelsParser::defaultAnalystSystemPromptShortClassic(),
+                'analyst_prompt_mode' => 'full',
                 'openrouter_timeout_sec' => 120,
                 'version' => 'openrouter_llm_analyst_v1',
             ],

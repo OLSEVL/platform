@@ -2,6 +2,7 @@
 
 namespace Tests\Unit;
 
+use App\Support\OpenRouterChartLevelsParser;
 use App\Support\OpenRouterLlmConfig;
 use PHPUnit\Framework\Attributes\Test;
 use Tests\TestCase;
@@ -66,5 +67,28 @@ class OpenRouterLlmConfigTest extends TestCase
 
         $this->assertStringContainsString('Вероятность успеха: NN%', $prompt);
         $this->assertStringContainsString('success_probability_percent', $prompt);
+    }
+
+    #[Test]
+    public function resolve_analyst_system_prompt_uses_short_mode_from_config(): void
+    {
+        $full = OpenRouterChartLevelsParser::defaultAnalystSystemPromptClassic();
+        $short = OpenRouterChartLevelsParser::defaultAnalystSystemPromptShortClassic();
+
+        $this->assertSame($full, OpenRouterLlmConfig::resolveAnalystSystemPrompt([
+            'analyst_prompt_mode' => 'full',
+            'system_prompt' => $full,
+        ]));
+        $this->assertSame($short, OpenRouterLlmConfig::resolveAnalystSystemPrompt([
+            'analyst_prompt_mode' => 'short',
+            'system_prompt_short' => $short,
+        ]));
+    }
+
+    #[Test]
+    public function analyst_prompt_mode_defaults_to_full(): void
+    {
+        $this->assertSame('full', OpenRouterLlmConfig::analystPromptMode([]));
+        $this->assertFalse(OpenRouterLlmConfig::isAnalystShortPromptMode([]));
     }
 }

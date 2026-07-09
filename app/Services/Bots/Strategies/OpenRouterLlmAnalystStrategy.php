@@ -4,6 +4,7 @@ namespace App\Services\Bots\Strategies;
 
 use App\Services\Bots\OpenRouterClient;
 use App\Support\OpenRouterChartLevelsParser;
+use App\Support\OpenRouterLlmConfig;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Throwable;
@@ -29,8 +30,15 @@ class OpenRouterLlmAnalystStrategy implements BotStrategyInterface
         $model = (string) ($cfg['model'] ?? 'openai/gpt-5.2');
         $temperature = (float) ($cfg['temperature'] ?? 0.2);
         $maxTokens = (int) ($cfg['max_tokens'] ?? 900);
+        $shortPromptMode = OpenRouterLlmConfig::isAnalystShortPromptMode($cfg);
+        // В кратком режиме используем отдельный лимит токенов из настроек бота (без жёсткого cap 64..512).
+        // Нормализация диапазона выполняется внутри OpenRouterClient::chatCompletion.
+        if ($shortPromptMode) {
+            $shortCap = (int) ($cfg['max_tokens_short'] ?? OpenRouterLlmConfig::ANALYST_SHORT_MAX_TOKENS_DEFAULT);
+            $maxTokens = min($maxTokens, $shortCap);
+        }
         $timeoutSec = OpenRouterClient::resolveChatTimeoutSec($cfg);
-        $systemPrompt = (string) ($cfg['system_prompt'] ?? $this->defaultSystemPrompt($cfg));
+        $systemPrompt = OpenRouterLlmConfig::resolveAnalystSystemPrompt($cfg);
         $mtfEnabled = (bool) ($cfg['mtf_enabled'] ?? true);
         $botId = isset($context['bot_id']) ? (int) $context['bot_id'] : null;
 
@@ -75,14 +83,18 @@ class OpenRouterLlmAnalystStrategy implements BotStrategyInterface
                 'h1' => count($h1),
                 's5' => count($closedS5) + ($partialS5 ? 1 : 0),
             ],
-            'response_format' => 'plain_text_russian',
+            'response_format' => $shortPromptMode ? 'short_verdict_russian' : 'plain_text_russian',
         ];
         if ($analystSmcEnabled) {
             $payload['smc_flow_summary'] = $smcFlowSummary;
             $payload['expiry_focus_min'] = [3, 6];
         }
 
-        $userContent = "Проанализируй график по данным ниже. Ответ — связный текст на русском.\n";
+        if ($shortPromptMode) {
+            $userContent = "Дай краткий вердикт по данным ниже: только направление (CALL/PUT/NONE) и вероятность успеха в процентах.\n";
+        } else {
+            $userContent = "Проанализируй график по данным ниже. Ответ — связный текст на русском.\n";
+        }
         if ($userQuestion !== '') {
             $userContent .= "Дополнительный вопрос трейдера: {$userQuestion}\n\n";
         }
@@ -113,6 +125,7 @@ class OpenRouterLlmAnalystStrategy implements BotStrategyInterface
                     'temperature' => $temperature,
                     'max_tokens' => $maxTokens,
                     'timeout_sec' => $timeoutSec,
+                    'analyst_prompt_mode' => OpenRouterLlmConfig::analystPromptMode($cfg),
                 ],
                 'request_text' => \App\Support\OpenRouterLlmLogFormatter::formatRequestText($requestMessages),
                 'status' => 'error',
@@ -130,10 +143,12 @@ class OpenRouterLlmAnalystStrategy implements BotStrategyInterface
             : null;
         $usedReasoningField = ($rawContent === null || $rawContent === '') && $assistantText !== null && $assistantText !== '';
 
-        // Текст для UI без блока chart_levels; JSON уровней — отдельно для графика.
+        // Текст для UI без блока chart_levels; JSON уровней — отдельно для графика (только полный режим).
         $split = OpenRouterChartLevelsParser::splitAssistantResponse((string) $assistantText);
-        $chartParsed = OpenRouterChartLevelsParser::normalize($split['chart_levels_raw'], $split['fence_found']);
-        $displayText = $split['analysis_text'];
+        $chartParsed = $shortPromptMode
+            ? ['ok' => false, 'message' => null, 'data' => ['levels' => [], 'zones' => [], 'entry' => null]]
+            : OpenRouterChartLevelsParser::normalize($split['chart_levels_raw'], $split['fence_found']);
+        $displayText = $shortPromptMode ? trim((string) $assistantText) : $split['analysis_text'];
 
         $llmLogId = $this->persistLlmLog([
             'bot_id' => $botId,
@@ -145,6 +160,7 @@ class OpenRouterLlmAnalystStrategy implements BotStrategyInterface
                 'temperature' => $temperature,
                 'max_tokens' => $maxTokens,
                 'timeout_sec' => $timeoutSec,
+                'analyst_prompt_mode' => OpenRouterLlmConfig::analystPromptMode($cfg),
             ],
             'request_text' => \App\Support\OpenRouterLlmLogFormatter::formatRequestText($requestMessages),
             'response_payload' => $response,
@@ -191,6 +207,7 @@ class OpenRouterLlmAnalystStrategy implements BotStrategyInterface
                 'used_reasoning_field' => $usedReasoningField,
                 'request_cost_usd' => $requestCostUsd,
                 'chart_levels_ok' => $chartParsed['ok'],
+                'analyst_prompt_mode' => OpenRouterLlmConfig::analystPromptMode($cfg),
             ],
             'llm_log_id' => $llmLogId,
         ];
@@ -198,7 +215,7 @@ class OpenRouterLlmAnalystStrategy implements BotStrategyInterface
 
     private function defaultSystemPrompt(array $cfg): string
     {
-        return OpenRouterChartLevelsParser::defaultAnalystSystemPromptForConfig($cfg);
+        return OpenRouterLlmConfig::resolveAnalystSystemPrompt($cfg);
     }
 
     /**
