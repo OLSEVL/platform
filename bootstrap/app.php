@@ -17,8 +17,8 @@ return Application::configure(basePath: dirname(__DIR__))
     })
     ->withSchedule(function (Schedule $schedule): void {
         $schedule->command('data:auto-cleanup')->hourly();
-        // Scan всех ботов может идти 1–4+ часа; mutex 45 мин давал параллельные bots:scan после рестарта.
-        $schedule->command('bots:scan')->everyMinute()->withoutOverlapping(360);
+        // Per-bot scan: диспетчер каждую минуту поднимает отдельный bots:scan --bot_id=N (параллельно).
+        $schedule->command('bots:scan-dispatch')->everyMinute()->withoutOverlapping(2);
         $schedule->command('bots:settle')->everyMinute()->withoutOverlapping(10);
         // Chart Analyst: /menu и inline-список пар требуют long polling + queue worker.
         $schedule->command('telegram:ensure-analyst-services')->everyMinute()->withoutOverlapping(2);

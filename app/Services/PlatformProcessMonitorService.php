@@ -8,6 +8,7 @@ use App\Models\InstrumentCandle;
 use App\Models\PocketInstrument;
 use App\Services\Telegram\TelegramAnalystProcessManager;
 use App\Support\ArtisanProcessFinder;
+use App\Support\BotScanCoordinator;
 use App\Support\BotScanProgress;
 use App\Support\IngestHealth;
 use Illuminate\Support\Facades\DB;
@@ -123,11 +124,15 @@ class PlatformProcessMonitorService
      */
     private function probeBotsScan(): array
     {
-        // Только реальный php artisan bots:scan — не bash/cursor-оболочки с этим текстом в cmdline.
-        $pids = ArtisanProcessFinder::findArtisanPids(static fn (string $cmd): bool => (bool) preg_match('#(?:^|/)(php\d*(?:\.\d+)?)\s+artisan\s+bots:scan\b#', $cmd));
+        $running = BotScanCoordinator::listRunningScans();
+        $pids = array_map(static fn (array $row): int => (int) $row['pid'], $running);
         $instances = ArtisanProcessFinder::metricsForPids($pids);
-        $lock = $this->scanLockRow();
-        $logPath = storage_path('logs/bots-scan.log');
+        foreach ($instances as $idx => $row) {
+            $instances[$idx]['bot_id'] = $running[$idx]['bot_id'] ?? null;
+        }
+
+        $lockRows = BotScanCoordinator::listLockRows();
+        $logPath = BotScanCoordinator::sharedLogPath();
 
         $maxElapsed = 0;
         $maxCpu = null;
@@ -143,12 +148,20 @@ class PlatformProcessMonitorService
 
         $status = 'stopped';
         $issues = [];
+        $expectedBots = BotScanCoordinator::scannableBots()->count();
 
         if ($pids !== []) {
             $status = 'ok';
-            if (count($pids) > 1) {
-                $status = 'error';
-                $issues[] = 'Несколько параллельных bots:scan ('.count($pids).')';
+            $botIdCounts = [];
+            foreach ($running as $row) {
+                $bid = $row['bot_id'] ?? 'all';
+                $botIdCounts[$bid] = ($botIdCounts[$bid] ?? 0) + 1;
+            }
+            foreach ($botIdCounts as $bid => $cnt) {
+                if ($cnt > 1) {
+                    $status = 'error';
+                    $issues[] = 'Дубликат scan для bot '.(is_int($bid) ? (string) $bid : 'all').' ('.$cnt.' проц.)';
+                }
             }
             if ($maxElapsed >= self::SCAN_ERROR_ELAPSED_SEC) {
                 $status = 'error';
@@ -161,23 +174,20 @@ class PlatformProcessMonitorService
                 $status = self::mergeSeverity($status, 'warning');
                 $issues[] = 'Долго на одной паре: '.$stuckInstrument['instrument'];
             }
-        } else {
-            $issues[] = 'Процесс не запущен (cron запустит при следующем schedule:run, если есть активные боты)';
+        } elseif ($expectedBots > 0) {
+            $issues[] = 'Нет запущенных scan (cron: bots:scan-dispatch каждую минуту)';
         }
 
-        if ($lock !== null && $pids === []) {
+        $staleLocks = array_filter($lockRows, static fn (array $row): bool => ! ($row['expired'] ?? false));
+        if ($staleLocks !== [] && $pids === []) {
             $status = self::mergeSeverity($status === 'stopped' ? 'warning' : $status, 'warning');
-            $issues[] = 'Lock bots:scan в БД без живого процесса';
-        }
-        if ($lock === null && $pids !== []) {
-            $status = self::mergeSeverity($status, 'warning');
-            $issues[] = 'Процесс есть, lock в cache_locks не найден';
+            $issues[] = 'Lock scan в БД без живого процесса ('.count($staleLocks).')';
         }
 
         return [
             'key' => 'bots_scan',
-            'label' => 'Bot scan (bots:scan)',
-            'description' => 'Плановый анализ пар активными ботами (cron каждую минуту).',
+            'label' => 'Bot scan (per-bot)',
+            'description' => 'Параллельный анализ: bots:scan-dispatch → bots:scan --bot_id=N (cron каждую минуту).',
             'running' => $pids !== [],
             'status' => $status,
             'pids' => $pids,
@@ -186,8 +196,9 @@ class PlatformProcessMonitorService
             'cpu_percent' => $maxCpu,
             'issues' => $issues,
             'details' => [
-                'lock_held' => $lock !== null,
-                'lock_expiration' => $lock['expiration'] ?? null,
+                'running_scans' => $running,
+                'locks' => $lockRows,
+                'expected_active_bots' => $expectedBots,
                 'scan_progress' => $scanProgress,
                 'stuck_instrument' => $stuckInstrument,
             ],
@@ -220,7 +231,7 @@ class PlatformProcessMonitorService
         return [
             'key' => 'scheduler',
             'label' => 'Laravel Scheduler (cron)',
-            'description' => 'Cron: * * * * * php artisan schedule:run — запускает bots:scan и bots:settle.',
+            'description' => 'Cron: * * * * * php artisan schedule:run — bots:scan-dispatch и bots:settle.',
             'running' => true,
             'status' => $status,
             'pids' => [],
@@ -423,29 +434,6 @@ class PlatformProcessMonitorService
     }
 
     /**
-     * @return array<string, mixed>|null
-     */
-    private function scanLockRow(): ?array
-    {
-        if (! Schema::hasTable('cache_locks')) {
-            return null;
-        }
-
-        $key = config('cache.prefix').'bots:scan:global';
-        $row = DB::table('cache_locks')->where('key', $key)->first();
-        if ($row === null) {
-            return null;
-        }
-
-        return [
-            'key' => $row->key,
-            'owner' => $row->owner ?? null,
-            'expiration' => isset($row->expiration) ? (int) $row->expiration : null,
-            'expired' => isset($row->expiration) && (int) $row->expiration <= time(),
-        ];
-    }
-
-    /**
      * @return list<array<string, mixed>>
      */
     private function scanProgressForActiveBots(): array
@@ -638,8 +626,7 @@ class PlatformProcessMonitorService
      */
     private function killBotsScan(): array
     {
-        // Только реальный php artisan bots:scan — не bash/cursor-оболочки с этим текстом в cmdline.
-        $pids = ArtisanProcessFinder::findArtisanPids(static fn (string $cmd): bool => (bool) preg_match('#(?:^|/)(php\d*(?:\.\d+)?)\s+artisan\s+bots:scan\b#', $cmd));
+        $pids = BotScanCoordinator::findScanPids();
         if ($pids === []) {
             $this->clearScanLock();
 
@@ -655,11 +642,7 @@ class PlatformProcessMonitorService
 
     private function clearScanLock(): void
     {
-        if (! Schema::hasTable('cache_locks')) {
-            return;
-        }
-        $key = config('cache.prefix').'bots:scan:global';
-        DB::table('cache_locks')->where('key', $key)->delete();
+        BotScanCoordinator::clearAllScanLocks();
     }
 
     /**
@@ -667,16 +650,14 @@ class PlatformProcessMonitorService
      */
     private function startBotsScan(): array
     {
-        if (ArtisanProcessFinder::findArtisanPids(static fn (string $cmd): bool => (bool) preg_match('#(?:^|/)(php\d*(?:\.\d+)?)\s+artisan\s+bots:scan\b#', $cmd)) !== []) {
-            return ['ok' => false, 'error' => 'already_running'];
-        }
-
-        $log = storage_path('logs/bots-scan.log');
-        $ok = ArtisanProcessFinder::spawnBackground([PHP_BINARY, 'artisan', 'bots:scan'], $log);
+        $started = BotScanCoordinator::spawnDispatchAll();
 
         return [
-            'ok' => $ok,
-            'message' => $ok ? 'bots:scan запущен в фоне' : 'Не удалось запустить bots:scan',
+            'ok' => $started > 0,
+            'message' => $started > 0
+                ? "Запущено scan-процессов: {$started}"
+                : 'Все активные боты уже сканируются или нет активных ботов',
+            'error' => $started > 0 ? null : 'already_running_or_empty',
             'status' => $this->snapshot(),
         ];
     }

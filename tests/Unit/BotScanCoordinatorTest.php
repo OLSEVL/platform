@@ -1,0 +1,47 @@
+<?php
+
+namespace Tests\Unit;
+
+use App\Support\BotScanCoordinator;
+use Tests\TestCase;
+
+class BotScanCoordinatorTest extends TestCase
+{
+    public function test_parse_bot_id_from_cmdline(): void
+    {
+        $this->assertSame(
+            11,
+            BotScanCoordinator::parseBotIdFromCmdline('/usr/bin/php8.3 artisan bots:scan --bot_id=11')
+        );
+        $this->assertNull(
+            BotScanCoordinator::parseBotIdFromCmdline('/usr/bin/php8.3 artisan bots:scan')
+        );
+    }
+
+    public function test_cmdline_matches_scan_per_bot(): void
+    {
+        $cmd11 = '/usr/bin/php8.3 artisan bots:scan --bot_id=11';
+        $cmd16 = '/usr/bin/php8.3 artisan bots:scan --bot_id=16';
+        $cmdAll = '/usr/bin/php8.3 artisan bots:scan';
+        $cmdDispatch = '/usr/bin/php8.3 artisan bots:scan-dispatch';
+
+        $this->assertTrue(BotScanCoordinator::cmdlineMatchesScan($cmd11, 11));
+        $this->assertFalse(BotScanCoordinator::cmdlineMatchesScan($cmd11, 16));
+        $this->assertTrue(BotScanCoordinator::cmdlineMatchesScan($cmd16, 16));
+        $this->assertFalse(BotScanCoordinator::cmdlineMatchesScan($cmd16, 11));
+        $this->assertTrue(BotScanCoordinator::cmdlineMatchesScan($cmdAll, null));
+        $this->assertFalse(BotScanCoordinator::cmdlineMatchesScan($cmd11, null));
+        $this->assertFalse(BotScanCoordinator::cmdlineMatchesScan($cmdDispatch, null));
+    }
+
+    public function test_bot_lock_name(): void
+    {
+        $this->assertSame('bots:scan:bot:11', BotScanCoordinator::botLockName(11));
+    }
+
+    public function test_log_path_for_bot(): void
+    {
+        $path = BotScanCoordinator::logPathForBot(11);
+        $this->assertStringEndsWith('bots-scan-11.log', $path);
+    }
+}

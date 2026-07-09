@@ -14,6 +14,7 @@ use App\Services\ProxyDeadProbeService;
 use App\Services\Telegram\TelegramAlertService;
 use App\Services\Telegram\TelegramAnalystHandler;
 use App\Services\Telegram\TelegramAnalystProcessManager;
+use App\Support\BotScanCoordinator;
 use App\Support\OpenRouterChartLevelsParser;
 use App\Support\OpenRouterLlmConfig;
 use Illuminate\Foundation\Inspiring;
@@ -24,18 +25,11 @@ use Illuminate\Support\Facades\Schema;
 
 /**
  * Реальный процесс scan: читаем cmdline PHP, а не pgrep по всей строке bash/cursor.
- * Иначе «зависший» lock после kill не снимается — pgrep находит оболочки с текстом bots:scan.
  */
 if (! function_exists('bots_scan_process_running')) {
-    function bots_scan_process_running(?int $exceptPid = null): bool
+    function bots_scan_process_running(?int $exceptPid = null, ?int $botId = null): bool
     {
-        // Тот же фильтр, что в ArtisanProcessFinder: без bash/cursor-оболочек с текстом «bots:scan» в cmdline.
-        $pids = \App\Support\ArtisanProcessFinder::findArtisanPids(
-            static fn (string $cmd): bool => (bool) preg_match('#(?:^|/)(php\d*(?:\.\d+)?)\s+artisan\s+bots:scan\b#', $cmd),
-            $exceptPid
-        );
-
-        return $pids !== [];
+        return BotScanCoordinator::isScanRunning($botId, $exceptPid);
     }
 }
 
@@ -237,7 +231,7 @@ Artisan::command('bots:status', function () {
 
     $this->newLine();
     $this->comment('Автоскан: в .env-среде должен работать планировщик (cron каждую минуту: php artisan schedule:run) или локально: php artisan schedule:work');
-    $this->comment('Вручную: php artisan bots:scan && php artisan bots:settle');
+    $this->comment('Вручную: php artisan bots:scan-dispatch && php artisan bots:settle');
     $this->comment('Нет новых сделок при повторном скане — нормально, если по инструменту уже есть открытая сделка, сработал dedupe, или стратегия не даёт сигнал.');
 })->purpose('Диагностика ботов: данные, открытые сделки, напоминание про планировщик');
 
@@ -666,59 +660,65 @@ Artisan::command('bots:openrouter-list-models', function (OpenRouterClient $clie
     }
 })->purpose('Проверить загрузку каталога моделей OpenRouter');
 
+Artisan::command('bots:scan-dispatch', function () {
+    $bots = BotScanCoordinator::scannableBots();
+    if ($bots->isEmpty()) {
+        $this->comment('Нет активных ботов для scan.');
+
+        return;
+    }
+
+    $started = 0;
+    $skipped = 0;
+    foreach ($bots as $bot) {
+        if (BotScanCoordinator::isScanRunning($bot->id)) {
+            $skipped++;
+            $this->line(sprintf('[bot:%d] scan уже выполняется — пропуск.', $bot->id));
+
+            continue;
+        }
+
+        if (BotScanCoordinator::spawnScan($bot->id)) {
+            $started++;
+            $this->line(sprintf('[bot:%d] запущен bots:scan в фоне → %s', $bot->id, BotScanCoordinator::logPathForBot($bot->id)));
+        } else {
+            $this->warn(sprintf('[bot:%d] не удалось запустить scan.', $bot->id));
+        }
+    }
+
+    $this->info(sprintf('Диспетчер: запущено %d, пропущено (уже идёт) %d, ботов %d.', $started, $skipped, $bots->count()));
+})->purpose('Запустить параллельный bots:scan для каждого активного бота (cron каждую минуту)');
+
 Artisan::command('bots:scan {--bot_id=} {--active-only=1}', function (BotEngineService $engine) {
-    // Если другой PHP-процесс scan уже работает — не стартуем второй (даже при протухшем lock в БД).
-    if (bots_scan_process_running(getmypid())) {
+    $botIdOpt = $this->option('bot_id');
+    $singleBotId = $botIdOpt !== null && $botIdOpt !== '' ? (int) $botIdOpt : null;
+
+    // Per-bot: блокируем только тот же bot_id; полный проход — отдельный lock «all».
+    $lockName = $singleBotId !== null
+        ? BotScanCoordinator::botLockName($singleBotId)
+        : BotScanCoordinator::ALL_BOTS_LOCK;
+    $processBotFilter = $singleBotId;
+
+    if (bots_scan_process_running(getmypid(), $processBotFilter)) {
         $this->warn('bots:scan уже выполняется — пропуск.');
 
         return;
     }
 
-    // Жёсткий global lock: withoutOverlapping на file cache не держит параллельные bots:scan,
-    // из-за чего endScan() одного процесса гасил счётчик sidebar mid-scan.
-    $lockStore = Schema::hasTable('cache') ? Cache::store('database') : Cache::store();
-    $lockKey = config('cache.prefix').'bots:scan:global';
-    // Scan всех ботов может идти несколько часов — lock должен пережить длинный проход.
-    $lockTtlSec = 21600;
-    $lock = null;
-    $lockAcquired = false;
-    for ($attempt = 0; $attempt < 2; $attempt++) {
-        $lock = $lockStore->lock('bots:scan:global', $lockTtlSec);
-        if ($lock->get()) {
-            $lockAcquired = true;
-            break;
-        }
-        if ($attempt === 0 && Schema::hasTable('cache_locks')) {
-            $row = DB::table('cache_locks')->where('key', $lockKey)->first();
-            $scanRunning = bots_scan_process_running(getmypid());
-            if ($scanRunning) {
-                // Живой scan без валидного lock — не снимаем mutex и не запускаем дубликат.
-                $lock = null;
-                break;
-            }
-            $lockExpired = $row && (int) ($row->expiration ?? 0) <= time();
-            if ($row && $lockExpired) {
-                DB::table('cache_locks')->where('key', $lockKey)->delete();
-
-                continue;
-            }
-        }
-        $lock = null;
-        break;
-    }
-    if (! $lockAcquired || ! $lock instanceof \Illuminate\Contracts\Cache\Lock) {
-        $this->warn('bots:scan уже выполняется — пропуск.');
+    $lockResult = BotScanCoordinator::acquireLock($lockName, getmypid());
+    if (! $lockResult['acquired'] || ! $lockResult['lock'] instanceof \Illuminate\Contracts\Cache\Lock) {
+        $this->warn('bots:scan уже выполняется — пропуск (lock).');
 
         return;
     }
+    $lock = $lockResult['lock'];
 
     try {
-        $botId = $this->option('bot_id');
         $activeOnly = (string) $this->option('active-only') !== '0';
 
         $q = Bot::query()->orderBy('id');
-        if ($botId) {
-            $q->where('id', (int) $botId);
+        if ($singleBotId !== null) {
+            $q->where('id', $singleBotId);
         }
         if ($activeOnly) {
             $q->where('is_active', true);
@@ -733,6 +733,9 @@ Artisan::command('bots:scan {--bot_id=} {--active-only=1}', function (BotEngineS
         $summary = ['processed' => 0, 'signals' => 0, 'trades' => 0];
         foreach ($bots as $bot) {
             if (! $bot instanceof Bot) {
+                continue;
+            }
+            if ($bot->type === 'openrouter_llm_analyst') {
                 continue;
             }
             $r = $engine->scanBot($bot);
@@ -755,53 +758,48 @@ Artisan::command('bots:scan {--bot_id=} {--active-only=1}', function (BotEngineS
             $summary['trades']
         ));
     } finally {
-        $lock->release();
+        BotScanCoordinator::releaseLock($lock);
     }
-})->purpose('Сканировать пары активными ботами и создавать сигналы/сделки');
+})->purpose('Сканировать пары ботом (один --bot_id или все активные в одном процессе)');
 
-Artisan::command('bots:scan-dedupe {--no-restart : Не запускать новый scan после остановки}', function () {
-    $pids = \App\Support\ArtisanProcessFinder::findArtisanPids(
-        static fn (string $cmd): bool => (bool) preg_match('#(?:^|/)(php\d*(?:\.\d+)?)\s+artisan\s+bots:scan\b#', $cmd)
-    );
+Artisan::command('bots:scan-dedupe {--no-restart : Не запускать dispatch после остановки}', function () {
+    $running = BotScanCoordinator::listRunningScans();
+    $byBot = [];
+    foreach ($running as $row) {
+        $key = $row['bot_id'] ?? 'all';
+        $byBot[$key][] = (int) $row['pid'];
+    }
 
-    if (count($pids) <= 1) {
-        $this->info(count($pids) === 1
-            ? 'Один процесс bots:scan (PID '.$pids[0].') — дубликатов нет.'
-            : 'Процесс bots:scan не запущен.');
+    $duplicatePids = [];
+    foreach ($byBot as $pids) {
+        if (count($pids) > 1) {
+            array_push($duplicatePids, ...$pids);
+        }
+    }
+
+    if ($duplicatePids === []) {
+        $this->info($running === []
+            ? 'Процесс bots:scan не запущен.'
+            : 'Дубликатов per-bot scan нет (параллельные боты — норма). '.count($running).' процесс(ов).');
 
         return;
     }
 
-    // Параллельные scan почти всегда мешают друг другу; «старейший» часто зависший — гасим всех.
-    $killed = \App\Support\ArtisanProcessFinder::terminatePids($pids);
+    $killed = \App\Support\ArtisanProcessFinder::terminatePids($duplicatePids);
     usleep(300_000);
+    BotScanCoordinator::clearAllScanLocks();
 
-    if (Schema::hasTable('cache_locks')) {
-        $lockKey = config('cache.prefix').'bots:scan:global';
-        DB::table('cache_locks')->where('key', $lockKey)->delete();
-    }
-
-    $this->warn(sprintf(
-        'Параллельных scan: %d. Остановлено: %d (%s). Lock сброшен.',
-        count($pids),
-        $killed,
-        implode(', ', $pids)
-    ));
+    $this->warn(sprintf('Дубликаты scan: остановлено %d PID (%s). Locks сброшены.', $killed, implode(', ', $duplicatePids)));
 
     if ($this->option('no-restart')) {
-        $this->comment('Новый scan не запущен (--no-restart). Cron запустит при следующем schedule:run.');
+        $this->comment('Новый dispatch не запущен (--no-restart).');
 
         return;
     }
 
-    $log = storage_path('logs/bots-scan.log');
-    $started = \App\Support\ArtisanProcessFinder::spawnBackground([PHP_BINARY, 'artisan', 'bots:scan'], $log);
-    if ($started) {
-        $this->info('Запущен новый bots:scan в фоне. Лог: '.$log);
-    } else {
-        $this->error('Не удалось запустить bots:scan. Попробуйте: php artisan bots:scan');
-    }
-})->purpose('Остановить все параллельные bots:scan, сбросить lock и запустить один новый');
+    Artisan::call('bots:scan-dispatch');
+    $this->info(trim(Artisan::output()));
+})->purpose('Остановить дубликаты bots:scan на одном bot_id, сбросить locks и запустить dispatch');
 
 Artisan::command('bots:settle {--bot_id=} {--limit=1000}', function (BotSettlementService $settlement) {
     $botId = $this->option('bot_id') ? (int) $this->option('bot_id') : null;
