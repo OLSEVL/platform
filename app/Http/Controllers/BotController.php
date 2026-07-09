@@ -355,7 +355,7 @@ class BotController extends Controller
     public function cards(Bot $bot): View
     {
         $this->ensureBotOwner($bot);
-        abort_unless($bot->type === 'strong_level', 404);
+        abort_unless(in_array($bot->type, ['strong_level', 'candle_reversal_confirm'], true), 404);
 
         return view('bots.cards', ['bot' => $bot]);
     }
@@ -366,7 +366,7 @@ class BotController extends Controller
     public function cardsData(Bot $bot, StrongLevelCardPresenter $presenter): JsonResponse
     {
         $this->ensureBotOwner($bot);
-        abort_unless($bot->type === 'strong_level', 404);
+        abort_unless(in_array($bot->type, ['strong_level', 'candle_reversal_confirm'], true), 404);
 
         $now = now();
 
@@ -424,7 +424,7 @@ class BotController extends Controller
     public function cardsChart(Bot $bot, BotTrade $trade, Request $request, StrongLevelCardPresenter $presenter): Response
     {
         $this->ensureBotOwner($bot);
-        abort_unless($bot->type === 'strong_level', 404);
+        abort_unless(in_array($bot->type, ['strong_level', 'candle_reversal_confirm'], true), 404);
         abort_unless((int) $trade->bot_id === (int) $bot->id, 404);
 
         $timeframe = (int) $request->query('tf', 1);
@@ -534,23 +534,27 @@ class BotController extends Controller
                 'version' => 'akim_trade_1m_v1',
             ]);
         } elseif ($bot->type === 'candle_reversal_confirm') {
-            // MTF-разворот:
-            // 1) сторона определяется на M5 по 3 закрытым свечам (impulse->reversal->confirm),
-            // 2) вход подтверждается на M1 по 3 закрытым свечам в ту же сторону и по теням.
+            // Отбитие от сильного уровня + настраиваемое M5 rejection / M1 разворот (v3).
             $extra = $request->validate([
-                'count' => ['required', 'integer', 'min:10', 'max:5000'],
+                'count' => ['required', 'integer', 'min:200', 'max:5000'],
+                'min_closed_bars' => ['required', 'integer', 'min:80', 'max:2000'],
+                'expiry_sec' => ['required', 'integer', 'min:120', 'max:600'],
                 'min_confidence' => ['required', 'numeric', 'min:0', 'max:1'],
-                // Пары с payout ниже порога не анализируются (экономический фильтр).
                 'min_payout' => ['required', 'numeric', 'min:0', 'max:100'],
                 'stale_after_sec' => ['required', 'integer', 'min:5', 'max:600'],
-                // M5-блок (разворотная свеча + confirm).
-                'm5_reversal_min_wick_ratio' => ['required', 'numeric', 'min:0.12', 'max:0.75'],
-                'm5_reversal_max_body_ratio' => ['required', 'numeric', 'min:0.15', 'max:0.9'],
-                // M1-блок (3 закрытых свечи подтверждения в сторону M5).
-                'm1_min_wick_ratio' => ['required', 'numeric', 'min:0.10', 'max:0.70'],
-                'm1_min_body_ratio' => ['required', 'numeric', 'min:0.05', 'max:0.80'],
-                // last = тени только у последней из 3 M1 (рекомендуется); all = у всех трёх (очень редкие сигналы).
-                'm1_wick_requirement_scope' => ['required', 'string', Rule::in(['all', 'last'])],
+                'min_level_strength' => ['required', 'numeric', 'min:40', 'max:95'],
+                'min_sources' => ['required', 'integer', 'min:1', 'max:6'],
+                'cluster_atr_mult_m5' => ['required', 'numeric', 'min:0.05', 'max:1'],
+                'touch_atr_mult_m1' => ['required', 'numeric', 'min:0.05', 'max:1.5'],
+                'bounce_min_wick_ratio_m5' => ['required', 'numeric', 'min:0.15', 'max:0.8'],
+                'h1_flat_strength_extra' => ['required', 'numeric', 'min:0', 'max:15'],
+                'm1_reversal_confirm_bars' => ['required', 'integer', 'min:1', 'max:3'],
+                'm1_reversal_min_wick_ratio' => ['required', 'numeric', 'min:0.10', 'max:0.70'],
+                'm1_reversal_min_body_ratio' => ['required', 'numeric', 'min:0.05', 'max:0.80'],
+                'm1_reversal_wick_scope' => ['required', 'string', Rule::in(['all', 'last'])],
+                'm5_take' => ['required', 'integer', 'min:20', 'max:300'],
+                'm15_take' => ['required', 'integer', 'min:20', 'max:300'],
+                'h1_take' => ['required', 'integer', 'min:10', 'max:200'],
                 'telegram_enabled' => ['sometimes', 'boolean'],
                 'telegram_bot_token' => ['nullable', 'string', 'max:128'],
                 'telegram_chat_id' => ['nullable', 'string', 'max:64'],
@@ -566,18 +570,29 @@ class BotController extends Controller
             $tokenInput = trim((string) ($extra['telegram_bot_token'] ?? ''));
             $config = array_merge($bot->config ?? [], [
                 'count' => (int) $extra['count'],
-                // По ТЗ фиксируем вход на 5 минут.
-                'expiry_sec' => 300,
+                'min_closed_bars' => (int) $extra['min_closed_bars'],
+                'expiry_sec' => (int) $extra['expiry_sec'],
                 'min_confidence' => (float) $extra['min_confidence'],
                 'min_payout' => (float) $extra['min_payout'],
                 'stale_after_sec' => (int) $extra['stale_after_sec'],
-                'm5_reversal_min_wick_ratio' => (float) $extra['m5_reversal_min_wick_ratio'],
-                'm5_reversal_max_body_ratio' => (float) $extra['m5_reversal_max_body_ratio'],
-                'm5_require_break_rev_extreme' => $request->boolean('m5_require_break_rev_extreme'),
-                'm1_min_wick_ratio' => (float) $extra['m1_min_wick_ratio'],
-                'm1_min_body_ratio' => (float) $extra['m1_min_body_ratio'],
-                'm1_require_wick_dominance' => $request->boolean('m1_require_wick_dominance'),
-                'm1_wick_requirement_scope' => (string) $extra['m1_wick_requirement_scope'],
+                'min_level_strength' => (float) $extra['min_level_strength'],
+                'min_sources' => (int) $extra['min_sources'],
+                'cluster_atr_mult_m5' => (float) $extra['cluster_atr_mult_m5'],
+                'touch_atr_mult_m1' => (float) $extra['touch_atr_mult_m1'],
+                'bounce_min_wick_ratio_m5' => (float) $extra['bounce_min_wick_ratio_m5'],
+                'h1_flat_strength_extra' => (float) $extra['h1_flat_strength_extra'],
+                'm5_rejection_enabled' => $request->boolean('m5_rejection_enabled'),
+                'm5_rejection_require_direction' => $request->boolean('m5_rejection_require_direction'),
+                'm1_reversal_enabled' => $request->boolean('m1_reversal_enabled'),
+                'm1_reversal_confirm_bars' => (int) $extra['m1_reversal_confirm_bars'],
+                'm1_reversal_min_wick_ratio' => (float) $extra['m1_reversal_min_wick_ratio'],
+                'm1_reversal_min_body_ratio' => (float) $extra['m1_reversal_min_body_ratio'],
+                'm1_reversal_require_wick_dominance' => $request->boolean('m1_reversal_require_wick_dominance'),
+                'm1_reversal_wick_scope' => (string) $extra['m1_reversal_wick_scope'],
+                'require_h1_alignment' => $request->boolean('require_h1_alignment'),
+                'm5_take' => (int) $extra['m5_take'],
+                'm15_take' => (int) $extra['m15_take'],
+                'h1_take' => (int) $extra['h1_take'],
                 'telegram_enabled' => $request->boolean('telegram_enabled'),
                 'telegram_bot_token' => $tokenInput !== '' ? $tokenInput : $existingToken,
                 'telegram_chat_id' => trim((string) ($extra['telegram_chat_id'] ?? '')),
@@ -592,7 +607,7 @@ class BotController extends Controller
                 'telegram_analyst_llm_question' => StrongLevelTelegramLlmButton::llmQuestionFromConfig([
                     'telegram_analyst_llm_question' => $extra['telegram_analyst_llm_question'] ?? null,
                 ]),
-                'version' => 'candle_reversal_confirm_v2_mtf',
+                'version' => 'candle_reversal_confirm_v3_level_bounce',
             ]);
         } elseif ($bot->type === 'smc_flow') {
             // SMC Flow: UT flip + 3BR confirm + LuxAlgo OB filter; экспирация по умолчанию 3 мин.

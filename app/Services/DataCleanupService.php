@@ -18,7 +18,15 @@ class DataCleanupService
     /** Допустимые окна хранения в UI «Удалить все данные» (0 = удалить всё). */
     public const ALLOWED_RETENTION_HOURS = [0, 1, 3, 6, 12, 24, 48];
 
+    /** Допустимые окна для авто-очистки по крону (без полного стирания). */
+    public const ALLOWED_AUTO_CLEANUP_RETENTION_HOURS = [1, 3, 6, 12, 24, 48];
+
+    public const SETTING_KEY_AUTO_CLEANUP_RETENTION_HOURS = 'data_auto_cleanup_retention_hours';
+
     public const DEFAULT_RETENTION_HOURS = 24;
+
+    /** Пока настройка не задана в БД — сохраняем прежнее поведение cron (свечи старше 24 ч.). */
+    public const DEFAULT_AUTO_CLEANUP_RETENTION_HOURS = 24;
 
     /**
      * Только свечи — для hourly-планировщика `candles:prune-old`.
@@ -150,6 +158,91 @@ class DataCleanupService
         return in_array($hours, self::ALLOWED_RETENTION_HOURS, true)
             ? $hours
             : self::DEFAULT_RETENTION_HOURS;
+    }
+
+    /**
+     * Окно авто-очистки из app_settings: null — «ничего не удалять».
+     */
+    public function getAutoCleanupRetentionHours(): ?int
+    {
+        $row = DB::table('app_settings')
+            ->where('key', self::SETTING_KEY_AUTO_CLEANUP_RETENTION_HOURS)
+            ->value('value');
+
+        // Пустая строка в БД — явное отключение авто-очистки пользователем.
+        if ($row !== null && trim((string) $row) === '') {
+            return null;
+        }
+
+        if ($row === null) {
+            return self::DEFAULT_AUTO_CLEANUP_RETENTION_HOURS;
+        }
+
+        $hours = (int) $row;
+
+        return in_array($hours, self::ALLOWED_AUTO_CLEANUP_RETENTION_HOURS, true)
+            ? $hours
+            : self::DEFAULT_AUTO_CLEANUP_RETENTION_HOURS;
+    }
+
+    public function isAutoCleanupEnabled(): bool
+    {
+        return $this->getAutoCleanupRetentionHours() !== null;
+    }
+
+    /**
+     * @param  int|null  $hours  null — отключить авто-очистку.
+     */
+    public function setAutoCleanupRetentionHours(?int $hours): void
+    {
+        $value = ($hours !== null && in_array($hours, self::ALLOWED_AUTO_CLEANUP_RETENTION_HOURS, true))
+            ? (string) $hours
+            : '';
+
+        DB::table('app_settings')->updateOrInsert(
+            ['key' => self::SETTING_KEY_AUTO_CLEANUP_RETENTION_HOURS],
+            [
+                'value' => $value,
+                'updated_at' => now(),
+                'created_at' => now(),
+            ],
+        );
+    }
+
+    /**
+     * Нормализует значение из формы настроек: пустая строка → отключено.
+     */
+    public function normalizeAutoCleanupRetentionHours(string|int|null $raw): ?int
+    {
+        if ($raw === null || trim((string) $raw) === '') {
+            return null;
+        }
+
+        $hours = (int) $raw;
+
+        return in_array($hours, self::ALLOWED_AUTO_CLEANUP_RETENTION_HOURS, true)
+            ? $hours
+            : null;
+    }
+
+    /**
+     * Человекочитаемая подпись для UI и flash-сообщений.
+     */
+    public function autoCleanupRetentionLabel(?int $hours): string
+    {
+        if ($hours === null) {
+            return 'Ничего не удалять';
+        }
+
+        return match ($hours) {
+            1 => '1 час',
+            3 => '3 часа',
+            6 => '6 часов',
+            12 => '12 часов',
+            24 => '24 часа',
+            48 => '48 часов',
+            default => "{$hours} ч.",
+        };
     }
 
     /**

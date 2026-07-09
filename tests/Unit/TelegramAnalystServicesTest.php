@@ -174,29 +174,24 @@ class TelegramAnalystServicesTest extends TestCase
         $this->assertSame('telegram_disabled', $result['error']);
     }
 
-    public function test_candle_reversal_alert_format_and_chart_builder(): void
+    public function test_strong_level_alert_format_uses_level_features(): void
     {
         $decision = [
             'side' => 'CALL',
             'confidence' => 0.72,
-            'reasons_short' => ['M5 разворот', 'M1 confirm'],
-            'features' => ['m5_reversal_wick' => 0.42, 'm1_avg_wick' => 0.28],
+            'reasons_short' => ['Уровень support', 'M5 rejection'],
+            'features' => [
+                'level_price' => 1.0845,
+                'level_strength' => 62.0,
+                'entry_regime' => 'bounce',
+                'level_kind' => 'support',
+                'level_sources' => ['pa_dgt_sr'],
+            ],
         ];
         $service = app(TelegramAlertService::class);
-        $text = $service->formatCandleReversalConfirmAlertText('EURUSD_otc', $decision, 88.0, 300, 1.0845, 'detailed');
-        $this->assertStringContainsString('Candle Reversal', $text);
-        $this->assertStringContainsString('M5 разворот', $text);
-
-        $candles = [];
-        $price = 1.0840;
-        for ($i = 0; $i < 12; $i++) {
-            $price += 0.0001;
-            $candles[] = ['open' => $price, 'high' => $price + 0.0002, 'low' => $price - 0.0001, 'close' => $price + 0.0001];
-        }
-        $chart = app(\App\Services\Telegram\CandleReversalTelegramChartBuilder::class)
-            ->chartLevelsFromDecision($decision, $candles, 1.0850);
-        $this->assertNotEmpty($chart['zones']);
-        $this->assertSame('CALL', $chart['entry']['side'] ?? null);
+        $text = $service->formatStrongLevelAlertText('EURUSD_otc', $decision, 88.0, 300, 1.0846, 'detailed');
+        $this->assertStringContainsString('Strong Level', $text);
+        $this->assertStringContainsString('1.0845', $text);
     }
 
     public function test_strong_level_chart_levels_builder(): void

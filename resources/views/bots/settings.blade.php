@@ -36,7 +36,7 @@
                 class="inline-flex items-center rounded border border-zinc-600 bg-zinc-800 px-2.5 py-1 text-xs font-medium text-zinc-200 shadow-sm transition-colors hover:bg-zinc-700 hover:border-zinc-500 hover:text-zinc-50 focus:outline-none focus:ring-2 focus:ring-blue-500/50">Liquidity Swings</a>
             <a href="{{ route('bots.indicators.smc-flow.edit', $bot) }}"
                 class="inline-flex items-center rounded border border-zinc-600 bg-zinc-800 px-2.5 py-1 text-xs font-medium text-zinc-200 shadow-sm transition-colors hover:bg-zinc-700 hover:border-zinc-500 hover:text-zinc-50 focus:outline-none focus:ring-2 focus:ring-blue-500/50">SMC Flow</a>
-            @if($bot->type === 'strong_level')
+            @if(in_array($bot->type, ['strong_level', 'candle_reversal_confirm'], true))
             <a href="{{ route('bots.cards', $bot) }}"
                 class="inline-flex items-center rounded border border-zinc-600 bg-zinc-800 px-2.5 py-1 text-xs font-medium text-zinc-200 shadow-sm transition-colors hover:bg-zinc-700 hover:border-zinc-500 hover:text-zinc-50 focus:outline-none focus:ring-2 focus:ring-blue-500/50">Карточки</a>
             @endif
@@ -228,143 +228,7 @@
                 </div>
             </div>
         @elseif ($bot->type === 'candle_reversal_confirm')
-            <div class="space-y-5 border-t border-zinc-800 pt-4">
-                <div class="space-y-2 text-sm text-zinc-400">
-                    <p>
-                        <strong class="text-zinc-300">Candle Reversal + Confirm</strong> — MTF-разворот: сторона определяется на <strong>M5</strong> (3 свечи: импульс → разворот → confirm),
-                        вход подтверждается на <strong>M1</strong> (3 свечи в ту же сторону + тени).
-                    </p>
-                    <p class="text-[11px] text-zinc-500">Экспирация фиксирована 300 с (5 мин) с момента сигнала. Вход = момент scan, не ждёт следующей свечи.</p>
-                </div>
-
-                <p class="text-xs font-semibold uppercase tracking-wide text-zinc-500">Общие параметры scan</p>
-                <div class="grid gap-4 sm:grid-cols-2">
-                    <div class="space-y-1">
-                        <label for="count" class="block text-xs font-medium text-zinc-400">Свечей M1 (count)</label>
-                        <input type="number" name="count" id="count" min="10" max="5000" required
-                            value="{{ old('count', $cfg['count'] ?? 180) }}"
-                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-                        <p class="text-[11px] text-zinc-500">История M1 для подтверждения. M5 подгружается отдельно (60 баров). Минимум 60 закрытых M1.</p>
-                        @error('count')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
-                    </div>
-                    <div class="space-y-1">
-                        <label for="expiry_sec" class="block text-xs font-medium text-zinc-400">Экспирация (сек, фикс)</label>
-                        <input type="number" name="expiry_sec" id="expiry_sec" min="300" max="300" readonly
-                            value="300"
-                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-                        <p class="text-[11px] text-zinc-500">Всегда 5 минут по ТЗ стратегии. На PO уходит та же длительность.</p>
-                        @error('expiry_sec')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
-                    </div>
-                    <div class="space-y-1">
-                        <label for="min_confidence" class="block text-xs font-medium text-zinc-400">Мин. confidence (0–1)</label>
-                        <input type="number" name="min_confidence" id="min_confidence" min="0" max="1" step="0.01" required
-                            value="{{ old('min_confidence', $cfg['min_confidence'] ?? 0.56) }}"
-                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-                        <p class="text-[11px] text-zinc-500">Складывается из качества M5-разворотной тени, M1-подтверждения и payout.</p>
-                        @error('min_confidence')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
-                    </div>
-                    <div class="space-y-1">
-                        <label for="min_payout" class="block text-xs font-medium text-zinc-400">Мин. payout (%)</label>
-                        <input type="number" name="min_payout" id="min_payout" min="0" max="100" step="0.1" required
-                            value="{{ old('min_payout', $cfg['min_payout'] ?? 80) }}"
-                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-                        <p class="text-[11px] text-zinc-500">Пары с payout ниже порога не сканируются.</p>
-                        @error('min_payout')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
-                    </div>
-                    <div class="space-y-1">
-                        <label for="stale_after_sec" class="block text-xs font-medium text-zinc-400">Свежесть текущей свечи (сек)</label>
-                        <input type="number" name="stale_after_sec" id="stale_after_sec" min="5" max="600" required
-                            value="{{ old('stale_after_sec', $cfg['stale_after_sec'] ?? 45) }}"
-                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-                        <p class="text-[11px] text-zinc-500">Пропуск «застывших» пар без свежего ingest.</p>
-                        @error('stale_after_sec')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
-                    </div>
-                </div>
-
-                <p class="text-xs font-semibold uppercase tracking-wide text-zinc-500">Паттерн M5 (разворот)</p>
-                <div class="grid gap-4 sm:grid-cols-2">
-                    <div class="space-y-1">
-                        <label for="m5_reversal_min_wick_ratio" class="block text-xs font-medium text-zinc-400">M5: мин. доля тени разворота</label>
-                        <input type="number" name="m5_reversal_min_wick_ratio" id="m5_reversal_min_wick_ratio" min="0.12" max="0.75" step="0.01" required
-                            value="{{ old('m5_reversal_min_wick_ratio', $cfg['m5_reversal_min_wick_ratio'] ?? 0.30) }}"
-                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-                        <p class="text-[11px] text-zinc-500">Средняя свеча паттерна (№2): CALL — нижняя тень, PUT — верхняя. 0.30 = 30% диапазона свечи. Выше — реже, но чище развороты.</p>
-                        @error('m5_reversal_min_wick_ratio')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
-                    </div>
-                    <div class="space-y-1">
-                        <label for="m5_reversal_max_body_ratio" class="block text-xs font-medium text-zinc-400">M5: макс. доля тела разворота</label>
-                        <input type="number" name="m5_reversal_max_body_ratio" id="m5_reversal_max_body_ratio" min="0.15" max="0.90" step="0.01" required
-                            value="{{ old('m5_reversal_max_body_ratio', $cfg['m5_reversal_max_body_ratio'] ?? 0.70) }}"
-                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-                        <p class="text-[11px] text-zinc-500">Разворотная свеча не должна быть «марубозу» — тело ограничено сверху. Меньше значение — только тонкие пин-бары.</p>
-                        @error('m5_reversal_max_body_ratio')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
-                    </div>
-                </div>
-
-                <p class="text-xs font-semibold uppercase tracking-wide text-zinc-500">Подтверждение M1</p>
-                <div class="grid gap-4 sm:grid-cols-2">
-                    <div class="space-y-1">
-                        <label for="m1_min_wick_ratio" class="block text-xs font-medium text-zinc-400">M1: мин. доля подтверждающей тени</label>
-                        <input type="number" name="m1_min_wick_ratio" id="m1_min_wick_ratio" min="0.10" max="0.70" step="0.01" required
-                            value="{{ old('m1_min_wick_ratio', $cfg['m1_min_wick_ratio'] ?? 0.22) }}"
-                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-                        <p class="text-[11px] text-zinc-500">Минимальная тень на выбранных M1-свечах (см. scope ниже) в сторону сделки.</p>
-                        @error('m1_min_wick_ratio')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
-                    </div>
-                    <div class="space-y-1">
-                        <label for="m1_min_body_ratio" class="block text-xs font-medium text-zinc-400">M1: мин. доля тела свечи</label>
-                        <input type="number" name="m1_min_body_ratio" id="m1_min_body_ratio" min="0.05" max="0.80" step="0.01" required
-                            value="{{ old('m1_min_body_ratio', $cfg['m1_min_body_ratio'] ?? 0.25) }}"
-                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-                        <p class="text-[11px] text-zinc-500">Три M1 должны иметь заметное тело в сторону входа (не доджи). Фильтр слабых свечей.</p>
-                        @error('m1_min_body_ratio')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
-                    </div>
-                </div>
-
-                <div class="space-y-3 rounded border border-zinc-800 bg-zinc-900/40 p-4">
-                    <p class="text-xs font-semibold uppercase tracking-wide text-zinc-500">Дополнительные фильтры M5/M1</p>
-                    <input type="hidden" name="m5_require_break_rev_extreme" value="0">
-                    <label class="flex items-start gap-2">
-                        <input type="checkbox" name="m5_require_break_rev_extreme" id="m5_require_break_rev_extreme" value="1"
-                            class="mt-0.5 rounded border-zinc-600 bg-zinc-800 text-blue-500"
-                            @checked((bool) old('m5_require_break_rev_extreme', ($cfg['m5_require_break_rev_extreme'] ?? true)))>
-                        <span>
-                            <span class="text-sm font-medium text-zinc-200">M5: пробой экстремума разворотной свечи</span>
-                            <span class="mt-0.5 block text-[11px] font-normal text-zinc-500">Третья (confirm) свеча M5 должна пробить high/low первой свечи импульса — подтверждение смены структуры.</span>
-                        </span>
-                    </label>
-                    <div class="space-y-1 pt-1">
-                        <label for="m1_wick_requirement_scope" class="block text-xs font-medium text-zinc-400">M1: где проверять тени</label>
-                        <select name="m1_wick_requirement_scope" id="m1_wick_requirement_scope" required
-                            class="w-full max-w-xl rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-                            <option value="last" @selected(old('m1_wick_requirement_scope', $cfg['m1_wick_requirement_scope'] ?? 'last') === 'last')>
-                                Только последняя закрытая (рекомендуется)
-                            </option>
-                            <option value="all" @selected(old('m1_wick_requirement_scope', $cfg['m1_wick_requirement_scope'] ?? 'last') === 'all')>
-                                Все три свечи (максимально строго)
-                            </option>
-                        </select>
-                        <p class="text-[11px] text-zinc-500"><strong>last</strong> — тени и тело у последней из 3 M1 (типичный сценарий после M5-разворота). <strong>all</strong> — у всех трёх; сигналов почти не будет.</p>
-                        @error('m1_wick_requirement_scope')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
-                    </div>
-                    <input type="hidden" name="m1_require_wick_dominance" value="0">
-                    <label class="flex items-start gap-2">
-                        <input type="checkbox" name="m1_require_wick_dominance" id="m1_require_wick_dominance" value="1"
-                            class="mt-0.5 rounded border-zinc-600 bg-zinc-800 text-blue-500"
-                            @checked((bool) old('m1_require_wick_dominance', ($cfg['m1_require_wick_dominance'] ?? true)))>
-                        <span>
-                            <span class="text-sm font-medium text-zinc-200">M1: доминирование «своей» тени</span>
-                            <span class="mt-0.5 block text-[11px] font-normal text-zinc-500">На проверяемых свечах тень в сторону сделки длиннее противоположной (rejection, а не просто направление close).</span>
-                        </span>
-                    </label>
-                </div>
-
-                @include('bots._telegram-signal-bot-settings', [
-                    'telegramUiKey' => 'crc',
-                    'telegramBotUsername' => 'candle_reversal_confirm_bot',
-                    'telegramNotifyHint' => 'По умолчанию — при каждой созданной сделке Candle Reversal.',
-                ])
-            </div>
+            @include('bots._candle-reversal-level-settings')
         @elseif ($bot->type === 'smc_flow')
             <div class="space-y-5 border-t border-zinc-800 pt-4">
                 <div class="space-y-2 text-sm text-zinc-400">

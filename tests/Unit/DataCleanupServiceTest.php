@@ -64,4 +64,25 @@ class DataCleanupServiceTest extends TestCase
         $this->assertStringContainsString('Удалены все данные', $message);
         $this->assertStringContainsString('свечи=100', $message);
     }
+
+    public function test_normalize_auto_cleanup_retention_hours(): void
+    {
+        $service = new DataCleanupService();
+
+        $this->assertNull($service->normalizeAutoCleanupRetentionHours(null));
+        $this->assertNull($service->normalizeAutoCleanupRetentionHours(''));
+        $this->assertSame(24, $service->normalizeAutoCleanupRetentionHours(24));
+        $this->assertSame(1, $service->normalizeAutoCleanupRetentionHours('1'));
+        $this->assertNull($service->normalizeAutoCleanupRetentionHours(0));
+        $this->assertNull($service->normalizeAutoCleanupRetentionHours(99));
+    }
+
+    public function test_auto_cleanup_retention_label(): void
+    {
+        $service = new DataCleanupService();
+
+        $this->assertSame('Ничего не удалять', $service->autoCleanupRetentionLabel(null));
+        $this->assertSame('24 часа', $service->autoCleanupRetentionLabel(24));
+        $this->assertSame('1 час', $service->autoCleanupRetentionLabel(1));
+    }
 }

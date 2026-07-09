@@ -55,6 +55,7 @@ class SettingsController extends Controller
                 'active' => ProxyEndpoint::query()->where('status', ProxyEndpoint::STATUS_ACTIVE)->count(),
                 'dead' => ProxyEndpoint::query()->where('status', ProxyEndpoint::STATUS_DEAD)->count(),
             ],
+            'dataAutoCleanupRetentionHours' => app(DataCleanupService::class)->getAutoCleanupRetentionHours(),
         ]);
     }
 
@@ -277,6 +278,30 @@ class SettingsController extends Controller
         return back()->with(
             'success',
             "Реанимировано (dead→active): {$reactivated} шт.; сброшено счётчиков ошибок: {$resetCounters} шт."
+        );
+    }
+
+    public function updateDataAutoCleanup(\Illuminate\Http\Request $request, DataCleanupService $dataCleanup): \Illuminate\Http\RedirectResponse
+    {
+        $validated = $request->validate([
+            'auto_cleanup_retention_hours' => 'nullable|string|max:8',
+        ]);
+
+        $raw = trim((string) ($validated['auto_cleanup_retention_hours'] ?? ''));
+        if ($raw !== '' && ! in_array((int) $raw, DataCleanupService::ALLOWED_AUTO_CLEANUP_RETENTION_HOURS, true)) {
+            return back()->with('error', 'Недопустимый период автоматической очистки.');
+        }
+
+        $hours = $dataCleanup->normalizeAutoCleanupRetentionHours($raw !== '' ? $raw : null);
+        $dataCleanup->setAutoCleanupRetentionHours($hours);
+
+        return back()->with(
+            'success',
+            $hours === null
+                ? 'Автоматическая очистка данных отключена.'
+                : 'Автоматическая очистка по крону: удалять данные старше '
+                    .$dataCleanup->autoCleanupRetentionLabel($hours)
+                    .' (команда data:auto-cleanup, каждый час).',
         );
     }
 

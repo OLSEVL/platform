@@ -139,4 +139,34 @@ class StrongTrendTelegramStrategyTest extends TestCase
 
         $this->assertNull($decision);
     }
+
+    public function test_signal_trade_mode_sets_notify_only_false(): void
+    {
+        $strategy = new StrongTrendTelegramStrategy;
+        $candles = [];
+        $price = 1.1000;
+        for ($i = 0; $i < 6; $i++) {
+            $open = $price;
+            $close = $price + 0.0005;
+            $candles[] = [
+                'time' => 1000 + ($i * 60),
+                'open' => $open,
+                'high' => $close,
+                'low' => $open,
+                'close' => $close,
+                'volume' => 1.0,
+            ];
+            $price = $close;
+        }
+
+        $decision = $strategy->analyze($candles, null, [
+            'config' => [
+                'streak_len' => 6,
+                'execution_mode' => 'signal_trade',
+            ],
+        ]);
+
+        $this->assertNotNull($decision);
+        $this->assertFalse($decision['notify_only']);
+    }
 }

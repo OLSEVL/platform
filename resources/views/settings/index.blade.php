@@ -608,7 +608,7 @@
         >
             @csrf
             <label class="flex flex-col gap-1 text-zinc-200 text-sm">
-                <span>Удалить данные старше</span>
+                <span>Удалить данные старше (вручную)</span>
                 <select
                     name="retention_hours"
                     class="min-w-[10rem] px-2 py-2 rounded border border-zinc-600 bg-zinc-950 text-zinc-100 focus:ring-2 focus:ring-rose-600 focus:border-transparent"
@@ -629,6 +629,43 @@
                 Удалить все данные
             </button>
         </form>
+
+        <div class="mt-6 pt-5 border-t border-zinc-800">
+            <p class="text-sm text-zinc-400 mb-4">
+                Автоматическая очистка выполняется планировщиком Laravel
+                (<code class="text-zinc-300 text-xs">php artisan schedule:run</code>)
+                раз в час командой <code class="text-zinc-300 text-xs">data:auto-cleanup</code>.
+                Удаляются те же типы данных, что и при ручной очистке, кроме варианта «удалить всё».
+            </p>
+            <form
+                action="{{ route('settings.data.auto-cleanup') }}"
+                method="POST"
+                class="flex flex-wrap items-end gap-3"
+            >
+                @csrf
+                <label class="flex flex-col gap-1 text-zinc-200 text-sm">
+                    <span>Автоматически удалять данные старше</span>
+                    <select
+                        name="auto_cleanup_retention_hours"
+                        class="min-w-[12rem] px-2 py-2 rounded border border-zinc-600 bg-zinc-950 text-zinc-100 focus:ring-2 focus:ring-indigo-600 focus:border-transparent"
+                    >
+                        <option value="" @selected(($dataAutoCleanupRetentionHours ?? null) === null)>Ничего не удалять</option>
+                        <option value="48" @selected(($dataAutoCleanupRetentionHours ?? null) === 48)>48 часов</option>
+                        <option value="24" @selected(($dataAutoCleanupRetentionHours ?? null) === 24)>24 часа</option>
+                        <option value="12" @selected(($dataAutoCleanupRetentionHours ?? null) === 12)>12 часов</option>
+                        <option value="6" @selected(($dataAutoCleanupRetentionHours ?? null) === 6)>6 часов</option>
+                        <option value="3" @selected(($dataAutoCleanupRetentionHours ?? null) === 3)>3 часа</option>
+                        <option value="1" @selected(($dataAutoCleanupRetentionHours ?? null) === 1)>1 час</option>
+                    </select>
+                </label>
+                <button
+                    type="submit"
+                    class="inline-flex items-center justify-center px-4 py-2 rounded bg-indigo-600 hover:bg-indigo-500 text-white font-medium"
+                >
+                    Сохранить авто-очистку
+                </button>
+            </form>
+        </div>
     </div>
 
     <div class="bg-zinc-900 border border-zinc-800 rounded-lg shadow-lg shadow-black/20 p-5 mt-6">

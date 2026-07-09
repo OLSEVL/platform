@@ -303,30 +303,64 @@ Artisan::command('bots:reversal-confirm-bootstrap', function () {
         return;
     }
 
+    $defaultConfig = [
+        'count' => 500,
+        'min_closed_bars' => 200,
+        'expiry_sec' => 300,
+        'min_confidence' => 0.58,
+        'min_payout' => 82.0,
+        'stale_after_sec' => 45,
+        'min_level_strength' => 58,
+        'min_sources' => 1,
+        'cluster_atr_mult_m5' => 0.28,
+        'touch_atr_mult_m1' => 0.55,
+        'bounce_min_wick_ratio_m5' => 0.28,
+        'h1_flat_strength_extra' => 4,
+        'm5_rejection_enabled' => true,
+        'm5_rejection_require_direction' => true,
+        'm1_reversal_enabled' => true,
+        'm1_reversal_confirm_bars' => 1,
+        'm1_reversal_min_wick_ratio' => 0.22,
+        'm1_reversal_min_body_ratio' => 0.25,
+        'm1_reversal_require_wick_dominance' => true,
+        'm1_reversal_wick_scope' => 'last',
+        'require_h1_alignment' => false,
+        'm5_take' => 120,
+        'm15_take' => 80,
+        'h1_take' => 48,
+        'version' => 'candle_reversal_confirm_v3_level_bounce',
+    ];
+
     $bot = Bot::query()->firstOrCreate(
         ['user_id' => $user->id, 'name' => 'Candle Reversal + Confirm', 'type' => 'candle_reversal_confirm'],
         [
             'is_active' => false,
-            'config' => [
-                'count' => 180,
-                'expiry_sec' => 300,
-                'min_confidence' => 0.56,
-                'min_payout' => 80.0,
-                'stale_after_sec' => 45,
-                'm5_reversal_min_wick_ratio' => 0.30,
-                'm5_reversal_max_body_ratio' => 0.70,
-                'm5_require_break_rev_extreme' => true,
-                'm1_min_wick_ratio' => 0.22,
-                'm1_min_body_ratio' => 0.25,
-                'm1_require_wick_dominance' => true,
-                'm1_wick_requirement_scope' => 'last',
-                'version' => 'candle_reversal_confirm_v2_mtf',
-            ],
+            'config' => $defaultConfig,
         ]
     );
 
-    $this->info("Бот разворота: #{$bot->id} {$bot->name} ({$bot->type}) — при необходимости включите в настройках.");
-})->purpose('Создать бота «M5 разворот + 3 свечи M1»');
+    // При повторном запуске обновляем config на v3, сохраняя Telegram и прочие пользовательские поля.
+    if ($bot->wasRecentlyCreated === false) {
+        $old = is_array($bot->config) ? $bot->config : [];
+        $preserveKeys = [
+            'telegram_enabled', 'telegram_bot_token', 'telegram_chat_id', 'telegram_notify_on',
+            'telegram_alert_format', 'telegram_send_chart', 'telegram_send_chart_m5',
+            'telegram_analyst_llm_enabled', 'telegram_analyst_bot_id', 'telegram_analyst_llm_question',
+            'analysis_runs_logging_enabled', 'allowed_instruments', 'tv_crosshair_enabled',
+        ];
+        $preserved = [];
+        foreach ($preserveKeys as $key) {
+            if (array_key_exists($key, $old)) {
+                $preserved[$key] = $old[$key];
+            }
+        }
+        $bot->config = array_merge($defaultConfig, $preserved);
+        $bot->save();
+        $this->info("Конфиг обновлён до v3 (Telegram-настройки сохранены).");
+    }
+
+    $this->info("Бот отбития от уровня: #{$bot->id} {$bot->name} ({$bot->type}) — при необходимости включите в настройках.");
+})->purpose('Создать бота «Candle Reversal + Confirm» (отскок от уровня)');
 
 Artisan::command('bots:smc-flow-bootstrap', function () {
     $user = User::query()->orderBy('id')->first();

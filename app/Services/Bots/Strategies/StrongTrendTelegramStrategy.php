@@ -4,7 +4,7 @@ namespace App\Services\Bots\Strategies;
 
 /**
  * Детектор сильного тренда на M1: N закрытых свечей подряд в одну сторону.
- * Результат — алерт (notify_only), без торгового входа в платформе.
+ * Режим исполнения (алерт / сделка) задаётся в config бота (execution_mode).
  */
 class StrongTrendTelegramStrategy implements BotStrategyInterface
 {
@@ -63,14 +63,15 @@ class StrongTrendTelegramStrategy implements BotStrategyInterface
             $reasons[] = sprintf('Payout: %.0f%%', $payout);
         }
 
-        // side в БД: CALL = восходящий тренд, PUT = нисходящий (не торговая рекомендация).
+        // side в БД: CALL = восходящий тренд, PUT = нисходящий.
         $side = $direction === 'up' ? 'CALL' : 'PUT';
+        $executionMode = (string) ($cfg['execution_mode'] ?? ((bool) ($cfg['notify_only'] ?? true) ? 'alert_only' : 'signal_trade'));
 
         return [
             'trend' => $direction,
             'side' => $side,
             'confidence' => $confidence,
-            'notify_only' => true,
+            'notify_only' => $executionMode === 'alert_only',
             'reasons_short' => $reasons,
             'analysis_text' => sprintf(
                 'strong_trend_telegram: %d×%s; strictness=%s; confidence=%.2f.',

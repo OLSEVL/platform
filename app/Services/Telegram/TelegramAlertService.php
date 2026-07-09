@@ -216,35 +216,104 @@ class TelegramAlertService
         }
 
         $sendChart = (bool) ($cfg['telegram_send_chart'] ?? true);
+        // Отдельный флаг для второго изображения M5 в Strong Level алерте.
+        // Держим дефолт true, чтобы новое поведение включалось автоматически после релиза.
+        $sendChartM5 = (bool) ($cfg['telegram_send_chart_m5'] ?? true);
         $photoOk = null;
         $photoError = null;
 
         // PNG: M1 + линия уровня + зона касания + маркер входа (как у Chart Analyst).
+        // Дополнительно отправляем второй кадр M5, чтобы трейдер видел контекст старшего ТФ
+        // в том же алерте без переключения на платформу.
         if ($sendChart && $m1Candles !== [] && extension_loaded('gd')) {
             $chartLevels = app(StrongLevelTelegramChartBuilder::class)
                 ->chartLevelsFromDecision($decision, $entryPrice);
-            $pngPath = app(TelegramChartImageRenderer::class)->render($instrument, $m1Candles, $chartLevels);
-            if ($pngPath !== null) {
-                $side = strtoupper((string) ($decision['side'] ?? ''));
-                $caption = '📊 <b>'.htmlspecialchars($instrument, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8').'</b>';
-                if ($side !== '') {
-                    $caption .= ' · '.$side;
-                }
-                $photoResult = $this->sendPhoto($token, $chatId, $pngPath, $caption);
-                $photoOk = (bool) ($photoResult['ok'] ?? false);
-                if (! $photoOk) {
-                    $photoError = (string) ($photoResult['error'] ?? 'telegram_photo_failed');
-                    Log::warning('strong_level_telegram_photo_failed', [
+            $side = strtoupper((string) ($decision['side'] ?? ''));
+            $captionBase = '📊 <b>'.htmlspecialchars($instrument, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8').'</b>';
+            if ($side !== '') {
+                $captionBase .= ' · '.$side;
+            }
+
+            // 1) Сначала отправляем старший контекст M5.
+            // Строим его из тех же M1 свечей агрегированием 5x1m -> 5m, чтобы не делать
+            // дополнительный сетевой запрос и не задерживать отправку алерта.
+            $m5Candles = $this->aggregateCandlesToTimeframe($m1Candles, 300);
+            if ($sendChartM5 && count($m5Candles) >= 12) {
+                $m5PngPath = app(TelegramChartImageRenderer::class)->render($instrument, $m5Candles, $chartLevels, [
+                    'width' => 640,
+                    'height' => 360,
+                    'max_bars' => 60,
+                    'margin_left' => 56,
+                    'margin_top' => 32,
+                    'margin_bottom' => 28,
+                    'font_size_title' => 10,
+                    'font_size_axis' => 8,
+                    'font_size_label' => 8,
+                ]);
+                if ($m5PngPath !== null) {
+                    $m5PhotoResult = $this->sendPhoto($token, $chatId, $m5PngPath, $captionBase.' · M5');
+                    $m5Ok = (bool) ($m5PhotoResult['ok'] ?? false);
+                    if ($photoOk === null) {
+                        $photoOk = $m5Ok;
+                    } else {
+                        // photo_ok=true только если успешно отправлены все попытки графиков.
+                        $photoOk = $photoOk && $m5Ok;
+                    }
+                    if (! $m5Ok) {
+                        $m5Error = (string) ($m5PhotoResult['error'] ?? 'telegram_photo_failed');
+                        $photoError = $photoError !== null ? $photoError.';m5:'.$m5Error : 'm5:'.$m5Error;
+                        Log::warning('strong_level_telegram_photo_m5_failed', [
+                            'bot_id' => $bot->id,
+                            'instrument' => $instrument,
+                            'error' => $m5Error,
+                        ]);
+                    }
+                    @unlink($m5PngPath);
+                } else {
+                    $photoOk = $photoOk === null ? false : $photoOk;
+                    $photoError = $photoError !== null ? $photoError.';m5:render_failed' : 'm5:render_failed';
+                    Log::warning('strong_level_telegram_photo_m5_skipped', [
                         'bot_id' => $bot->id,
                         'instrument' => $instrument,
-                        'error' => $photoError,
+                        'reason' => 'render_returned_null',
                     ]);
                 }
-                @unlink($pngPath);
+            } elseif ($sendChartM5) {
+                // Недостаточно истории для визуально полезного M5 графика:
+                // не считаем это ошибкой отправки алерта, просто логируем skip.
+                Log::info('strong_level_telegram_photo_m5_skipped', [
+                    'bot_id' => $bot->id,
+                    'instrument' => $instrument,
+                    'reason' => 'not_enough_m1_bars_for_m5',
+                    'm1_count' => count($m1Candles),
+                ]);
+            }
+
+            // 2) Затем отправляем базовую миниатюру M1.
+            $m1PngPath = app(TelegramChartImageRenderer::class)->render($instrument, $m1Candles, $chartLevels);
+            if ($m1PngPath !== null) {
+                $photoResult = $this->sendPhoto($token, $chatId, $m1PngPath, $captionBase.' · M1');
+                $m1Ok = (bool) ($photoResult['ok'] ?? false);
+                if ($photoOk === null) {
+                    $photoOk = $m1Ok;
+                } else {
+                    // photo_ok=true только если успешно отправлены все попытки графиков.
+                    $photoOk = $photoOk && $m1Ok;
+                }
+                if (! $m1Ok) {
+                    $m1Error = (string) ($photoResult['error'] ?? 'telegram_photo_failed');
+                    $photoError = $photoError !== null ? $photoError.';m1:'.$m1Error : 'm1:'.$m1Error;
+                    Log::warning('strong_level_telegram_photo_m1_failed', [
+                        'bot_id' => $bot->id,
+                        'instrument' => $instrument,
+                        'error' => $m1Error,
+                    ]);
+                }
+                @unlink($m1PngPath);
             } else {
-                $photoOk = false;
-                $photoError = 'chart_render_failed';
-                Log::warning('strong_level_telegram_photo_skipped', [
+                $photoOk = $photoOk === null ? false : $photoOk;
+                $photoError = $photoError !== null ? $photoError.';m1:render_failed' : 'm1:render_failed';
+                Log::warning('strong_level_telegram_photo_m1_skipped', [
                     'bot_id' => $bot->id,
                     'instrument' => $instrument,
                     'reason' => 'render_returned_null',
@@ -284,188 +353,6 @@ class TelegramAlertService
         ]));
     }
 
-    /**
-     * Алерт Candle Reversal + Confirm: новый MTF-сигнал + paper-сделка (как Strong Level).
-     *
-     * @param  array<string, mixed>  $decision
-     * @return array{ok:bool,error?:string,message_id?:int}
-     */
-    public function sendCandleReversalConfirmAlert(
-        Bot $bot,
-        string $instrument,
-        array $decision,
-        ?float $payout,
-        int $expirySec,
-        ?float $entryPrice = null,
-        array $m1Candles = [],
-    ): array {
-        /** @var array<string, mixed> $cfg */
-        $cfg = is_array($bot->config) ? $bot->config : [];
-        if (! (bool) ($cfg['telegram_enabled'] ?? false)) {
-            return ['ok' => false, 'error' => 'telegram_disabled'];
-        }
-
-        $notifyOn = (string) ($cfg['telegram_notify_on'] ?? 'signal_trade');
-        if ($notifyOn !== 'signal_trade') {
-            return ['ok' => false, 'error' => 'telegram_notify_disabled'];
-        }
-
-        $token = trim((string) ($cfg['telegram_bot_token'] ?? ''));
-        $chatId = trim((string) ($cfg['telegram_chat_id'] ?? ''));
-        if ($token === '' || $chatId === '') {
-            return ['ok' => false, 'error' => 'telegram_token_or_chat_id_missing'];
-        }
-
-        $format = (string) ($cfg['telegram_alert_format'] ?? 'brief');
-        if (! in_array($format, ['brief', 'detailed', 'card'], true)) {
-            $format = 'brief';
-        }
-
-        $sendChart = (bool) ($cfg['telegram_send_chart'] ?? true);
-        $photoOk = null;
-        $photoError = null;
-
-        if ($sendChart && $m1Candles !== [] && extension_loaded('gd')) {
-            $chartLevels = app(CandleReversalTelegramChartBuilder::class)
-                ->chartLevelsFromDecision($decision, $m1Candles, $entryPrice);
-            $pngPath = app(TelegramChartImageRenderer::class)->render($instrument, $m1Candles, $chartLevels, [
-                'width' => 640,
-                'height' => 360,
-                'max_bars' => 48,
-                'margin_left' => 56,
-                'margin_top' => 32,
-                'margin_bottom' => 28,
-                'font_size_title' => 10,
-                'font_size_axis' => 8,
-                'font_size_label' => 8,
-            ]);
-            if ($pngPath !== null) {
-                $side = strtoupper((string) ($decision['side'] ?? ''));
-                $caption = '📊 <b>'.htmlspecialchars($instrument, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8').'</b>';
-                if ($side !== '') {
-                    $caption .= ' · '.$side;
-                }
-                $photoResult = $this->sendPhoto($token, $chatId, $pngPath, $caption);
-                $photoOk = (bool) ($photoResult['ok'] ?? false);
-                if (! $photoOk) {
-                    $photoError = (string) ($photoResult['error'] ?? 'telegram_photo_failed');
-                    Log::warning('candle_reversal_telegram_photo_failed', [
-                        'bot_id' => $bot->id,
-                        'instrument' => $instrument,
-                        'error' => $photoError,
-                    ]);
-                }
-                @unlink($pngPath);
-            } else {
-                $photoOk = false;
-                $photoError = 'chart_render_failed';
-            }
-        } elseif ($sendChart && ! extension_loaded('gd')) {
-            $photoOk = false;
-            $photoError = 'gd_extension_missing';
-        }
-
-        $text = $this->formatCandleReversalConfirmAlertText(
-            $instrument,
-            $decision,
-            $payout,
-            $expirySec,
-            $entryPrice,
-            $format
-        );
-
-        $llmMarkup = StrongLevelTelegramLlmButton::inlineKeyboardMarkup($cfg, $bot, $instrument);
-        if ($llmMarkup !== null) {
-            app(StrongLevelTelegramProcessManager::class)->ensurePollRunning($bot->id);
-        }
-        $messageResult = $llmMarkup !== null
-            ? $this->sendMessageWithMarkup($token, $chatId, $text, $llmMarkup)
-            : $this->sendMessage($token, $chatId, $text);
-        if (! ($messageResult['ok'] ?? false)) {
-            return array_merge($messageResult, array_filter([
-                'photo_ok' => $photoOk,
-                'photo_error' => $photoError,
-            ]));
-        }
-
-        return array_merge($messageResult, array_filter([
-            'photo_ok' => $photoOk,
-            'photo_error' => $photoError,
-        ]));
-    }
-
-    /**
-     * HTML-текст алерта Candle Reversal + Confirm.
-     *
-     * @param  array<string, mixed>  $decision
-     */
-    public function formatCandleReversalConfirmAlertText(
-        string $instrument,
-        array $decision,
-        ?float $payout,
-        int $expirySec,
-        ?float $entryPrice,
-        string $format = 'brief',
-    ): string {
-        $side = (string) ($decision['side'] ?? '');
-        $sideLabel = $side === 'CALL' ? 'CALL ▲' : ($side === 'PUT' ? 'PUT ▼' : $side);
-        $features = is_array($decision['features'] ?? null) ? $decision['features'] : [];
-        $confidence = isset($decision['confidence']) ? (float) $decision['confidence'] : 0.0;
-        $m5Wick = isset($features['m5_reversal_wick']) ? (float) $features['m5_reversal_wick'] : 0.0;
-        $m1Wick = isset($features['m1_avg_wick']) ? (float) $features['m1_avg_wick'] : 0.0;
-
-        $instrumentEsc = htmlspecialchars($instrument, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
-
-        if ($format === 'card') {
-            $lines = [
-                '🔄 <b>'.$instrumentEsc.' · '.htmlspecialchars($sideLabel, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8').'</b>',
-                '',
-                'MTF-разворот: M5 (3 свечи) → подтверждение M1 (3 свечи).',
-                sprintf('Экспирация %d с · confidence %.0f%%', max(1, $expirySec), $confidence * 100),
-            ];
-            if ($payout !== null) {
-                $lines[] = 'Payout: '.number_format($payout, 1, '.', '').'%';
-            }
-            if ($entryPrice !== null) {
-                $lines[] = sprintf('Вход: %.5f', $entryPrice);
-            }
-            $lines[] = 'Время: '.now()->utc()->format('d.m.Y H:i').' UTC';
-
-            return implode("\n", $lines);
-        }
-
-        $lines = [
-            '🔄 <b>Candle Reversal — '.htmlspecialchars($sideLabel, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8').'</b>',
-            '',
-            'Пара: <b>'.$instrumentEsc.'</b>',
-            'Сетап: M5 разворот + M1 confirm (3×3)',
-            sprintf('Экспирация %d с', max(1, $expirySec)),
-        ];
-
-        if ($payout !== null) {
-            $lines[] = 'Payout: '.number_format($payout, 1, '.', '').'%';
-        }
-
-        if ($format === 'detailed') {
-            $lines[] = sprintf('Confidence: %.2f', $confidence);
-            if ($entryPrice !== null) {
-                $lines[] = sprintf('Вход: %.5f', $entryPrice);
-            }
-            $lines[] = sprintf('M5 reversal wick: %.0f%% | M1 avg wick: %.0f%%', $m5Wick * 100, $m1Wick * 100);
-            $reasons = $decision['reasons_short'] ?? [];
-            if (is_array($reasons) && $reasons !== []) {
-                $lines[] = '';
-                $lines[] = '<b>Причины:</b>';
-                foreach ($reasons as $reason) {
-                    $lines[] = '• '.htmlspecialchars((string) $reason, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
-                }
-            }
-        }
-
-        $lines[] = 'Время: '.now()->utc()->format('d.m.Y H:i').' UTC';
-
-        return implode("\n", $lines);
-    }
 
     /**
      * HTML-текст алерта Strong Level (краткий или развёрнутый).
@@ -862,6 +749,69 @@ class TelegramAlertService
         }
 
         return $parts;
+    }
+
+    /**
+     * Агрегирует свечи младшего ТФ в старший.
+     *
+     * Пример: 1m + periodSec=300 -> 5m свечи.
+     * Ожидается формат входа как у CandleService/renderer:
+     * ['time','open','high','low','close','volume'].
+     *
+     * @param  list<array<string,mixed>>  $candles
+     * @return list<array{time:int,open:float,high:float,low:float,close:float,volume:float}>
+     */
+    private function aggregateCandlesToTimeframe(array $candles, int $periodSec): array
+    {
+        if ($candles === [] || $periodSec <= 1) {
+            return [];
+        }
+
+        $buckets = [];
+        foreach ($candles as $row) {
+            if (! is_array($row) || ! isset($row['time'], $row['open'], $row['high'], $row['low'], $row['close'])) {
+                continue;
+            }
+            $time = (int) $row['time'];
+            if ($time <= 0) {
+                continue;
+            }
+            $bucketTs = intdiv($time, $periodSec) * $periodSec;
+            $open = (float) $row['open'];
+            $high = (float) $row['high'];
+            $low = (float) $row['low'];
+            $close = (float) $row['close'];
+            $volume = isset($row['volume']) ? (float) $row['volume'] : 0.0;
+
+            if (! isset($buckets[$bucketTs])) {
+                $buckets[$bucketTs] = [
+                    'time' => $bucketTs,
+                    'open' => $open,
+                    'high' => $high,
+                    'low' => $low,
+                    'close' => $close,
+                    'volume' => $volume,
+                ];
+                continue;
+            }
+
+            $buckets[$bucketTs]['high'] = max((float) $buckets[$bucketTs]['high'], $high);
+            $buckets[$bucketTs]['low'] = min((float) $buckets[$bucketTs]['low'], $low);
+            // Последний close в пределах бакета становится close агрегированной свечи.
+            $buckets[$bucketTs]['close'] = $close;
+            $buckets[$bucketTs]['volume'] = (float) $buckets[$bucketTs]['volume'] + $volume;
+        }
+
+        if ($buckets === []) {
+            return [];
+        }
+
+        ksort($buckets);
+
+        /** @var list<array{time:int,open:float,high:float,low:float,close:float,volume:float}> $out */
+        $out = array_values($buckets);
+
+        return $out;
     }
 
     /**

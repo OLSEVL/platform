@@ -11,7 +11,7 @@ use App\Models\IndicatorSetting;
 use App\Models\PocketInstrument;
 use App\Services\Bots\Strategies\AkimTrade1MStrategy;
 use App\Services\Bots\Strategies\BotStrategyInterface;
-use App\Services\Bots\Strategies\CandleReversalMtfConfirmStrategy;
+use App\Services\Bots\Strategies\CandleReversalLevelStrategy;
 use App\Services\Bots\Strategies\OpenRouterLlmAnalystStrategy;
 use App\Services\Bots\Strategies\OpenRouterLlmStrategy;
 use App\Services\Bots\Strategies\SmcFlowStrategy;
@@ -165,13 +165,7 @@ class BotEngineService
                     }
                     $partial = $series['partial'];
                     $mtf = [];
-                    if ($bot->type === 'candle_reversal_confirm') {
-                        // Для MTF-разворота обязательно подмешиваем M5: направление определяется сначала на M5,
-                        // а вход подтверждается блоком из 3 закрытых M1 свечей в ту же сторону.
-                        $mtf = $this->botDataService->mtfSeries($instrument, [
-                            5 => 60,
-                        ]);
-                    } elseif ($bot->type === 'strong_level') {
+                    if ($bot->type === 'candle_reversal_confirm' || $bot->type === 'strong_level') {
                         // Strong Level: M5/M15/H1 для bias и swing-уровней; M1 — тайминг входа.
                         $mtf = $this->botDataService->mtfSeries($instrument, [
                             5 => (int) ($config['m5_take'] ?? 120),
@@ -193,7 +187,7 @@ class BotEngineService
                     if ($bot->type === 'smc_flow') {
                         $analyzeContext['smc_params'] = IndicatorSetting::mergedSmcFlowParams($bot);
                     }
-                    if ($bot->type === 'strong_level') {
+                    if ($bot->type === 'strong_level' || $bot->type === 'candle_reversal_confirm') {
                         $analyzeContext['pa_params'] = IndicatorSetting::mergedPriceActionDgtParams($bot);
                         $analyzeContext['smc_params'] = IndicatorSetting::mergedSmcFlowParams($bot);
                     }
@@ -211,7 +205,7 @@ class BotEngineService
 
                     // SMC Flow: стратегия может вернуть адаптивную экспирацию (2..10 мин).
                     $decisionExpirySec = $expirySec;
-                    if (($bot->type === 'smc_flow' || $bot->type === 'strong_level') && isset($decision['expiry_sec'])) {
+                    if (in_array($bot->type, ['smc_flow', 'strong_level', 'candle_reversal_confirm'], true) && isset($decision['expiry_sec'])) {
                         $decisionExpirySec = max(120, min(600, (int) $decision['expiry_sec']));
                     }
 
@@ -238,7 +232,7 @@ class BotEngineService
 
                     // Dedupe-окно привязываем к фактической экспирации конкретного сигнала,
                     // чтобы логика "один сигнал на окно" корректно работала и для 2/3/4/5 минут.
-                    $signalDedupeBucketSec = in_array($bot->type, ['smc_flow', 'strong_level'], true)
+                    $signalDedupeBucketSec = in_array($bot->type, ['smc_flow', 'strong_level', 'candle_reversal_confirm'], true)
                         ? max(60, min(900, $decisionExpirySec))
                         : $dedupeBucketSec;
                     $bucket = intdiv(time(), $signalDedupeBucketSec) * $signalDedupeBucketSec;
@@ -247,7 +241,7 @@ class BotEngineService
                     $levelPrice = (float) (($decision['features']['level_price'] ?? 0));
                     $dedupeSuffix = match ($bot->type) {
                         'strong_trend_telegram' => $trendKey,
-                        'strong_level' => sprintf('%s:%.5f', $side, $levelPrice),
+                        'strong_level', 'candle_reversal_confirm' => sprintf('%s:%.5f', $side, $levelPrice),
                         default => $side,
                     };
                     $dedupeKey = sprintf('%d:%s:%d:%s', $bot->id, $instrument, $bucket, $dedupeSuffix);
@@ -426,7 +420,7 @@ class BotEngineService
 
                     // Strong Level / Candle Reversal: push в Telegram после paper-сделки.
                     $telegramResult = null;
-                    if ($bot->type === 'strong_level') {
+                    if ($bot->type === 'strong_level' || $bot->type === 'candle_reversal_confirm') {
                         $telegramResult = app(TelegramAlertService::class)->sendStrongLevelAlert(
                             $bot,
                             $instrument,
@@ -438,26 +432,9 @@ class BotEngineService
                         );
                         if (! ($telegramResult['ok'] ?? false)
                             && ! in_array($telegramResult['error'] ?? '', ['telegram_disabled', 'telegram_notify_disabled'], true)) {
-                            Log::warning('strong_level_telegram_alert_failed', [
+                            Log::warning('level_bounce_telegram_alert_failed', [
                                 'bot_id' => $bot->id,
-                                'instrument' => $instrument,
-                                'error' => $telegramResult['error'] ?? 'unknown',
-                            ]);
-                        }
-                    } elseif ($bot->type === 'candle_reversal_confirm') {
-                        $telegramResult = app(TelegramAlertService::class)->sendCandleReversalConfirmAlert(
-                            $bot,
-                            $instrument,
-                            $decision,
-                            $payoutSnapshot,
-                            $decisionExpirySec,
-                            $entryPrice,
-                            $closed
-                        );
-                        if (! ($telegramResult['ok'] ?? false)
-                            && ! in_array($telegramResult['error'] ?? '', ['telegram_disabled', 'telegram_notify_disabled'], true)) {
-                            Log::warning('candle_reversal_telegram_alert_failed', [
-                                'bot_id' => $bot->id,
+                                'bot_type' => $bot->type,
                                 'instrument' => $instrument,
                                 'error' => $telegramResult['error'] ?? 'unknown',
                             ]);
@@ -801,12 +778,7 @@ class BotEngineService
         }
 
         $mtf = [];
-        if ($bot->type === 'candle_reversal_confirm') {
-            // В explain используем тот же M5-контекст, что и в scan, иначе диагностика не совпадет с боевым входом.
-            $mtf = $this->botDataService->mtfSeries($instrument, [
-                5 => 60,
-            ]);
-        } elseif ($bot->type === 'strong_level') {
+        if ($bot->type === 'candle_reversal_confirm' || $bot->type === 'strong_level') {
             $cfg = $runtime['config'];
             $mtf = $this->botDataService->mtfSeries($instrument, [
                 5 => (int) ($cfg['m5_take'] ?? 120),
@@ -826,7 +798,7 @@ class BotEngineService
         if ($bot->type === 'smc_flow') {
             $explainContext['smc_params'] = IndicatorSetting::mergedSmcFlowParams($bot);
         }
-        if ($bot->type === 'strong_level') {
+        if ($bot->type === 'strong_level' || $bot->type === 'candle_reversal_confirm') {
             $explainContext['pa_params'] = IndicatorSetting::mergedPriceActionDgtParams($bot);
             $explainContext['smc_params'] = IndicatorSetting::mergedSmcFlowParams($bot);
         }
@@ -878,7 +850,7 @@ class BotEngineService
                 'summary' => 'Стратегия не видит валидного сетапа на текущем баре.',
                 'analysis_text' => match ($bot->type) {
                     'smc_flow' => 'SMC Flow: нет совпадения UT + 3BR + OB на последней закрытой свече.',
-                    'strong_level' => 'Strong Level: нет сильного уровня у цены или нет подтверждения отскока/пробоя на M5/M1.',
+                    'strong_level', 'candle_reversal_confirm' => 'Нет сильного уровня у цены или нет подтверждения отскока (M5/M1).',
                     default => '',
                 },
                 'reasons_short' => [],
@@ -892,7 +864,11 @@ class BotEngineService
         $side = (string) ($decision['side'] ?? '');
         $confidence = (float) ($decision['confidence'] ?? 0);
         $bucket = intdiv(time(), $runtime['dedupe_bucket_sec']) * $runtime['dedupe_bucket_sec'];
-        $dedupeKey = sprintf('%d:%s:%d:%s', $bot->id, $instrument, $bucket, $side);
+        $levelPrice = (float) (($decision['features']['level_price'] ?? 0));
+        $dedupeSuffix = in_array($bot->type, ['strong_level', 'candle_reversal_confirm'], true)
+            ? sprintf('%s:%.5f', $side, $levelPrice)
+            : $side;
+        $dedupeKey = sprintf('%d:%s:%d:%s', $bot->id, $instrument, $bucket, $dedupeSuffix);
         $dedupeExists = BotSignal::query()->where('dedupe_key', $dedupeKey)->exists();
         $hasOpenTrade = BotTrade::query()
             ->where('bot_id', $bot->id)
@@ -964,7 +940,7 @@ class BotEngineService
         $defaultCount = match ($bot->type) {
             'smc_flow' => 500,
             'strong_level' => 500,
-            'candle_reversal_confirm' => 180,
+            'candle_reversal_confirm' => 500,
             'openrouter_llm_analyst' => 120,
             'strong_trend_telegram' => 30,
             default => 120,
@@ -993,7 +969,7 @@ class BotEngineService
             'strong_level' => 0.58,
             'openrouter_llm' => 0.65,
             'akim_trade_1m' => 0.58,
-            'candle_reversal_confirm' => 0.56,
+            'candle_reversal_confirm' => 0.58,
             'strong_trend_telegram' => 0.55,
             default => 0.55,
         });
@@ -1001,7 +977,7 @@ class BotEngineService
         // Для LLM-бота ставим умеренный дефолтный порог, чтобы не брать пары с совсем слабой выплатой.
         $minPayout = (float) ($config['min_payout'] ?? match ($bot->type) {
             'openrouter_llm' => 70.0,
-            'candle_reversal_confirm' => 80.0,
+            'candle_reversal_confirm' => 82.0,
             'three_candles_in_row' => 80.0,
             'akim_trade_1m' => 80.0,
             'strong_trend_telegram' => 80.0,
@@ -1015,7 +991,7 @@ class BotEngineService
             'akim_trade_1m' => 90,
             'strong_trend_telegram' => $streakLen,
             // Для MTF-разворота нужен запас истории M1 и стабильная M5-агрегация.
-            'candle_reversal_confirm' => 60,
+            'candle_reversal_confirm' => max(80, (int) ($config['min_closed_bars'] ?? 200)),
             // LLM-боту нужен достаточно широкий контекст последних свечей,
             // иначе модель чаще даёт шумные и нестабильные решения.
             'openrouter_llm' => 20,
@@ -1074,7 +1050,7 @@ class BotEngineService
         return match ($type) {
             'three_candles_in_row' => new ThreeCandlesInRowStrategy,
             'akim_trade_1m' => new AkimTrade1MStrategy,
-            'candle_reversal_confirm' => new CandleReversalMtfConfirmStrategy,
+            'candle_reversal_confirm' => new CandleReversalLevelStrategy,
             // Новый бот полностью изолирован от старых эвристик:
             // торговое решение принимает только LLM через OpenRouter.
             'openrouter_llm' => new OpenRouterLlmStrategy($this->openRouterClient),

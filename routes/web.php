@@ -95,4 +95,5 @@ Route::middleware('auth')->group(function () {
     Route::get('/settings/proxies/health-live-ajax', [SettingsController::class, 'proxyHealthLiveAjax'])->name('settings.proxies.health-live-ajax');
     Route::post('/settings/payout/monitoring', [SettingsController::class, 'updatePayoutMonitoring'])->name('settings.payout.monitoring');
     Route::post('/settings/data/purge', [SettingsController::class, 'purgeOldData'])->name('settings.data.purge');
+    Route::post('/settings/data/auto-cleanup', [SettingsController::class, 'updateDataAutoCleanup'])->name('settings.data.auto-cleanup');
 });
