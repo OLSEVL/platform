@@ -6,6 +6,7 @@ use App\Models\Bot;
 use App\Models\BotSignal;
 use App\Models\BotTrade;
 use App\Services\CandleService;
+use App\Services\Telegram\LevelBounceAlertPresenter;
 use App\Services\Telegram\StrongLevelTelegramChartBuilder;
 use App\Services\Telegram\TelegramChartImageRenderer;
 use Carbon\Carbon;
@@ -38,6 +39,7 @@ class StrongLevelCardPresenter
         private readonly CandleService $candleService,
         private readonly StrongLevelTelegramChartBuilder $chartBuilder,
         private readonly TelegramChartImageRenderer $chartRenderer,
+        private readonly LevelBounceAlertPresenter $alertPresenter,
     ) {}
 
     /**
@@ -54,6 +56,9 @@ class StrongLevelCardPresenter
         $sig = $trade->relationLoaded('signal') ? $trade->signal : $trade->signal()->first();
         $features = is_array($sig?->features_json) ? $sig->features_json : [];
         $reasons = $this->normalizeReasons($sig);
+        $bot = $trade->relationLoaded('bot') ? $trade->bot : $trade->bot()->first();
+        $botType = $bot !== null ? (string) $bot->type : null;
+        $decision = $this->decisionFromSignal($sig);
 
         $side = strtoupper((string) $trade->side);
         $sideRu = $this->sideLabelRu($side);
@@ -70,10 +75,10 @@ class StrongLevelCardPresenter
         $entryPrice = $trade->entry_price !== null ? (float) $trade->entry_price : null;
         $confidence = $sig !== null ? (float) $sig->confidence : null;
 
-        $strategyTitle = $this->strategyTitle($features);
+        $strategyTitle = $this->strategyTitle($features, $botType, $decision);
         $strategyTeaser = $this->strategyTeaser($features, $reasons);
-        $strategyNarrative = $this->strategyNarrative($features, $side);
-        $technicalDetails = $this->technicalDetails($features, $reasons);
+        $strategyNarrative = $this->strategyNarrative($features, $side, $botType, $decision, $reasons);
+        $technicalDetails = $this->technicalDetails($features, $reasons, $botType, $decision);
 
         $totalSec = ($entryTs !== null && $expiryTs !== null && $expiryTs > $entryTs)
             ? ($expiryTs - $entryTs)
@@ -274,12 +279,11 @@ class StrongLevelCardPresenter
 
     /**
      * @param  array<string, mixed>  $features
+     * @param  array<string, mixed>  $decision
      */
-    public function strategyTitle(array $features): string
+    public function strategyTitle(array $features, ?string $botType = null, array $decision = []): string
     {
-        $regime = (string) ($features['entry_regime'] ?? 'bounce');
-
-        return $regime === 'breakout' ? 'Пробой уровня' : 'Отбой от уровня';
+        return $this->alertPresenter->strategyTitle($features, $botType, $decision);
     }
 
     /**
@@ -299,103 +303,38 @@ class StrongLevelCardPresenter
             return sprintf('%s %.5f', $kind, $levelPrice);
         }
 
-        return $this->strategyTitle($features);
+        return $this->strategyTitle($features, null, []);
     }
 
     /**
      * Связный абзац для модалки (шаблон без LLM).
      *
      * @param  array<string, mixed>  $features
+     * @param  list<string>  $reasons
+     * @param  array<string, mixed>  $decision
      */
-    public function strategyNarrative(array $features, string $side): string
-    {
-        $regime = (string) ($features['entry_regime'] ?? 'bounce');
-        $levelPrice = isset($features['level_price']) ? (float) $features['level_price'] : 0.0;
-        $strength = isset($features['level_strength']) ? (float) $features['level_strength'] : 0.0;
-        $touches = max(0, (int) ($features['level_touches'] ?? 0));
-        $kind = $this->levelKindRu((string) ($features['level_kind'] ?? 'neutral'));
-        $sources = $this->formatSources($features);
-        $h1 = $this->h1BiasRu((string) ($features['h1_bias'] ?? ''));
-        $setup = (string) ($features['setup_type'] ?? '');
-
-        $levelPart = $levelPrice > 0
-            ? sprintf('сильному уровню %s %.5f', $kind, $levelPrice)
-            : sprintf('сильному уровню %s', $kind);
-
-        $metaPart = [];
-        if ($strength > 0) {
-            $metaPart[] = sprintf('сила %.0f', $strength);
-        }
-        if ($touches > 0) {
-            $metaPart[] = $this->touchesLabel($touches);
-        }
-        if ($sources !== '') {
-            $metaPart[] = 'источники: '.$sources;
-        }
-        $metaSuffix = $metaPart !== [] ? ' ('.implode(', ', $metaPart).')' : '';
-
-        $direction = strtoupper($side) === 'CALL' ? 'вверх' : 'вниз';
-
-        if ($regime === 'breakout') {
-            $retest = str_contains(mb_strtolower($setup), 'retest') ? ' с ретестом' : '';
-            $h1Part = $h1 !== '' ? ' Контекст H1: '.$h1.'.' : '';
-
-            return sprintf(
-                'Цена пробила %s%s%s. После закрепления за уровнем ожидаем продолжение движения %s.%s',
-                $levelPart,
-                $metaSuffix,
-                $retest,
-                $direction,
-                $h1Part
-            );
-        }
-
-        $bounceDir = strtoupper($side) === 'CALL' ? 'вверх' : 'вниз';
-        $h1Part = $h1 !== '' ? ' Тренд H1: '.$h1.' — движение согласовано с контекстом.' : '';
-
-        return sprintf(
-            'Цена подошла к %s%s и оттолкнулась. На таком уровне скапливаются встречные заявки — ждём продолжение отскока %s.%s',
-            $levelPart,
-            $metaSuffix,
-            $bounceDir,
-            $h1Part
-        );
+    public function strategyNarrative(
+        array $features,
+        string $side,
+        ?string $botType = null,
+        array $decision = [],
+        array $reasons = [],
+    ): string {
+        return $this->alertPresenter->strategyNarrative($features, $side, $botType, $decision, $reasons);
     }
 
     /**
      * @param  array<string, mixed>  $features
      * @param  list<string>  $reasons
+     * @param  array<string, mixed>  $decision
      */
-    public function technicalDetails(array $features, array $reasons): string
-    {
-        $parts = [];
-        $levelPrice = isset($features['level_price']) ? (float) $features['level_price'] : 0.0;
-        $kind = $this->levelKindRu((string) ($features['level_kind'] ?? 'neutral'));
-        $touches = max(0, (int) ($features['level_touches'] ?? 0));
-        $regime = (string) ($features['entry_regime'] ?? 'bounce');
-        $setup = (string) ($features['setup_type'] ?? '');
-
-        if ($levelPrice > 0) {
-            $touchText = $touches > 0 ? ' ('.$this->touchesLabel($touches).')' : '';
-            $parts[] = $kind.' '.number_format($levelPrice, 5, '.', '').$touchText;
-        }
-
-        $sources = $this->formatSources($features);
-        if ($sources !== '') {
-            $parts[] = 'источники: '.$sources;
-        }
-
-        $parts[] = $regime === 'breakout' ? 'режим: пробой' : 'режим: отскок';
-
-        if ($setup !== '') {
-            $parts[] = $setup;
-        }
-
-        if ($reasons !== []) {
-            $parts[] = implode(' · ', $reasons);
-        }
-
-        return implode(' · ', $parts);
+    public function technicalDetails(
+        array $features,
+        array $reasons,
+        ?string $botType = null,
+        array $decision = [],
+    ): string {
+        return $this->alertPresenter->technicalDetails($features, $reasons, $botType, $decision);
     }
 
     /**
@@ -409,30 +348,42 @@ class StrongLevelCardPresenter
         ?float $payout,
         int $expirySec,
         ?float $entryPrice,
+        ?string $botType = null,
     ): string {
         $side = strtoupper((string) ($decision['side'] ?? ''));
         $sideRu = $this->sideLabelRu($side);
         $features = is_array($decision['features'] ?? null) ? $decision['features'] : [];
         $reasons = $this->normalizeReasonsList($decision['reasons_short'] ?? []);
         $confidence = isset($decision['confidence']) ? (float) $decision['confidence'] : null;
+        $isCrc = $this->alertPresenter->isCrcDecision($decision, $botType);
 
         $instrumentEsc = htmlspecialchars($instrument, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
         $sideEsc = htmlspecialchars($sideRu, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
-        $expiryLabel = htmlspecialchars($this->formatDurationRu(max(1, $expirySec)), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
-        $strategyTitle = htmlspecialchars($this->strategyTitle($features), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
-        $narrative = htmlspecialchars($this->strategyNarrative($features, $side), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
-        $technical = htmlspecialchars($this->technicalDetails($features, $reasons), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+        $expiryLabel = htmlspecialchars($this->alertPresenter->formatExpiryRu(max(1, $expirySec)), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+        $strategyTitle = htmlspecialchars($this->strategyTitle($features, $botType, $decision), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+        $narrative = htmlspecialchars($this->strategyNarrative($features, $side, $botType, $decision, $reasons), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+        $technical = htmlspecialchars($this->technicalDetails($features, $reasons, $botType, $decision), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+        $headerEmoji = $isCrc ? '🔄' : '🎯';
 
         $lines = [
-            '🎯 <b>'.$instrumentEsc.' · '.$sideEsc.' · '.$expiryLabel.' · 1м</b>',
+            $headerEmoji.' <b>'.$instrumentEsc.' · '.$sideEsc.' · '.$expiryLabel.' · 1м</b>',
             '',
             '<b>'.$strategyTitle.'</b>',
             $narrative,
-            '',
-            '<b>Статистика сигнала</b>',
-            'Выплата: <b>'.($payout !== null ? htmlspecialchars(number_format($payout, 0, '.', '').'%', ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') : '—').'</b>',
-            'Уверенность: <b>'.($confidence !== null ? htmlspecialchars(number_format($confidence, 2, '.', ''), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') : '—').'</b>',
         ];
+
+        if ($isCrc) {
+            $lines[] = '';
+            $lines[] = '<b>Подтверждение</b>';
+            foreach ($this->alertPresenter->formatConfirmLines($features, $reasons) as $confirmLine) {
+                $lines[] = '• '.htmlspecialchars($confirmLine, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+            }
+        }
+
+        $lines[] = '';
+        $lines[] = '<b>Статистика сигнала</b>';
+        $lines[] = 'Выплата: <b>'.($payout !== null ? htmlspecialchars(number_format($payout, 0, '.', '').'%', ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') : '—').'</b>';
+        $lines[] = 'Уверенность: <b>'.($confidence !== null ? htmlspecialchars(number_format($confidence, 2, '.', ''), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') : '—').'</b>';
 
         if ($entryPrice !== null) {
             $lines[] = 'Вход: <b>'.htmlspecialchars($this->formatPrice($entryPrice), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8').'</b>';
@@ -473,13 +424,18 @@ class StrongLevelCardPresenter
     /**
      * @return array<string, mixed>
      */
-    private function decisionFromSignal(BotSignal $sig): array
+    private function decisionFromSignal(?BotSignal $sig): array
     {
+        if ($sig === null) {
+            return [];
+        }
+
         return [
             'side' => $sig->side,
             'confidence' => $sig->confidence,
             'reasons_short' => is_array($sig->reasons_json) ? $sig->reasons_json : [],
             'features' => is_array($sig->features_json) ? $sig->features_json : [],
+            'decision_version' => (string) ($sig->decision_version ?? ''),
         ];
     }
 

@@ -330,7 +330,8 @@ class TelegramAlertService
             $payout,
             $expirySec,
             $entryPrice,
-            $format
+            $format,
+            (string) $bot->type,
         );
 
         $llmMarkup = StrongLevelTelegramLlmButton::inlineKeyboardMarkup($cfg, $bot, $instrument);
@@ -355,7 +356,7 @@ class TelegramAlertService
 
 
     /**
-     * HTML-текст алерта Strong Level (краткий или развёрнутый).
+     * HTML-текст алерта Strong Level / Candle Reversal (краткий, развёрнутый или карточка).
      *
      * @param  array<string, mixed>  $decision
      */
@@ -366,6 +367,7 @@ class TelegramAlertService
         int $expirySec,
         ?float $entryPrice,
         string $format = 'brief',
+        ?string $botType = null,
     ): string {
         if ($format === 'card') {
             return app(StrongLevelCardPresenter::class)->formatTelegramCardAlert(
@@ -374,9 +376,11 @@ class TelegramAlertService
                 $payout,
                 $expirySec,
                 $entryPrice,
+                $botType,
             );
         }
 
+        $presenter = app(LevelBounceAlertPresenter::class);
         $side = (string) ($decision['side'] ?? '');
         $sideLabel = $side === 'CALL' ? 'CALL ▲' : ($side === 'PUT' ? 'PUT ▼' : $side);
         $features = is_array($decision['features'] ?? null) ? $decision['features'] : [];
@@ -386,18 +390,42 @@ class TelegramAlertService
         $regimeLabel = $regime === 'breakout' ? 'пробой' : 'отскок';
         $confidence = isset($decision['confidence']) ? (float) $decision['confidence'] : 0.0;
         $h1Bias = (string) ($features['h1_bias'] ?? '');
+        $reasons = $this->normalizeAlertReasons($decision['reasons_short'] ?? []);
+        $isCrc = $presenter->isCrcDecision($decision, $botType);
 
         $instrumentEsc = htmlspecialchars($instrument, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+        $kindLabel = $presenter->levelKindRu((string) ($features['level_kind'] ?? 'neutral'));
+        $expiryRu = $presenter->formatExpiryRu(max(1, $expirySec));
+
         $lines = [
-            '🎯 <b>Strong Level — '.htmlspecialchars($sideLabel, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8').'</b>',
+            $presenter->alertBrandTitle($decision, $sideLabel, $botType),
             '',
             'Пара: <b>'.$instrumentEsc.'</b>',
-            sprintf('Уровень: <b>%.5f</b> | сила %.0f', $levelPrice, $strength),
-            sprintf('Режим: %s | экспирация %d с', $regimeLabel, max(1, $expirySec)),
         ];
+
+        $levelLine = sprintf(
+            'Уровень: <b>%.5f</b> (%s) | сила %.0f',
+            $levelPrice,
+            htmlspecialchars($kindLabel, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'),
+            $strength
+        );
+        $distanceLine = $presenter->formatDistanceLine($features, $entryPrice);
+        if ($distanceLine !== null) {
+            $levelLine .= ' · '.htmlspecialchars($distanceLine, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+        }
+        $lines[] = $levelLine;
+        $lines[] = sprintf('Режим: %s | экспирация %s', $regimeLabel, $expiryRu);
 
         if ($payout !== null) {
             $lines[] = 'Payout: '.number_format($payout, 1, '.', '').'%';
+        }
+
+        if ($isCrc) {
+            $lines[] = '';
+            $lines[] = '<b>Подтверждение:</b>';
+            foreach ($presenter->formatConfirmLines($features, $reasons) as $confirmLine) {
+                $lines[] = '• '.htmlspecialchars($confirmLine, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+            }
         }
 
         if ($format === 'detailed') {
@@ -406,22 +434,25 @@ class TelegramAlertService
                 $lines[] = sprintf('Вход: %.5f', $entryPrice);
             }
             if ($h1Bias !== '') {
-                $lines[] = 'H1 bias: '.$h1Bias;
+                $h1Ru = $presenter->h1BiasRu($h1Bias);
+                $lines[] = 'H1: '.($h1Ru !== '' ? $h1Ru : $h1Bias);
             }
-            $sources = $features['level_sources'] ?? [];
-            if (is_array($sources) && $sources !== []) {
-                $srcEsc = array_map(
-                    static fn ($s): string => htmlspecialchars((string) $s, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'),
-                    $sources
-                );
-                $lines[] = 'Источники: '.implode(', ', $srcEsc);
+            $sourcesHuman = $presenter->formatSources($features);
+            if ($sourcesHuman !== '') {
+                $lines[] = 'Источники: '.htmlspecialchars($sourcesHuman, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
             }
-            $reasons = $decision['reasons_short'] ?? [];
-            if (is_array($reasons) && $reasons !== []) {
+
+            if ($isCrc) {
+                $narrative = $presenter->strategyNarrative($features, $side, $botType, $decision, $reasons);
+                $lines[] = '';
+                $lines[] = htmlspecialchars($narrative, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+            }
+
+            if ($reasons !== []) {
                 $lines[] = '';
                 $lines[] = '<b>Причины:</b>';
                 foreach ($reasons as $reason) {
-                    $lines[] = '• '.htmlspecialchars((string) $reason, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+                    $lines[] = '• '.htmlspecialchars($reason, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
                 }
             }
         }
@@ -429,6 +460,21 @@ class TelegramAlertService
         $lines[] = 'Время: '.now()->utc()->format('d.m.Y H:i').' UTC';
 
         return implode("\n", $lines);
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function normalizeAlertReasons(mixed $reasons): array
+    {
+        if (! is_array($reasons)) {
+            return [];
+        }
+
+        return array_values(array_filter(array_map(
+            static fn ($x) => is_string($x) ? $x : (is_scalar($x) ? (string) $x : ''),
+            $reasons
+        ), static fn ($s) => $s !== ''));
     }
 
     /**

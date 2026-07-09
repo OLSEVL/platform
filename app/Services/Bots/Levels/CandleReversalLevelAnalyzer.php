@@ -2,6 +2,8 @@
 
 namespace App\Services\Bots\Levels;
 
+use App\Services\Telegram\LevelBounceAlertPresenter;
+
 use App\Services\Indicators\PriceActionDgtIndicatorService;
 use App\Services\Indicators\SmcFlowIndicatorService;
 
@@ -180,24 +182,10 @@ class CandleReversalLevelAnalyzer
             return null;
         }
 
-        [$side, $reasons, $setupType] = $entry;
+        [$side, $reasons, $setupType, $m5Wick] = $entry;
         $confidence = $this->scoreConfidence($nearest, $h1Bias, $payout);
 
-        return [
-            'side' => $side,
-            'confidence' => $confidence,
-            'expiry_sec' => $expirySec,
-            'reasons_short' => $reasons,
-            'analysis_text' => sprintf(
-                'candle_reversal_level: %s @ %.5f strength=%.1f sources=%d h1=%s conf=%.2f',
-                $side,
-                $nearest['price'],
-                $nearest['strength'],
-                count($nearest['sources']),
-                $h1Bias,
-                $confidence
-            ),
-            'features' => [
+        $features = [
                 'level_price' => round($nearest['price'], 8),
                 'level_strength' => round($nearest['strength'], 2),
                 'level_kind' => $nearest['kind'],
@@ -213,15 +201,35 @@ class CandleReversalLevelAnalyzer
                 'm1_reversal_enabled' => $m1ReversalEnabled,
                 'm1_reversal_confirm_bars' => $m1ReversalBars,
                 'm1_reversal_wick_scope' => $m1WickScope,
+                'signal_side' => $side,
                 'payout' => $payout,
                 'partial_present' => $partial !== null,
-            ],
+        ];
+        if ($m5Wick !== null) {
+            $features['m5_reversal_wick'] = round($m5Wick, 4);
+        }
+
+        return [
+            'side' => $side,
+            'confidence' => $confidence,
+            'expiry_sec' => $expirySec,
+            'reasons_short' => $reasons,
+            'analysis_text' => sprintf(
+                'candle_reversal_level: %s @ %.5f strength=%.1f sources=%d h1=%s conf=%.2f',
+                $side,
+                $nearest['price'],
+                $nearest['strength'],
+                count($nearest['sources']),
+                $h1Bias,
+                $confidence
+            ),
+            'features' => $features,
             'decision_version' => 'candle_reversal_confirm_v3_level_bounce',
         ];
     }
 
     /**
-     * @return array{0:string,1:list<string>,2:string}|null  [side, reasons, setup_type]
+     * @return array{0:string,1:list<string>,2:string,3:?float}|null  [side, reasons, setup_type, m5_wick]
      */
     private function tryLevelBounceEntry(
         array $m5,
@@ -302,20 +310,30 @@ class CandleReversalLevelAnalyzer
             }
         }
 
+        $presenter = app(LevelBounceAlertPresenter::class);
+        $kindRu = $presenter->levelKindRuGenitive((string) $cluster['kind']);
+        $sourcesHuman = $presenter->formatSourceList($cluster['sources']);
+
         $reasons = [
-            sprintf('Сильный уровень %.5f (strength %.0f, источников %d).', $level, $cluster['strength'], count($cluster['sources'])),
-            sprintf('Режим: отскок от уровня; сторона %s.', $side),
+            sprintf(
+                'Сильный уровень %s %.5f (сила %.0f, %s).',
+                $kindRu,
+                $level,
+                $cluster['strength'],
+                implode('+', $sourcesHuman)
+            ),
+            sprintf('Режим: отскок; сторона %s.', $side),
         ];
         if ($m5RejectionEnabled && $m5Wick !== null) {
-            $reasons[] = sprintf('M5 rejection wick=%.0f%%.', $m5Wick * 100);
+            $reasons[] = sprintf('M5 rejection (тень %.0f%%).', $m5Wick * 100);
         }
         if ($m1ReversalEnabled) {
-            $reasons[] = sprintf('M1: %d закрытых свечей подтверждают разворот.', $m1ReversalBars);
+            $reasons[] = sprintf('M1: %d свечи подтверждают разворот.', $m1ReversalBars);
         }
-        $reasons[] = sprintf('H1 bias: %s.', $h1Bias);
-        $reasons[] = sprintf('Источники: %s.', implode(', ', $cluster['sources']));
+        $h1Ru = $presenter->h1BiasRu($h1Bias);
+        $reasons[] = $h1Ru !== '' ? sprintf('H1: %s.', $h1Ru) : sprintf('H1: %s.', $h1Bias);
 
-        return [$side, $reasons, 'level_bounce_reversal'];
+        return [$side, $reasons, 'level_bounce_reversal', $m5Wick];
     }
 
     /**
