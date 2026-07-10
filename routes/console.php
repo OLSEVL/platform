@@ -165,7 +165,20 @@ Artisan::command('proxies:probe-loop', function (ProxyDeadProbeService $probe) {
     $this->info('proxies:probe-loop started (Ctrl+C to stop).');
 
     while (true) {
-        $probe->releaseStaleLock();
+        // releaseStaleLock вне try раньше валил весь daemon (FK на удалённый proxy).
+        try {
+            $probe->releaseStaleLock();
+        } catch (\Throwable $e) {
+            $this->error('Stale lock cleanup failed: '.$e->getMessage());
+            try {
+                $probe->forceReleaseLock();
+            } catch (\Throwable) {
+                // ignore secondary cleanup errors
+            }
+            sleep(2);
+
+            continue;
+        }
 
         if (! $probe->isEnabled() || $probe->getProbeInstrumentName() === null) {
             $probe->setCurrentProbeIdle();
@@ -196,8 +209,13 @@ Artisan::command('proxies:probe-loop', function (ProxyDeadProbeService $probe) {
                 sleep(2);
             }
         } catch (\Throwable $e) {
-            $probe->forceReleaseLock();
+            try {
+                $probe->forceReleaseLock();
+            } catch (\Throwable $cleanupError) {
+                $this->error('Lock cleanup failed: '.$cleanupError->getMessage());
+            }
             $this->error('Probe error: '.$e->getMessage());
+            sleep(2);
         }
     }
 })->purpose('Бесконечный цикл авто-пробы dead-прокси по кругу (daemon)');

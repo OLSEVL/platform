@@ -785,8 +785,13 @@ class PlatformProcessMonitorService
             return ['ok' => true, 'message' => 'probe-loop уже запущен'];
         }
 
+        // Из php-fpm PHP_BINARY = php-fpm — процесс сразу печатает Usage и умирает.
+        // Берём CLI-бинарник (как у bots:scan / Telegram daemons).
         $log = storage_path('logs/proxy-probe.log');
-        $ok = ArtisanProcessFinder::spawnBackground([PHP_BINARY, 'artisan', 'proxies:probe-loop'], $log);
+        $ok = ArtisanProcessFinder::spawnBackground(
+            [ArtisanProcessFinder::cliPhpBinary(), 'artisan', 'proxies:probe-loop'],
+            $log
+        );
 
         return [
             'ok' => $ok,

@@ -370,10 +370,20 @@ class ProxyDeadProbeService
         if ($instrumentId > 0) {
             $instrument = PocketInstrument::query()->find($instrumentId);
             if ($instrument) {
-                $this->restoreInstrumentProxy(
-                    $instrument,
-                    $originalId !== null ? (int) $originalId : null
-                );
+                try {
+                    $this->restoreInstrumentProxy(
+                        $instrument,
+                        $originalId !== null ? (int) $originalId : null
+                    );
+                } catch (\Throwable $e) {
+                    // Не даём FK/БД-ошибке оставить вечный lock и убить probe-loop.
+                    report($e);
+                    try {
+                        $instrument->update(['proxy_endpoint_id' => null]);
+                    } catch (\Throwable) {
+                        // ignore
+                    }
+                }
             }
         }
         $this->releaseLock();
@@ -525,6 +535,14 @@ class ProxyDeadProbeService
 
     private function restoreInstrumentProxy(PocketInstrument $instrument, ?int $originalProxyId): void
     {
+        // original_proxy мог быть удалён, пока шла проба — FK на proxy_endpoints иначе валит весь probe-loop.
+        if ($originalProxyId !== null) {
+            $exists = ProxyEndpoint::query()->whereKey($originalProxyId)->exists();
+            if (! $exists) {
+                $originalProxyId = null;
+            }
+        }
+
         $instrument->update([
             'proxy_endpoint_id' => $originalProxyId,
         ]);
