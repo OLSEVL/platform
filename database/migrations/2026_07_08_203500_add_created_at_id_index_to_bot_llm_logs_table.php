@@ -41,8 +41,20 @@ return new class extends Migration
 
     private function indexExists(string $table, string $indexName): bool
     {
-        $dbName = (string) DB::getDatabaseName();
+        // SQLite (phpunit :memory:) не имеет information_schema.statistics.
+        $driver = Schema::getConnection()->getDriverName();
+        if ($driver === 'sqlite') {
+            $indexes = Schema::getIndexes($table);
+            foreach ($indexes as $index) {
+                if (($index['name'] ?? '') === $indexName) {
+                    return true;
+                }
+            }
 
+            return false;
+        }
+
+        $dbName = (string) DB::getDatabaseName();
         $count = DB::table('information_schema.statistics')
             ->where('table_schema', $dbName)
             ->where('table_name', $table)

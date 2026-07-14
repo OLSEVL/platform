@@ -17,6 +17,11 @@ class UserTradingSetting extends Model
         'martingale_step',
         'mirror_trades_enabled',
         'mirror_wait_previous_settled',
+        'mirror_proxy_endpoint_ids',
+        'mirror_proxy_auto',
+        'mirror_proxy_auto_last_endpoint_id',
+        'mirror_proxy_auto_last_at',
+        'mirror_proxy_auto_history',
     ];
 
     protected function casts(): array
@@ -29,7 +34,59 @@ class UserTradingSetting extends Model
             'martingale_step' => 'integer',
             'mirror_trades_enabled' => 'boolean',
             'mirror_wait_previous_settled' => 'boolean',
+            'mirror_proxy_endpoint_ids' => 'array',
+            'mirror_proxy_auto' => 'boolean',
+            'mirror_proxy_auto_last_endpoint_id' => 'integer',
+            'mirror_proxy_auto_last_at' => 'datetime',
+            'mirror_proxy_auto_history' => 'array',
         ];
+    }
+
+    /**
+     * Сколько раз endpoint попадал в недавнюю историю авто-выбора.
+     *
+     * @return array<int, int> endpointId => count
+     */
+    public function mirrorProxyAutoPickCounts(): array
+    {
+        $history = is_array($this->mirror_proxy_auto_history) ? $this->mirror_proxy_auto_history : [];
+        $counts = [];
+        foreach ($history as $entry) {
+            $id = is_array($entry) ? (int) ($entry['id'] ?? 0) : (int) $entry;
+            if ($id <= 0) {
+                continue;
+            }
+            $counts[$id] = ($counts[$id] ?? 0) + 1;
+        }
+
+        return $counts;
+    }
+
+    /**
+     * ID прокси из пула зеркала (чекбоксы на /profile/trading).
+     *
+     * @return list<int>
+     */
+    public function mirrorProxyEndpointIds(): array
+    {
+        $raw = $this->mirror_proxy_endpoint_ids;
+        if (! is_array($raw) || $raw === []) {
+            return [];
+        }
+
+        $ids = [];
+        foreach ($raw as $id) {
+            if (is_numeric($id) && (int) $id > 0) {
+                $ids[] = (int) $id;
+            }
+        }
+
+        return array_values(array_unique($ids));
+    }
+
+    public function usesMirrorProxyEndpoint(int $endpointId): bool
+    {
+        return in_array($endpointId, $this->mirrorProxyEndpointIds(), true);
     }
 
     public function user(): BelongsTo

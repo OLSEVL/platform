@@ -90,13 +90,12 @@
                     Разделители: запятая или «;». Десятичная — точка (2.5). Каждая сумма от 1 до 20000.
                 </p>
                 @error('order_amounts')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
-                @php($mg = $martingale ?? $settings->martingaleStatus())
                 <div class="mt-2 flex flex-wrap items-center gap-3 rounded border border-zinc-700 bg-zinc-950/60 px-3 py-2 text-xs">
                     <span class="text-zinc-400">
                         Текущий шаг:
                         <span class="font-medium text-zinc-100">
-                            @if(($mg['total'] ?? 0) > 0)
-                                {{ ($mg['step'] ?? 0) + 1 }} из {{ $mg['total'] }} → {{ $mg['amount_label'] ?? '—' }}
+                            @if(($martingale['total'] ?? 0) > 0)
+                                {{ ($martingale['step'] ?? 0) + 1 }} из {{ $martingale['total'] }} → {{ $martingale['amount_label'] ?? '—' }}
                             @else
                                 —
                             @endif
@@ -116,8 +115,9 @@
                     <span>
                         <span class="font-medium">Одна сделка на PO</span>
                         <span class="mt-0.5 block text-[11px] font-normal text-zinc-500">
-                            Перед новым ордером платформа спрашивает Pocket Option (активные сделки через proxy).
-                            Пока на PO есть незавершённая сделка — сигнал пропускается (без отложенного входа).
+                            Пока на платформе не закрыта (win/loss) предыдущая успешно зеркальная сделка —
+                            новый ордер на PO не отправляется. Так цепочка сумм мартингейла успевает
+                            сдвинуться до следующей отправки. Без запроса к Pocket Option.
                         </span>
                     </span>
                 </label>
@@ -144,6 +144,8 @@
             <p>Нужны <code class="text-amber-200">platform-pocket-proxy</code> и <code class="text-amber-200">platform-queue</code> (или <code class="text-amber-200">queue:work</code>).</p>
             <p class="text-amber-200/90">SSID — из DevTools <strong>того же</strong> кабинета PO, где смотрите сделки.
                 Зеркало сейчас на <strong>{{ $settings->is_demo ? 'DEMO' : 'REAL' }}</strong> — на сайте PO переключите тот же режим (Demo/Real), иначе сделок в истории не будет.</p>
+            <p class="text-amber-200/80">Пул прокси для ротации IP — на странице
+                <a href="{{ route('profile.mirror-proxies.edit') }}" class="underline hover:text-amber-100">Прокси зеркала</a>.</p>
         </div>
 
         <button type="submit"

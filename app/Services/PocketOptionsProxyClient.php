@@ -115,6 +115,7 @@ class PocketOptionsProxyClient
         return [
             'ok' => (bool) ($data['ok'] ?? false),
             'confirmed' => (bool) ($data['confirmed'] ?? true),
+            'confirmed_via' => isset($data['confirmed_via']) ? (string) $data['confirmed_via'] : null,
             'order_id' => isset($data['order_id']) ? (string) $data['order_id'] : null,
             'status' => isset($data['status']) ? (string) $data['status'] : null,
             'instrument' => $data['instrument'] ?? $instrument,

@@ -50,4 +50,19 @@ class Bot extends Model
     {
         return $this->hasMany(IndicatorSetting::class);
     }
+
+    /**
+     * Зеркалирование сделок этого бота на PO (профиль → Торговля).
+     * По умолчанию выключено: без ключа в config бот не зеркалит (нужно явно включить в настройках).
+     */
+    public function isMirrorTradesEnabled(): bool
+    {
+        $cfg = is_array($this->config) ? $this->config : [];
+
+        if (! array_key_exists('mirror_trades_enabled', $cfg)) {
+            return false;
+        }
+
+        return (bool) $cfg['mirror_trades_enabled'];
+    }
 }

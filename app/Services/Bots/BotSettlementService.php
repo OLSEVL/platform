@@ -6,6 +6,7 @@ use App\Models\BotTrade;
 use App\Models\InstrumentCandle;
 use App\Services\CandleService;
 use App\Services\Mirror\UserMartingaleService;
+use Illuminate\Support\Facades\DB;
 
 class BotSettlementService
 {
@@ -97,8 +98,12 @@ class BotSettlementService
                 );
             }
 
-            $trade->update($updatePayload);
-            $martingale->advanceAfterSettledTrade($trade, $result, $mirrorStatusBefore);
+            // Settle + сдвиг мартингейла в одной транзакции: «одна сделка на PO»
+            // отпускает следующую только после commit, когда шаг уже обновлён.
+            DB::transaction(function () use ($trade, $updatePayload, $martingale, $result, $mirrorStatusBefore): void {
+                $trade->update($updatePayload);
+                $martingale->advanceAfterSettledTrade($trade, $result, $mirrorStatusBefore);
+            });
             $settled++;
             if ($usedEntryFallback) {
                 $settledFallback++;

@@ -152,6 +152,84 @@ class ProxyRotationServiceTest extends TestCase
         $this->assertSame($goodProxy->id, $instrument->proxy_endpoint_id);
     }
 
+    public function test_mark_proxy_endpoint_failure_from_mirror_marks_dead_by_failure_count(): void
+    {
+        $rotation = app(ProxyRotationService::class);
+        $rotation->setAutoRotationEnabled(true);
+        $rotation->setDeadStreakThreshold(3);
+        $rotation->setMaxInstrumentsPerProxy(2);
+
+        $badProxy = ProxyEndpoint::query()->create([
+            'url' => 'http://mirror-bad:1@7.7.7.7:7',
+            'status' => ProxyEndpoint::STATUS_ACTIVE,
+            'failure_count' => 0,
+        ]);
+        $goodProxy = ProxyEndpoint::query()->create([
+            'url' => 'http://mirror-good:1@6.6.6.6:6',
+            'status' => ProxyEndpoint::STATUS_ACTIVE,
+        ]);
+
+        $instrument = PocketInstrument::query()->create([
+            'instrument' => 'GBPUSD_otc',
+            'is_active' => true,
+            'proxy_endpoint_id' => $badProxy->id,
+        ]);
+
+        // Без instrument-streak: dead по накопленному failure_count (как у зеркала).
+        $rotation->markProxyEndpointFailure($badProxy, 'Failed to connect to Pocket Option (connect returned false)', null, null, [
+            'source' => 'mirror',
+        ]);
+        $this->assertSame(ProxyEndpoint::STATUS_ACTIVE, $badProxy->fresh()->status);
+        $this->assertSame(1, (int) $badProxy->fresh()->failure_count);
+        $this->assertStringContainsString('connect returned false', (string) $badProxy->fresh()->last_error);
+
+        $rotation->markProxyEndpointFailure($badProxy->fresh(), 'Failed to connect to Pocket Option (connect returned false)', null, null, [
+            'source' => 'mirror',
+        ]);
+        $rotation->markProxyEndpointFailure($badProxy->fresh(), 'Failed to connect to Pocket Option (connect returned false)', null, null, [
+            'source' => 'mirror',
+        ]);
+
+        $badProxy->refresh();
+        $instrument->refresh();
+
+        $this->assertSame(ProxyEndpoint::STATUS_DEAD, $badProxy->status);
+        $this->assertSame(3, (int) $badProxy->failure_count);
+        $this->assertSame($goodProxy->id, $instrument->proxy_endpoint_id);
+        $this->assertSame('mirror', $badProxy->dead_reason_log[0]['meta']['source'] ?? null);
+    }
+
+    public function test_mark_proxy_dead_manually_from_settings(): void
+    {
+        $rotation = app(ProxyRotationService::class);
+        $rotation->setMaxInstrumentsPerProxy(2);
+
+        $badProxy = ProxyEndpoint::query()->create([
+            'url' => 'http://manual-dead:1@5.5.5.5:5',
+            'status' => ProxyEndpoint::STATUS_ACTIVE,
+        ]);
+        $goodProxy = ProxyEndpoint::query()->create([
+            'url' => 'http://manual-good:1@4.4.4.4:4',
+            'status' => ProxyEndpoint::STATUS_ACTIVE,
+        ]);
+
+        $instrument = PocketInstrument::query()->create([
+            'instrument' => 'USDJPY_otc',
+            'is_active' => true,
+            'proxy_endpoint_id' => $badProxy->id,
+        ]);
+
+        $result = $rotation->markProxyDeadManually($badProxy);
+
+        $this->assertFalse($result['already_dead']);
+        $this->assertSame(1, $result['rotated']);
+        $this->assertSame(0, $result['instruments_left']);
+        $this->assertSame(ProxyEndpoint::STATUS_DEAD, $badProxy->fresh()->status);
+        $this->assertSame('manual_mark_dead', $badProxy->fresh()->last_error);
+        $this->assertSame($goodProxy->id, $instrument->fresh()->proxy_endpoint_id);
+        $this->assertSame('settings_manual', $badProxy->fresh()->dead_reason_log[0]['meta']['source'] ?? null);
+    }
+
     public function test_handle_stale_po_proxy_marks_dead_and_rotates_when_enabled(): void
     {
         $rotation = app(ProxyRotationService::class);

@@ -33,6 +33,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\ValidationException;
 use Illuminate\View\View;
 use Throwable;
 
@@ -488,6 +489,8 @@ class BotController extends Controller
         $base = $request->validate([
             'name' => ['required', 'string', 'max:255'],
             'is_active' => ['sometimes', 'boolean'],
+            // Per-bot зеркало на PO: опциональный checkbox (нет в POST = выкл.).
+            'mirror_trades_enabled' => ['sometimes', 'boolean'],
             // UI-настройка графика: включает/выключает tradingview-подобный кроссхейр (линии X/Y + подписи цены/времени).
             // Поле опциональное, потому что HTML-checkbox не отправляется в payload, когда выключен.
             'tv_crosshair_enabled' => ['sometimes', 'boolean'],
@@ -543,11 +546,12 @@ class BotController extends Controller
                 'min_payout' => ['required', 'numeric', 'min:0', 'max:100'],
                 'stale_after_sec' => ['required', 'integer', 'min:5', 'max:600'],
                 'min_level_strength' => ['required', 'numeric', 'min:40', 'max:95'],
+                'max_level_strength' => ['required', 'numeric', 'min:0', 'max:100'],
                 'min_sources' => ['required', 'integer', 'min:1', 'max:6'],
                 'cluster_atr_mult_m5' => ['required', 'numeric', 'min:0.05', 'max:1'],
                 'touch_atr_mult_m1' => ['required', 'numeric', 'min:0.05', 'max:1.5'],
                 'bounce_min_wick_ratio_m5' => ['required', 'numeric', 'min:0.15', 'max:0.8'],
-                'h1_flat_strength_extra' => ['required', 'numeric', 'min:0', 'max:15'],
+                'h1_flat_strength_extra' => ['required', 'numeric', 'min:0', 'max:40'],
                 'm1_reversal_confirm_bars' => ['required', 'integer', 'min:1', 'max:3'],
                 'm1_reversal_min_wick_ratio' => ['required', 'numeric', 'min:0.10', 'max:0.70'],
                 'm1_reversal_min_body_ratio' => ['required', 'numeric', 'min:0.05', 'max:0.80'],
@@ -576,6 +580,7 @@ class BotController extends Controller
                 'min_payout' => (float) $extra['min_payout'],
                 'stale_after_sec' => (int) $extra['stale_after_sec'],
                 'min_level_strength' => (float) $extra['min_level_strength'],
+                'max_level_strength' => (float) $extra['max_level_strength'],
                 'min_sources' => (int) $extra['min_sources'],
                 'cluster_atr_mult_m5' => (float) $extra['cluster_atr_mult_m5'],
                 'touch_atr_mult_m1' => (float) $extra['touch_atr_mult_m1'],
@@ -590,6 +595,7 @@ class BotController extends Controller
                 'm1_reversal_require_wick_dominance' => $request->boolean('m1_reversal_require_wick_dominance'),
                 'm1_reversal_wick_scope' => (string) $extra['m1_reversal_wick_scope'],
                 'require_h1_alignment' => $request->boolean('require_h1_alignment'),
+                'block_h1_flat' => $request->boolean('block_h1_flat'),
                 'm5_take' => (int) $extra['m5_take'],
                 'm15_take' => (int) $extra['m15_take'],
                 'h1_take' => (int) $extra['h1_take'],
@@ -609,6 +615,13 @@ class BotController extends Controller
                 ]),
                 'version' => 'candle_reversal_confirm_v3_level_bounce',
             ]);
+            // CandleReversalLevelAnalyzer::analyzeEntry сразу return null, если оба
+            // подтверждения выключены — бот «живой», но сигналов не будет никогда.
+            if (! $config['m5_rejection_enabled'] && ! $config['m1_reversal_enabled']) {
+                throw ValidationException::withMessages([
+                    'm1_reversal_enabled' => 'Включите хотя бы одно подтверждение: M5 rejection или M1 разворот. Иначе бот не даст ни одного сигнала.',
+                ]);
+            }
         } elseif ($bot->type === 'smc_flow') {
             // SMC Flow: UT flip + 3BR confirm + LuxAlgo OB filter; экспирация по умолчанию 3 мин.
             $extra = $request->validate([
@@ -648,6 +661,14 @@ class BotController extends Controller
                 'dedupe_bucket_sec' => ['required', 'integer', 'min:60', 'max:3600'],
                 'candle_strictness' => ['required', 'string', Rule::in(['strict', 'with_doji'])],
                 'min_body_to_range_ratio' => ['required', 'numeric', 'min:0', 'max:1'],
+                // 0 = выкл.; иначе верхняя граница средней доли тела (отсекает late-entry «ракеты»).
+                'max_body_to_range_ratio' => ['required', 'numeric', 'min:0', 'max:1'],
+                'require_pullback_to_ma' => ['sometimes', 'boolean'],
+                'pullback_bars' => ['required', 'integer', 'min:1', 'max:5'],
+                'pullback_ma_type' => ['required', 'string', Rule::in(['ema', 'hma'])],
+                'pullback_ma_length' => ['required', 'integer', 'min:2', 'max:100'],
+                'pullback_touch_atr_mult' => ['required', 'numeric', 'min:0.05', 'max:2'],
+                'pullback_max_extension_atr' => ['required', 'numeric', 'min:0.5', 'max:5'],
                 'execution_mode' => ['required', 'string', Rule::in(['alert_only', 'signal_trade'])],
                 'telegram_enabled' => ['sometimes', 'boolean'],
                 'telegram_bot_token' => ['nullable', 'string', 'max:128'],
@@ -669,6 +690,13 @@ class BotController extends Controller
                 'dedupe_bucket_sec' => (int) $extra['dedupe_bucket_sec'],
                 'candle_strictness' => (string) $extra['candle_strictness'],
                 'min_body_to_range_ratio' => (float) $extra['min_body_to_range_ratio'],
+                'max_body_to_range_ratio' => (float) $extra['max_body_to_range_ratio'],
+                'require_pullback_to_ma' => $request->boolean('require_pullback_to_ma'),
+                'pullback_bars' => (int) $extra['pullback_bars'],
+                'pullback_ma_type' => (string) $extra['pullback_ma_type'],
+                'pullback_ma_length' => (int) $extra['pullback_ma_length'],
+                'pullback_touch_atr_mult' => (float) $extra['pullback_touch_atr_mult'],
+                'pullback_max_extension_atr' => (float) $extra['pullback_max_extension_atr'],
                 'execution_mode' => (string) $extra['execution_mode'],
                 'telegram_enabled' => $request->boolean('telegram_enabled'),
                 // Пустое поле token при сохранении не затирает уже сохранённый token.
@@ -684,7 +712,7 @@ class BotController extends Controller
                 'telegram_send_chart' => ($extra['telegram_send_chart'] ?? '1') === '1',
                 // Для обратной совместимости и удобства движка дублируем режим в bool-ключ.
                 'notify_only' => (string) $extra['execution_mode'] === 'alert_only',
-                'version' => 'strong_trend_telegram_v1',
+                'version' => 'strong_trend_telegram_v2',
             ]);
         } elseif ($bot->type === 'strong_level') {
             // Strong Level: конфлюенс уровней DGT+SMC, вход на отскок или пробой.
@@ -696,11 +724,13 @@ class BotController extends Controller
                 'stale_after_sec' => ['required', 'integer', 'min:5', 'max:600'],
                 'entry_mode' => ['required', 'string', Rule::in(['bounce', 'breakout', 'both'])],
                 'min_level_strength' => ['required', 'numeric', 'min:40', 'max:95'],
+                // 0 = без потолка; иначе не торговать уровни сильнее этого значения.
+                'max_level_strength' => ['required', 'numeric', 'min:0', 'max:100'],
                 'min_sources' => ['required', 'integer', 'min:1', 'max:6'],
                 'cluster_atr_mult_m5' => ['required', 'numeric', 'min:0.05', 'max:1'],
                 'touch_atr_mult_m1' => ['required', 'numeric', 'min:0.05', 'max:1.5'],
                 'bounce_min_wick_ratio_m5' => ['required', 'numeric', 'min:0.15', 'max:0.8'],
-                'h1_flat_strength_extra' => ['required', 'numeric', 'min:0', 'max:15'],
+                'h1_flat_strength_extra' => ['required', 'numeric', 'min:0', 'max:40'],
                 'expiry_sec_bounce' => ['required', 'integer', 'min:120', 'max:600'],
                 'expiry_sec_breakout' => ['required', 'integer', 'min:120', 'max:600'],
                 'm5_take' => ['required', 'integer', 'min:20', 'max:300'],
@@ -726,6 +756,7 @@ class BotController extends Controller
                 'stale_after_sec' => (int) $extra['stale_after_sec'],
                 'entry_mode' => (string) $extra['entry_mode'],
                 'min_level_strength' => (float) $extra['min_level_strength'],
+                'max_level_strength' => (float) $extra['max_level_strength'],
                 'min_sources' => (int) $extra['min_sources'],
                 'cluster_atr_mult_m5' => (float) $extra['cluster_atr_mult_m5'],
                 'touch_atr_mult_m1' => (float) $extra['touch_atr_mult_m1'],
@@ -737,6 +768,7 @@ class BotController extends Controller
                 'm15_take' => (int) $extra['m15_take'],
                 'h1_take' => (int) $extra['h1_take'],
                 'require_h1_alignment' => $request->boolean('require_h1_alignment'),
+                'block_h1_flat' => $request->boolean('block_h1_flat'),
                 'bounce_require_m1_confirm' => $request->boolean('bounce_require_m1_confirm'),
                 'breakout_require_retest' => $request->boolean('breakout_require_retest'),
                 'breakout_vol_above_sma' => $request->boolean('breakout_vol_above_sma'),
@@ -888,6 +920,11 @@ class BotController extends Controller
         // Всегда сохраняем явное boolean-значение, чтобы поведение было детерминированным
         // и не зависело от "отсутствующего ключа" в старых конфигах.
         $config['analysis_runs_logging_enabled'] = $request->boolean('analysis_runs_logging_enabled');
+        // Per-bot зеркало paper→PO — только для ботов, что открывают сделки (не Chart Analyst).
+        // Checkbox есть в форме только у них; иначе boolean()=false затёрло бы дефолт «вкл».
+        if ($bot->type !== 'openrouter_llm_analyst') {
+            $config['mirror_trades_enabled'] = $request->boolean('mirror_trades_enabled');
+        }
 
         // price_action_dgt хранится только в indicator_settings (страница индикатора), из config убираем при любом сохранении общих настроек.
         unset($config[IndicatorSetting::KEY_PRICE_ACTION_DGT], $config[IndicatorSetting::KEY_LIQUIDITY_SWINGS], $config[IndicatorSetting::KEY_ORDER_BLOCKS]);

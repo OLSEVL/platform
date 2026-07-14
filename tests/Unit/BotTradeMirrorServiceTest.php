@@ -29,11 +29,40 @@ class BotTradeMirrorServiceTest extends TestCase
         $this->assertSame('skipped_disabled', $trade->meta_json['mirror_status'] ?? null);
     }
 
+    public function test_mirror_skipped_when_bot_mirror_disabled(): void
+    {
+        Http::fake();
+
+        // Профиль зеркала вкл., у бота — выкл.: place-order не должен вызываться.
+        $trade = $this->createTradeWithSettings(mirrorEnabled: true, botMirrorEnabled: false);
+
+        app(BotTradeMirrorService::class)->mirrorTrade($trade->fresh());
+
+        $trade->refresh();
+        $this->assertSame('skipped_bot_mirror_disabled', $trade->meta_json['mirror_status'] ?? null);
+        Http::assertNothingSent();
+    }
+
+    public function test_mirror_default_bot_flag_is_disabled(): void
+    {
+        // Без ключа в config зеркало бота выключено — иначе все боты по умолчанию шли бы на PO.
+        $bot = new Bot(['config' => []]);
+        $this->assertFalse($bot->isMirrorTradesEnabled());
+
+        $bot->config = ['mirror_trades_enabled' => true];
+        $this->assertTrue($bot->isMirrorTradesEnabled());
+
+        $bot->config = ['mirror_trades_enabled' => false];
+        $this->assertFalse($bot->isMirrorTradesEnabled());
+    }
+
     public function test_mirror_executes_via_proxy_when_enabled(): void
     {
         Http::fake([
             '*/api/place-order' => Http::response([
                 'ok' => true,
+                'confirmed' => true,
+                'confirmed_via' => 'send',
                 'order_id' => 'po-99',
                 'status' => 'open',
             ]),
@@ -45,6 +74,7 @@ class BotTradeMirrorServiceTest extends TestCase
 
         $trade->refresh();
         $this->assertSame('executed', $trade->meta_json['mirror_status'] ?? null);
+        $this->assertSame('send', $trade->meta_json['mirror_confirmed_via'] ?? null);
         $this->assertSame('10.0.0.5', $trade->meta_json['mirror_proxy_host'] ?? null);
         $this->assertSame('http://mirroruser:***@10.0.0.5:8080', $trade->meta_json['mirror_proxy_url'] ?? null);
         $this->assertFalse($trade->meta_json['mirror_proxy_direct'] ?? true);
@@ -77,8 +107,12 @@ class BotTradeMirrorServiceTest extends TestCase
         $this->assertNull($trade->meta_json['mirror_proxy_host'] ?? null);
     }
 
-    private function createTradeWithSettings(bool $mirrorEnabled, bool $waitPrevious = false, bool $withProxy = true): BotTrade
-    {
+    private function createTradeWithSettings(
+        bool $mirrorEnabled,
+        bool $waitPrevious = false,
+        bool $withProxy = true,
+        bool $botMirrorEnabled = true,
+    ): BotTrade {
         $user = User::factory()->create();
         UserTradingSetting::query()->create([
             'user_id' => $user->id,
@@ -96,7 +130,10 @@ class BotTradeMirrorServiceTest extends TestCase
             'name' => 'Test',
             'type' => 'candle_reversal_confirm',
             'is_active' => true,
-            'config' => [],
+            'config' => [
+                // Явно задаём per-bot флаг (по умолчанию false, если ключа нет).
+                'mirror_trades_enabled' => $botMirrorEnabled,
+            ],
         ]);
 
         $entry = now();
@@ -131,12 +168,35 @@ class BotTradeMirrorServiceTest extends TestCase
         ]);
     }
 
-    public function test_mirror_skips_when_previous_po_trade_still_open(): void
+    public function test_mirror_records_proxy_failure_on_connect_returned_false(): void
     {
         Http::fake([
-            '*/api/active-orders' => Http::sequence()
-                ->push(['ok' => true, 'count' => 0, 'orders' => []])
-                ->push(['ok' => true, 'count' => 1, 'orders' => [['order_id' => 'po-1']]]),
+            '*/api/place-order' => Http::response([
+                'ok' => false,
+                'error' => 'Failed to connect to Pocket Option (connect returned false)',
+            ], 502),
+        ]);
+
+        $trade = $this->createTradeWithSettings(mirrorEnabled: true);
+        $proxy = ProxyEndpoint::query()->where('url', 'http://mirroruser:pass@10.0.0.5:8080')->first();
+        $this->assertNotNull($proxy);
+        $this->assertSame(0, (int) $proxy->failure_count);
+
+        app(BotTradeMirrorService::class)->mirrorTrade($trade->fresh());
+
+        $trade->refresh();
+        $proxy->refresh();
+
+        $this->assertSame('failed', $trade->meta_json['mirror_status'] ?? null);
+        $this->assertSame($proxy->id, (int) ($trade->meta_json['mirror_proxy_endpoint_id'] ?? 0));
+        $this->assertSame(1, (int) $proxy->failure_count);
+        $this->assertStringContainsString('connect returned false', (string) $proxy->last_error);
+        $this->assertNotNull($proxy->last_failed_at);
+    }
+
+    public function test_mirror_skips_when_previous_platform_trade_still_open(): void
+    {
+        Http::fake([
             '*/api/place-order' => Http::response([
                 'ok' => true,
                 'order_id' => 'po-1',
@@ -166,13 +226,13 @@ class BotTradeMirrorServiceTest extends TestCase
         app(BotTradeMirrorService::class)->mirrorTrade($trade2->fresh());
         $trade2->refresh();
         $this->assertSame('skipped_wait_previous_trade', $trade2->meta_json['mirror_status'] ?? null);
-        Http::assertSentCount(3);
+        // Только place-order первой сделки — вторая пропущена без запроса к PO.
+        Http::assertSentCount(1);
     }
 
-    public function test_mirror_allows_when_po_reports_no_active_orders_even_if_platform_trade_open(): void
+    public function test_mirror_skips_when_previous_expired_but_not_settled(): void
     {
         Http::fake([
-            '*/api/active-orders' => Http::response(['ok' => true, 'count' => 0, 'orders' => []]),
             '*/api/place-order' => Http::response([
                 'ok' => true,
                 'order_id' => 'po-2',
@@ -182,6 +242,53 @@ class BotTradeMirrorServiceTest extends TestCase
 
         $trade1 = $this->createTradeWithSettings(mirrorEnabled: true, waitPrevious: true);
         app(BotTradeMirrorService::class)->mirrorTrade($trade1->fresh());
+        $trade1->refresh();
+        $this->assertSame('executed', $trade1->meta_json['mirror_status'] ?? null);
+
+        // Expiry прошёл, но paper ещё open — шаг мартингейла ещё не обновлён → ждём settle.
+        $trade1->expiry_time = now()->subSecond();
+        $trade1->save();
+
+        $bot = $trade1->bot;
+        $entry = now();
+        $trade2 = BotTrade::query()->create([
+            'bot_id' => $bot->id,
+            'instrument' => 'GBPUSD_otc',
+            'side' => 'PUT',
+            'status' => BotTrade::STATUS_OPEN,
+            'result' => BotTrade::RESULT_PENDING,
+            'entry_time' => $entry,
+            'expiry_time' => $entry->copy()->addSeconds(300),
+            'entry_price' => 1.2,
+            'meta_json' => ['expiry_sec_used' => 300],
+        ]);
+
+        app(BotTradeMirrorService::class)->mirrorTrade($trade2->fresh());
+        $trade2->refresh();
+        $this->assertSame('skipped_wait_previous_trade', $trade2->meta_json['mirror_status'] ?? null);
+        Http::assertSentCount(1);
+    }
+
+    public function test_mirror_allows_when_previous_platform_trade_settled(): void
+    {
+        Http::fake([
+            '*/api/place-order' => Http::response([
+                'ok' => true,
+                'order_id' => 'po-2',
+                'status' => 'open',
+            ]),
+        ]);
+
+        $trade1 = $this->createTradeWithSettings(mirrorEnabled: true, waitPrevious: true);
+        app(BotTradeMirrorService::class)->mirrorTrade($trade1->fresh());
+        $trade1->refresh();
+        $this->assertSame('executed', $trade1->meta_json['mirror_status'] ?? null);
+
+        // После settle блокировка снимается — следующая может идти на PO.
+        $trade1->status = BotTrade::STATUS_SETTLED;
+        $trade1->result = BotTrade::RESULT_LOSS;
+        $trade1->expiry_time = now()->subSecond();
+        $trade1->save();
 
         $bot = $trade1->bot;
         $entry = now();
@@ -200,7 +307,7 @@ class BotTradeMirrorServiceTest extends TestCase
         app(BotTradeMirrorService::class)->mirrorTrade($trade2->fresh());
         $trade2->refresh();
         $this->assertSame('executed', $trade2->meta_json['mirror_status'] ?? null);
-        Http::assertSentCount(4);
+        Http::assertSentCount(2);
     }
 
     public function test_mirror_does_not_skip_when_wait_setting_disabled(): void

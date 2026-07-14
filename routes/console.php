@@ -819,6 +819,42 @@ Artisan::command('bots:scan-dedupe {--no-restart : Не запускать dispa
     $this->info(trim(Artisan::output()));
 })->purpose('Остановить дубликаты bots:scan на одном bot_id, сбросить locks и запустить dispatch');
 
+Artisan::command('bots:scan-watchdog {--max-elapsed= : Секунды wall-time до kill (default из app_settings / SCAN_MAX_ELAPSED_SEC)} {--no-restart : Не поднимать scan после kill}', function () {
+    // Зависший bots:scan остаётся «живым» PID → dispatch вечно skip'ает бота.
+    // Watchdog убивает процессы дольше max-elapsed и (по умолчанию) поднимает заново.
+    $maxOpt = $this->option('max-elapsed');
+    $maxElapsed = $maxOpt !== null && $maxOpt !== ''
+        ? max(60, (int) $maxOpt)
+        : BotScanCoordinator::getScanMaxElapsedSec();
+
+    $reaped = BotScanCoordinator::reapStaleScans($maxElapsed);
+    if ($reaped === []) {
+        $this->info(sprintf('Watchdog: зависших scan нет (порог %d с).', $maxElapsed));
+
+        return;
+    }
+
+    foreach ($reaped as $row) {
+        $this->warn(sprintf(
+            'Watchdog: kill pid=%d bot=%s elapsed=%ds reason=%s',
+            $row['pid'],
+            $row['bot_id'] !== null ? (string) $row['bot_id'] : 'all',
+            $row['elapsed_sec'],
+            $row['reason']
+        ));
+    }
+
+    if ($this->option('no-restart')) {
+        $this->comment('Новый dispatch не запущен (--no-restart).');
+
+        return;
+    }
+
+    usleep(300_000);
+    Artisan::call('bots:scan-dispatch');
+    $this->info(trim(Artisan::output()));
+})->purpose('Убить зависшие bots:scan (wall-time) и перезапустить dispatch');
+
 Artisan::command('bots:settle {--bot_id=} {--limit=1000}', function (BotSettlementService $settlement) {
     $botId = $this->option('bot_id') ? (int) $this->option('bot_id') : null;
     $limit = max(1, (int) $this->option('limit'));

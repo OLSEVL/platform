@@ -57,11 +57,14 @@ class CandleReversalLevelAnalyzer
         }
 
         $minStrength = max(40.0, min(95.0, (float) ($cfg['min_level_strength'] ?? 58.0)));
+        // 0 = без потолка; иначе не берём уровни сильнее max (статистика: 90+ хуже, чем 80–90).
+        $maxStrength = max(0.0, min(100.0, (float) ($cfg['max_level_strength'] ?? 0.0)));
         $minSources = max(1, min(6, (int) ($cfg['min_sources'] ?? 1)));
         $clusterAtrMult = max(0.05, min(1.0, (float) ($cfg['cluster_atr_mult_m5'] ?? 0.28)));
         $touchAtrMult = max(0.05, min(1.5, (float) ($cfg['touch_atr_mult_m1'] ?? 0.55)));
         $requireH1Alignment = (bool) ($cfg['require_h1_alignment'] ?? false);
-        $h1FlatStrengthExtra = max(0.0, min(15.0, (float) ($cfg['h1_flat_strength_extra'] ?? 4.0)));
+        $blockH1Flat = (bool) ($cfg['block_h1_flat'] ?? false);
+        $h1FlatStrengthExtra = max(0.0, min(40.0, (float) ($cfg['h1_flat_strength_extra'] ?? 4.0)));
         $expirySec = max(120, min(600, (int) ($cfg['expiry_sec'] ?? 300)));
 
         // M5 rejection (опционально).
@@ -135,6 +138,9 @@ class CandleReversalLevelAnalyzer
             if ($cluster['strength'] < $minStrength) {
                 continue;
             }
+            if ($maxStrength > 0.0 && $cluster['strength'] > $maxStrength) {
+                continue;
+            }
             if (count($cluster['sources']) < $minSources) {
                 continue;
             }
@@ -150,6 +156,9 @@ class CandleReversalLevelAnalyzer
         }
 
         $h1Bias = $this->detectH1Bias($h1);
+        if ($blockH1Flat && $h1Bias === 'flat' && count($h1) >= 10) {
+            return null;
+        }
         if ($requireH1Alignment && $h1Bias === 'flat' && count($h1) >= 10) {
             if ($nearest['strength'] < $minStrength + $h1FlatStrengthExtra) {
                 return null;

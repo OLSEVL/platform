@@ -15,12 +15,16 @@ from .constants import REGIONS
 
 class ConnectionKeepAlive:
     """
-    Advanced connection keep-alive manager based on old API patterns
+    Advanced connection keep-alive manager based on old API patterns.
+
+    proxy_url — HTTP/SOCKS прокси (как у AsyncWebSocketClient). Без него зеркало
+    place-order ходит с IP VPS и провоцирует бан у Pocket Option.
     """
 
-    def __init__(self, ssid: str, is_demo: bool = True):
+    def __init__(self, ssid: str, is_demo: bool = True, proxy_url: Optional[str] = None):
         self.ssid = ssid
         self.is_demo = is_demo
+        self.proxy_url = proxy_url
 
         # Connection state
         self.websocket: Optional[WebSocketClientProtocol] = None
@@ -136,22 +140,42 @@ class ConnectionKeepAlive:
                 ssl_context.check_hostname = False
                 ssl_context.verify_mode = ssl.CERT_NONE
 
-                # Connect with headers (like old API)
-                self.websocket = await asyncio.wait_for(
-                    connect(
-                        url,
-                        ssl=ssl_context,
-                        extra_headers={
-                            "Origin": "https://pocketoption.com",
-                            "Cache-Control": "no-cache",
-                            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                        },
-                        ping_interval=None,  # We handle pings manually
-                        ping_timeout=None,
-                        close_timeout=10,
-                    ),
-                    timeout=15.0,
+                extra_headers = {
+                    "Origin": "https://pocketoption.com",
+                    "Cache-Control": "no-cache",
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                }
+                connect_kwargs = dict(
+                    ssl=ssl_context,
+                    extra_headers=extra_headers,
+                    ping_interval=None,  # We handle pings manually
+                    ping_timeout=None,
+                    close_timeout=10,
                 )
+
+                # Тот же механизм, что в AsyncWebSocketClient: без proxy_connect
+                # persistent WS (зеркало) выходит напрямую с IP сервера.
+                if self.proxy_url:
+                    from websockets_proxy import Proxy, proxy_connect
+
+                    proxy = Proxy.from_url(self.proxy_url)
+                    host_hint = (
+                        self.proxy_url.split("@")[-1]
+                        if "@" in self.proxy_url
+                        else "set"
+                    )
+                    # print в stdout: в сервисе enable_logging=False глушит loguru.
+                    print(f"[INFO] KeepAlive Connecting via proxy ({host_hint})", flush=True)
+                    logger.info(f"Connecting via proxy ({host_hint})")
+                    self.websocket = await asyncio.wait_for(
+                        proxy_connect(url, proxy=proxy, **connect_kwargs),
+                        timeout=15.0,
+                    )
+                else:
+                    self.websocket = await asyncio.wait_for(
+                        connect(url, **connect_kwargs),
+                        timeout=15.0,
+                    )
 
                 # Update connection info
                 region = self._extract_region_from_url(url)

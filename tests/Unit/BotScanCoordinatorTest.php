@@ -44,4 +44,18 @@ class BotScanCoordinatorTest extends TestCase
         $path = BotScanCoordinator::logPathForBot(11);
         $this->assertStringEndsWith('bots-scan-11.log', $path);
     }
+
+    public function test_scan_max_elapsed_is_between_one_and_two_hours(): void
+    {
+        // Дефолтный константный порог выше нормального цикла (~минуты), но << суток.
+        $this->assertGreaterThanOrEqual(3600, BotScanCoordinator::SCAN_MAX_ELAPSED_SEC);
+        $this->assertLessThanOrEqual(7200, BotScanCoordinator::SCAN_MAX_ELAPSED_SEC);
+        $this->assertContains(BotScanCoordinator::SCAN_MAX_ELAPSED_SEC, BotScanCoordinator::ALLOWED_WATCHDOG_MAX_ELAPSED_SEC);
+    }
+
+    public function test_scan_max_elapsed_label(): void
+    {
+        $this->assertSame('60 мин', BotScanCoordinator::scanMaxElapsedLabel(3600));
+        $this->assertSame('15 мин', BotScanCoordinator::scanMaxElapsedLabel(900));
+    }
 }

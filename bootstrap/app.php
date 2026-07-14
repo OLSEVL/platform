@@ -19,6 +19,8 @@ return Application::configure(basePath: dirname(__DIR__))
         $schedule->command('data:auto-cleanup')->hourly();
         // Per-bot scan: диспетчер каждую минуту поднимает отдельный bots:scan --bot_id=N (параллельно).
         $schedule->command('bots:scan-dispatch')->everyMinute()->withoutOverlapping(2);
+        // Зависший scan (живой PID) блокирует dispatch навсегда — reap по wall-time.
+        $schedule->command('bots:scan-watchdog')->everyFiveMinutes()->withoutOverlapping(5);
         $schedule->command('bots:settle')->everyMinute()->withoutOverlapping(10);
         // Chart Analyst: /menu и inline-список пар требуют long polling + queue worker.
         $schedule->command('telegram:ensure-analyst-services')->everyMinute()->withoutOverlapping(2);

@@ -139,6 +139,8 @@ class MirrorQueueDashboardService
                 'bot_name' => $trade->bot?->name ?? '—',
                 'instrument' => $trade->instrument,
                 'side' => $trade->side,
+                // Итог paper-сделки после settle (win/loss); null пока открыта.
+                'result' => $trade->result,
                 'paper_status' => $trade->status,
                 'entry_time' => optional($trade->entry_time)->format('Y-m-d H:i:s'),
                 'expiry_time' => optional($trade->expiry_time)->format('Y-m-d H:i:s'),
@@ -152,6 +154,11 @@ class MirrorQueueDashboardService
                 'job_duration_sec' => $this->durationSeconds($queuedAt, $finishedAt),
                 'mirror_latency_ms' => isset($meta['mirror_latency_ms']) ? (int) $meta['mirror_latency_ms'] : null,
                 'mirror_dispatch' => $meta['mirror_dispatch'] ?? null,
+                // Сумма, ушедшая в place-order (мартингейл-шаг на момент зеркала).
+                'mirror_amount' => isset($meta['mirror_amount']) && is_numeric($meta['mirror_amount'])
+                    ? (float) $meta['mirror_amount']
+                    : null,
+                'mirror_amount_label' => $trade->mirrorEntryAmountLabel(),
                 'pocket_order_id' => $meta['pocket_order_id'] ?? null,
                 'mirror_is_demo' => isset($meta['mirror_is_demo']) ? (bool) $meta['mirror_is_demo'] : null,
                 'mirror_error' => isset($meta['mirror_error']) ? mb_substr((string) $meta['mirror_error'], 0, 300) : null,

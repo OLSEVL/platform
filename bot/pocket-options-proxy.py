@@ -22,7 +22,7 @@ import re
 import asyncio
 import hashlib
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Optional, List, Dict
 from fastapi import FastAPI, HTTPException, Query, Body
 from fastapi.responses import JSONResponse, Response
@@ -52,7 +52,7 @@ import uuid
 from pocketoptionapi_async import AsyncPocketOptionClient
 from pocketoptionapi_async.constants import API_LIMITS, ASSETS
 from pocketoptionapi_async.exceptions import InvalidParameterError
-from pocketoptionapi_async.models import Order, OrderDirection
+from pocketoptionapi_async.models import Order, OrderDirection, OrderResult, OrderStatus
 
 # Настройки сервера
 PORT = 3000
@@ -120,10 +120,7 @@ _clients: Dict[str, AsyncPocketOptionClient] = {}
 # Ingest + HTTP в одном loop: не больше 2 одновременных place-order.
 _place_order_semaphore = asyncio.Semaphore(2)
 
-# Ожидание successopenOrder / json_data после openOrder (без доп. запросов к PO).
-MIRROR_ORDER_CONFIRM_TIMEOUT_SEC = 25.0
-# Доп. grace: PO иногда отвечает с задержкой, когда ingest грузит event loop.
-MIRROR_ORDER_CONFIRM_GRACE_SEC = 5.0
+# Успех зеркала = openOrder ушёл по WS (KeepAlive не парсит successopenOrder → ложные 502).
 
 
 def convert_ui_asset_to_websocket(ui_asset: str) -> str:
@@ -1195,15 +1192,16 @@ def _normalize_order_asset(instrument: str) -> str:
     return name.replace("#", "")
 
 
-def _mirror_order_confirmed(result: Any) -> bool:
-    """
-    PO API при таймауте ответа создаёт «fallback» OrderResult со status=ACTIVE,
-    но сделки в кабинете нет — не считаем такой ордер успешным.
-    """
-    err = getattr(result, "error_message", None) or ""
-    if err and "Timeout waiting for server confirmation" in str(err):
-        return False
-    return True
+def _build_open_order_message(
+    client: AsyncPocketOptionClient,
+    order: Order,
+) -> str:
+    """Тот же payload, что AsyncPocketOptionClient._send_order."""
+    return (
+        f'42["openOrder",{{"asset":"{order.asset}","amount":{order.amount},'
+        f'"action":"{order.direction.value}","isDemo":{1 if client.is_demo else 0},'
+        f'"requestId":"{order.request_id}","optionType":100,"time":{order.duration}}}]'
+    )
 
 
 async def place_mirror_order(
@@ -1212,9 +1210,13 @@ async def place_mirror_order(
     amount: float,
     direction: OrderDirection,
     duration: int,
-) -> Any:
+) -> OrderResult:
     """
     Размещение ордера без проверки asset in ASSETS — ingest уже торгует теми же парами.
+
+    Успех = openOrder отправлен по WebSocket без исключения / отказа send.
+    Не ждём successopenOrder: KeepAlive его не разбирает, а лишнее ожидание
+    даёт 502 при уже открытой сделке на PO и провоцирует повторные openOrder.
     """
     asset = _normalize_order_asset(instrument)
     if (
@@ -1240,22 +1242,42 @@ async def place_mirror_order(
         duration=duration,
         request_id=request_id,
     )
-    await client._send_order(order)
-    result = await client._wait_for_order_result(
-        request_id, order, timeout=MIRROR_ORDER_CONFIRM_TIMEOUT_SEC
+    message = _build_open_order_message(client, order)
+
+    # Явно проверяем результат send у KeepAlive (там bool, а не exception).
+    if getattr(client, "_is_persistent", False) and getattr(client, "_keep_alive_manager", None):
+        sent = await client._keep_alive_manager.send_message(message)
+        if not sent:
+            raise HTTPException(
+                status_code=502,
+                detail="Не удалось отправить openOrder: WebSocket не подключён",
+            )
+    else:
+        try:
+            await client._websocket.send_message(message)
+        except Exception as exc:
+            raise HTTPException(
+                status_code=502,
+                detail=f"Не удалось отправить openOrder: {exc}",
+            ) from exc
+
+    now = datetime.now()
+    print(
+        f"[INFO] openOrder sent (success=via_send) asset={asset} "
+        f"requestId={request_id} amount={amount} duration={duration}s",
+        flush=True,
     )
-    if not _mirror_order_confirmed(result):
-        # Ещё несколько секунд ждём ответ PO в том же WS — без active-orders и без нового openOrder.
-        result = await client._wait_for_order_result(
-            request_id, order, timeout=MIRROR_ORDER_CONFIRM_GRACE_SEC
-        )
-    if not _mirror_order_confirmed(result):
-        raise HTTPException(
-            status_code=502,
-            detail="Pocket Option не подтвердил ордер (нет successopenOrder). "
-            "Проверьте SSID, demo/real и что пара доступна для торговли.",
-        )
-    return result
+
+    return OrderResult(
+        order_id=request_id,
+        asset=asset,
+        amount=amount,
+        direction=direction,
+        duration=duration,
+        status=OrderStatus.ACTIVE,
+        placed_at=now,
+        expires_at=now + timedelta(seconds=duration),
+    )
 
 
 @app.post("/api/test-auth")
@@ -1374,6 +1396,8 @@ async def place_order_api(
             content={
                 "ok": True,
                 "confirmed": True,
+                # openOrder ушёл по WS — successopenOrder не ждём (KeepAlive его не парсит).
+                "confirmed_via": "send",
                 "order_id": str(order_id) if order_id is not None else None,
                 "status": str(status) if status is not None else None,
                 "instrument": asset_clean,

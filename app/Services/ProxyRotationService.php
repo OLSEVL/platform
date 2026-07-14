@@ -454,29 +454,128 @@ class ProxyRotationService
             return;
         }
 
+        $this->markProxyEndpointFailure($proxy, $error, $streak, $instrument, [
+            'source' => 'ingest',
+        ]);
+    }
+
+    /**
+     * Учёт ошибки по конкретному endpoint (зеркало PO / любой вызов без привязки к ingest-инструменту).
+     * Пишет failure_count + last_error; при достижении порога — dead и ротация пар на этом прокси.
+     *
+     * @param  array<string, mixed>  $meta
+     */
+    public function markProxyEndpointFailure(
+        ProxyEndpoint $proxy,
+        string $error,
+        ?int $streak = null,
+        ?PocketInstrument $instrument = null,
+        array $meta = [],
+    ): void {
+        if ($this->deadProbe->isProxyUnderProbe($proxy->id)) {
+            return;
+        }
+
+        if ($instrument !== null && $this->deadProbe->isInstrumentProbeLocked($instrument)) {
+            return;
+        }
+
         $autoRotationEnabled = $this->isAutoRotationEnabled();
         $deadThreshold = $this->getDeadStreakThreshold();
-        $streakValue = max(0, (int) ($streak ?? 0));
+
+        ProxyEndpoint::query()->whereKey($proxy->id)->increment('failure_count');
+        $proxy->refresh();
+
+        // Ingest передаёт streak сессии WS; для зеркала без сессии берём накопленный failure_count.
+        $streakValue = $streak !== null
+            ? max(0, (int) $streak)
+            : max(0, (int) $proxy->failure_count);
+
         // После «Обновить прокси» кратковременные connect_failed не уводят свежий пул в dead.
         $shouldMarkDead = $autoRotationEnabled
             && $streakValue >= $deadThreshold
             && ! $this->isWithinPoolRefreshGracePeriod();
 
-        ProxyEndpoint::query()->whereKey($proxy->id)->increment('failure_count');
+        $errorText = mb_substr($error, 0, 1000);
         $proxy->update([
-            'last_error' => mb_substr($error, 0, 1000),
+            'last_error' => $errorText,
             'last_failed_at' => now(),
             'status' => $shouldMarkDead ? ProxyEndpoint::STATUS_DEAD : $proxy->status,
         ]);
 
-        if ($shouldMarkDead) {
-            $proxy->refresh();
-            $this->appendDeadReasonLogOnly($proxy, $instrument, mb_substr($error, 0, 1000), [
-                'streak' => $streakValue,
-                'dead_streak_threshold' => $deadThreshold,
-            ]);
-            $this->rotateInstrumentProxy($instrument, false);
+        if (! $shouldMarkDead) {
+            return;
         }
+
+        $proxy->refresh();
+        $this->appendDeadReasonLogOnly($proxy, $instrument, $errorText, array_merge($meta, [
+            'streak' => $streakValue,
+            'dead_streak_threshold' => $deadThreshold,
+        ]));
+
+        if ($instrument !== null) {
+            $this->rotateInstrumentProxy($instrument, false);
+
+            return;
+        }
+
+        // Зеркало: endpoint мог не быть назначен на пару — переназначаем все active-инструменты с него.
+        $this->rotateInstrumentsOnProxy($proxy);
+    }
+
+    /**
+     * Ручной перевод прокси в dead со страницы /settings.
+     * Переназначает активные инструменты с этого endpoint (если есть свободные слоты).
+     *
+     * @return array{already_dead: bool, rotated: int, instruments_left: int}
+     */
+    public function markProxyDeadManually(ProxyEndpoint $proxy, string $reason = 'manual_mark_dead'): array
+    {
+        if ($proxy->status === ProxyEndpoint::STATUS_DEAD) {
+            return [
+                'already_dead' => true,
+                'rotated' => 0,
+                'instruments_left' => (int) PocketInstrument::query()
+                    ->where('proxy_endpoint_id', $proxy->id)
+                    ->where('is_active', true)
+                    ->count(),
+            ];
+        }
+
+        // Сразу dead + журнал причины; дальше пытаемся снять с него пары.
+        $this->markProxyAsDead($proxy, null, $reason, [
+            'source' => 'settings_manual',
+        ]);
+
+        $rotated = $this->rotateInstrumentsOnProxy($proxy->fresh());
+
+        return [
+            'already_dead' => false,
+            'rotated' => $rotated,
+            'instruments_left' => (int) PocketInstrument::query()
+                ->where('proxy_endpoint_id', $proxy->id)
+                ->where('is_active', true)
+                ->count(),
+        ];
+    }
+
+    /**
+     * Переназначить все активные инструменты с данного (обычно уже dead) прокси.
+     */
+    public function rotateInstrumentsOnProxy(ProxyEndpoint $proxy): int
+    {
+        $rotated = 0;
+        PocketInstrument::query()
+            ->where('proxy_endpoint_id', $proxy->id)
+            ->where('is_active', true)
+            ->orderBy('id')
+            ->each(function (PocketInstrument $instrument) use (&$rotated): void {
+                if ($this->rotateInstrumentProxy($instrument, false) !== null) {
+                    $rotated++;
+                }
+            });
+
+        return $rotated;
     }
 
     /**
@@ -484,7 +583,7 @@ class ProxyRotationService
      */
     private function markProxyAsDead(
         ProxyEndpoint $proxy,
-        PocketInstrument $instrument,
+        ?PocketInstrument $instrument,
         string $reason,
         array $meta = [],
     ): void {
@@ -503,7 +602,7 @@ class ProxyRotationService
      */
     private function appendDeadReasonLogOnly(
         ProxyEndpoint $proxy,
-        PocketInstrument $instrument,
+        ?PocketInstrument $instrument,
         string $reason,
         array $meta = [],
     ): void {

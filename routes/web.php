@@ -7,6 +7,7 @@ use App\Http\Controllers\BotController;
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\InstrumentController;
 use App\Http\Controllers\PlatformDiagnosticsController;
+use App\Http\Controllers\ProfileMirrorProxiesController;
 use App\Http\Controllers\ProfileMirrorQueueController;
 use App\Http\Controllers\ProfileTradingController;
 use App\Http\Controllers\SettingsController;
@@ -77,6 +78,8 @@ Route::middleware('auth')->group(function () {
         ->name('profile.trading.reset-martingale');
     Route::post('/profile/trading/test-connection', [ProfileTradingController::class, 'testConnection'])
         ->name('profile.trading.test-connection');
+    Route::get('/profile/mirror-proxies', [ProfileMirrorProxiesController::class, 'edit'])->name('profile.mirror-proxies.edit');
+    Route::put('/profile/mirror-proxies', [ProfileMirrorProxiesController::class, 'update'])->name('profile.mirror-proxies.update');
     Route::get('/profile/mirror-queue', [ProfileMirrorQueueController::class, 'index'])->name('profile.mirror-queue.index');
     Route::get('/profile/mirror-queue/data', [ProfileMirrorQueueController::class, 'data'])->name('profile.mirror-queue.data');
 
@@ -88,6 +91,7 @@ Route::middleware('auth')->group(function () {
     Route::post('/settings/proxies/refresh', [SettingsController::class, 'refreshProxies'])->name('settings.proxies.refresh');
     Route::post('/settings/proxies/auto-rotation', [SettingsController::class, 'updateProxyRotation'])->name('settings.proxies.auto-rotation');
     Route::post('/settings/proxies/{proxy}/reactivate', [SettingsController::class, 'reactivateProxy'])->name('settings.proxies.reactivate');
+    Route::post('/settings/proxies/{proxy}/mark-dead', [SettingsController::class, 'markProxyDead'])->name('settings.proxies.mark-dead');
     Route::post('/settings/proxies/reactivate-all', [SettingsController::class, 'reactivateAllProblemProxies'])->name('settings.proxies.reactivate-all');
     Route::post('/settings/proxies/{proxy}/test-quick-ajax', [SettingsController::class, 'testQuickProxyAjax'])->name('settings.proxies.test-quick-ajax');
     Route::post('/settings/proxies/{proxy}/test-deep-ajax', [SettingsController::class, 'testDeepProxyAjax'])->name('settings.proxies.test-deep-ajax');
@@ -96,4 +100,5 @@ Route::middleware('auth')->group(function () {
     Route::post('/settings/payout/monitoring', [SettingsController::class, 'updatePayoutMonitoring'])->name('settings.payout.monitoring');
     Route::post('/settings/data/purge', [SettingsController::class, 'purgeOldData'])->name('settings.data.purge');
     Route::post('/settings/data/auto-cleanup', [SettingsController::class, 'updateDataAutoCleanup'])->name('settings.data.auto-cleanup');
+    Route::post('/settings/bots/scan-watchdog', [SettingsController::class, 'updateScanWatchdog'])->name('settings.bots.scan-watchdog');
 });

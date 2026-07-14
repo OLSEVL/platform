@@ -75,6 +75,8 @@ class AsyncPocketOptionClient:
         self.persistent_connection = persistent_connection
         self.auto_reconnect = auto_reconnect
         self.enable_logging = enable_logging
+        # Нужен и для persistent WS: ConnectionKeepAlive раньше игнорировал proxy.
+        self.proxy_url = proxy_url
 
         # Configure logging based on preference
         if not enable_logging:
@@ -89,7 +91,7 @@ class AsyncPocketOptionClient:
             self.session_id = ssid
             self._complete_ssid = None
 
-        # Core components
+        # Core components (не-persistent путь уже ходит через proxy_url)
         self._websocket = AsyncWebSocketClient(proxy_url=proxy_url)
         self._balance: Optional[Balance] = None
         self._orders: Dict[str, OrderResult] = {}
@@ -258,9 +260,13 @@ class AsyncPocketOptionClient:
         # Import the keep-alive manager
         from .connection_keep_alive import ConnectionKeepAlive
 
-        # Create keep-alive manager
+        # Create keep-alive manager — тот же proxy_url, что у обычного WS (ingest).
         complete_ssid = self.raw_ssid
-        self._keep_alive_manager = ConnectionKeepAlive(complete_ssid, self.is_demo)
+        self._keep_alive_manager = ConnectionKeepAlive(
+            complete_ssid,
+            self.is_demo,
+            proxy_url=self.proxy_url,
+        )
 
         # Add event handlers
         self._keep_alive_manager.add_event_handler(

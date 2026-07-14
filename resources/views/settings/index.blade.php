@@ -482,13 +482,29 @@
                                             data-proxy-id="{{ $proxyId }}"
                                             data-mode="deep"
                                         >Deep (45с)</button>
-                                        <form action="{{ route('settings.proxies.reactivate', $proxy) }}" method="POST" class="inline">
-                                            @csrf
-                                            <button
-                                                type="submit"
-                                                class="inline-flex items-center px-2 py-1 rounded bg-emerald-700 hover:bg-emerald-600 text-white text-[11px] font-medium whitespace-nowrap"
-                                            >Реанимировать</button>
-                                        </form>
+                                        @if(($row['status'] ?? $proxy->status) !== 'dead')
+                                            {{-- Ручной dead: убирает endpoint из Auto / assignment и ротирует пары. --}}
+                                            <form
+                                                action="{{ route('settings.proxies.mark-dead', $proxy) }}"
+                                                method="POST"
+                                                class="inline"
+                                                onsubmit="return confirm('Пометить этот прокси как dead? Инструменты по возможности будут переназначены.');"
+                                            >
+                                                @csrf
+                                                <button
+                                                    type="submit"
+                                                    class="inline-flex items-center px-2 py-1 rounded bg-rose-800 hover:bg-rose-700 text-white text-[11px] font-medium whitespace-nowrap"
+                                                >Dead</button>
+                                            </form>
+                                        @else
+                                            <form action="{{ route('settings.proxies.reactivate', $proxy) }}" method="POST" class="inline">
+                                                @csrf
+                                                <button
+                                                    type="submit"
+                                                    class="inline-flex items-center px-2 py-1 rounded bg-emerald-700 hover:bg-emerald-600 text-white text-[11px] font-medium whitespace-nowrap"
+                                                >Реанимировать</button>
+                                            </form>
+                                        @endif
                                     </div>
                                     <div data-proxy-test-result class="mt-1 text-[10px] text-zinc-500 min-h-[1rem] break-words text-right max-w-[12rem] ml-auto"></div>
                                 </td>
@@ -665,6 +681,101 @@
                     Сохранить авто-очистку
                 </button>
             </form>
+        </div>
+    </div>
+
+    <div class="bg-zinc-900 border border-zinc-800 rounded-lg shadow-lg shadow-black/20 p-5 mt-6">
+        <h2 class="text-lg font-semibold text-zinc-100 mb-2">Watchdog bots:scan</h2>
+        <p class="text-sm text-zinc-400 mb-4">
+            Если процесс <code class="text-zinc-300 text-xs">bots:scan --bot_id=N</code> завис (живой PID),
+            диспетчер больше не поднимает новый скан для этого бота — сигналы пропадают.
+            Команда <code class="text-zinc-300 text-xs">bots:scan-watchdog</code> по крону каждые
+            <strong class="text-zinc-300">5 минут</strong> убивает процессы дольше порога и запускает
+            <code class="text-zinc-300 text-xs">bots:scan-dispatch</code> заново.
+            Нормальный цикл Strong Level обычно 2–10 мин; порог ниже 15 мин может рубить длинные, но живые проходы.
+        </p>
+
+        <form
+            action="{{ route('settings.bots.scan-watchdog') }}"
+            method="POST"
+            class="flex flex-wrap items-end gap-3"
+        >
+            @csrf
+            <label class="flex flex-col gap-1 text-zinc-200 text-sm">
+                <span>Убивать scan дольше</span>
+                <select
+                    name="scan_watchdog_max_elapsed_sec"
+                    class="min-w-[12rem] px-2 py-2 rounded border border-zinc-600 bg-zinc-950 text-zinc-100 focus:ring-2 focus:ring-indigo-600 focus:border-transparent"
+                >
+                    @foreach (($scanWatchdogAllowedElapsedSec ?? [3600]) as $sec)
+                        <option value="{{ $sec }}" @selected((int) ($scanWatchdogMaxElapsedSec ?? 3600) === (int) $sec)>
+                            {{ (int) round($sec / 60) }} мин
+                        </option>
+                    @endforeach
+                </select>
+            </label>
+            <button
+                type="submit"
+                class="inline-flex items-center justify-center px-4 py-2 rounded bg-indigo-600 hover:bg-indigo-500 text-white font-medium"
+            >
+                Сохранить порог
+            </button>
+        </form>
+
+        <div class="mt-5 pt-4 border-t border-zinc-800">
+            <p class="text-xs font-semibold uppercase tracking-wide text-zinc-500 mb-2">Сейчас запущены</p>
+            @php $scanRows = $scanWatchdogRunning ?? []; @endphp
+            @if (count($scanRows) === 0)
+                <p class="text-sm text-zinc-500">Нет живых процессов bots:scan.</p>
+            @else
+                <div class="overflow-x-auto rounded border border-zinc-800">
+                    <table class="min-w-full text-sm text-left text-zinc-300">
+                        <thead class="bg-zinc-950/80 text-xs uppercase text-zinc-500">
+                            <tr>
+                                <th class="px-3 py-2">Bot</th>
+                                <th class="px-3 py-2">PID</th>
+                                <th class="px-3 py-2">Elapsed</th>
+                                <th class="px-3 py-2">CPU</th>
+                                <th class="px-3 py-2">Статус</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-zinc-800">
+                            @foreach ($scanRows as $row)
+                                @php
+                                    $elapsed = $row['elapsed_sec'] ?? null;
+                                    $elapsedLabel = $elapsed === null
+                                        ? '—'
+                                        : (intdiv((int) $elapsed, 3600) > 0
+                                            ? sprintf('%dч %02dм', intdiv((int) $elapsed, 3600), intdiv((int) $elapsed % 3600, 60))
+                                            : sprintf('%dм %02dс', intdiv((int) $elapsed, 60), (int) $elapsed % 60));
+                                @endphp
+                                <tr class="{{ ! empty($row['stale']) ? 'bg-rose-950/40' : '' }}">
+                                    <td class="px-3 py-2 font-mono">#{{ $row['bot_id'] ?? 'all' }}</td>
+                                    <td class="px-3 py-2 font-mono">{{ $row['pid'] }}</td>
+                                    <td class="px-3 py-2 font-mono">{{ $elapsedLabel }}</td>
+                                    <td class="px-3 py-2 font-mono">
+                                        {{ isset($row['cpu_percent']) ? number_format((float) $row['cpu_percent'], 1).'%' : '—' }}
+                                    </td>
+                                    <td class="px-3 py-2">
+                                        @if (! empty($row['stale']))
+                                            <span class="text-rose-400">сверх порога</span>
+                                        @else
+                                            <span class="text-emerald-400">ok</span>
+                                        @endif
+                                    </td>
+                                </tr>
+                            @endforeach
+                        </tbody>
+                    </table>
+                </div>
+            @endif
+            <p class="mt-3 text-[11px] text-zinc-500">
+                Текущий порог:
+                <span class="text-zinc-300">{{ \App\Support\BotScanCoordinator::scanMaxElapsedLabel($scanWatchdogMaxElapsedSec ?? null) }}</span>
+                · cron: <code class="text-zinc-400">bots:scan-watchdog</code> everyFiveMinutes
+                · диагностика:
+                <a href="{{ route('settings.processes.index') }}" class="text-indigo-400 hover:text-indigo-300">Процессы</a>
+            </p>
         </div>
     </div>
 

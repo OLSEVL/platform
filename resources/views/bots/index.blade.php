@@ -36,6 +36,8 @@
                         <th class="px-4 py-3 text-left">Бот</th>
                         <th class="px-4 py-3 text-left">Тип</th>
                         <th class="px-4 py-3 text-left">Статус</th>
+                        {{-- Per-bot flag config.mirror_trades_enabled (default off if missing). --}}
+                        <th class="px-4 py-3 text-left">Зеркало PO</th>
                         <th class="px-4 py-3 text-left">Сделок</th>
                         <th class="px-4 py-3 text-left">Win / Loss</th>
                         <th class="px-4 py-3 text-left">Открыто</th>
@@ -73,6 +75,13 @@
                                     <span class="text-emerald-400">active</span>
                                 @else
                                     <span class="text-zinc-500">inactive</span>
+                                @endif
+                            </td>
+                            <td class="px-4 py-3">
+                                @if($bot->isMirrorTradesEnabled())
+                                    <span class="text-emerald-400">вкл</span>
+                                @else
+                                    <span class="text-zinc-500">выкл</span>
                                 @endif
                             </td>
                             <td class="px-4 py-3 text-zinc-300">{{ $bot->trades_total }}</td>

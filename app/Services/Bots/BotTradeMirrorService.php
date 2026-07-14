@@ -3,9 +3,11 @@
 namespace App\Services\Bots;
 
 use App\Models\BotTrade;
+use App\Models\ProxyEndpoint;
 use App\Models\UserTradingSetting;
-use App\Services\PocketOptionsProxyClient;
 use App\Services\Mirror\MirrorWaitPreviousService;
+use App\Services\PocketOptionsProxyClient;
+use App\Services\ProxyRotationService;
 use App\Support\MirrorProxyMeta;
 use App\Support\PocketMirrorProxy;
 use App\Support\PocketSsidNormalizer;
@@ -50,9 +52,18 @@ class BotTradeMirrorService
             return;
         }
 
-        $user = $trade->bot?->user;
+        $bot = $trade->bot;
+        $user = $bot?->user;
         if (! $user) {
             $this->markMirror($trade, $meta, 'skipped_no_user', null, 'Bot user not found');
+
+            return;
+        }
+
+        // Per-bot выключатель зеркала (настройки бота). Профиль «Включить зеркалирование»
+        // остаётся общим гейтом; этот флаг — поверх него для каждого бота.
+        if ($bot !== null && ! $bot->isMirrorTradesEnabled()) {
+            $this->markMirror($trade, $meta, 'skipped_bot_mirror_disabled', null, null);
 
             return;
         }
@@ -79,12 +90,19 @@ class BotTradeMirrorService
             return;
         }
 
-        $proxyUrl = PocketMirrorProxy::resolveForInstrument((string) $trade->instrument);
-        // Фиксируем, через какой endpoint шли на PO (host + маскированный URL; без пароля).
+        // Пул прокси из профиля (auto / ручной / fallback), фиксируем id для учёта ошибок.
+        $resolved = PocketMirrorProxy::resolveForMirrorEndpoint($settings, (string) $trade->instrument);
+        $proxyUrl = $resolved['url'] ?? null;
+        $proxyEndpointId = $resolved['id'] ?? null;
         $meta = array_merge($meta, MirrorProxyMeta::forTradeMeta($proxyUrl));
+        if ($proxyEndpointId !== null) {
+            $meta['mirror_proxy_endpoint_id'] = (int) $proxyEndpointId;
+        }
 
+        // «Одна сделка на PO»: ждём settle предыдущей executed paper-сделки
+        // (не только expiry), чтобы шаг мартингейла успел обновиться.
         $waitPrevious = app(MirrorWaitPreviousService::class);
-        if ($waitPrevious->shouldSkipMirror($settings, (int) $user->id, (int) $trade->id, $profileSsid, $proxyUrl)) {
+        if ($waitPrevious->shouldSkipMirror($settings, (int) $user->id, (int) $trade->id)) {
             $this->markMirror($trade, $meta, MirrorWaitPreviousService::SKIP_STATUS, null, null);
 
             return;
@@ -132,6 +150,10 @@ class BotTradeMirrorService
         if (($result['ok'] ?? false) && $confirmed) {
             $meta['mirror_ssid_source'] = 'profile';
             $meta['mirror_is_demo'] = (bool) $settings->is_demo;
+            // confirmed_via=send: proxy считает успехом уход openOrder по WS (без successopenOrder).
+            if (isset($result['confirmed_via'])) {
+                $meta['mirror_confirmed_via'] = (string) $result['confirmed_via'];
+            }
             $this->markMirror(
                 $trade,
                 $meta,
@@ -152,6 +174,9 @@ class BotTradeMirrorService
             $error = 'Proxy place-order failed';
         }
 
+        // Connect/WS ошибка через конкретный прокси → тот же учёт, что у ingest (failure_count / dead).
+        $this->recordMirrorProxyConnectivityFailure($proxyEndpointId, $proxyUrl, $error, (string) $trade->instrument);
+
         $this->markMirror(
             $trade,
             $meta,
@@ -160,6 +185,57 @@ class BotTradeMirrorService
             $error,
             $result
         );
+    }
+
+    /**
+     * Пишем failure_count / last_error на endpoint; при пороге — dead (как ingest connect_failed).
+     */
+    private function recordMirrorProxyConnectivityFailure(
+        ?int $proxyEndpointId,
+        ?string $proxyUrl,
+        string $error,
+        string $instrument,
+    ): void {
+        if (! $this->isMirrorProxyConnectivityError($error)) {
+            return;
+        }
+
+        $endpoint = null;
+        if ($proxyEndpointId !== null && $proxyEndpointId > 0) {
+            $endpoint = ProxyEndpoint::query()->find($proxyEndpointId);
+        }
+        if ($endpoint === null) {
+            $endpoint = PocketMirrorProxy::findEndpointByUrl($proxyUrl);
+        }
+        if ($endpoint === null) {
+            return;
+        }
+
+        app(ProxyRotationService::class)->markProxyEndpointFailure(
+            $endpoint,
+            $error,
+            null,
+            null,
+            [
+                'source' => 'mirror',
+                'instrument' => $instrument,
+            ],
+        );
+    }
+
+    /**
+     * Ошибки, при которых виноват/заподозрен HTTP-прокси до Pocket Option WebSocket.
+     */
+    private function isMirrorProxyConnectivityError(string $error): bool
+    {
+        $normalized = mb_strtolower($error);
+
+        return str_contains($normalized, 'connect returned false')
+            || str_contains($normalized, 'pocket option connect error')
+            || str_contains($normalized, 'failed to connect to pocket option')
+            || str_contains($normalized, 'websocket не подключ')
+            || str_contains($normalized, 'not connected after auth')
+            || str_contains($normalized, 'client not connected after auth');
     }
 
     /**
@@ -190,12 +266,6 @@ class BotTradeMirrorService
         $trade->save();
     }
 
-    /**
-     * @param  array<string, mixed>  $meta
-     */
-    /**
-     * @param  array<string, mixed>  $meta
-     */
     /**
      * Длительность ордера на PO: полный expiry_sec сделки (как в paper), без укорочения «остатком» до expiry_time.
      */

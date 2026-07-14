@@ -79,6 +79,22 @@
                 <span class="mt-0.5 block text-[11px] font-normal text-zinc-500">Участвует в плановом <code class="text-zinc-400">bots:scan</code> (cron каждую минуту). Выключенный бот не анализирует пары и не создаёт сигналы/сделки.</span>
             </label>
         </div>
+
+        {{-- Per-bot зеркало: профиль «Включить зеркалирование» — общий гейт; этот чекбокс — по боту.
+             По умолчанию выкл. (нет ключа в config = false). --}}
+        <div class="flex items-start gap-2">
+            <input type="hidden" name="mirror_trades_enabled" value="0">
+            <input type="checkbox" name="mirror_trades_enabled" id="mirror_trades_enabled" value="1"
+                class="mt-0.5 rounded border-zinc-600 bg-zinc-800 text-blue-500"
+                @checked(old('mirror_trades_enabled', $cfg['mirror_trades_enabled'] ?? false))>
+            <label for="mirror_trades_enabled" class="text-sm text-zinc-300">
+                <span class="font-medium text-zinc-200">Включить зеркалирование на PO</span>
+                <span class="mt-0.5 block text-[11px] font-normal text-zinc-500">
+                    Отправлять paper-сделки этого бота на Pocket Option (SSID и сумма — в Профиль → Торговля).
+                    Нужен также общий переключатель зеркала в профиле. По умолчанию выключено.
+                </span>
+            </label>
+        </div>
         @else
         <p class="text-sm text-zinc-500">Этот бот не участвует в плановом сканировании — анализ только по кнопке «Сделать анализ» на графике.</p>
         @endunless
@@ -303,7 +319,7 @@
 
                 <div class="space-y-3 rounded border border-zinc-800 bg-zinc-900/40 p-4">
                     <p class="text-xs font-semibold uppercase tracking-wide text-zinc-500">Фильтры SMC Flow</p>
-                    <input type="hidden" name="smc_three_br_allow_pattern" value="0">
+                        <input type="hidden" name="smc_three_br_allow_pattern" value="0">
                     <label class="flex items-start gap-2">
                         <input type="checkbox" name="smc_three_br_allow_pattern" id="smc_three_br_allow_pattern" value="1"
                             @checked(old('smc_three_br_allow_pattern', $cfg['smc_three_br_allow_pattern'] ?? true))
@@ -312,8 +328,8 @@
                             <span class="text-sm font-medium text-zinc-200">3BR: учитывать pattern (^/¡)</span>
                             <span class="mt-0.5 block text-[11px] font-normal text-zinc-500">Если выкл. — только confirm (?). Pattern даёт больше сигналов, но слабее подтверждение.</span>
                         </span>
-                    </label>
-                    <input type="hidden" name="smc_require_ob" value="0">
+                        </label>
+                        <input type="hidden" name="smc_require_ob" value="0">
                     <label class="flex items-start gap-2">
                         <input type="checkbox" name="smc_require_ob" id="smc_require_ob" value="1"
                             @checked(old('smc_require_ob', $cfg['smc_require_ob'] ?? true))
@@ -322,7 +338,7 @@
                             <span class="text-sm font-medium text-zinc-200">Требовать LuxAlgo Order Block</span>
                             <span class="mt-0.5 block text-[11px] font-normal text-zinc-500">Цена в активной OB-зоне нужной стороны. Выкл. — вход по UT + 3BR без зоны накопления.</span>
                         </span>
-                    </label>
+                        </label>
                 </div>
             </div>
         @elseif ($bot->type === 'openrouter_llm')
@@ -350,12 +366,12 @@
                         <label class="flex items-start gap-2">
                             <input type="checkbox" name="mtf_enabled" id="mtf_enabled" value="1"
                                 class="mt-0.5 rounded border-zinc-600 bg-zinc-800 text-blue-500"
-                                @checked(old('mtf_enabled', $cfg['mtf_enabled'] ?? true))>
+                                   @checked(old('mtf_enabled', $cfg['mtf_enabled'] ?? true))>
                             <span>
                                 <span class="text-xs font-medium text-zinc-300">MTF-контекст (M5/M15/H1)</span>
                                 <span class="mt-0.5 block text-[11px] font-normal text-zinc-500">Модель получает старшие ТФ для bias и структуры. Выкл. — только M1 (быстрее, но больше шума).</span>
                             </span>
-                        </label>
+                            </label>
                         @error('mtf_enabled')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
@@ -463,13 +479,13 @@
                 <div class="space-y-2 text-sm text-zinc-400">
                     <p>
                         <strong class="text-zinc-300">Chart Analyst</strong> —
-                        @if($analystSmcFlowEnabled)
+                    @if($analystSmcFlowEnabled)
                             ручной и Telegram-анализ с снимком SMC Flow в LLM + блок <code class="text-zinc-400">chart_levels</code> для графика.
-                        @else
+                    @else
                             ручной анализ по кнопке «Сделать анализ» на графике (классический MTF без SMC в промпте).
-                        @endif
+                    @endif
                         Paper-сделки и плановый scan <strong>отключены</strong>.
-                    </p>
+                </p>
                     <p class="text-[11px] text-zinc-500">Ответ — текст на русском + уровни для оверлея. История в <code class="text-zinc-400">bot_llm_logs</code>.</p>
                 </div>
 
@@ -864,6 +880,14 @@
                         @error('min_level_strength')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
+                        <label for="max_level_strength" class="block text-xs font-medium text-zinc-400">Макс. сила уровня (0 = выкл.)</label>
+                        <input type="number" name="max_level_strength" id="max_level_strength" min="0" max="100" step="1" required
+                            value="{{ old('max_level_strength', $cfg['max_level_strength'] ?? 0) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        <p class="text-[11px] text-zinc-500">Потолок силы. 90 отсекает «переоптимизированные» уровни с кучей касаний (часто пила). 0 = без потолка.</p>
+                        @error('max_level_strength')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                    <div class="space-y-1">
                         <label for="min_sources" class="block text-xs font-medium text-zinc-400">Мин. источников конфлюенса</label>
                         <input type="number" name="min_sources" id="min_sources" min="1" max="6" required
                             value="{{ old('min_sources', $cfg['min_sources'] ?? 1) }}"
@@ -933,10 +957,10 @@
                     </div>
                     <div class="space-y-1">
                         <label for="h1_flat_strength_extra" class="block text-xs font-medium text-zinc-400">H1 флэт: доп. сила уровня</label>
-                        <input type="number" name="h1_flat_strength_extra" id="h1_flat_strength_extra" min="0" max="15" step="1" required
+                        <input type="number" name="h1_flat_strength_extra" id="h1_flat_strength_extra" min="0" max="40" step="1" required
                             value="{{ old('h1_flat_strength_extra', $cfg['h1_flat_strength_extra'] ?? 4) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-                        <p class="text-[11px] text-zinc-500">Когда H1 во флэте, к min_level_strength добавляется этот запас. 0 = торговать флэт как обычно. 4–5 — умеренно. 8+ — почти нет сигналов во флэте.</p>
+                        <p class="text-[11px] text-zinc-500">Когда H1 во флэте и <em>не</em> включён полный запрет flat — к min_level_strength добавляется этот запас. 15–40 — почти нет сигналов во флэте.</p>
                         @error('h1_flat_strength_extra')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                 </div>
@@ -949,7 +973,16 @@
                                 @checked(old('require_h1_alignment', ($cfg['require_h1_alignment'] ?? false) ? '1' : '') === '1' || (old('require_h1_alignment') === null && ($cfg['require_h1_alignment'] ?? false)))>
                             <span>
                                 <span class="font-medium text-zinc-200">H1 bias не против входа</span>
-                                <span class="mt-0.5 block text-[11px] font-normal text-zinc-500">CALL запрещён при явном H1 down, PUT — при H1 up. Во флэте H1 нужна доп. сила (поле выше). По умолчанию выкл. — больше сигналов.</span>
+                                <span class="mt-0.5 block text-[11px] font-normal text-zinc-500">CALL запрещён при явном H1 down, PUT — при H1 up. Во флэте H1 нужна доп. сила (поле выше), если не включён полный запрет flat.</span>
+                            </span>
+                        </label>
+                        <label class="flex items-start gap-2">
+                            <input type="hidden" name="block_h1_flat" value="0">
+                            <input type="checkbox" name="block_h1_flat" value="1" class="mt-0.5 rounded border-zinc-600 bg-zinc-800 text-blue-500"
+                                @checked(old('block_h1_flat', ($cfg['block_h1_flat'] ?? false) ? '1' : '') === '1' || (old('block_h1_flat') === null && ($cfg['block_h1_flat'] ?? false)))>
+                            <span>
+                                <span class="font-medium text-zinc-200">Запрет входа при H1 = flat</span>
+                                <span class="mt-0.5 block text-[11px] font-normal text-zinc-500">Жёстко: при боковом H1 сделок нет (рекомендуется по статистике — flat давал ~48% WR).</span>
                             </span>
                         </label>
                         <label class="flex items-start gap-2">
@@ -1375,8 +1408,77 @@
                         <input type="number" name="min_body_to_range_ratio" id="min_body_to_range_ratio" min="0" max="1" step="0.01" required
                             value="{{ old('min_body_to_range_ratio', $cfg['min_body_to_range_ratio'] ?? 0) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-                        <p class="text-[11px] text-zinc-500">Средняя |close−open| / (high−low) по серии. 0 = выкл. 0.35–0.5 отсекает «пилу» с длинными тенями. Влияет и на confidence.</p>
+                        <p class="text-[11px] text-zinc-500">Средняя |close−open| / (high−low) по серии. 0 = выкл. Рекомендуется 0.55 — отсекает доджи и «пилу».</p>
                         @error('min_body_to_range_ratio')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                    <div class="space-y-1">
+                        <label for="max_body_to_range_ratio" class="block text-xs font-medium text-zinc-400">Макс. доля тела (0 = выкл.)</label>
+                        <input type="number" name="max_body_to_range_ratio" id="max_body_to_range_ratio" min="0" max="1" step="0.01" required
+                            value="{{ old('max_body_to_range_ratio', $cfg['max_body_to_range_ratio'] ?? 0) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        <p class="text-[11px] text-zinc-500">Верхняя граница средней доли тела. 0.70 отсекает «ракеты» без отката (late entry). 0 = выкл.</p>
+                        @error('max_body_to_range_ratio')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                </div>
+
+                <p class="text-xs font-semibold uppercase tracking-wide text-zinc-500">Откат к EMA/HMA (не входить на голой N-й свече)</p>
+                <div class="space-y-3 rounded border border-zinc-800 bg-zinc-900/40 p-4">
+                    <input type="hidden" name="require_pullback_to_ma" value="0">
+                    <label class="flex items-start gap-2">
+                        <input type="checkbox" name="require_pullback_to_ma" id="require_pullback_to_ma" value="1"
+                            class="mt-0.5 rounded border-zinc-600 bg-zinc-800 text-blue-500"
+                            @checked(old('require_pullback_to_ma', $cfg['require_pullback_to_ma'] ?? false))>
+                        <span>
+                            <span class="text-sm font-medium text-zinc-200">Требовать откат к MA перед входом</span>
+                            <span class="mt-0.5 block text-[11px] font-normal text-zinc-500">
+                                Мягкий фильтр late-entry: в серии N свечей цена должна коснуться зоны EMA/HMA
+                                <em>или</em> не улететь дальше «макс. удаления × ATR» от MA. Без галочки — вход сразу на N-й свече.
+                            </span>
+                        </span>
+                    </label>
+                    <div class="grid gap-4 sm:grid-cols-2">
+                        <div class="space-y-1">
+                            <label for="pullback_bars" class="block text-xs font-medium text-zinc-400">Баров на откат (legacy)</label>
+                            <input type="number" name="pullback_bars" id="pullback_bars" min="1" max="5" required
+                                value="{{ old('pullback_bars', $cfg['pullback_bars'] ?? 2) }}"
+                                class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                            <p class="text-[11px] text-zinc-500">Сохраняется в конфиге; в soft-режиме касание ищется по всей серии streak_len.</p>
+                            @error('pullback_bars')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                        </div>
+                        <div class="space-y-1">
+                            <label for="pullback_ma_type" class="block text-xs font-medium text-zinc-400">Тип MA</label>
+                            @php $pullbackMaType = old('pullback_ma_type', $cfg['pullback_ma_type'] ?? 'ema'); @endphp
+                            <select name="pullback_ma_type" id="pullback_ma_type" required
+                                class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                                <option value="ema" @selected($pullbackMaType === 'ema')>EMA</option>
+                                <option value="hma" @selected($pullbackMaType === 'hma')>HMA (Hull)</option>
+                            </select>
+                            @error('pullback_ma_type')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                        </div>
+                        <div class="space-y-1">
+                            <label for="pullback_ma_length" class="block text-xs font-medium text-zinc-400">Длина MA</label>
+                            <input type="number" name="pullback_ma_length" id="pullback_ma_length" min="2" max="100" required
+                                value="{{ old('pullback_ma_length', $cfg['pullback_ma_length'] ?? 9) }}"
+                                class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                            <p class="text-[11px] text-zinc-500">EMA/HMA(9) на M1 — быстрый откат. 21 — глубже.</p>
+                            @error('pullback_ma_length')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                        </div>
+                        <div class="space-y-1">
+                            <label for="pullback_touch_atr_mult" class="block text-xs font-medium text-zinc-400">Зона касания MA (× ATR)</label>
+                            <input type="number" name="pullback_touch_atr_mult" id="pullback_touch_atr_mult" min="0.05" max="2" step="0.01" required
+                                value="{{ old('pullback_touch_atr_mult', $cfg['pullback_touch_atr_mult'] ?? 0.35) }}"
+                                class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                            <p class="text-[11px] text-zinc-500">Насколько близко low/high к MA считается касанием. 0.5–0.7 — мягче.</p>
+                            @error('pullback_touch_atr_mult')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                        </div>
+                        <div class="space-y-1">
+                            <label for="pullback_max_extension_atr" class="block text-xs font-medium text-zinc-400">Макс. удаление от MA (× ATR)</label>
+                            <input type="number" name="pullback_max_extension_atr" id="pullback_max_extension_atr" min="0.5" max="5" step="0.1" required
+                                value="{{ old('pullback_max_extension_atr', $cfg['pullback_max_extension_atr'] ?? 1.8) }}"
+                                class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                            <p class="text-[11px] text-zinc-500">Если в серии не было касания MA — вход всё равно разрешён, пока цена не дальше этого порога от MA. 2.0–2.5 — мягче.</p>
+                            @error('pullback_max_extension_atr')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                        </div>
                     </div>
                 </div>
 

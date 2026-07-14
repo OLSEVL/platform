@@ -52,46 +52,33 @@
         </div>
     </div>
 
-    <div class="rounded border border-zinc-800">
-        <table class="w-full table-fixed text-xs">
-            <colgroup>
-                <col class="w-[3%]">
-                <col class="w-[7%]">
-                <col class="w-[6%]">
-                <col class="w-[5%]">
-                <col class="w-[7%]">
-                <col class="w-[9%]">
-                <col class="w-[9%]">
-                <col class="w-[5%]">
-                <col class="w-[5%]">
-                <col class="w-[7%]">
-                <col class="w-[7%]">
-                <col class="w-[7%]">
-                <col class="w-[7%]">
-                <col class="w-[7%]">
-                <col class="w-[11%]">
-            </colgroup>
+    <div class="rounded border border-zinc-800 overflow-x-auto">
+        {{-- table-auto: узкие колонки (ID, сторона, сумма, длит., мс) сжимаются по содержимому;
+             широкие (бот, статус, ошибка, datetime) берут только нужное место. --}}
+        <table class="w-max min-w-full text-xs">
             <thead class="bg-zinc-900 text-zinc-400 uppercase text-[10px] leading-tight">
                 <tr>
-                    <th class="px-1.5 py-2 text-left">ID</th>
-                    <th class="px-1.5 py-2 text-left">Бот</th>
-                    <th class="px-1.5 py-2 text-left">Пара</th>
-                    <th class="px-1.5 py-2 text-left">Стор.</th>
-                    <th class="px-1.5 py-2 text-left">Очередь</th>
-                    <th class="px-1.5 py-2 text-left">Поставлена</th>
-                    <th class="px-1.5 py-2 text-left">Выполнена</th>
-                    <th class="px-1.5 py-2 text-left">Длит.</th>
-                    <th class="px-1.5 py-2 text-left">PO, мс</th>
-                    <th class="px-1.5 py-2 text-left">Статус</th>
-                    <th class="px-1.5 py-2 text-left">Прокси</th>
-                    <th class="px-1.5 py-2 text-left">Order</th>
-                    <th class="px-1.5 py-2 text-left">Вход</th>
-                    <th class="px-1.5 py-2 text-left">Эксп.</th>
-                    <th class="px-1.5 py-2 text-left">Ошибка</th>
+                    <th class="px-1.5 py-2 text-left whitespace-nowrap">ID</th>
+                    <th class="px-1.5 py-2 text-left whitespace-nowrap">Бот</th>
+                    <th class="px-1.5 py-2 text-left whitespace-nowrap">Пара</th>
+                    <th class="px-1.5 py-2 text-left whitespace-nowrap">Стор.</th>
+                    <th class="px-1.5 py-2 text-left whitespace-nowrap">Сумма</th>
+                    <th class="px-1.5 py-2 text-left whitespace-nowrap" title="Итог paper-сделки после экспирации">Итог</th>
+                    <th class="px-1.5 py-2 text-left whitespace-nowrap">Очередь</th>
+                    <th class="px-1.5 py-2 text-left whitespace-nowrap">Поставлена</th>
+                    <th class="px-1.5 py-2 text-left whitespace-nowrap">Выполнена</th>
+                    <th class="px-1.5 py-2 text-left whitespace-nowrap">Длит.</th>
+                    <th class="px-1.5 py-2 text-left whitespace-nowrap">PO, мс</th>
+                    <th class="px-1.5 py-2 text-left whitespace-nowrap">Статус</th>
+                    <th class="px-1.5 py-2 text-left whitespace-nowrap">Прокси</th>
+                    <th class="px-1.5 py-2 text-left whitespace-nowrap">Order</th>
+                    <th class="px-1.5 py-2 text-left whitespace-nowrap">Вход</th>
+                    <th class="px-1.5 py-2 text-left whitespace-nowrap">Эксп.</th>
+                    <th class="px-1.5 py-2 text-left whitespace-nowrap" title="Текст ошибки place-order / зеркала">Ош. зеркала</th>
                 </tr>
             </thead>
             <tbody id="mq-trades-body" class="divide-y divide-zinc-800 bg-zinc-950/40">
-                <tr><td colspan="15" class="px-2 py-8 text-center text-zinc-500">Загрузка…</td></tr>
+                <tr><td colspan="17" class="px-2 py-8 text-center text-zinc-500">Загрузка…</td></tr>
             </tbody>
         </table>
     </div>
@@ -132,6 +119,15 @@
         return side ?? '—';
     }
 
+    // Итог paper-сделки: win / loss / draw / ещё не settle.
+    function resultCell(result) {
+        const r = String(result ?? '').toLowerCase();
+        if (r === 'win') return '<span class="text-emerald-400 font-medium whitespace-nowrap">win</span>';
+        if (r === 'loss') return '<span class="text-rose-400 font-medium whitespace-nowrap">loss</span>';
+        if (r === 'draw') return '<span class="text-zinc-400 font-medium whitespace-nowrap">draw</span>';
+        return '<span class="text-zinc-600">—</span>';
+    }
+
     function queueCell(state) {
         const cfg = queueLabels[state] || { text: state, class: 'text-zinc-400' };
         return `<span class="${cfg.class} font-medium">${cfg.text}</span>`;
@@ -147,10 +143,11 @@
         return m + ' м ' + s + ' с';
     }
 
+    // Полный datetime без CSS truncate/ellipsis (колонки Поставлена / Выполнена).
     function timeCell(value, sub) {
         if (!value) return '<span class="text-zinc-600">—</span>';
-        const extra = sub ? `<div class="text-zinc-600 text-[10px]">${escapeHtml(sub)}</div>` : '';
-        return `<span class="text-zinc-300 font-mono text-xs">${escapeHtml(value)}</span>${extra}`;
+        const extra = sub ? `<div class="text-zinc-600 text-[10px] whitespace-nowrap">${escapeHtml(sub)}</div>` : '';
+        return `<span class="text-zinc-300 font-mono text-xs whitespace-nowrap">${escapeHtml(value)}</span>${extra}`;
     }
 
     function renderSummary(s) {
@@ -194,35 +191,43 @@
 
     function renderTrades(trades) {
         if (!trades.length) {
-            tradesBody.innerHTML = '<tr><td colspan="15" class="px-4 py-8 text-center text-zinc-500">За последние 6 ч сделок нет.</td></tr>';
+            tradesBody.innerHTML = '<tr><td colspan="17" class="px-4 py-8 text-center text-zinc-500">За последние 6 ч сделок нет.</td></tr>';
             return;
         }
         const newIds = new Set(trades.map(t => t.id));
         tradesBody.innerHTML = trades.map(t => {
             const isNew = !lastTradeIds.has(t.id);
-            const err = t.mirror_error ? `<span class="text-rose-300" title="${escapeAttr(t.mirror_error)}">${escapeHtml(t.mirror_error.slice(0, 40))}${t.mirror_error.length > 40 ? '…' : ''}</span>` : '—';
+            const err = t.mirror_error
+                ? `<span class="text-rose-300" title="${escapeAttr(t.mirror_error)}">${escapeHtml(t.mirror_error)}</span>`
+                : '—';
             const proxyTitle = t.mirror_proxy_url ? escapeAttr(t.mirror_proxy_url) : '';
             const proxyCell = t.mirror_proxy_direct
                 ? '<span class="text-rose-400 font-medium" title="Прямое подключение с IP сервера">direct</span>'
                 : (t.mirror_proxy_host
                     ? `<span class="font-mono text-emerald-400/90" title="${proxyTitle}">${escapeHtml(t.mirror_proxy_host)}</span>`
                     : '<span class="text-zinc-600">—</span>');
+            // Сумма на PO из meta.mirror_amount (шаг мартингейла на момент place-order).
+            const amountLabel = t.mirror_amount_label && t.mirror_amount_label !== '—'
+                ? escapeHtml(t.mirror_amount_label)
+                : (t.mirror_amount != null ? '$' + Number(t.mirror_amount) : '—');
             return `<tr class="hover:bg-zinc-900/50 ${isNew ? 'bg-sky-950/20' : ''}">
-                <td class="px-1.5 py-1.5 font-mono text-zinc-400 truncate">#${t.id}</td>
-                <td class="px-1.5 py-1.5 text-zinc-200 truncate" title="${escapeAttr(t.bot_name)}">${escapeHtml(t.bot_name)}</td>
-                <td class="px-1.5 py-1.5 font-mono text-zinc-300 truncate">${escapeHtml(t.instrument)}</td>
-                <td class="px-1.5 py-1.5 whitespace-nowrap">${sideLabel(t.side)}</td>
-                <td class="px-1.5 py-1.5">${queueCell(t.queue_state)}</td>
-                <td class="px-1.5 py-1.5 truncate">${timeCell(t.job_queued_at, t.job_started_at ? 'старт ' + t.job_started_at : '')}</td>
-                <td class="px-1.5 py-1.5 truncate">${timeCell(t.job_finished_at)}</td>
-                <td class="px-1.5 py-1.5 text-zinc-400 font-mono whitespace-nowrap">${formatDuration(t.job_duration_sec)}</td>
-                <td class="px-1.5 py-1.5 font-mono whitespace-nowrap ${t.mirror_latency_ms != null && t.mirror_latency_ms < 5000 ? 'text-emerald-400' : 'text-amber-300'}">${t.mirror_latency_ms != null ? t.mirror_latency_ms : '—'}</td>
-                <td class="px-1.5 py-1.5 text-zinc-500 truncate">${escapeHtml(t.mirror_status || '—')}</td>
-                <td class="px-1.5 py-1.5 truncate">${proxyCell}</td>
-                <td class="px-1.5 py-1.5 font-mono text-zinc-400 truncate">${escapeHtml(t.pocket_order_id ? String(t.pocket_order_id).slice(0, 10) + '…' : '—')}</td>
-                <td class="px-1.5 py-1.5 text-zinc-500 truncate">${t.entry_time ?? '—'}</td>
-                <td class="px-1.5 py-1.5 text-zinc-500 truncate">${t.expiry_time ?? '—'}</td>
-                <td class="px-1.5 py-1.5 truncate">${err}</td>
+                <td class="px-1 py-1.5 font-mono text-zinc-400 whitespace-nowrap">#${t.id}</td>
+                <td class="px-1.5 py-1.5 text-zinc-200 whitespace-nowrap">${escapeHtml(t.bot_name)}</td>
+                <td class="px-1.5 py-1.5 font-mono text-zinc-300 whitespace-nowrap">${escapeHtml(t.instrument)}</td>
+                <td class="px-1 py-1.5 whitespace-nowrap">${sideLabel(t.side)}</td>
+                <td class="px-1 py-1.5 font-mono text-amber-200/90 whitespace-nowrap" title="Сумма ордера на PO">${amountLabel}</td>
+                <td class="px-1 py-1.5 whitespace-nowrap" title="Итог paper-сделки">${resultCell(t.result)}</td>
+                <td class="px-1.5 py-1.5 whitespace-nowrap">${queueCell(t.queue_state)}</td>
+                <td class="px-1.5 py-1.5 whitespace-nowrap">${timeCell(t.job_queued_at, t.job_started_at ? 'старт ' + t.job_started_at : '')}</td>
+                <td class="px-1.5 py-1.5 whitespace-nowrap">${timeCell(t.job_finished_at)}</td>
+                <td class="px-1 py-1.5 text-zinc-400 font-mono whitespace-nowrap">${formatDuration(t.job_duration_sec)}</td>
+                <td class="px-1 py-1.5 font-mono whitespace-nowrap ${t.mirror_latency_ms != null && t.mirror_latency_ms < 5000 ? 'text-emerald-400' : 'text-amber-300'}">${t.mirror_latency_ms != null ? t.mirror_latency_ms : '—'}</td>
+                <td class="px-1.5 py-1.5 text-zinc-500 font-mono whitespace-nowrap">${escapeHtml(t.mirror_status || '—')}</td>
+                <td class="px-1.5 py-1.5 whitespace-nowrap">${proxyCell}</td>
+                <td class="px-1 py-1.5 font-mono text-zinc-400 whitespace-nowrap" title="${escapeAttr(t.pocket_order_id || '')}">${escapeHtml(t.pocket_order_id ? String(t.pocket_order_id).slice(0, 10) + '…' : '—')}</td>
+                <td class="px-1.5 py-1.5 text-zinc-500 whitespace-nowrap">${t.entry_time ?? '—'}</td>
+                <td class="px-1.5 py-1.5 text-zinc-500 whitespace-nowrap">${t.expiry_time ?? '—'}</td>
+                <td class="px-1.5 py-1.5 text-zinc-300 max-w-[28rem]">${err}</td>
             </tr>`;
         }).join('');
         lastTradeIds = newIds;

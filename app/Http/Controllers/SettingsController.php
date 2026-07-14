@@ -8,6 +8,7 @@ use App\Services\CurrentCandleCacheService;
 use App\Services\DataCleanupService;
 use App\Services\ProxyDiagnosticsService;
 use App\Services\ProxyRotationService;
+use App\Support\BotScanCoordinator;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Client\RequestException;
 use Illuminate\Support\Facades\DB;
@@ -56,6 +57,10 @@ class SettingsController extends Controller
                 'dead' => ProxyEndpoint::query()->where('status', ProxyEndpoint::STATUS_DEAD)->count(),
             ],
             'dataAutoCleanupRetentionHours' => app(DataCleanupService::class)->getAutoCleanupRetentionHours(),
+            // Watchdog bots:scan — порог wall-time и снимок живых процессов.
+            'scanWatchdogMaxElapsedSec' => BotScanCoordinator::getScanMaxElapsedSec(),
+            'scanWatchdogAllowedElapsedSec' => BotScanCoordinator::ALLOWED_WATCHDOG_MAX_ELAPSED_SEC,
+            'scanWatchdogRunning' => BotScanCoordinator::runningScanStatusRows(),
         ]);
     }
 
@@ -253,6 +258,28 @@ class SettingsController extends Controller
         return back()->with('success', 'Прокси возвращён в active-пул.');
     }
 
+    /**
+     * Ручная пометка прокси dead в таблице пула на /settings.
+     */
+    public function markProxyDead(ProxyEndpoint $proxy, ProxyRotationService $proxyRotation)
+    {
+        $result = $proxyRotation->markProxyDeadManually($proxy);
+
+        if ($result['already_dead']) {
+            return back()->with('success', 'Прокси уже в статусе dead.');
+        }
+
+        $message = 'Прокси помечен как dead.';
+        if ($result['rotated'] > 0) {
+            $message .= " Переназначено инструментов: {$result['rotated']}.";
+        }
+        if ($result['instruments_left'] > 0) {
+            $message .= " Осталось на dead без замены: {$result['instruments_left']} (нет свободных слотов).";
+        }
+
+        return back()->with('success', $message);
+    }
+
     public function reactivateAllProblemProxies()
     {
         // Реанимируем dead → active и сразу обнуляем счётчик/ошибки у каждого такого endpoint.
@@ -302,6 +329,27 @@ class SettingsController extends Controller
                 : 'Автоматическая очистка по крону: удалять данные старше '
                     .$dataCleanup->autoCleanupRetentionLabel($hours)
                     .' (команда data:auto-cleanup, каждый час).',
+        );
+    }
+
+    /**
+     * Порог wall-time для bots:scan-watchdog (убить зависший scan и перезапустить).
+     */
+    public function updateScanWatchdog(\Illuminate\Http\Request $request): \Illuminate\Http\RedirectResponse
+    {
+        $allowed = BotScanCoordinator::ALLOWED_WATCHDOG_MAX_ELAPSED_SEC;
+        $validated = $request->validate([
+            'scan_watchdog_max_elapsed_sec' => 'required|integer|in:'.implode(',', $allowed),
+        ]);
+
+        $sec = (int) $validated['scan_watchdog_max_elapsed_sec'];
+        BotScanCoordinator::setScanMaxElapsedSec($sec);
+
+        return back()->with(
+            'success',
+            'Watchdog bots:scan: убивать процесс дольше '
+                .BotScanCoordinator::scanMaxElapsedLabel($sec)
+                .' (команда bots:scan-watchdog каждые 5 мин).',
         );
     }
 

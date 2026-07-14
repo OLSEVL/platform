@@ -80,6 +80,14 @@
             @error('min_level_strength')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
         </div>
         <div class="space-y-1">
+            <label for="max_level_strength" class="block text-xs font-medium text-zinc-400">Макс. сила уровня (0 = выкл.)</label>
+            <input type="number" name="max_level_strength" id="max_level_strength" min="0" max="100" step="1" required
+                value="{{ old('max_level_strength', $cfg['max_level_strength'] ?? 0) }}"
+                class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+            <p class="text-[11px] text-zinc-500">Потолок силы. Рекомендуется 90 — уровни 90+ статистически хуже. 0 = без потолка.</p>
+            @error('max_level_strength')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+        </div>
+        <div class="space-y-1">
             <label for="min_sources" class="block text-xs font-medium text-zinc-400">Мин. источников конфлюенса</label>
             <input type="number" name="min_sources" id="min_sources" min="1" max="6" required
                 value="{{ old('min_sources', $cfg['min_sources'] ?? 1) }}"
@@ -105,10 +113,10 @@
         </div>
         <div class="space-y-1">
             <label for="h1_flat_strength_extra" class="block text-xs font-medium text-zinc-400">H1 флэт: доп. сила уровня</label>
-            <input type="number" name="h1_flat_strength_extra" id="h1_flat_strength_extra" min="0" max="15" step="1" required
+            <input type="number" name="h1_flat_strength_extra" id="h1_flat_strength_extra" min="0" max="40" step="1" required
                 value="{{ old('h1_flat_strength_extra', $cfg['h1_flat_strength_extra'] ?? 4) }}"
                 class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-            <p class="text-[11px] text-zinc-500">Когда H1 во флэте и включён H1-фильтр — к min_level_strength добавляется этот запас.</p>
+            <p class="text-[11px] text-zinc-500">Когда H1 во флэте и включён H1-фильтр (без полного запрета flat) — к min_level_strength добавляется этот запас.</p>
             @error('h1_flat_strength_extra')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
         </div>
     </div>
@@ -124,6 +132,9 @@
             @error('bounce_min_wick_ratio_m5')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
         </div>
     </div>
+    {{-- Нужен хотя бы один из M5/M1; иначе анализатор всегда возвращает null. --}}
+    <p class="text-[11px] text-amber-400/90">Важно: нельзя выключать и M5 rejection, и M1 разворот одновременно — бот перестанет давать сигналы.</p>
+    @error('m1_reversal_enabled')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
     <div class="space-y-3 rounded border border-zinc-800 bg-zinc-900/40 p-4">
         <input type="hidden" name="m5_rejection_enabled" value="0">
         <label class="flex items-start gap-2">
@@ -214,6 +225,16 @@
             <span>
                 <span class="text-sm font-medium text-zinc-200">H1 bias не против входа</span>
                 <span class="mt-0.5 block text-[11px] font-normal text-zinc-500">CALL запрещён при H1 down, PUT — при H1 up. По умолчанию выкл.</span>
+            </span>
+        </label>
+        <input type="hidden" name="block_h1_flat" value="0">
+        <label class="flex items-start gap-2">
+            <input type="checkbox" name="block_h1_flat" id="block_h1_flat_crc" value="1"
+                class="mt-0.5 rounded border-zinc-600 bg-zinc-800 text-blue-500"
+                @checked((bool) old('block_h1_flat', $cfg['block_h1_flat'] ?? false))>
+            <span>
+                <span class="text-sm font-medium text-zinc-200">Запрет входа при H1 = flat</span>
+                <span class="mt-0.5 block text-[11px] font-normal text-zinc-500">При боковом H1 сделок нет. Жёстче, чем «доп. сила во флэте».</span>
             </span>
         </label>
     </div>

@@ -57,15 +57,19 @@ class StrongLevelAnalyzer
             $entryMode = 'both';
         }
         $minStrength = max(40.0, min(95.0, (float) ($cfg['min_level_strength'] ?? 68.0)));
+        // 0 = без верхней границы; иначе отсекаем «переоптимизированные» уровни (часто пила на 90+).
+        $maxStrength = max(0.0, min(100.0, (float) ($cfg['max_level_strength'] ?? 0.0)));
         $minSources = max(1, min(6, (int) ($cfg['min_sources'] ?? 2)));
         $clusterAtrMult = max(0.05, min(1.0, (float) ($cfg['cluster_atr_mult_m5'] ?? 0.20)));
         $touchAtrMult = max(0.05, min(1.5, (float) ($cfg['touch_atr_mult_m1'] ?? 0.35)));
         $requireH1Alignment = (bool) ($cfg['require_h1_alignment'] ?? true);
+        // Жёсткий запрет входов при боковом H1 (сильнее, чем h1_flat_strength_extra).
+        $blockH1Flat = (bool) ($cfg['block_h1_flat'] ?? false);
         $bounceMinWickM5 = max(0.15, min(0.80, (float) ($cfg['bounce_min_wick_ratio_m5'] ?? 0.28)));
         // При false — для отскока достаточно M5 rejection, M1 может быть нейтральной (больше сигналов на OTC).
         $bounceRequireM1Confirm = (bool) ($cfg['bounce_require_m1_confirm'] ?? true);
-        // Доп. порог силы уровня во флэте H1 (раньше жёстко +8 — почти всегда отсекало 2-source кластеры).
-        $h1FlatStrengthExtra = max(0.0, min(15.0, (float) ($cfg['h1_flat_strength_extra'] ?? 5.0)));
+        // Доп. порог силы уровня во флэте H1 (если block_h1_flat выкл.). До 40 — почти нет сигналов во флэте.
+        $h1FlatStrengthExtra = max(0.0, min(40.0, (float) ($cfg['h1_flat_strength_extra'] ?? 5.0)));
         $breakoutRequireRetest = (bool) ($cfg['breakout_require_retest'] ?? true);
         $breakoutVolAboveSma = (bool) ($cfg['breakout_vol_above_sma'] ?? true);
         $expiryBounce = max(120, min(600, (int) ($cfg['expiry_sec_bounce'] ?? 180)));
@@ -122,6 +126,10 @@ class StrongLevelAnalyzer
             if ($cluster['strength'] < $minStrength) {
                 continue;
             }
+            // Верхний потолок силы: слишком «идеальные» уровни с кучей касаний часто = пила.
+            if ($maxStrength > 0.0 && $cluster['strength'] > $maxStrength) {
+                continue;
+            }
             if (count($cluster['sources']) < $minSources) {
                 continue;
             }
@@ -137,6 +145,9 @@ class StrongLevelAnalyzer
         }
 
         $h1Bias = $this->detectH1Bias($h1);
+        if ($blockH1Flat && $h1Bias === 'flat' && count($h1) >= 10) {
+            return null;
+        }
         if ($requireH1Alignment && $h1Bias === 'flat' && count($h1) >= 10) {
             // Во флэте H1 — только уровни чуть сильнее порога (настраивается h1_flat_strength_extra).
             if ($nearest['strength'] < $minStrength + $h1FlatStrengthExtra) {

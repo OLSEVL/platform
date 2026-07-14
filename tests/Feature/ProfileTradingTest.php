@@ -24,7 +24,8 @@ class ProfileTradingTest extends TestCase
         $this->actingAs($user)
             ->get(route('profile.trading.edit'))
             ->assertOk()
-            ->assertSee('Включить зеркалирование');
+            ->assertSee('Включить зеркалирование')
+            ->assertSee('Прокси зеркала');
 
         $ssid = '42["auth",{"session":"abc","uid":1,"isDemo":1,"platform":2}]';
 
@@ -55,6 +56,64 @@ class ProfileTradingTest extends TestCase
         $this->assertTrue($settings->mirror_wait_previous_settled);
         $this->assertStringContainsString('42["auth"', (string) $settings->pocket_ssid);
         $this->assertTrue($settings->canMirrorTrades());
+    }
+
+    public function test_user_can_manage_mirror_proxy_pool(): void
+    {
+        $user = User::factory()->create();
+        $proxyA = \App\Models\ProxyEndpoint::query()->create([
+            'url' => 'http://u:p@127.0.0.1:7001',
+            'status' => \App\Models\ProxyEndpoint::STATUS_ACTIVE,
+            'failure_count' => 2,
+        ]);
+        \App\Models\ProxyEndpoint::query()->create([
+            'url' => 'http://u:p@127.0.0.1:7002',
+            'status' => \App\Models\ProxyEndpoint::STATUS_DEAD,
+        ]);
+
+        $this->actingAs($user)
+            ->get(route('profile.mirror-proxies.edit'))
+            ->assertOk()
+            ->assertSee('Прокси для зеркала')
+            ->assertSee('Авто: минимальная нагрузка')
+            ->assertSee('127.0.0.1')
+            ->assertDontSee(':7002');
+
+        $this->actingAs($user)
+            ->put(route('profile.mirror-proxies.update'), [
+                'mirror_proxy_endpoint_ids' => [$proxyA->id],
+            ])
+            ->assertRedirect(route('profile.mirror-proxies.edit'))
+            ->assertSessionHas('status');
+
+        $settings = UserTradingSetting::query()->where('user_id', $user->id)->first();
+        $this->assertSame([(int) $proxyA->id], $settings?->mirrorProxyEndpointIds());
+        $this->assertFalse((bool) $settings?->mirror_proxy_auto);
+
+        $this->actingAs($user)
+            ->put(route('profile.mirror-proxies.update'), [
+                'mirror_proxy_auto' => '1',
+            ])
+            ->assertRedirect(route('profile.mirror-proxies.edit'));
+
+        $settings->refresh();
+        $this->assertTrue((bool) $settings->mirror_proxy_auto);
+        // Ручной пул не затирается при включении авто (disabled checkboxes).
+        $this->assertSame([(int) $proxyA->id], $settings->mirrorProxyEndpointIds());
+
+        // После включения авто в колонке видны кандидаты min-нагрузки.
+        $this->actingAs($user)
+            ->get(route('profile.mirror-proxies.edit'))
+            ->assertOk()
+            ->assertSee('title="Сейчас в пуле минимальной нагрузки"', false);
+
+        // Симулируем auto-выбор — на странице должна появиться метка «последний».
+        \App\Support\PocketMirrorProxy::rememberAutoPick($settings, (int) $proxyA->id);
+        $this->actingAs($user)
+            ->get(route('profile.mirror-proxies.edit'))
+            ->assertOk()
+            ->assertSee('последний')
+            ->assertSee('Последний авто-выбор');
     }
 
     public function test_reset_martingale_button(): void

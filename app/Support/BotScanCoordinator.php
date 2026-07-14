@@ -15,8 +15,28 @@ use Illuminate\Support\Facades\Schema;
  */
 final class BotScanCoordinator
 {
+    /** Ключ app_settings: порог wall-time (сек) для bots:scan-watchdog. */
+    public const SETTING_KEY_SCAN_WATCHDOG_MAX_ELAPSED_SEC = 'bots_scan_watchdog_max_elapsed_sec';
+
     /** Длинный scan не должен терять lock mid-run (до 6 ч). */
     public const LOCK_TTL_SEC = 21600;
+
+    /**
+     * Дефолтный потолок wall-time одного bots:scan --bot_id=N (если нет app_settings).
+     * Нормальный цикл Strong Level ~2–10 мин; 60+ мин = зависший процесс.
+     * Важно: isScanRunning() смотрит только на живой PID — без reap dispatch
+     * вечно пропускает бота (кейс #17: 31ч при 70%+ CPU).
+     */
+    public const SCAN_MAX_ELAPSED_SEC = 3600;
+
+    /** Допустимые пороги для UI /settings (минуты → секунды). */
+    public const ALLOWED_WATCHDOG_MAX_ELAPSED_SEC = [
+        900,   // 15 мин
+        1800,  // 30 мин
+        3600,  // 60 мин
+        5400,  // 90 мин
+        7200,  // 2 ч
+    ];
 
     /** Lock для ручного прохода всех ботов в одном процессе (без --bot_id). */
     public const ALL_BOTS_LOCK = 'bots:scan:all';
@@ -221,5 +241,116 @@ final class BotScanCoordinator
         }
 
         return $out;
+    }
+
+    /**
+     * Порог watchdog из app_settings (или SCAN_MAX_ELAPSED_SEC).
+     */
+    public static function getScanMaxElapsedSec(): int
+    {
+        if (! Schema::hasTable('app_settings')) {
+            return self::SCAN_MAX_ELAPSED_SEC;
+        }
+
+        $raw = DB::table('app_settings')
+            ->where('key', self::SETTING_KEY_SCAN_WATCHDOG_MAX_ELAPSED_SEC)
+            ->value('value');
+
+        if ($raw === null || trim((string) $raw) === '') {
+            return self::SCAN_MAX_ELAPSED_SEC;
+        }
+
+        $sec = (int) $raw;
+
+        return in_array($sec, self::ALLOWED_WATCHDOG_MAX_ELAPSED_SEC, true)
+            ? $sec
+            : self::SCAN_MAX_ELAPSED_SEC;
+    }
+
+    public static function setScanMaxElapsedSec(int $seconds): void
+    {
+        $value = in_array($seconds, self::ALLOWED_WATCHDOG_MAX_ELAPSED_SEC, true)
+            ? $seconds
+            : self::SCAN_MAX_ELAPSED_SEC;
+
+        DB::table('app_settings')->updateOrInsert(
+            ['key' => self::SETTING_KEY_SCAN_WATCHDOG_MAX_ELAPSED_SEC],
+            [
+                'value' => (string) $value,
+                'updated_at' => now(),
+                'created_at' => now(),
+            ],
+        );
+    }
+
+    /** Подпись для UI: «60 мин». */
+    public static function scanMaxElapsedLabel(?int $seconds = null): string
+    {
+        $sec = $seconds ?? self::getScanMaxElapsedSec();
+        $min = (int) round($sec / 60);
+
+        return $min.' мин';
+    }
+
+    /**
+     * Снимок живых scan для страницы /settings.
+     *
+     * @return list<array{pid:int,bot_id:?int,elapsed_sec:?int,cpu_percent:?float,stale:bool}>
+     */
+    public static function runningScanStatusRows(): array
+    {
+        $maxElapsed = self::getScanMaxElapsedSec();
+        $rows = [];
+        foreach (self::listRunningScans() as $row) {
+            $pid = (int) $row['pid'];
+            $metrics = ArtisanProcessFinder::readPidMetrics($pid);
+            $elapsed = $metrics['elapsed_sec'] ?? null;
+            $rows[] = [
+                'pid' => $pid,
+                'bot_id' => $row['bot_id'] ?? null,
+                'elapsed_sec' => $elapsed,
+                'cpu_percent' => $metrics['cpu_percent'] ?? null,
+                'stale' => is_int($elapsed) && $elapsed >= $maxElapsed,
+            ];
+        }
+
+        return $rows;
+    }
+
+    /**
+     * Убивает зависшие scan-процессы (wall-time > $maxElapsedSec) и чистит их locks.
+     *
+     * @return list<array{pid:int,bot_id:?int,elapsed_sec:int,reason:string}>
+     */
+    public static function reapStaleScans(?int $maxElapsedSec = null): array
+    {
+        $maxElapsedSec ??= self::getScanMaxElapsedSec();
+        $reaped = [];
+
+        foreach (self::listRunningScans() as $row) {
+            $pid = (int) $row['pid'];
+            $metrics = ArtisanProcessFinder::readPidMetrics($pid);
+            $elapsed = (int) ($metrics['elapsed_sec'] ?? 0);
+            if ($elapsed < $maxElapsedSec) {
+                continue;
+            }
+
+            $botId = $row['bot_id'] ?? null;
+            ArtisanProcessFinder::terminatePids([$pid]);
+            if (is_int($botId)) {
+                self::clearLock(self::botLockName($botId));
+            } else {
+                self::clearLock(self::ALL_BOTS_LOCK);
+            }
+
+            $reaped[] = [
+                'pid' => $pid,
+                'bot_id' => $botId,
+                'elapsed_sec' => $elapsed,
+                'reason' => 'max_elapsed',
+            ];
+        }
+
+        return $reaped;
     }
 }

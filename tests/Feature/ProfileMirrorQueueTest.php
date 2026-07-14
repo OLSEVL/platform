@@ -50,7 +50,12 @@ class ProfileMirrorQueueTest extends TestCase
             'entry_time' => now(),
             'expiry_time' => now()->addMinute(),
             'entry_price' => 1.05,
-            'meta_json' => ['mirror_status' => 'executed', 'pocket_order_id' => 'abc'],
+            'meta_json' => [
+                'mirror_status' => 'executed',
+                'pocket_order_id' => 'abc',
+                'mirror_amount' => 4.0,
+                'martingale_step_used' => 1,
+            ],
         ]);
 
         MirrorBotTradeJob::dispatch($trade->id + 1);
@@ -58,7 +63,10 @@ class ProfileMirrorQueueTest extends TestCase
         $this->actingAs($user)
             ->get(route('profile.mirror-queue.index'))
             ->assertOk()
-            ->assertSee('Очередь зеркалирования');
+            ->assertSee('Очередь зеркалирования')
+            ->assertSee('Сумма')
+            ->assertSee('Итог')
+            ->assertSee('Ош. зеркала');
 
         $response = $this->actingAs($user)
             ->getJson(route('profile.mirror-queue.data'))
@@ -72,5 +80,8 @@ class ProfileMirrorQueueTest extends TestCase
 
         $this->assertTrue($response->json('summary.mirror_enabled'));
         $this->assertNotEmpty($response->json('trades'));
+        $this->assertSame(4.0, (float) $response->json('trades.0.mirror_amount'));
+        $this->assertSame('$4', $response->json('trades.0.mirror_amount_label'));
+        $this->assertSame(BotTrade::RESULT_PENDING, $response->json('trades.0.result'));
     }
 }

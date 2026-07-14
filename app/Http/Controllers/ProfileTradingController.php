@@ -162,7 +162,7 @@ class ProfileTradingController extends Controller
         $flash = 'Настройки торговли сохранены.';
         if ($settings->mirror_trades_enabled && self::ssidIsReady($settings) && ! app()->runningUnitTests()) {
             $ssid = PocketSsidNormalizer::normalize((string) $settings->pocket_ssid, (bool) $settings->is_demo);
-            $proxyUrl = PocketMirrorProxy::resolveForInstrument(null);
+            $proxyUrl = PocketMirrorProxy::resolveForMirror($settings);
             try {
                 $auth = app(PocketOptionsProxyClient::class)->testAuth((string) $ssid, (bool) $settings->is_demo, $proxyUrl);
             } catch (\Throwable $e) {
@@ -232,7 +232,7 @@ class ProfileTradingController extends Controller
             ], 422);
         }
 
-        $proxyUrl = PocketMirrorProxy::resolveForInstrument(null);
+        $proxyUrl = PocketMirrorProxy::resolveForMirror($settings);
 
         try {
             $result = $proxy->testAuth($ssid, $isDemo, $proxyUrl);
