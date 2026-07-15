@@ -30,7 +30,8 @@ class BotScanCoordinatorTest extends TestCase
         $this->assertTrue(BotScanCoordinator::cmdlineMatchesScan($cmd16, 16));
         $this->assertFalse(BotScanCoordinator::cmdlineMatchesScan($cmd16, 11));
         $this->assertTrue(BotScanCoordinator::cmdlineMatchesScan($cmdAll, null));
-        $this->assertFalse(BotScanCoordinator::cmdlineMatchesScan($cmd11, null));
+        // null = все scan, включая per-bot (нужно watchdog'у для reap).
+        $this->assertTrue(BotScanCoordinator::cmdlineMatchesScan($cmd11, null));
         $this->assertFalse(BotScanCoordinator::cmdlineMatchesScan($cmdDispatch, null));
     }
 

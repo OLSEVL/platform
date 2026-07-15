@@ -112,8 +112,10 @@ final class BotScanCoordinator
             return $cmdBotId === $botId;
         }
 
-        // «Полный» scan без --bot_id (legacy / ручной проход всех ботов в одном процессе).
-        return $cmdBotId === null;
+        // Watchdog / список всех scan: и per-bot (--bot_id=N), и legacy без --bot_id.
+        // Раньше при null возвращали только legacy → зависшие --bot_id=N никогда не reap'ились
+        // (isScanRunning(N)=true → dispatch skip, сделки на платформе останавливались).
+        return true;
     }
 
     /**
