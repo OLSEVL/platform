@@ -113,7 +113,7 @@ class ProfileTradingTest extends TestCase
             ->get(route('profile.mirror-proxies.edit'))
             ->assertOk()
             ->assertSee('последний')
-            ->assertSee('Последний авто-выбор');
+            ->assertSee('Sticky / последний авто-выбор');
     }
 
     public function test_reset_martingale_button(): void

@@ -6,22 +6,28 @@
     <div>
         <h2 class="text-lg font-medium text-slate-100">Прокси для зеркала</h2>
         <p class="mt-1 text-sm text-zinc-400">
-            Ручной пул: случайный из отмеченных. Авто: каждый раз берётся active-прокси
-            с минимальным числом пар (нагрузка). Dead в список не попадают.
+            Ручной пул: sticky из отмеченных (до dead). Авто: sticky least-loaded
+            (новый прокси только если текущий dead). Dead в список не попадают.
         </p>
         @if ($mirrorProxyAuto && $autoLastId > 0 && $autoLastAt)
             <p class="mt-2 text-xs text-emerald-400/90">
-                Последний авто-выбор:
+                Sticky / последний авто-выбор:
                 <span class="font-mono">#{{ $autoLastId }}</span>
                 · {{ $autoLastAt->timezone(config('app.timezone'))->format('d.m.Y H:i:s') }}
             </p>
         @elseif ($mirrorProxyAuto)
             <p class="mt-2 text-xs text-zinc-500">
                 Авто включён: подсвечены кандидаты с минимальной нагрузкой.
-                Фактический выбор появится после первого зеркала / теста SSID.
+                Sticky закрепится после прогрева / первого зеркала.
             </p>
         @endif
     </div>
+
+    @include('profile._mirror-warm-status', ['mirrorWarmStatus' => $mirrorWarmStatus ?? []])
+
+    @if (session('status'))
+        <p class="text-sm text-emerald-400">{{ session('status') }}</p>
+    @endif
 
     @if ($errors->any())
         <div class="rounded border border-rose-800 bg-rose-950/40 px-4 py-3 text-sm text-rose-300">
@@ -46,8 +52,8 @@
             <span>
                 <span class="font-medium">Авто: минимальная нагрузка</span>
                 <span class="mt-0.5 block text-[11px] font-normal text-zinc-500">
-                    Берётся active-прокси с наименьшим числом пар. Ручные галочки при этом недоступны;
-                    в колонке «Авто» видно кандидатов и фактические выборы.
+                    Берётся active-прокси с наименьшей нагрузкой и держится (sticky),
+                    пока не станет dead. Ручные галочки при этом недоступны.
                 </span>
             </span>
         </label>

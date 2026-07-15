@@ -54,7 +54,8 @@ class BotTradeMirrorProfileOnlyTest extends TestCase
             'name' => 'T',
             'type' => 'three_candles_in_row',
             'is_active' => true,
-            'config' => [],
+            // Per-bot зеркало по умолчанию выкл — явно включаем для теста SSID профиля.
+            'config' => ['mirror_trades_enabled' => true],
         ]);
 
         $entry = Carbon::now('UTC');

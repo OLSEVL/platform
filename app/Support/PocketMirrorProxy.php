@@ -9,7 +9,7 @@ use Illuminate\Support\Carbon;
 
 /**
  * Прокси для WebSocket Pocket Option (зеркало сделок).
- * Режимы: авто (min нагрузка), ручной пул (случайный), fallback на прокси пары.
+ * Режимы: авто (sticky least-loaded до dead), ручной пул (sticky до dead), fallback на прокси пары.
  */
 class PocketMirrorProxy
 {
@@ -18,8 +18,8 @@ class PocketMirrorProxy
 
     /**
      * Прокси для зеркала:
-     * 1) авто — active с минимальным числом инструментов;
-     * 2) случайный из отмеченных в профиле;
+     * 1) авто — sticky last active, иначе min нагрузка;
+     * 2) ручной пул — sticky last из пула, иначе случайный;
      * 3) прокси пары / первый active.
      */
     public static function resolveForMirror(
@@ -39,6 +39,12 @@ class PocketMirrorProxy
         ?string $instrument = null,
     ): array {
         if ($settings !== null && (bool) $settings->mirror_proxy_auto) {
+            // Sticky warm: пока last endpoint active — не прыгаем на новый (избегаем cold start).
+            $sticky = self::peekStickyEndpoint($settings);
+            if ($sticky !== null) {
+                return $sticky;
+            }
+
             $picked = self::pickLeastLoadedActive();
             if ($picked !== null) {
                 self::rememberAutoPick($settings, (int) $picked['id']);
@@ -50,12 +56,75 @@ class PocketMirrorProxy
             }
         }
 
+        if ($settings !== null) {
+            $stickyPool = self::peekStickyEndpoint($settings);
+            if ($stickyPool !== null) {
+                return $stickyPool;
+            }
+        }
+
         $fromPool = self::randomEndpointFromUserPool($settings);
         if ($fromPool !== null) {
+            if ($settings !== null && ($fromPool['id'] ?? null) !== null) {
+                self::rememberAutoPick($settings, (int) $fromPool['id']);
+            }
+
             return $fromPool;
         }
 
         return self::resolveEndpointForInstrument($instrument);
+    }
+
+    /**
+     * Текущий sticky endpoint без нового pick (для UI status).
+     * Условия: last_id > 0, endpoint readyForAssignment; при ручном пуле — id в выбранных.
+     *
+     * @return array{id: int, url: string}|null
+     */
+    public static function peekStickyEndpoint(?UserTradingSetting $settings): ?array
+    {
+        if ($settings === null) {
+            return null;
+        }
+
+        $endpointId = (int) ($settings->mirror_proxy_auto_last_endpoint_id ?? 0);
+        if ($endpointId <= 0) {
+            return null;
+        }
+
+        // Ручной режим: sticky только если endpoint всё ещё в отмеченном пуле.
+        if (! (bool) $settings->mirror_proxy_auto) {
+            $poolIds = $settings->mirrorProxyEndpointIds();
+            if ($poolIds !== [] && ! in_array($endpointId, $poolIds, true)) {
+                return null;
+            }
+            // Пустой ручной пул — sticky всё равно ок, пока endpoint active (fallback path).
+        }
+
+        $endpoint = ProxyEndpoint::query()
+            ->readyForAssignment()
+            ->whereKey($endpointId)
+            ->first(['id', 'url']);
+
+        if ($endpoint === null || ! is_string($endpoint->url) || $endpoint->url === '') {
+            return null;
+        }
+
+        return [
+            'id' => (int) $endpoint->id,
+            'url' => (string) $endpoint->url,
+        ];
+    }
+
+    /**
+     * Сбросить sticky (после connect fail на warm — чтобы сразу взять другой active).
+     */
+    public static function forgetSticky(UserTradingSetting $settings): void
+    {
+        $settings->forceFill([
+            'mirror_proxy_auto_last_endpoint_id' => null,
+            'mirror_proxy_auto_last_at' => null,
+        ])->save();
     }
 
     /**

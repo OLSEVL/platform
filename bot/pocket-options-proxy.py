@@ -82,7 +82,10 @@ async def _shutdown_ingest():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _ingest_task
+    global _ingest_task, _keepalive_task
+    # Sticky warm pool: фоновый reconnect для заранее прогретых SSID+прокси.
+    _keepalive_task = asyncio.create_task(_warm_keepalive_loop())
+    print("[WARM] keepalive loop started", flush=True)
     if os.environ.get("PLATFORM_URL"):
         try:
             from ingest_stream import run_ingest_forever
@@ -95,6 +98,13 @@ async def lifespan(app: FastAPI):
             print(f"[INGEST] failed to start: {e}", flush=True)
             traceback.print_exc()
     yield
+    if _keepalive_task is not None:
+        _keepalive_task.cancel()
+        try:
+            await _keepalive_task
+        except asyncio.CancelledError:
+            pass
+        _keepalive_task = None
     await _shutdown_ingest()
 
 
@@ -119,6 +129,13 @@ app.add_middleware(
 _clients: Dict[str, AsyncPocketOptionClient] = {}
 # Ingest + HTTP в одном loop: не больше 2 одновременных place-order.
 _place_order_semaphore = asyncio.Semaphore(2)
+
+# Sticky warm pool: client_key → {ssid, is_demo, proxy_url} — держим WS живым до ордера.
+_warm_sessions: Dict[str, Dict[str, Any]] = {}
+_keepalive_task: Optional[asyncio.Task] = None
+_WARM_KEEPALIVE_INTERVAL_SEC = 30
+_AUTH_READY_TIMEOUT_SEC = 8.0
+_AUTH_READY_POLL_SEC = 0.25
 
 # Успех зеркала = openOrder ушёл по WS (KeepAlive не парсит successopenOrder → ложные 502).
 
@@ -277,6 +294,73 @@ def _ssid_client_cache_key(ssid: str) -> str:
     return "ssid:" + hashlib.sha256(ssid.encode("utf-8")).hexdigest()[:24]
 
 
+def _mirror_client_key(ssid: str, proxy_url: Optional[str]) -> str:
+    """Ключ кэша зеркала: SSID + отпечаток proxy_url (sticky warm / place-order)."""
+    proxy_tag = hashlib.sha256((proxy_url or "").encode("utf-8")).hexdigest()[:8]
+    return f"{_ssid_client_cache_key(ssid)}:{proxy_tag}"
+
+
+async def _wait_client_ready(
+    client: AsyncPocketOptionClient,
+    timeout_sec: float = _AUTH_READY_TIMEOUT_SEC,
+    poll_sec: float = _AUTH_READY_POLL_SEC,
+) -> bool:
+    """
+    Ждём is_connected после connect(), без фиксированного sleep(6).
+    Под нагрузкой ingest auth может занять 1–8 с — polling быстрее слепого ожидания.
+    """
+    deadline = time.monotonic() + timeout_sec
+    while time.monotonic() < deadline:
+        if getattr(client, "is_connected", False):
+            return True
+        await asyncio.sleep(poll_sec)
+    return bool(getattr(client, "is_connected", False))
+
+
+def _register_warm_session(client_key: str, ssid: str, is_demo: bool, proxy_url: Optional[str]) -> None:
+    """Помечаем сессию для фонового keepalive (reconnect при обрыве)."""
+    _warm_sessions[client_key] = {
+        "ssid": ssid,
+        "is_demo": is_demo,
+        "proxy_url": proxy_url,
+        "warmed_at": time.time(),
+    }
+
+
+async def _warm_keepalive_loop() -> None:
+    """Периодически проверяет warm-сессии и переподключает отвалившиеся WS."""
+    while True:
+        try:
+            await asyncio.sleep(_WARM_KEEPALIVE_INTERVAL_SEC)
+            for client_key, meta in list(_warm_sessions.items()):
+                client = _clients.get(client_key)
+                if client is not None and getattr(client, "is_connected", False):
+                    continue
+                ssid = str(meta.get("ssid") or "")
+                if not ssid:
+                    _warm_sessions.pop(client_key, None)
+                    continue
+                try:
+                    print(f"[WARM] reconnect key={client_key[:40]}...", flush=True)
+                    await get_or_create_client_by_ssid(
+                        ssid,
+                        is_demo=bool(meta.get("is_demo", True)),
+                        proxy_url=meta.get("proxy_url"),
+                    )
+                    _register_warm_session(
+                        client_key,
+                        ssid,
+                        bool(meta.get("is_demo", True)),
+                        meta.get("proxy_url"),
+                    )
+                except Exception as exc:
+                    print(f"[WARM] reconnect failed key={client_key[:40]}...: {exc}", flush=True)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            print(f"[WARM] keepalive loop error: {exc}", flush=True)
+
+
 def normalize_pocket_ssid(raw: str, is_demo: bool = True) -> str:
     """Полный SSID 42[\"auth\",...] из строки auth, JSON sessionToken или голого токена."""
     raw = (raw or "").strip()
@@ -343,15 +427,14 @@ async def get_or_create_client_by_ssid(
     """
     ssid = normalize_pocket_ssid(ssid, is_demo=is_demo)
 
-    proxy_tag = hashlib.sha256((proxy_url or "").encode("utf-8")).hexdigest()[:8]
-    client_key = f"{_ssid_client_cache_key(ssid)}:{proxy_tag}"
+    client_key = _mirror_client_key(ssid, proxy_url)
     if client_key in _clients:
         client = _clients[client_key]
         if client.is_connected:
             return client
         try:
             await client.connect()
-            if client.is_connected:
+            if await _wait_client_ready(client, timeout_sec=4.0):
                 return client
         except Exception:
             pass
@@ -376,16 +459,19 @@ async def get_or_create_client_by_ssid(
         raise HTTPException(status_code=502, detail=f"Pocket Option connect error: {exc}") from exc
     if not success:
         raise HTTPException(status_code=502, detail="Failed to connect to Pocket Option (connect returned false)")
-    # Ingest и зеркало делят event loop — даём WS время на auth; при нагрузке 5 с мало.
-    for attempt in range(2):
-        await asyncio.sleep(6 if attempt == 0 else 4)
-        if client.is_connected:
-            _clients[client_key] = client
-            return client
-        try:
-            await client.connect()
-        except Exception:
-            pass
+
+    # Ждём auth polling'ом, не sleep(6): тёплый клиент часто готов за <1 с.
+    if await _wait_client_ready(client):
+        _clients[client_key] = client
+        return client
+
+    try:
+        await client.connect()
+    except Exception:
+        pass
+    if await _wait_client_ready(client, timeout_sec=4.0):
+        _clients[client_key] = client
+        return client
 
     raise HTTPException(
         status_code=502,
@@ -1284,6 +1370,7 @@ async def place_mirror_order(
 async def test_auth_api(payload: Dict[str, Any] = Body(...)):
     """
     Проверка SSID: подключение к PO без ордера (для профиля и artisan profile:test-po-connection).
+    Успешный auth регистрирует sticky warm session (keepalive).
     """
     ssid = str(payload.get("ssid") or "").strip()
     is_demo = bool(payload.get("is_demo", True))
@@ -1295,13 +1382,123 @@ async def test_auth_api(payload: Dict[str, Any] = Body(...)):
         raise HTTPException(status_code=400, detail="Required: ssid")
 
     try:
-        await get_or_create_client_by_ssid(ssid, is_demo=is_demo, proxy_url=proxy_url)
-        return {"ok": True}
+        client = await get_or_create_client_by_ssid(ssid, is_demo=is_demo, proxy_url=proxy_url)
+        normalized = normalize_pocket_ssid(ssid, is_demo=is_demo)
+        client_key = _mirror_client_key(normalized, proxy_url)
+        _register_warm_session(client_key, normalized, is_demo, proxy_url)
+        return {
+            "ok": True,
+            "connected": bool(getattr(client, "is_connected", False)),
+            "warm": True,
+        }
     except HTTPException as exc:
         return {"ok": False, "error": exc.detail}
     except Exception as exc:
         return {"ok": False, "error": str(exc)}
 
+
+@app.post("/api/warm-client")
+async def warm_client_api(payload: Dict[str, Any] = Body(...)):
+    """
+    Прогрев sticky-канала зеркала: connect + auth + регистрация в keepalive.
+    Вызывается из Laravel при включении зеркала и по cron после рестарта proxy.
+    """
+    ssid = str(payload.get("ssid") or "").strip()
+    is_demo = bool(payload.get("is_demo", True))
+    proxy_url = payload.get("proxy_url")
+    if proxy_url is not None:
+        proxy_url = str(proxy_url).strip() or None
+
+    if not ssid:
+        raise HTTPException(status_code=400, detail="Required: ssid")
+
+    started = time.monotonic()
+    try:
+        client = await get_or_create_client_by_ssid(ssid, is_demo=is_demo, proxy_url=proxy_url)
+        normalized = normalize_pocket_ssid(ssid, is_demo=is_demo)
+        client_key = _mirror_client_key(normalized, proxy_url)
+        _register_warm_session(client_key, normalized, is_demo, proxy_url)
+        latency_ms = int((time.monotonic() - started) * 1000)
+        print(
+            f"[WARM] client ready key={client_key[:40]}... connected={client.is_connected} latency_ms={latency_ms}",
+            flush=True,
+        )
+        return {
+            "ok": True,
+            "connected": bool(getattr(client, "is_connected", False)),
+            "warm": True,
+            "latency_ms": latency_ms,
+            "client_key": client_key,
+        }
+    except HTTPException as exc:
+        return {"ok": False, "warm": False, "error": exc.detail}
+    except Exception as exc:
+        return {"ok": False, "warm": False, "error": str(exc)}
+
+
+@app.post("/api/unwarm-client")
+async def unwarm_client_api(payload: Dict[str, Any] = Body(...)):
+    """Снять сессию с keepalive (зеркалирование выключили). Клиент в кэше может остаться."""
+    ssid = str(payload.get("ssid") or "").strip()
+    is_demo = bool(payload.get("is_demo", True))
+    proxy_url = payload.get("proxy_url")
+    if proxy_url is not None:
+        proxy_url = str(proxy_url).strip() or None
+
+    if not ssid:
+        raise HTTPException(status_code=400, detail="Required: ssid")
+
+    try:
+        normalized = normalize_pocket_ssid(ssid, is_demo=is_demo)
+    except HTTPException as exc:
+        return {"ok": False, "error": exc.detail}
+
+    client_key = _mirror_client_key(normalized, proxy_url)
+    removed = _warm_sessions.pop(client_key, None) is not None
+    print(f"[WARM] unwarm key={client_key[:40]}... removed={removed}", flush=True)
+    return {"ok": True, "removed": removed}
+
+
+@app.post("/api/client-status")
+async def client_status_api(payload: Dict[str, Any] = Body(...)):
+    """
+    Статус sticky warm без создания нового коннекта (для UI профиля).
+    state: warm | cold
+    """
+    ssid = str(payload.get("ssid") or "").strip()
+    is_demo = bool(payload.get("is_demo", True))
+    proxy_url = payload.get("proxy_url")
+    if proxy_url is not None:
+        proxy_url = str(proxy_url).strip() or None
+
+    if not ssid:
+        raise HTTPException(status_code=400, detail="Required: ssid")
+
+    try:
+        normalized = normalize_pocket_ssid(ssid, is_demo=is_demo)
+    except HTTPException as exc:
+        return {"ok": False, "state": "cold", "error": exc.detail}
+
+    client_key = _mirror_client_key(normalized, proxy_url)
+    client = _clients.get(client_key)
+    connected = bool(client is not None and getattr(client, "is_connected", False))
+    registered = client_key in _warm_sessions
+    state = "warm" if connected else "cold"
+    warmed_at = None
+    if registered:
+        meta = _warm_sessions.get(client_key) or {}
+        ts = meta.get("warmed_at")
+        if isinstance(ts, (int, float)):
+            warmed_at = datetime.utcfromtimestamp(ts).isoformat() + "Z"
+
+    return {
+        "ok": True,
+        "state": state,
+        "connected": connected,
+        "registered": registered,
+        "client_key": client_key,
+        "warmed_at": warmed_at,
+    }
 
 @app.post("/api/active-orders")
 async def active_orders_api(payload: Dict[str, Any] = Body(...)):
@@ -1383,6 +1580,9 @@ async def place_order_api(
     try:
         async with _place_order_semaphore:
             client = await get_or_create_client_by_ssid(ssid, is_demo=is_demo, proxy_url=proxy_url)
+            # После ордера держим канал в warm pool — следующий вход без cold start.
+            normalized = normalize_pocket_ssid(ssid, is_demo=is_demo)
+            _register_warm_session(_mirror_client_key(normalized, proxy_url), normalized, is_demo, proxy_url)
             result = await place_mirror_order(
                 client,
                 asset_clean,
@@ -1425,7 +1625,10 @@ async def root():
             "/api/assets": "GET - Получить список всех активов и категорий",
             "/api/candles": "GET - Получить данные свечей (может возвращать график PNG при include_chart=true и timeframe=1)",
             "/api/chart": "GET - Получить свечной график (PNG изображение)",
-            "/api/test-auth": "POST - Проверить SSID (без ордера)",
+            "/api/test-auth": "POST - Проверить SSID (без ордера) + зарегистрировать warm",
+            "/api/warm-client": "POST - Прогреть sticky WS-канал зеркала",
+            "/api/unwarm-client": "POST - Снять warm keepalive",
+            "/api/client-status": "POST - Статус warm (без нового connect)",
             "/api/active-orders": "POST - Активные ордера на PO (для мартингейла)",
             "/api/place-order": "POST - Разместить ордер (зеркало сделки бота)",
         }
@@ -1435,8 +1638,11 @@ async def root():
 @app.get("/health")
 async def health():
     """Health check endpoint"""
-    return {"status": "ok", "clients": len(_clients)}
-
+    return {
+        "status": "ok",
+        "clients": len(_clients),
+        "warm_sessions": len(_warm_sessions),
+    }
 
 if __name__ == "__main__":
     print("=" * 60)

@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\ProxyEndpoint;
 use App\Models\UserTradingSetting;
+use App\Services\Mirror\MirrorWarmPoolService;
 use App\Support\MirrorProxyMeta;
 use App\Support\PocketMirrorProxy;
 use Illuminate\Http\RedirectResponse;
@@ -37,6 +38,7 @@ class ProfileMirrorProxiesController extends Controller
             'mirrorProxyAuto' => $mirrorProxyAuto,
             'autoLastAt' => $settings->mirror_proxy_auto_last_at,
             'autoLastId' => $autoLastId,
+            'mirrorWarmStatus' => app(MirrorWarmPoolService::class)->describeStatus($settings),
         ]);
     }
 
@@ -65,11 +67,23 @@ class ProfileMirrorProxiesController extends Controller
 
         $settings->save();
 
+        $flash = $auto
+            ? 'Авто-выбор прокси: sticky до dead (минимальная нагрузка при смене).'
+            : 'Пул прокси для зеркала сохранён (sticky до dead).';
+
+        // Если зеркало уже включено — сразу прогреем sticky-канал на новом выборе.
+        if ($settings->mirror_trades_enabled && ! app()->runningUnitTests()) {
+            $warm = app(MirrorWarmPoolService::class)->warm($settings);
+            if ($warm['ok'] ?? false) {
+                $flash .= ' Канал PO прогрет.';
+            } elseif (! empty($warm['error'])) {
+                $flash .= ' Warm: '.$warm['error'];
+            }
+        }
+
         return redirect()
             ->route('profile.mirror-proxies.edit')
-            ->with('status', $auto
-                ? 'Авто-выбор прокси включён (минимальная нагрузка среди active).'
-                : 'Пул прокси для зеркала сохранён.');
+            ->with('status', $flash);
     }
 
     /**

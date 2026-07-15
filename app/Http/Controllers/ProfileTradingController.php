@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Jobs\MirrorBotTradeJob;
 use App\Models\BotTrade;
 use App\Models\UserTradingSetting;
+use App\Services\Mirror\MirrorWarmPoolService;
 use App\Services\Mirror\UserMartingaleService;
 use App\Services\PocketOptionsProxyClient;
 use App\Support\MartingaleAmountsParser;
@@ -22,11 +23,13 @@ class ProfileTradingController extends Controller
     public function edit(Request $request): View
     {
         $settings = $this->settingsForUser($request->user()->id);
+        $warmStatus = app(MirrorWarmPoolService::class)->describeStatus($settings);
 
         return view('profile.trading', [
             'settings' => $settings,
             'martingale' => $settings->martingaleStatus(),
             'systemStatus' => $this->systemStatus($settings),
+            'mirrorWarmStatus' => $warmStatus,
         ]);
     }
 
@@ -45,7 +48,8 @@ class ProfileTradingController extends Controller
                 $endpoints = json_encode($body['endpoints'] ?? [], JSON_UNESCAPED_UNICODE);
                 $hasPlaceOrder = str_contains($endpoints, 'place-order')
                     && str_contains($endpoints, 'test-auth')
-                    && str_contains($endpoints, 'active-orders');
+                    && str_contains($endpoints, 'active-orders')
+                    && str_contains($endpoints, 'warm-client');
             } catch (\Throwable) {
                 $proxyOk = false;
             }
@@ -160,20 +164,26 @@ class ProfileTradingController extends Controller
         $settings->save();
 
         $flash = 'Настройки торговли сохранены.';
-        if ($settings->mirror_trades_enabled && self::ssidIsReady($settings) && ! app()->runningUnitTests()) {
-            $ssid = PocketSsidNormalizer::normalize((string) $settings->pocket_ssid, (bool) $settings->is_demo);
-            $proxyUrl = PocketMirrorProxy::resolveForMirror($settings);
-            try {
-                $auth = app(PocketOptionsProxyClient::class)->testAuth((string) $ssid, (bool) $settings->is_demo, $proxyUrl);
-            } catch (\Throwable $e) {
-                $auth = ['ok' => false, 'error' => $e->getMessage()];
+        $warmPool = app(MirrorWarmPoolService::class);
+
+        if (! $settings->mirror_trades_enabled) {
+            // Зеркало выключили — снимаем keepalive, paper больше не шлёт на PO.
+            if ($previousMirror && ! app()->runningUnitTests()) {
+                $warmPool->cool($settings);
             }
-            if ($auth['ok'] ?? false) {
+        } elseif (self::ssidIsReady($settings) && ! app()->runningUnitTests()) {
+            // Sticky warm: прогреваем до первой сделки, чтобы place-order не ловил cold start.
+            try {
+                $warm = $warmPool->warm($settings);
+            } catch (\Throwable $e) {
+                $warm = ['ok' => false, 'error' => $e->getMessage()];
+            }
+            if ($warm['ok'] ?? false) {
                 $this->allowMirrorRetryForUser($settings->user_id);
-                $flash .= ' Подключение к Pocket Option: OK.';
+                $flash .= ' Канал PO прогрет (sticky warm).';
             } else {
-                $err = (string) ($auth['error'] ?? 'auth failed');
-                $flash .= ' Внимание: PO не принял SSID — '.$err
+                $err = (string) ($warm['error'] ?? 'warm failed');
+                $flash .= ' Внимание: warm PO не удался — '.$err
                     .'. Скопируйте новый auth из DevTools того кабинета, где смотрите сделки.';
             }
         }
@@ -235,6 +245,7 @@ class ProfileTradingController extends Controller
         $proxyUrl = PocketMirrorProxy::resolveForMirror($settings);
 
         try {
+            // test-auth на proxy теперь сразу регистрирует warm keepalive.
             $result = $proxy->testAuth($ssid, $isDemo, $proxyUrl);
         } catch (\Throwable $e) {
             return response()->json([
@@ -254,6 +265,7 @@ class ProfileTradingController extends Controller
             'format_ok' => true,
             'error' => $result['error'] ?? null,
             'proxy_used' => $proxyUrl !== null && $proxyUrl !== '',
+            'warm' => (bool) ($result['warm'] ?? false),
         ]);
     }
 

@@ -22,6 +22,8 @@ return Application::configure(basePath: dirname(__DIR__))
         // Зависший scan (живой PID) блокирует dispatch навсегда — reap по wall-time.
         $schedule->command('bots:scan-watchdog')->everyFiveMinutes()->withoutOverlapping(5);
         $schedule->command('bots:settle')->everyMinute()->withoutOverlapping(10);
+        // Sticky warm pool: после рестарта proxy и при обрыве WS — догрев зеркальных сессий.
+        $schedule->command('mirror:warm-pool')->everyMinute()->withoutOverlapping(5);
         // Chart Analyst: /menu и inline-список пар требуют long polling + queue worker.
         $schedule->command('telegram:ensure-analyst-services')->everyMinute()->withoutOverlapping(2);
         // Авто-проба dead: постоянный цикл — отдельный процесс `php artisan proxies:probe-loop`.

@@ -34,6 +34,8 @@
         @endif
     </div>
 
+    @include('profile._mirror-warm-status', ['mirrorWarmStatus' => $mirrorWarmStatus ?? []])
+
     @if (session('status'))
         <p class="text-sm text-emerald-400">{{ session('status') }}</p>
     @endif

@@ -44,8 +44,9 @@ class PocketOptionsProxyClient
      */
     /**
      * Проверка SSID без размещения ордера (auth + WebSocket).
+     * Успех также регистрирует sticky warm-сессию на стороне proxy.
      *
-     * @return array{ok: bool, error?: string}
+     * @return array{ok: bool, error?: string|null, warm?: bool, connected?: bool}
      */
     public function testAuth(string $ssid, bool $isDemo = true, ?string $proxyUrl = null): array
     {
@@ -72,6 +73,120 @@ class PocketOptionsProxyClient
 
         return [
             'ok' => (bool) ($data['ok'] ?? false),
+            'error' => isset($data['error']) ? (string) $data['error'] : null,
+            'warm' => (bool) ($data['warm'] ?? false),
+            'connected' => (bool) ($data['connected'] ?? false),
+        ];
+    }
+
+    /**
+     * Прогрев sticky WS-канала зеркала (connect + keepalive registration).
+     *
+     * @return array{ok: bool, warm?: bool, connected?: bool, latency_ms?: int, error?: string|null}
+     */
+    public function warmClient(string $ssid, bool $isDemo = true, ?string $proxyUrl = null): array
+    {
+        $payload = [
+            'ssid' => $ssid,
+            'is_demo' => $isDemo,
+        ];
+        if ($proxyUrl !== null && $proxyUrl !== '') {
+            $payload['proxy_url'] = $proxyUrl;
+        }
+
+        $response = Http::timeout(60)->post("{$this->baseUrl}/api/warm-client", $payload);
+
+        if ($response->failed()) {
+            $detail = $response->json('detail') ?? $response->body();
+
+            return [
+                'ok' => false,
+                'error' => is_string($detail) ? $detail : json_encode($detail),
+            ];
+        }
+
+        $data = $response->json() ?? [];
+
+        return [
+            'ok' => (bool) ($data['ok'] ?? false),
+            'warm' => (bool) ($data['warm'] ?? false),
+            'connected' => (bool) ($data['connected'] ?? false),
+            'latency_ms' => isset($data['latency_ms']) ? (int) $data['latency_ms'] : null,
+            'error' => isset($data['error']) ? (string) $data['error'] : null,
+        ];
+    }
+
+    /**
+     * Снять сессию с keepalive (зеркалирование выключили).
+     *
+     * @return array{ok: bool, removed?: bool, error?: string|null}
+     */
+    public function unwarmClient(string $ssid, bool $isDemo = true, ?string $proxyUrl = null): array
+    {
+        $payload = [
+            'ssid' => $ssid,
+            'is_demo' => $isDemo,
+        ];
+        if ($proxyUrl !== null && $proxyUrl !== '') {
+            $payload['proxy_url'] = $proxyUrl;
+        }
+
+        $response = Http::timeout(15)->post("{$this->baseUrl}/api/unwarm-client", $payload);
+
+        if ($response->failed()) {
+            $detail = $response->json('detail') ?? $response->body();
+
+            return [
+                'ok' => false,
+                'error' => is_string($detail) ? $detail : json_encode($detail),
+            ];
+        }
+
+        $data = $response->json() ?? [];
+
+        return [
+            'ok' => (bool) ($data['ok'] ?? true),
+            'removed' => (bool) ($data['removed'] ?? false),
+            'error' => isset($data['error']) ? (string) $data['error'] : null,
+        ];
+    }
+
+    /**
+     * Статус warm без нового connect (для UI).
+     *
+     * @return array{ok: bool, state?: string, connected?: bool, registered?: bool, error?: string|null}
+     */
+    public function clientStatus(string $ssid, bool $isDemo = true, ?string $proxyUrl = null): array
+    {
+        $payload = [
+            'ssid' => $ssid,
+            'is_demo' => $isDemo,
+        ];
+        if ($proxyUrl !== null && $proxyUrl !== '') {
+            $payload['proxy_url'] = $proxyUrl;
+        }
+
+        $response = Http::timeout(10)->post("{$this->baseUrl}/api/client-status", $payload);
+
+        if ($response->failed()) {
+            $detail = $response->json('detail') ?? $response->body();
+
+            return [
+                'ok' => false,
+                'state' => 'cold',
+                'connected' => false,
+                'registered' => false,
+                'error' => is_string($detail) ? $detail : json_encode($detail),
+            ];
+        }
+
+        $data = $response->json() ?? [];
+
+        return [
+            'ok' => (bool) ($data['ok'] ?? false),
+            'state' => (string) ($data['state'] ?? 'cold'),
+            'connected' => (bool) ($data['connected'] ?? false),
+            'registered' => (bool) ($data['registered'] ?? false),
             'error' => isset($data['error']) ? (string) $data['error'] : null,
         ];
     }

@@ -111,6 +111,76 @@ class PocketMirrorProxyTest extends TestCase
         $this->assertSame((int) $light->id, (int) $settings->mirror_proxy_auto_last_endpoint_id);
         $this->assertNotNull($settings->mirror_proxy_auto_last_at);
         $this->assertSame(1, $settings->mirrorProxyAutoPickCounts()[$light->id] ?? 0);
+
+        // Sticky: второй resolve не прыгает на другой active, даже если нагрузка изменилась.
+        \App\Models\PocketInstrument::query()->create([
+            'instrument' => 'USDJPY_otc',
+            'is_active' => true,
+            'proxy_endpoint_id' => $light->id,
+            'session_token' => 't3',
+            'uid' => '1',
+        ]);
+        \App\Models\PocketInstrument::query()->create([
+            'instrument' => 'AUDUSD_otc',
+            'is_active' => true,
+            'proxy_endpoint_id' => $light->id,
+            'session_token' => 't4',
+            'uid' => '1',
+        ]);
+        // Теперь heavy легче, но sticky всё ещё light.
+        $this->assertSame($light->url, PocketMirrorProxy::resolveForMirror($settings->fresh(), null));
+        $this->assertSame((int) $light->id, (int) $settings->fresh()->mirror_proxy_auto_last_endpoint_id);
+    }
+
+    public function test_sticky_skips_dead_and_repicks(): void
+    {
+        $a = ProxyEndpoint::query()->create([
+            'url' => 'http://user:pass@10.0.0.1:1000',
+            'status' => ProxyEndpoint::STATUS_ACTIVE,
+        ]);
+        $b = ProxyEndpoint::query()->create([
+            'url' => 'http://user:pass@10.0.0.2:2000',
+            'status' => ProxyEndpoint::STATUS_ACTIVE,
+        ]);
+
+        $user = User::factory()->create();
+        $settings = UserTradingSetting::query()->create([
+            'user_id' => $user->id,
+            'order_amount' => 1,
+            'order_amounts' => [1.0],
+            'mirror_proxy_auto' => true,
+            'mirror_proxy_auto_last_endpoint_id' => $a->id,
+        ]);
+
+        $this->assertSame($a->url, PocketMirrorProxy::resolveForMirror($settings, null));
+
+        $a->status = ProxyEndpoint::STATUS_DEAD;
+        $a->save();
+
+        $url = PocketMirrorProxy::resolveForMirror($settings->fresh(), null);
+        $this->assertSame($b->url, $url);
+        $this->assertSame((int) $b->id, (int) $settings->fresh()->mirror_proxy_auto_last_endpoint_id);
+    }
+
+    public function test_peek_sticky_does_not_mutate(): void
+    {
+        $ep = ProxyEndpoint::query()->create([
+            'url' => 'http://user:pass@10.0.0.1:1000',
+            'status' => ProxyEndpoint::STATUS_ACTIVE,
+        ]);
+        $user = User::factory()->create();
+        $settings = UserTradingSetting::query()->create([
+            'user_id' => $user->id,
+            'order_amount' => 1,
+            'order_amounts' => [1.0],
+            'mirror_proxy_auto' => true,
+            'mirror_proxy_auto_last_endpoint_id' => $ep->id,
+        ]);
+
+        $peek = PocketMirrorProxy::peekStickyEndpoint($settings);
+        $this->assertNotNull($peek);
+        $this->assertSame((int) $ep->id, (int) $peek['id']);
+        $this->assertNull($settings->fresh()->mirror_proxy_auto_last_at);
     }
 
     public function test_least_loaded_active_ids_returns_min_load_set(): void
