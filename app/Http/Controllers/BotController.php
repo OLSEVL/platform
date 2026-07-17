@@ -64,6 +64,9 @@ class BotController extends Controller
         $now = now();
         $from = $now->copy()->subHours($hours);
 
+        // SQL-выражение для итога PO из meta_json (MySQL vs SQLite в тестах).
+        $poResultSql = $this->mirrorPoResultSql('t.meta_json');
+
         // Общий winrate за выбранный период по всем ботам (учитываем только win/loss).
         $overall = DB::table('bot_trades as t')
             ->where('t.entry_time', '>=', $from)
@@ -77,6 +80,20 @@ class BotController extends Controller
         $overallLosses = (int) ($overall->losses ?? 0);
         $overallTotal = $overallWins + $overallLosses;
         $overallWinrate = $overallTotal > 0 ? round(($overallWins * 100) / $overallTotal, 2) : null;
+
+        // Фактический winrate по PO: только сделки с mirror_po_result = win|loss.
+        $overallPo = DB::table('bot_trades as t')
+            ->where('t.entry_time', '>=', $from)
+            ->whereRaw("{$poResultSql} IN (?, ?)", [BotTrade::RESULT_WIN, BotTrade::RESULT_LOSS])
+            ->selectRaw("
+                SUM(CASE WHEN {$poResultSql} = 'win' THEN 1 ELSE 0 END) as wins,
+                SUM(CASE WHEN {$poResultSql} = 'loss' THEN 1 ELSE 0 END) as losses
+            ")
+            ->first();
+        $overallPoWins = (int) ($overallPo->wins ?? 0);
+        $overallPoLosses = (int) ($overallPo->losses ?? 0);
+        $overallPoTotal = $overallPoWins + $overallPoLosses;
+        $overallPoWinrate = $overallPoTotal > 0 ? round(($overallPoWins * 100) / $overallPoTotal, 2) : null;
 
         // Интервал обобщения статистики (график + таблица): 1/5/15/30 мин или 1 час.
         $intervalPresets = [
@@ -135,6 +152,25 @@ class BotController extends Controller
             ->orderBy('s.bucket_ts')
             ->get();
 
+        // Те же бакеты, но по фактическому итогу PO (meta_json.mirror_po_result).
+        $poTradesPerBucket = DB::table('bot_trades as t')
+            ->join('bots as b', 'b.id', '=', 't.bot_id')
+            ->where('t.entry_time', '>=', $from)
+            ->whereRaw("{$poResultSql} IN (?, ?)", [BotTrade::RESULT_WIN, BotTrade::RESULT_LOSS])
+            ->selectRaw(
+                'b.id as bot_id, b.name as bot_name, FLOOR(UNIX_TIMESTAMP(t.entry_time) / ?) * ? as bucket_ts',
+                [$bucketSeconds, $bucketSeconds]
+            )
+            ->selectRaw("CASE WHEN {$poResultSql} = ? THEN 1 ELSE 0 END as trade_win", [BotTrade::RESULT_WIN])
+            ->selectRaw("CASE WHEN {$poResultSql} = ? THEN 1 ELSE 0 END as trade_loss", [BotTrade::RESULT_LOSS]);
+
+        $poNetByBucket = DB::query()
+            ->fromSub($poTradesPerBucket, 's')
+            ->selectRaw('s.bot_id as bot_id, s.bot_name as bot_name, s.bucket_ts as bucket_ts, SUM(s.trade_win) as bucket_wins, SUM(s.trade_loss) as bucket_losses')
+            ->groupBy('s.bot_id', 's.bot_name', 's.bucket_ts')
+            ->orderBy('s.bucket_ts')
+            ->get();
+
         // Границы бакетов должны совпадать с FLOOR(UNIX_TIMESTAMP(entry_time)/step) в MySQL.
         // PHP->timestamp — это UTC; UNIX_TIMESTAMP в MySQL считает в зоне сессии БД — смещение ломало ключи бакетов (график пустой на любом периоде).
         $driver = DB::connection()->getDriverName();
@@ -187,6 +223,20 @@ class BotController extends Controller
             ];
         }
 
+        // PO win/loss по бакетам — отдельная серия на том же графике.
+        $poBucketStats = [];
+        foreach ($poNetByBucket as $row) {
+            $bid = (int) $row->bot_id;
+            $bk = (int) $row->bucket_ts;
+            if (! isset($poBucketStats[$bid])) {
+                $poBucketStats[$bid] = ['by_ts' => []];
+            }
+            $poBucketStats[$bid]['by_ts'][$bk] = [
+                'w' => (int) $row->bucket_wins,
+                'l' => (int) $row->bucket_losses,
+            ];
+        }
+
         // Все включённые боты пользователя — график для каждого, даже без сделок за период.
         $activeBots = Bot::query()
             ->where('user_id', auth()->id())
@@ -210,6 +260,22 @@ class BotController extends Controller
             ->get()
             ->keyBy('bot_id');
 
+        // PO winrate за период по боту (только зеркальные сделки с известным итогом PO).
+        $botPoPeriodStats = DB::table('bot_trades as t')
+            ->join('bots as b', 'b.id', '=', 't.bot_id')
+            ->where('b.user_id', auth()->id())
+            ->where('b.is_active', true)
+            ->where('t.entry_time', '>=', $from)
+            ->whereRaw("{$poResultSql} IN (?, ?)", [BotTrade::RESULT_WIN, BotTrade::RESULT_LOSS])
+            ->groupBy('b.id')
+            ->selectRaw("
+                b.id as bot_id,
+                SUM(CASE WHEN {$poResultSql} = 'win' THEN 1 ELSE 0 END) as wins,
+                SUM(CASE WHEN {$poResultSql} = 'loss' THEN 1 ELSE 0 END) as losses
+            ")
+            ->get()
+            ->keyBy('bot_id');
+
         $tz = config('app.timezone');
         $chartLabels = [];
         foreach ($timeline as $bk) {
@@ -217,10 +283,285 @@ class BotController extends Controller
         }
 
         // Ось Y: winrate в процентах по каждому бакету (0..100), без кумулятивного накопления.
+        // Две серии: paper (платформа) и фактический PO.
         $chartSeries = [];
         foreach ($activeBots as $bot) {
             $botId = (int) $bot->id;
             $byTs = $bucketStats[$botId]['by_ts'] ?? [];
+            $poByTs = $poBucketStats[$botId]['by_ts'] ?? [];
+            $values = [];
+            $bucketWins = [];
+            $bucketLosses = [];
+            $poValues = [];
+            $poBucketWins = [];
+            $poBucketLosses = [];
+            foreach ($timeline as $bk) {
+                $cell = $byTs[$bk] ?? ['w' => 0, 'l' => 0];
+                $w = (int) $cell['w'];
+                $l = (int) $cell['l'];
+                $total = $w + $l;
+                $bucketWins[] = $w;
+                $bucketLosses[] = $l;
+                $values[] = $total > 0
+                    ? round(100.0 * $w / $total, 2)
+                    : null;
+
+                $poCell = $poByTs[$bk] ?? ['w' => 0, 'l' => 0];
+                $pw = (int) $poCell['w'];
+                $pl = (int) $poCell['l'];
+                $poTotal = $pw + $pl;
+                $poBucketWins[] = $pw;
+                $poBucketLosses[] = $pl;
+                $poValues[] = $poTotal > 0
+                    ? round(100.0 * $pw / $poTotal, 2)
+                    : null;
+            }
+
+            $periodRow = $botPeriodStats->get($botId);
+            $botWins = (int) ($periodRow->wins ?? 0);
+            $botLosses = (int) ($periodRow->losses ?? 0);
+            $botTotal = $botWins + $botLosses;
+
+            $poPeriodRow = $botPoPeriodStats->get($botId);
+            $poWins = (int) ($poPeriodRow->wins ?? 0);
+            $poLosses = (int) ($poPeriodRow->losses ?? 0);
+            $poPeriodTotal = $poWins + $poLosses;
+
+            $chartSeries[] = [
+                'bot_id' => $botId,
+                'name' => (string) $bot->name,
+                'values' => $values,
+                'bucket_wins' => $bucketWins,
+                'bucket_losses' => $bucketLosses,
+                'wins' => $botWins,
+                'losses' => $botLosses,
+                'winrate' => $botTotal > 0 ? round(($botWins * 100) / $botTotal, 2) : null,
+                // Фактический winrate по заключённым сделкам на Pocket Option.
+                'po_values' => $poValues,
+                'po_bucket_wins' => $poBucketWins,
+                'po_bucket_losses' => $poBucketLosses,
+                'po_wins' => $poWins,
+                'po_losses' => $poLosses,
+                'po_winrate' => $poPeriodTotal > 0 ? round(($poWins * 100) / $poPeriodTotal, 2) : null,
+            ];
+        }
+
+        return view('bots.analytics', [
+            'hours' => $hours,
+            'interval' => $bucketSeconds,
+            'intervalPresets' => $intervalPresets,
+            'rows' => $raw,
+            'chartLabels' => $chartLabels,
+            'chartSeries' => $chartSeries,
+            'bucketSeconds' => $bucketSeconds,
+            'overallWins' => $overallWins,
+            'overallLosses' => $overallLosses,
+            'overallWinrate' => $overallWinrate,
+            'overallPoWins' => $overallPoWins,
+            'overallPoLosses' => $overallPoLosses,
+            'overallPoWinrate' => $overallPoWinrate,
+        ]);
+    }
+
+    /**
+     * SQL-выражение: достать mirror_po_result из JSON meta сделки.
+     * MySQL/MariaDB — JSON_UNQUOTE(JSON_EXTRACT(...)); SQLite — json_extract(...).
+     */
+    private function mirrorPoResultSql(string $column = 'meta_json'): string
+    {
+        $driver = DB::connection()->getDriverName();
+        if (in_array($driver, ['mysql', 'mariadb'], true)) {
+            return "JSON_UNQUOTE(JSON_EXTRACT({$column}, '$.mirror_po_result'))";
+        }
+
+        // SQLite (phpunit) и прочие драйверы с json1.
+        return "json_extract({$column}, '$.mirror_po_result')";
+    }
+
+    /**
+     * Аналитика по валютным парам одного бота: те же бакеты времени и winrate,
+     * что на /bots/analytics, но отдельный график на каждый instrument, по которому были сделки.
+     */
+    public function analyticsPairs(Request $request): View
+    {
+        $botId = $request->integer('bot_id');
+        abort_unless($botId > 0, 404);
+
+        // Только свой бот — чужие id не отдаём.
+        $bot = Bot::query()
+            ->where('user_id', auth()->id())
+            ->whereKey($botId)
+            ->firstOrFail();
+
+        $hours = (int) ($request->input('hours', 24));
+        $hours = max(1, min(168, $hours));
+        $now = now();
+        $from = $now->copy()->subHours($hours);
+
+        // Общий winrate выбранного бота за период (все пары вместе).
+        $overall = DB::table('bot_trades as t')
+            ->where('t.bot_id', $bot->id)
+            ->where('t.entry_time', '>=', $from)
+            ->whereIn('t.result', [BotTrade::RESULT_WIN, BotTrade::RESULT_LOSS])
+            ->selectRaw("
+                SUM(CASE WHEN t.result = 'win' THEN 1 ELSE 0 END) as wins,
+                SUM(CASE WHEN t.result = 'loss' THEN 1 ELSE 0 END) as losses
+            ")
+            ->first();
+        $overallWins = (int) ($overall->wins ?? 0);
+        $overallLosses = (int) ($overall->losses ?? 0);
+        $overallTotal = $overallWins + $overallLosses;
+        $overallWinrate = $overallTotal > 0 ? round(($overallWins * 100) / $overallTotal, 2) : null;
+
+        $intervalPresets = [
+            60 => '1 минута',
+            300 => '5 минут',
+            900 => '15 минут',
+            1800 => '30 минут',
+            3600 => '1 час',
+        ];
+        $requestedInterval = (int) $request->input('interval', 0);
+        $bucketSeconds = array_key_exists($requestedInterval, $intervalPresets)
+            ? $requestedInterval
+            : match (true) {
+                $hours <= 1 => 300,
+                $hours <= 6 => 900,
+                $hours <= 48 => 3600,
+                default => 3600,
+            };
+
+        // Таблица: пара × бакет времени.
+        $raw = DB::table('bot_trades as t')
+            ->selectRaw("
+                t.instrument as instrument,
+                FLOOR(UNIX_TIMESTAMP(t.entry_time) / ?) * ? as bucket_ts,
+                COUNT(*) as trades_total,
+                SUM(CASE WHEN t.result = 'win' THEN 1 ELSE 0 END) as wins,
+                SUM(CASE WHEN t.result = 'loss' THEN 1 ELSE 0 END) as losses
+            ", [$bucketSeconds, $bucketSeconds])
+            ->where('t.bot_id', $bot->id)
+            ->where('t.entry_time', '>=', $from)
+            ->whereNotNull('t.instrument')
+            ->where('t.instrument', '!=', '')
+            ->groupBy('t.instrument', 'bucket_ts')
+            ->orderByDesc('bucket_ts')
+            ->orderBy('t.instrument')
+            ->get();
+
+        // Сырые win/loss по сделкам → агрегат по паре и бакету для графика.
+        $tradesPerBucket = DB::table('bot_trades as t')
+            ->where('t.bot_id', $bot->id)
+            ->where('t.entry_time', '>=', $from)
+            ->whereIn('t.result', [BotTrade::RESULT_WIN, BotTrade::RESULT_LOSS])
+            ->whereNotNull('t.instrument')
+            ->where('t.instrument', '!=', '')
+            ->selectRaw(
+                't.instrument as instrument, FLOOR(UNIX_TIMESTAMP(t.entry_time) / ?) * ? as bucket_ts',
+                [$bucketSeconds, $bucketSeconds]
+            )
+            ->selectRaw(
+                'CASE WHEN t.result = ? THEN 1 ELSE 0 END as trade_win',
+                [BotTrade::RESULT_WIN]
+            )
+            ->selectRaw(
+                'CASE WHEN t.result = ? THEN 1 ELSE 0 END as trade_loss',
+                [BotTrade::RESULT_LOSS]
+            );
+
+        $netByBucket = DB::query()
+            ->fromSub($tradesPerBucket, 's')
+            ->selectRaw('s.instrument as instrument, s.bucket_ts as bucket_ts, SUM(s.trade_win) as bucket_wins, SUM(s.trade_loss) as bucket_losses')
+            ->groupBy('s.instrument', 's.bucket_ts')
+            ->orderBy('s.bucket_ts')
+            ->get();
+
+        // Границы шкалы X — как в analytics(): через UNIX_TIMESTAMP сессии MySQL, иначе бакеты не совпадут.
+        $driver = DB::connection()->getDriverName();
+        if (in_array($driver, ['mysql', 'mariadb'], true)) {
+            $fromTs = (int) DB::selectOne(
+                'SELECT FLOOR(UNIX_TIMESTAMP(?) / ?) * ? AS ts',
+                [$from, $bucketSeconds, $bucketSeconds]
+            )->ts;
+            $endTs = (int) DB::selectOne(
+                'SELECT FLOOR(UNIX_TIMESTAMP(?) / ?) * ? AS ts',
+                [$now, $bucketSeconds, $bucketSeconds]
+            )->ts;
+        } else {
+            $fromTs = (int) (floor($from->getTimestamp() / $bucketSeconds) * $bucketSeconds);
+            $endTs = (int) (floor($now->getTimestamp() / $bucketSeconds) * $bucketSeconds);
+        }
+        if ($fromTs > $endTs) {
+            $timeline = [];
+        } else {
+            $timeline = [];
+            for ($ts = $fromTs; $ts <= $endTs; $ts += $bucketSeconds) {
+                $timeline[] = $ts;
+            }
+        }
+        if ($timeline === [] && $netByBucket->isNotEmpty()) {
+            $minBk = (int) $netByBucket->min('bucket_ts');
+            $maxBk = (int) $netByBucket->max('bucket_ts');
+            for ($ts = $minBk; $ts <= $maxBk; $ts += $bucketSeconds) {
+                $timeline[] = $ts;
+            }
+        }
+        $maxChartBuckets = 600;
+        if (count($timeline) > $maxChartBuckets) {
+            $timeline = array_slice($timeline, -$maxChartBuckets);
+        }
+
+        // instrument → {by_ts: bucket => {w,l}}
+        $bucketStats = [];
+        foreach ($netByBucket as $row) {
+            $inst = (string) $row->instrument;
+            $bk = (int) $row->bucket_ts;
+            if (! isset($bucketStats[$inst])) {
+                $bucketStats[$inst] = ['by_ts' => []];
+            }
+            $bucketStats[$inst]['by_ts'][$bk] = [
+                'w' => (int) $row->bucket_wins,
+                'l' => (int) $row->bucket_losses,
+            ];
+        }
+
+        // Пары, по которым бот торговал за период (сортировка по имени для стабильного UI).
+        $instruments = DB::table('bot_trades as t')
+            ->where('t.bot_id', $bot->id)
+            ->where('t.entry_time', '>=', $from)
+            ->whereNotNull('t.instrument')
+            ->where('t.instrument', '!=', '')
+            ->distinct()
+            ->orderBy('t.instrument')
+            ->pluck('t.instrument')
+            ->map(fn ($v) => (string) $v)
+            ->values();
+
+        // Winrate за период по каждой паре (подпись под заголовком графика).
+        $pairPeriodStats = DB::table('bot_trades as t')
+            ->where('t.bot_id', $bot->id)
+            ->where('t.entry_time', '>=', $from)
+            ->whereIn('t.result', [BotTrade::RESULT_WIN, BotTrade::RESULT_LOSS])
+            ->whereNotNull('t.instrument')
+            ->where('t.instrument', '!=', '')
+            ->groupBy('t.instrument')
+            ->selectRaw("
+                t.instrument as instrument,
+                SUM(CASE WHEN t.result = 'win' THEN 1 ELSE 0 END) as wins,
+                SUM(CASE WHEN t.result = 'loss' THEN 1 ELSE 0 END) as losses
+            ")
+            ->get()
+            ->keyBy('instrument');
+
+        $tz = config('app.timezone');
+        $chartLabels = [];
+        foreach ($timeline as $bk) {
+            $chartLabels[] = Carbon::createFromTimestamp($bk)->timezone($tz)->format('d.m H:i');
+        }
+
+        // Один dataset на пару: winrate % по бакету (null = нет сделок в интервале).
+        $chartSeries = [];
+        foreach ($instruments as $instrument) {
+            $byTs = $bucketStats[$instrument]['by_ts'] ?? [];
             $values = [];
             $bucketWins = [];
             $bucketLosses = [];
@@ -236,24 +577,36 @@ class BotController extends Controller
                     : null;
             }
 
-            $periodRow = $botPeriodStats->get($botId);
-            $botWins = (int) ($periodRow->wins ?? 0);
-            $botLosses = (int) ($periodRow->losses ?? 0);
-            $botTotal = $botWins + $botLosses;
+            $periodRow = $pairPeriodStats->get($instrument);
+            $pairWins = (int) ($periodRow->wins ?? 0);
+            $pairLosses = (int) ($periodRow->losses ?? 0);
+            $pairTotal = $pairWins + $pairLosses;
+
+            // slug безопасен для id canvas (точки/слэши в OTC-тикерах заменяем).
+            $slug = preg_replace('/[^a-zA-Z0-9_-]+/', '-', $instrument) ?: 'pair';
 
             $chartSeries[] = [
-                'bot_id' => $botId,
-                'name' => (string) $bot->name,
+                'instrument' => $instrument,
+                'slug' => $slug,
                 'values' => $values,
                 'bucket_wins' => $bucketWins,
                 'bucket_losses' => $bucketLosses,
-                'wins' => $botWins,
-                'losses' => $botLosses,
-                'winrate' => $botTotal > 0 ? round(($botWins * 100) / $botTotal, 2) : null,
+                'wins' => $pairWins,
+                'losses' => $pairLosses,
+                'winrate' => $pairTotal > 0 ? round(($pairWins * 100) / $pairTotal, 2) : null,
             ];
         }
 
-        return view('bots.analytics', [
+        // Список ботов пользователя — селект «переключить бота» на странице.
+        $bots = Bot::query()
+            ->where('user_id', auth()->id())
+            ->orderByDesc('is_active')
+            ->orderBy('name')
+            ->get(['id', 'name', 'is_active']);
+
+        return view('bots.analytics-pairs', [
+            'bot' => $bot,
+            'bots' => $bots,
             'hours' => $hours,
             'interval' => $bucketSeconds,
             'intervalPresets' => $intervalPresets,
@@ -330,7 +683,17 @@ class BotController extends Controller
                     'instrument' => $t->instrument,
                     'side' => $t->side,
                     'status' => $t->status,
+                    // Paper = итог по свечам платформы; mirror_po_* = итог на Pocket Option (мартингейл).
                     'result' => $t->result ?? 'pending',
+                    'paper_result' => $meta['paper_result'] ?? ($t->result ?? 'pending'),
+                    'mirror_po_result' => isset($meta['mirror_po_result']) ? (string) $meta['mirror_po_result'] : null,
+                    'mirror_po_result_source' => isset($meta['mirror_po_result_source'])
+                        ? (string) $meta['mirror_po_result_source']
+                        : null,
+                    'mirror_po_profit' => isset($meta['mirror_po_profit']) && is_numeric($meta['mirror_po_profit'])
+                        ? (float) $meta['mirror_po_profit']
+                        : null,
+                    'mirror_status' => isset($meta['mirror_status']) ? (string) $meta['mirror_status'] : null,
                     'entry_price' => $t->entry_price !== null ? number_format((float) $t->entry_price, 5, '.', '') : null,
                     'entry_amount' => BotTrade::formatMirrorAmountLabel(BotTrade::mirrorAmountFromMeta($meta)),
                     'expiry_price' => $t->expiry_price !== null ? number_format((float) $t->expiry_price, 5, '.', '') : null,
@@ -509,13 +872,31 @@ class BotController extends Controller
                 // Пары с payout ниже порога не анализируются (экономический фильтр).
                 'min_payout' => ['required', 'numeric', 'min:0', 'max:100'],
                 'stale_after_sec' => ['required', 'integer', 'min:5', 'max:600'],
+                // Golden-фильтры: сила тел серии + торговое окно UTC + blacklist пар.
+                'min_body_to_range_ratio' => ['nullable', 'numeric', 'min:0', 'max:1'],
+                'trade_hour_utc_from' => ['nullable', 'integer', 'min:0', 'max:23'],
+                'trade_hour_utc_to' => ['nullable', 'integer', 'min:0', 'max:23'],
+                'blocked_instruments_text' => ['nullable', 'string', 'max:8000'],
             ]);
+            $blockedList = \App\Services\Telegram\TelegramAnalystInstrumentService::parseInstrumentListInput(
+                $extra['blocked_instruments_text'] ?? null
+            );
             $config = array_merge($bot->config ?? [], [
                 'count' => (int) $extra['count'],
                 'expiry_sec' => (int) $extra['expiry_sec'],
                 'min_confidence' => (float) $extra['min_confidence'],
                 'min_payout' => (float) $extra['min_payout'],
                 'stale_after_sec' => (int) $extra['stale_after_sec'],
+                // 0 = фильтр тел выключен; иначе avg body/range серии должен быть ≥ порога.
+                'min_body_to_range_ratio' => (float) ($extra['min_body_to_range_ratio'] ?? 0),
+                // Оба часа заданы → торгуем только в [from, to] UTC; пусто → 24/7.
+                'trade_hour_utc_from' => array_key_exists('trade_hour_utc_from', $extra) && $extra['trade_hour_utc_from'] !== null
+                    ? (int) $extra['trade_hour_utc_from']
+                    : null,
+                'trade_hour_utc_to' => array_key_exists('trade_hour_utc_to', $extra) && $extra['trade_hour_utc_to'] !== null
+                    ? (int) $extra['trade_hour_utc_to']
+                    : null,
+                'blocked_instruments' => $blockedList,
             ]);
             unset($config['streak_len'], $config['confirm_streak_len']);
         } elseif ($bot->type === 'akim_trade_1m') {

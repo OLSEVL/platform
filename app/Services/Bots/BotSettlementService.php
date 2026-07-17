@@ -5,6 +5,7 @@ namespace App\Services\Bots;
 use App\Models\BotTrade;
 use App\Models\InstrumentCandle;
 use App\Services\CandleService;
+use App\Services\Mirror\MirrorPoResultService;
 use App\Services\Mirror\UserMartingaleService;
 use Illuminate\Support\Facades\DB;
 
@@ -37,12 +38,25 @@ class BotSettlementService
         $settled = 0;
         $skipped = 0;
         $settledFallback = 0;
+        $awaitingPo = 0;
 
         $martingale = app(UserMartingaleService::class);
+        $poResults = app(MirrorPoResultService::class);
 
         foreach ($rows as $trade) {
             $metaBefore = is_array($trade->meta_json) ? $trade->meta_json : [];
             $mirrorStatusBefore = (string) ($metaBefore['mirror_status'] ?? '');
+
+            // Зеркальные executed: ждём expiry+5с, чтобы successcloseOrder успел попасть в кэш.
+            if ($mirrorStatusBefore === 'executed') {
+                $poReadyAt = $trade->expiry_time->copy()->addSeconds(MirrorPoResultService::PO_RESULT_DELAY_SEC);
+                if ($poReadyAt->isFuture()) {
+                    $awaitingPo++;
+                    $skipped++;
+
+                    continue;
+                }
+            }
 
             $expiryTs = (int) $trade->expiry_time->timestamp;
             $settlement = $this->resolveSettlementPriceAtExpiry((string) $trade->instrument, $expiryTs);
@@ -81,28 +95,55 @@ class BotSettlementService
                 default => 0.0,
             };
 
+            $meta = array_merge($metaBefore, [
+                // Paper-итог по свечам платформы (статистика бота).
+                'paper_result' => $result,
+            ]);
+            if ($usedEntryFallback) {
+                $meta['settlement_fallback'] = 'entry_price_draw';
+                $meta['settlement_fallback_reason'] = 'no_candle_at_expiry';
+            }
+
+            // Для executed зеркала: итог PO (successcloseOrder) → мартингейл; иначе fallback paper.
+            $martingaleResult = $result;
+            if ($mirrorStatusBefore === 'executed') {
+                $po = $poResults->resolveForTrade($trade, $result);
+                if ($po['result'] !== null) {
+                    $meta['mirror_po_result'] = $po['result'];
+                    $martingaleResult = $po['result'];
+                }
+                $meta['mirror_po_result_source'] = $po['source'];
+                if ($po['profit'] !== null) {
+                    $meta['mirror_po_profit'] = $po['profit'];
+                }
+                if (! empty($po['deal_id'])) {
+                    $meta['pocket_deal_id'] = $po['deal_id'];
+                }
+                // Если после всех retry PO-result так и не получен, считаем зеркало
+                // "не подтверждённо открытым" (PO open not confirmed):
+                // 1) помечаем статус в meta для диагностики в UI/истории,
+                // 2) НЕ двигаем мартингейл по paper-итогу этой сделки.
+                if (($po['source'] ?? null) === MirrorPoResultService::SOURCE_ASSUME_NOT_OPENED) {
+                    $meta['mirror_status'] = 'assumed_not_opened';
+                    $martingaleResult = BotTrade::RESULT_DRAW;
+                }
+            }
+
             $updatePayload = [
                 'status' => BotTrade::STATUS_SETTLED,
                 'result' => $result,
                 'expiry_price' => $expiry,
                 'pnl' => $pnl,
                 'settled_at' => now(),
+                'meta_json' => $meta,
             ];
-            if ($usedEntryFallback) {
-                $updatePayload['meta_json'] = array_merge(
-                    is_array($trade->meta_json) ? $trade->meta_json : [],
-                    [
-                        'settlement_fallback' => 'entry_price_draw',
-                        'settlement_fallback_reason' => 'no_candle_at_expiry',
-                    ],
-                );
-            }
 
             // Settle + сдвиг мартингейла в одной транзакции: «одна сделка на PO»
             // отпускает следующую только после commit, когда шаг уже обновлён.
-            DB::transaction(function () use ($trade, $updatePayload, $martingale, $result, $mirrorStatusBefore): void {
+            DB::transaction(function () use ($trade, $updatePayload, $martingale, $martingaleResult, $mirrorStatusBefore): void {
                 $trade->update($updatePayload);
-                $martingale->advanceAfterSettledTrade($trade, $result, $mirrorStatusBefore);
+                $trade->refresh();
+                $martingale->advanceAfterSettledTrade($trade, $martingaleResult, $mirrorStatusBefore);
             });
             $settled++;
             if ($usedEntryFallback) {
@@ -114,6 +155,7 @@ class BotSettlementService
             'checked' => $rows->count(),
             'settled' => $settled,
             'skipped' => $skipped,
+            'awaiting_po' => $awaitingPo,
             'settled_fallback' => $settledFallback,
         ];
     }

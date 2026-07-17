@@ -137,6 +137,10 @@ _WARM_KEEPALIVE_INTERVAL_SEC = 30
 _AUTH_READY_TIMEOUT_SEC = 8.0
 _AUTH_READY_POLL_SEC = 0.25
 
+# Кэш итогов зеркальных ордеров (requestId / dealId → result) из successcloseOrder.
+_mirror_order_results: Dict[str, Dict[str, Any]] = {}
+_MIRROR_ORDER_RESULTS_LIMIT = 500
+
 # Успех зеркала = openOrder ушёл по WS (KeepAlive не парсит successopenOrder → ложные 502).
 
 
@@ -430,11 +434,26 @@ async def get_or_create_client_by_ssid(
     client_key = _mirror_client_key(ssid, proxy_url)
     if client_key in _clients:
         client = _clients[client_key]
-        if client.is_connected:
+        km = getattr(client, "_keep_alive_manager", None)
+        loop_alive = bool(km is not None and getattr(km, "message_loop_alive", lambda: True)())
+        # «Подключён», но recv-таск умер → send работает, successclose не читается.
+        if client.is_connected and not loop_alive:
+            print(
+                "[WARN] KeepAlive message loop dead while is_connected — forcing reconnect",
+                flush=True,
+            )
+            try:
+                await client.disconnect()
+            except Exception:
+                pass
+            del _clients[client_key]
+        elif client.is_connected:
+            _attach_mirror_order_hooks(client)
             return client
         try:
             await client.connect()
             if await _wait_client_ready(client, timeout_sec=4.0):
+                _attach_mirror_order_hooks(client)
                 return client
         except Exception:
             pass
@@ -463,6 +482,7 @@ async def get_or_create_client_by_ssid(
     # Ждём auth polling'ом, не sleep(6): тёплый клиент часто готов за <1 с.
     if await _wait_client_ready(client):
         _clients[client_key] = client
+        _attach_mirror_order_hooks(client)
         return client
 
     try:
@@ -471,12 +491,114 @@ async def get_or_create_client_by_ssid(
         pass
     if await _wait_client_ready(client, timeout_sec=4.0):
         _clients[client_key] = client
+        _attach_mirror_order_hooks(client)
         return client
 
     raise HTTPException(
         status_code=502,
         detail="Pocket Option client not connected after auth (SSID устарел — скопируйте новый 42[\"auth\",...] из DevTools кабинета PO)",
     )
+
+
+def _attach_mirror_order_hooks(client: AsyncPocketOptionClient) -> None:
+    """
+    Один раз вешаем колбэки: successopen/close через client events → кэш proxy.
+    place-order не ждёт confirmation; итог для мартингейла читаем после expiry.
+    """
+    if getattr(client, "_mirror_hooks_attached", False):
+        return
+
+    async def on_opened(data: Any) -> None:
+        if not isinstance(data, dict):
+            return
+        request_id = str(data.get("requestId") or data.get("request_id") or "")
+        deal_id = str(data.get("id") or data.get("orderId") or data.get("order_id") or "")
+        if not request_id and not deal_id:
+            return
+        existing = _mirror_order_results.get(request_id) or _mirror_order_results.get(deal_id) or {}
+        entry = {
+            **existing,
+            "request_id": request_id or existing.get("request_id"),
+            "deal_id": deal_id or existing.get("deal_id"),
+            "asset": data.get("asset") or existing.get("asset"),
+            "amount": float(data["amount"]) if "amount" in data else existing.get("amount"),
+            "status": existing.get("status") or "pending",
+            "updated_at": time.time(),
+        }
+        if request_id:
+            _mirror_order_results[request_id] = entry
+        if deal_id:
+            _mirror_order_results[deal_id] = entry
+        _trim_mirror_order_results()
+        print(
+            f"[MIRROR] successopenOrder mapped requestId={request_id or '-'} dealId={deal_id or '-'}",
+            flush=True,
+        )
+
+    async def on_closed(data: Any) -> None:
+        if isinstance(data, OrderResult):
+            profit = data.profit
+            status = data.status
+            status_val = status.value if hasattr(status, "value") else str(status or "")
+            if status_val.lower() in ("win", "won") or (profit is not None and float(profit) > 0):
+                result = "win"
+            elif status_val.lower() in ("lose", "loss", "lost") or (
+                profit is not None and float(profit) < 0
+            ):
+                result = "loss"
+            else:
+                result = "draw"
+            _store_mirror_order_result(
+                request_id=None,
+                deal_id=str(data.order_id),
+                result=result,
+                profit=float(profit) if profit is not None else None,
+                asset=str(data.asset),
+            )
+            return
+
+        if not isinstance(data, dict):
+            return
+        deals = data.get("deals")
+        if isinstance(deals, list):
+            for deal in deals:
+                if isinstance(deal, dict):
+                    profit = float(deal.get("profit") or 0)
+                    result = "win" if profit > 0 else ("loss" if profit < 0 else "draw")
+                    _store_mirror_order_result(
+                        request_id=str(deal.get("requestId") or "") or None,
+                        deal_id=str(deal.get("id") or "") or None,
+                        result=result,
+                        profit=profit,
+                        asset=str(deal.get("asset") or "") or None,
+                    )
+            return
+        profit = float(data.get("profit") or 0) if "profit" in data else None
+        if profit is None and not data.get("id"):
+            return
+        p = float(profit or 0)
+        result = "win" if p > 0 else ("loss" if p < 0 else "draw")
+        _store_mirror_order_result(
+            request_id=str(data.get("requestId") or "") or None,
+            deal_id=str(data.get("id") or "") or None,
+            result=result,
+            profit=profit,
+            asset=str(data.get("asset") or "") or None,
+        )
+
+    # Вешаем hooks и на client callbacks, и на KeepAlive typed events —
+    # place-order идёт через KeepAlive WS, success* приходят туда же.
+    try:
+        client.add_event_callback("order_opened", on_opened)
+        client.add_event_callback("order_closed", on_closed)
+        km = getattr(client, "_keep_alive_manager", None)
+        if km is not None and hasattr(km, "add_event_handler"):
+            km.add_event_handler("order_opened", on_opened)
+            km.add_event_handler("order_closed", on_closed)
+        client._mirror_hooks_attached = True
+        print("[MIRROR] order hooks attached (client + keep_alive)", flush=True)
+    except Exception as exc:
+        print(f"[MIRROR] failed to attach order hooks: {exc}", flush=True)
 
 
 async def get_candles_data(
@@ -1354,6 +1476,23 @@ async def place_mirror_order(
         flush=True,
     )
 
+    # Регистрируем pending: successopenOrder/successcloseOrder допишут deal id и profit.
+    _remember_mirror_order_pending(
+        request_id=request_id,
+        asset=asset,
+        amount=amount,
+        direction=direction.value if hasattr(direction, "value") else str(direction),
+        duration=duration,
+    )
+
+    # Фоново ждём open/close в кэше (не блокируем HTTP) — диагностика + дожим.
+    try:
+        asyncio.create_task(
+            _watch_mirror_order_lifecycle(client, request_id, duration)
+        )
+    except Exception as exc:
+        print(f"[MIRROR] failed to start lifecycle watch: {exc}", flush=True)
+
     return OrderResult(
         order_id=request_id,
         asset=asset,
@@ -1364,6 +1503,240 @@ async def place_mirror_order(
         placed_at=now,
         expires_at=now + timedelta(seconds=duration),
     )
+
+
+async def _watch_mirror_order_lifecycle(
+    client: AsyncPocketOptionClient,
+    request_id: str,
+    duration: int,
+) -> None:
+    """
+    Ждём successopen/close в кэше до duration+45с.
+    Сам по себе кэш не наполняет — даёт время message loop обработать кадры
+    и пишет в лог, если до expiry+буфера итога так и нет.
+    """
+    deadline = time.time() + max(30, int(duration) + 45)
+    saw_deal = False
+    while time.time() < deadline:
+        cached = _mirror_order_results.get(request_id) or {}
+        if cached.get("deal_id") and not saw_deal:
+            saw_deal = True
+            print(
+                f"[MIRROR] lifecycle open requestId={request_id} dealId={cached.get('deal_id')}",
+                flush=True,
+            )
+        if cached.get("result") in ("win", "loss", "draw"):
+            print(
+                f"[MIRROR] lifecycle close requestId={request_id} "
+                f"result={cached.get('result')} profit={cached.get('profit')}",
+                flush=True,
+            )
+            return
+        # Подтянуть из client._order_results, если KeepAlive уже трекнул close.
+        try:
+            from_client = _lookup_client_order_result(client, request_id)
+            if from_client and from_client.get("completed"):
+                print(
+                    f"[MIRROR] lifecycle from client_cache requestId={request_id} "
+                    f"result={from_client.get('result')}",
+                    flush=True,
+                )
+                return
+        except Exception:
+            pass
+        await asyncio.sleep(2.0)
+    print(
+        f"[MIRROR] lifecycle TIMEOUT requestId={request_id} "
+        f"(no successcloseOrder in {duration}+45s)",
+        flush=True,
+    )
+
+
+def _trim_mirror_order_results() -> None:
+    """Не даём кэшу итогов расти без предела."""
+    overflow = len(_mirror_order_results) - _MIRROR_ORDER_RESULTS_LIMIT
+    if overflow <= 0:
+        return
+    for key in list(_mirror_order_results.keys())[:overflow]:
+        _mirror_order_results.pop(key, None)
+
+
+def _remember_mirror_order_pending(
+    request_id: str,
+    asset: str,
+    amount: float,
+    direction: str,
+    duration: int,
+) -> None:
+    """
+    Регистрируем pending. Не затираем deal_id/result, если successopen/close
+    успел прийти раньше (гонка с отправкой openOrder).
+    """
+    existing = _mirror_order_results.get(request_id) or {}
+    if existing.get("result") in ("win", "loss", "draw"):
+        return
+    entry = {
+        **existing,
+        "request_id": request_id,
+        "deal_id": existing.get("deal_id"),
+        "asset": asset or existing.get("asset"),
+        "amount": amount,
+        "direction": direction,
+        "duration": duration,
+        "status": existing.get("status") or "pending",
+        "result": existing.get("result"),
+        "profit": existing.get("profit"),
+        "updated_at": time.time(),
+    }
+    _mirror_order_results[request_id] = entry
+    if entry.get("deal_id"):
+        _mirror_order_results[str(entry["deal_id"])] = entry
+    _trim_mirror_order_results()
+
+
+def _store_mirror_order_result(
+    *,
+    request_id: Optional[str],
+    deal_id: Optional[str],
+    result: str,
+    profit: Optional[float] = None,
+    asset: Optional[str] = None,
+) -> None:
+    """Пишем win/loss в кэш по requestId и dealId."""
+    keys = [k for k in (request_id, deal_id) if k]
+    if not keys:
+        return
+
+    base = None
+    for k in keys:
+        if k in _mirror_order_results:
+            base = dict(_mirror_order_results[k])
+            break
+    if base is None:
+        base = {
+            "request_id": request_id,
+            "deal_id": deal_id,
+            "asset": asset,
+            "status": "closed",
+        }
+
+    base["status"] = "closed"
+    base["result"] = result
+    base["profit"] = profit
+    base["updated_at"] = time.time()
+    if request_id:
+        base["request_id"] = request_id
+    if deal_id:
+        base["deal_id"] = deal_id
+    if asset:
+        base["asset"] = asset
+
+    for k in keys:
+        _mirror_order_results[k] = base
+    _trim_mirror_order_results()
+    print(
+        f"[MIRROR] order result cached requestId={request_id or '-'} "
+        f"dealId={deal_id or '-'} result={result} profit={profit}",
+        flush=True,
+    )
+
+
+def _lookup_mirror_order_result(order_id: str) -> Optional[Dict[str, Any]]:
+    """Итог из локального кэша proxy или из _order_results клиента."""
+    if not order_id:
+        return None
+    cached = _mirror_order_results.get(order_id)
+    if cached and cached.get("result") in ("win", "loss", "draw"):
+        return {
+            "ok": True,
+            "found": True,
+            "completed": True,
+            "order_id": cached.get("deal_id") or cached.get("request_id") or order_id,
+            "request_id": cached.get("request_id"),
+            "deal_id": cached.get("deal_id"),
+            "result": cached.get("result"),
+            "profit": cached.get("profit"),
+            "source": "proxy_cache",
+        }
+    if cached and cached.get("status") == "pending":
+        return {
+            "ok": True,
+            "found": True,
+            "completed": False,
+            "order_id": order_id,
+            "request_id": cached.get("request_id"),
+            "deal_id": cached.get("deal_id"),
+            "result": None,
+            "profit": None,
+            "source": "proxy_cache_pending",
+        }
+    return None
+
+
+def _lookup_client_order_result(
+    client: AsyncPocketOptionClient,
+    order_id: str,
+) -> Optional[Dict[str, Any]]:
+    """Читаем результат из кэша AsyncPocketOptionClient после successcloseOrder."""
+    results = getattr(client, "_order_results", {}) or {}
+    active = getattr(client, "_active_orders", {}) or {}
+
+    # map:requestId → OrderResult с deal id после successopenOrder
+    mapped = results.get(f"map:{order_id}")
+    if mapped is not None and getattr(mapped, "order_id", None):
+        deal_key = str(mapped.order_id)
+        if deal_key in results and deal_key != f"map:{order_id}":
+            order_id = deal_key
+
+    item = results.get(order_id)
+    if item is None:
+        return None
+
+    status = getattr(item, "status", None)
+    status_val = status.value if hasattr(status, "value") else str(status or "")
+    profit = getattr(item, "profit", None)
+    result = None
+    if status_val.lower() in ("win", "won"):
+        result = "win"
+    elif status_val.lower() in ("lose", "loss", "lost"):
+        result = "loss"
+    elif profit is not None:
+        p = float(profit)
+        result = "win" if p > 0 else ("loss" if p < 0 else "draw")
+
+    if result is None:
+        # Ещё в active — сделка не закрыта.
+        if order_id in active:
+            return {
+                "ok": True,
+                "found": True,
+                "completed": False,
+                "order_id": order_id,
+                "result": None,
+                "profit": None,
+                "source": "client_active",
+            }
+        return None
+
+    deal_id = str(getattr(item, "order_id", order_id))
+    _store_mirror_order_result(
+        request_id=order_id if order_id != deal_id else None,
+        deal_id=deal_id,
+        result=result,
+        profit=float(profit) if profit is not None else None,
+        asset=str(getattr(item, "asset", "") or None),
+    )
+    return {
+        "ok": True,
+        "found": True,
+        "completed": True,
+        "order_id": deal_id,
+        "request_id": order_id,
+        "deal_id": deal_id,
+        "result": result,
+        "profit": float(profit) if profit is not None else None,
+        "source": "client_cache",
+    }
 
 
 @app.post("/api/test-auth")
@@ -1545,6 +1918,80 @@ async def active_orders_api(payload: Dict[str, Any] = Body(...)):
         return JSONResponse(content={"ok": False, "count": 0, "error": str(exc)}, status_code=502)
 
 
+@app.post("/api/order-result")
+async def order_result_api(payload: Dict[str, Any] = Body(...)):
+    """
+    Итог закрытой сделки PO (win/loss) для мартингейла.
+    Читает кэш successcloseOrder / client._order_results без нового openOrder.
+    Тело: ssid, order_id (requestId или deal id), is_demo, proxy_url?
+    """
+    ssid = str(payload.get("ssid") or "").strip()
+    order_id = str(payload.get("order_id") or payload.get("request_id") or "").strip()
+    is_demo = bool(payload.get("is_demo", True))
+    proxy_url = payload.get("proxy_url")
+    if proxy_url is not None:
+        proxy_url = str(proxy_url).strip() or None
+
+    if not ssid or not order_id:
+        raise HTTPException(status_code=400, detail="Required: ssid, order_id")
+
+    # Сначала локальный кэш proxy (событие уже пришло).
+    cached = _lookup_mirror_order_result(order_id)
+    if cached and cached.get("completed"):
+        return JSONResponse(content=cached)
+
+    try:
+        client = await get_or_create_client_by_ssid(ssid, is_demo=is_demo, proxy_url=proxy_url)
+        # Даём message loop шанс дочитать запоздавший successcloseOrder.
+        for _ in range(3):
+            from_client = _lookup_client_order_result(client, order_id)
+            if from_client and from_client.get("completed"):
+                return JSONResponse(content=from_client)
+            cached = _lookup_mirror_order_result(order_id)
+            if cached and cached.get("completed"):
+                return JSONResponse(content=cached)
+            await asyncio.sleep(1.0)
+
+        from_client = _lookup_client_order_result(client, order_id)
+        if from_client and from_client.get("completed"):
+            return JSONResponse(content=from_client)
+        if from_client:
+            return JSONResponse(content=from_client)
+
+        # Диагностика: жив ли recv.
+        km = getattr(client, "_keep_alive_manager", None)
+        loop_alive = bool(km is not None and getattr(km, "message_loop_alive", lambda: False)())
+        stats = km.get_connection_stats() if km is not None and hasattr(km, "get_connection_stats") else {}
+        pending = _lookup_mirror_order_result(order_id)
+        if pending:
+            pending = {
+                **pending,
+                "message_loop_alive": loop_alive,
+                "ws_msgs_received": stats.get("total_messages_received"),
+            }
+            return JSONResponse(content=pending)
+    except HTTPException as exc:
+        return JSONResponse(content={"ok": False, "found": False, "completed": False, "error": exc.detail})
+    except Exception as exc:
+        print(f"[ERROR] order-result: {exc}", flush=True)
+        return JSONResponse(
+            content={"ok": False, "found": False, "completed": False, "error": str(exc)},
+            status_code=502,
+        )
+
+    return JSONResponse(
+        content={
+            "ok": True,
+            "found": False,
+            "completed": False,
+            "order_id": order_id,
+            "result": None,
+            "source": "not_found",
+            "message_loop_alive": False,
+        }
+    )
+
+
 @app.post("/api/place-order")
 async def place_order_api(
     payload: Dict[str, Any] = Body(...),
@@ -1630,6 +2077,7 @@ async def root():
             "/api/unwarm-client": "POST - Снять warm keepalive",
             "/api/client-status": "POST - Статус warm (без нового connect)",
             "/api/active-orders": "POST - Активные ордера на PO (для мартингейла)",
+            "/api/order-result": "POST - Итог закрытой сделки PO (win/loss)",
             "/api/place-order": "POST - Разместить ордер (зеркало сделки бота)",
         }
     }

@@ -8,6 +8,8 @@ use App\Models\BotTrade;
 use App\Models\InstrumentCandle;
 use App\Models\User;
 use App\Services\Bots\BotSettlementService;
+use App\Services\Mirror\MirrorPoResultService;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
 
@@ -144,6 +146,122 @@ class BotSettlementServiceTest extends TestCase
         $this->assertSame(0, $res['settled']);
         $this->assertSame(1, $res['skipped']);
         $this->assertSame(BotTrade::STATUS_OPEN, $trade->status);
+    }
+
+    public function test_mirrored_trade_waits_po_delay_after_expiry(): void
+    {
+        $trade = $this->makeOpenTrade([
+            'entry_price' => 100.00000,
+            'expiry_time' => now()->subSeconds(2),
+            'meta_json' => [
+                'mirror_status' => 'executed',
+                'pocket_order_id' => 'req-1',
+            ],
+        ]);
+
+        InstrumentCandle::query()->create([
+            'instrument' => $trade->instrument,
+            'timeframe' => 60,
+            'time' => $trade->expiry_time->timestamp - ($trade->expiry_time->timestamp % 60),
+            'open' => 101,
+            'high' => 102,
+            'low' => 99,
+            'close' => 101,
+            'volume' => 1,
+        ]);
+
+        $res = app(BotSettlementService::class)->settleDueTrades($trade->bot_id);
+        $this->assertSame(0, $res['settled']);
+        $this->assertGreaterThan(0, $res['awaiting_po'] ?? 0);
+        $trade->refresh();
+        $this->assertSame(BotTrade::STATUS_OPEN, $trade->status);
+    }
+
+    public function test_assume_not_opened_source_does_not_advance_martingale_and_marks_meta_status(): void
+    {
+        Http::fake([
+            '*/api/order-result' => Http::response([
+                'ok' => true,
+                'found' => false,
+                'completed' => false,
+                'result' => null,
+                'source' => 'not_found',
+            ]),
+        ]);
+
+        $user = User::factory()->create();
+        \App\Models\UserTradingSetting::query()->create([
+            'user_id' => $user->id,
+            'pocket_ssid' => '42["auth",{"session":"x","uid":1,"isDemo":1,"platform":2}]',
+            'is_demo' => true,
+            'order_amount' => 1,
+            'order_amounts' => [1.0, 2.0, 4.0],
+            'martingale_step' => 1,
+            'mirror_trades_enabled' => true,
+        ]);
+
+        $bot = Bot::query()->create([
+            'user_id' => $user->id,
+            'name' => 'Mirror Test Bot',
+            'type' => 'three_candles_in_row',
+            'config' => ['mirror_trades_enabled' => true],
+            'is_active' => true,
+        ]);
+
+        $signal = BotSignal::query()->create([
+            'bot_id' => $bot->id,
+            'instrument' => 'EURUSD_otc',
+            'side' => 'CALL',
+            'signal_at' => now()->subMinutes(3),
+            'expiry_time' => now()->subMinute(),
+            'dedupe_key' => uniqid('test:', true),
+        ]);
+
+        $trade = BotTrade::query()->create([
+            'bot_id' => $bot->id,
+            'bot_signal_id' => $signal->id,
+            'instrument' => 'EURUSD_otc',
+            'side' => 'CALL',
+            'status' => BotTrade::STATUS_OPEN,
+            'result' => BotTrade::RESULT_PENDING,
+            'entry_time' => now()->subMinutes(3),
+            // expiry уже давно в прошлом, чтобы не ждать PO_RESULT_DELAY_SEC.
+            'expiry_time' => now()->subMinute(),
+            'entry_price' => 100.0,
+            'payout_snapshot' => 92.0,
+            'meta_json' => [
+                'mirror_status' => 'executed',
+                'pocket_order_id' => 'req-unresolved-po',
+            ],
+        ]);
+
+        // Свеча даёт paper-loss для CALL (expiry open ниже entry), чтобы убедиться:
+        // несмотря на paper-loss, step не должен увеличиться при assume_not_opened.
+        $expiryTs = $trade->expiry_time->timestamp;
+        $bucketTs = $expiryTs - ($expiryTs % 60);
+        InstrumentCandle::query()->create([
+            'instrument' => $trade->instrument,
+            'timeframe' => 1,
+            'time' => $bucketTs,
+            'open' => 99.5,
+            'high' => 100.2,
+            'low' => 99.1,
+            'close' => 99.4,
+            'volume' => 1,
+        ]);
+
+        $res = app(BotSettlementService::class)->settleDueTrades($bot->id);
+        $this->assertSame(1, $res['settled']);
+
+        $trade->refresh();
+        $meta = is_array($trade->meta_json) ? $trade->meta_json : [];
+        $this->assertSame(MirrorPoResultService::SOURCE_ASSUME_NOT_OPENED, $meta['mirror_po_result_source'] ?? null);
+        $this->assertSame('assumed_not_opened', $meta['mirror_status'] ?? null);
+
+        $step = (int) \App\Models\UserTradingSetting::query()
+            ->where('user_id', $user->id)
+            ->value('martingale_step');
+        $this->assertSame(1, $step);
     }
 
     /**

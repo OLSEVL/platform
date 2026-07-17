@@ -64,6 +64,7 @@ class ProfileMirrorQueueTest extends TestCase
             ->get(route('profile.mirror-queue.index'))
             ->assertOk()
             ->assertSee('Очередь зеркалирования')
+            ->assertSee('Окно таблицы сделок')
             ->assertSee('Сумма')
             ->assertSee('Итог')
             ->assertSee('Ош. зеркала');
@@ -80,8 +81,47 @@ class ProfileMirrorQueueTest extends TestCase
 
         $this->assertTrue($response->json('summary.mirror_enabled'));
         $this->assertNotEmpty($response->json('trades'));
+        $this->assertSame(6, (int) $response->json('window_hours'));
+        $this->assertSame(80, (int) $response->json('window_limit'));
         $this->assertSame(4.0, (float) $response->json('trades.0.mirror_amount'));
         $this->assertSame('$4', $response->json('trades.0.mirror_amount_label'));
         $this->assertSame(BotTrade::RESULT_PENDING, $response->json('trades.0.result'));
+    }
+
+    public function test_user_can_change_mirror_queue_window_from_page_settings(): void
+    {
+        $user = User::factory()->create();
+        UserTradingSetting::query()->create([
+            'user_id' => $user->id,
+            'pocket_ssid' => '42["auth",{"session":"x","uid":1,"isDemo":1,"platform":2}]',
+            'is_demo' => true,
+            'order_amount' => 1,
+            'mirror_trades_enabled' => true,
+            'mirror_queue_hours' => 6,
+            'mirror_queue_limit' => 80,
+        ]);
+
+        $this->actingAs($user)
+            ->putJson(route('profile.mirror-queue.window'), [
+                'hours' => 24,
+                'limit' => 200,
+            ])
+            ->assertOk()
+            ->assertJson([
+                'ok' => true,
+                'hours' => 24,
+                'limit' => 200,
+            ]);
+
+        $settings = UserTradingSetting::query()->where('user_id', $user->id)->first();
+        $this->assertSame(24, (int) $settings->mirror_queue_hours);
+        $this->assertSame(200, (int) $settings->mirror_queue_limit);
+
+        $response = $this->actingAs($user)
+            ->getJson(route('profile.mirror-queue.data', ['hours' => 24, 'limit' => 200]))
+            ->assertOk();
+
+        $this->assertSame(24, (int) $response->json('window_hours'));
+        $this->assertSame(200, (int) $response->json('window_limit'));
     }
 }

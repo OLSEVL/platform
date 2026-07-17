@@ -52,6 +52,33 @@
         </div>
     </div>
 
+    <div class="rounded border border-zinc-700 bg-zinc-950/40 px-4 py-3">
+        <h3 class="text-sm font-medium text-zinc-300 mb-3">Окно таблицы сделок</h3>
+        <div class="flex flex-wrap items-end gap-4">
+            <label class="block text-xs text-zinc-500">
+                Период (часы)
+                <select id="mq-hours" class="mt-1 block rounded border border-zinc-700 bg-zinc-900 px-2 py-1.5 text-sm text-zinc-100">
+                    @foreach($hoursOptions as $h)
+                        <option value="{{ $h }}" @selected($queueHours === $h)>{{ $h }} ч</option>
+                    @endforeach
+                </select>
+            </label>
+            <label class="block text-xs text-zinc-500">
+                Макс. строк
+                <select id="mq-limit" class="mt-1 block rounded border border-zinc-700 bg-zinc-900 px-2 py-1.5 text-sm text-zinc-100">
+                    @foreach($limitOptions as $lim)
+                        <option value="{{ $lim }}" @selected($queueLimit === $lim)>{{ $lim }}</option>
+                    @endforeach
+                </select>
+            </label>
+            <p class="text-xs text-zinc-500 pb-1" id="mq-window-hint">
+                Показываем до <span id="mq-window-limit-label">{{ $queueLimit }}</span> сделок за последние
+                <span id="mq-window-hours-label">{{ $queueHours }}</span> ч.
+            </p>
+            <p class="text-xs text-emerald-400 pb-1 hidden" id="mq-window-saved">Сохранено</p>
+        </div>
+    </div>
+
     <div class="rounded border border-zinc-800 overflow-x-auto">
         {{-- table-auto: узкие колонки (ID, сторона, сумма, длит., мс) сжимаются по содержимому;
              широкие (бот, статус, ошибка, datetime) берут только нужное место. --}}
@@ -63,7 +90,8 @@
                     <th class="px-1.5 py-2 text-left whitespace-nowrap">Пара</th>
                     <th class="px-1.5 py-2 text-left whitespace-nowrap">Стор.</th>
                     <th class="px-1.5 py-2 text-left whitespace-nowrap">Сумма</th>
-                    <th class="px-1.5 py-2 text-left whitespace-nowrap" title="Итог paper-сделки после экспирации">Итог</th>
+                    <th class="px-1.5 py-2 text-left whitespace-nowrap" title="Итог paper-сделки после экспирации">Paper</th>
+                    <th class="px-1.5 py-2 text-left whitespace-nowrap" title="Итог на Pocket Option (для мартингейла)">PO</th>
                     <th class="px-1.5 py-2 text-left whitespace-nowrap">Очередь</th>
                     <th class="px-1.5 py-2 text-left whitespace-nowrap">Поставлена</th>
                     <th class="px-1.5 py-2 text-left whitespace-nowrap">Выполнена</th>
@@ -78,7 +106,7 @@
                 </tr>
             </thead>
             <tbody id="mq-trades-body" class="divide-y divide-zinc-800 bg-zinc-950/40">
-                <tr><td colspan="17" class="px-2 py-8 text-center text-zinc-500">Загрузка…</td></tr>
+                <tr><td colspan="18" class="px-2 py-8 text-center text-zinc-500">Загрузка…</td></tr>
             </tbody>
         </table>
     </div>
@@ -94,11 +122,21 @@
 <script>
 (function () {
     const DATA_URL = @json(route('profile.mirror-queue.data'));
+    const WINDOW_URL = @json(route('profile.mirror-queue.window'));
     const metaEl = document.getElementById('mq-meta');
     const jobsBody = document.getElementById('mq-jobs-body');
     const tradesBody = document.getElementById('mq-trades-body');
+    const hoursSelect = document.getElementById('mq-hours');
+    const limitSelect = document.getElementById('mq-limit');
+    const hoursLabel = document.getElementById('mq-window-hours-label');
+    const limitLabel = document.getElementById('mq-window-limit-label');
+    const savedHint = document.getElementById('mq-window-saved');
+    let queueHours = Number(@json($queueHours));
+    let queueLimit = Number(@json($queueLimit));
     let lastTradeIds = new Set();
     let timer = null;
+    let saveTimer = null;
+    let savedTimer = null;
 
     const queueLabels = {
         queued: { text: 'В очереди', class: 'text-amber-300' },
@@ -119,13 +157,34 @@
         return side ?? '—';
     }
 
-    // Итог paper-сделки: win / loss / draw / ещё не settle.
-    function resultCell(result) {
+    // Итог paper / PO: win / loss / draw / ещё нет.
+    function resultCell(result, title) {
         const r = String(result ?? '').toLowerCase();
-        if (r === 'win') return '<span class="text-emerald-400 font-medium whitespace-nowrap">win</span>';
-        if (r === 'loss') return '<span class="text-rose-400 font-medium whitespace-nowrap">loss</span>';
-        if (r === 'draw') return '<span class="text-zinc-400 font-medium whitespace-nowrap">draw</span>';
+        const tip = title ? ` title="${escapeAttr(title)}"` : '';
+        if (r === 'win') return `<span class="text-emerald-400 font-medium whitespace-nowrap"${tip}>win</span>`;
+        if (r === 'loss') return `<span class="text-rose-400 font-medium whitespace-nowrap"${tip}>loss</span>`;
+        if (r === 'draw') return `<span class="text-zinc-400 font-medium whitespace-nowrap"${tip}>draw</span>`;
         return '<span class="text-zinc-600">—</span>';
+    }
+
+    function poResultCell(t) {
+        const src = t.mirror_po_result_source ? String(t.mirror_po_result_source) : '';
+        const mirrorStatus = t.mirror_status ? String(t.mirror_status) : '';
+        if (src === 'po_assume_not_opened' || mirrorStatus === 'assumed_not_opened') {
+            return '<span class="text-amber-400 font-medium whitespace-nowrap" title="PO: не подтверждено открытие; мартингейл не изменяется">не подтв.</span>';
+        }
+        if (src === 'paper_fallback') {
+            return '<span class="text-amber-400 font-medium whitespace-nowrap" title="Не удалось получить successcloseOrder с PO; мартингейл по paper">ошибка</span>';
+        }
+        if (!t.mirror_po_result) {
+            if (t.mirror_status === 'executed' && (t.status === 'open' || t.queue_state === 'active')) {
+                return '<span class="text-zinc-500" title="Ждём successcloseOrder после экспирации">…</span>';
+            }
+            return '<span class="text-zinc-600">—</span>';
+        }
+        const profit = t.mirror_po_profit != null ? ` profit=${t.mirror_po_profit}` : '';
+        const title = src ? `Источник: ${src}${profit}` : (profit ? profit.trim() : 'Итог PO');
+        return resultCell(t.mirror_po_result, title);
     }
 
     function queueCell(state) {
@@ -189,9 +248,11 @@
         }).join('');
     }
 
-    function renderTrades(trades) {
+    function renderTrades(trades, windowHours, windowLimit) {
+        const hours = Number(windowHours ?? queueHours);
+        const limit = Number(windowLimit ?? queueLimit);
         if (!trades.length) {
-            tradesBody.innerHTML = '<tr><td colspan="17" class="px-4 py-8 text-center text-zinc-500">За последние 6 ч сделок нет.</td></tr>';
+            tradesBody.innerHTML = `<tr><td colspan="18" class="px-4 py-8 text-center text-zinc-500">За последние ${hours} ч сделок нет (лимит ${limit}).</td></tr>`;
             return;
         }
         const newIds = new Set(trades.map(t => t.id));
@@ -216,7 +277,8 @@
                 <td class="px-1.5 py-1.5 font-mono text-zinc-300 whitespace-nowrap">${escapeHtml(t.instrument)}</td>
                 <td class="px-1 py-1.5 whitespace-nowrap">${sideLabel(t.side)}</td>
                 <td class="px-1 py-1.5 font-mono text-amber-200/90 whitespace-nowrap" title="Сумма ордера на PO">${amountLabel}</td>
-                <td class="px-1 py-1.5 whitespace-nowrap" title="Итог paper-сделки">${resultCell(t.result)}</td>
+                <td class="px-1 py-1.5 whitespace-nowrap" title="Итог paper-сделки">${resultCell(t.paper_result ?? t.result, 'Paper (свечи платформы)')}</td>
+                <td class="px-1 py-1.5 whitespace-nowrap">${poResultCell(t)}</td>
                 <td class="px-1.5 py-1.5 whitespace-nowrap">${queueCell(t.queue_state)}</td>
                 <td class="px-1.5 py-1.5 whitespace-nowrap">${timeCell(t.job_queued_at, t.job_started_at ? 'старт ' + t.job_started_at : '')}</td>
                 <td class="px-1.5 py-1.5 whitespace-nowrap">${timeCell(t.job_finished_at)}</td>
@@ -240,20 +302,86 @@
         return escapeHtml(s).replace(/"/g, '&quot;');
     }
 
+    function dataUrl() {
+        const params = new URLSearchParams({
+            hours: String(queueHours),
+            limit: String(queueLimit),
+        });
+        return DATA_URL + '?' + params.toString();
+    }
+
+    function updateWindowLabels() {
+        if (hoursLabel) hoursLabel.textContent = String(queueHours);
+        if (limitLabel) limitLabel.textContent = String(queueLimit);
+    }
+
+    function showSavedHint() {
+        if (!savedHint) return;
+        savedHint.classList.remove('hidden');
+        clearTimeout(savedTimer);
+        savedTimer = setTimeout(() => savedHint.classList.add('hidden'), 2000);
+    }
+
+    async function persistWindowSettings() {
+        const csrf = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '';
+        const res = await fetch(WINDOW_URL, {
+            method: 'PUT',
+            headers: {
+                'Accept': 'application/json',
+                'Content-Type': 'application/json',
+                'X-CSRF-TOKEN': csrf,
+                'X-Requested-With': 'XMLHttpRequest',
+            },
+            body: JSON.stringify({ hours: queueHours, limit: queueLimit }),
+        });
+        if (!res.ok) {
+            throw new Error('save_failed');
+        }
+        const body = await res.json();
+        queueHours = Number(body.hours ?? queueHours);
+        queueLimit = Number(body.limit ?? queueLimit);
+        updateWindowLabels();
+        showSavedHint();
+    }
+
+    function scheduleWindowSave() {
+        clearTimeout(saveTimer);
+        saveTimer = setTimeout(() => {
+            persistWindowSettings().catch(() => {
+                metaEl.textContent = 'Не удалось сохранить настройки окна';
+            });
+        }, 250);
+    }
+
+    function onWindowChange() {
+        queueHours = Number(hoursSelect?.value ?? queueHours);
+        queueLimit = Number(limitSelect?.value ?? queueLimit);
+        updateWindowLabels();
+        scheduleWindowSave();
+        tick();
+    }
+
     async function tick() {
         try {
-            const res = await fetch(DATA_URL, { headers: { 'Accept': 'application/json' } });
+            const res = await fetch(dataUrl(), { headers: { 'Accept': 'application/json' } });
             const data = await res.json();
+            const wh = Number(data.window_hours ?? queueHours);
+            const wl = Number(data.window_limit ?? queueLimit);
             metaEl.textContent = 'Обновлено: ' + (data.server_time || '—')
+                + ' · окно: ' + wh + ' ч / ' + wl + ' строк'
                 + ' · OK: ' + (data.summary?.mirror_executed_recent ?? 0)
                 + ' · fail: ' + (data.summary?.mirror_failed_recent ?? 0);
             renderSummary(data.summary || {});
             renderJobs(data.pending_jobs || []);
-            renderTrades(data.trades || []);
+            renderTrades(data.trades || [], wh, wl);
         } catch (e) {
             metaEl.textContent = 'Ошибка загрузки';
         }
     }
+
+    hoursSelect?.addEventListener('change', onWindowChange);
+    limitSelect?.addEventListener('change', onWindowChange);
+    updateWindowLabels();
 
     tick();
     timer = setInterval(tick, 2000);

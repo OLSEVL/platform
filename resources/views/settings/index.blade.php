@@ -159,6 +159,32 @@
                     value="{{ (int) ($proxyDeadStreakThreshold ?? 10) }}"
                     class="w-28 px-2 py-1 rounded border border-zinc-600 bg-zinc-950 text-zinc-100 focus:ring-2 focus:ring-indigo-600 focus:border-transparent"
                 >
+                {{-- Пояснение: порог ≠ колонка «ошибки» в таблице; для ingest это серия подряд. --}}
+                <span class="text-xs text-zinc-500 max-w-xl leading-relaxed">
+                    Сколько fail подряд нужно, чтобы прокси ушёл в dead (при включённой авто-ротации).
+                    Для ingest (свечи) streak — серия неудачных connect в текущей WS-сессии: успешный коннект обнуляет streak,
+                    а счётчик «ошибки» в таблице растёт накопительно и сам по себе этот порог не трогает
+                    (для накопительного счётчика — соседний параметр failure_count).
+                    Нужен, чтобы отсекать стабильно плохие прокси по серии сбоев, не баня весь пул после единичных ошибок.
+                </span>
+            </label>
+            <label class="flex flex-col gap-1 text-zinc-200 text-sm">
+                <span>Порог перевода в dead (failure_count >=)</span>
+                <input
+                    type="number"
+                    name="proxy_dead_failure_count_threshold"
+                    min="1"
+                    max="10000"
+                    value="{{ (int) ($proxyDeadFailureCountThreshold ?? 50) }}"
+                    class="w-28 px-2 py-1 rounded border border-zinc-600 bg-zinc-950 text-zinc-100 focus:ring-2 focus:ring-indigo-600 focus:border-transparent"
+                >
+                {{-- Накопительный счётчик из колонки «ошибки» в таблице прокси. --}}
+                <span class="text-xs text-zinc-500 max-w-xl leading-relaxed">
+                    Сколько суммарных ошибок (колонка «ошибки» / failure_count) достаточно для dead при авто-ротации.
+                    В отличие от streak, счётчик не обнуляется после успешного connect — копит сбои за всё время жизни endpoint
+                    (ingest, зеркало PO, warm, paper_fallback и т.д.).
+                    Если порог ещё не сохраняли — используется значение streak-порога (старое поведение зеркала).
+                </span>
             </label>
             <label class="flex flex-col gap-1 text-zinc-200 text-sm">
                 <span>Лимит нагрузки на 1 прокси (активных инструментов)</span>

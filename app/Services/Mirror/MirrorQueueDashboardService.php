@@ -13,6 +13,26 @@ use Illuminate\Support\Facades\Http;
  */
 class MirrorQueueDashboardService
 {
+    public const DEFAULT_WINDOW_HOURS = 6;
+
+    public const DEFAULT_WINDOW_LIMIT = 80;
+
+    public const MIN_WINDOW_HOURS = 1;
+
+    public const MAX_WINDOW_HOURS = 168;
+
+    public const MIN_WINDOW_LIMIT = 10;
+
+    public const MAX_WINDOW_LIMIT = 500;
+
+    /** @return array{hours: int, limit: int} */
+    public static function normalizeWindow(int $hours, int $limit): array
+    {
+        return [
+            'hours' => max(self::MIN_WINDOW_HOURS, min(self::MAX_WINDOW_HOURS, $hours)),
+            'limit' => max(self::MIN_WINDOW_LIMIT, min(self::MAX_WINDOW_LIMIT, $limit)),
+        ];
+    }
     /**
      * @return array<int, array<string, mixed>>
      */
@@ -103,20 +123,27 @@ class MirrorQueueDashboardService
     /**
      * @return array<string, mixed>
      */
-    public function buildSnapshotForUser(int $userId): array
-    {
+    public function buildSnapshotForUser(
+        int $userId,
+        ?int $windowHours = null,
+        ?int $windowLimit = null,
+    ): array {
         $settings = UserTradingSetting::query()->where('user_id', $userId)->first();
+        $window = self::normalizeWindow(
+            $windowHours ?? (int) ($settings?->mirror_queue_hours ?? self::DEFAULT_WINDOW_HOURS),
+            $windowLimit ?? (int) ($settings?->mirror_queue_limit ?? self::DEFAULT_WINDOW_LIMIT),
+        );
         $pendingByTrade = $this->pendingMirrorJobsByTradeId();
         $pendingJobs = $this->pendingMirrorJobsList();
         $failedByTrade = $this->recentFailedMirrorJobsByTradeId();
 
-        $from = now()->subHours(6);
+        $from = now()->subHours($window['hours']);
         $trades = BotTrade::query()
             ->with('bot:id,name,user_id')
             ->whereHas('bot', fn ($q) => $q->where('user_id', $userId))
             ->where('created_at', '>=', $from)
             ->orderByDesc('id')
-            ->limit(80)
+            ->limit($window['limit'])
             ->get();
 
         $tradeRows = $trades->map(function (BotTrade $trade) use ($pendingByTrade, $failedByTrade, $settings) {
@@ -141,6 +168,15 @@ class MirrorQueueDashboardService
                 'side' => $trade->side,
                 // Итог paper-сделки после settle (win/loss); null пока открыта.
                 'result' => $trade->result,
+                'paper_result' => $meta['paper_result'] ?? $trade->result,
+                // Итог на PO (successcloseOrder) для мартингейла; null если не зеркалилось / ещё нет.
+                'mirror_po_result' => isset($meta['mirror_po_result']) ? (string) $meta['mirror_po_result'] : null,
+                'mirror_po_result_source' => isset($meta['mirror_po_result_source'])
+                    ? (string) $meta['mirror_po_result_source']
+                    : null,
+                'mirror_po_profit' => isset($meta['mirror_po_profit']) && is_numeric($meta['mirror_po_profit'])
+                    ? (float) $meta['mirror_po_profit']
+                    : null,
                 'paper_status' => $trade->status,
                 'entry_time' => optional($trade->entry_time)->format('Y-m-d H:i:s'),
                 'expiry_time' => optional($trade->expiry_time)->format('Y-m-d H:i:s'),
@@ -190,6 +226,8 @@ class MirrorQueueDashboardService
         return [
             'server_time' => now()->toIso8601String(),
             'from' => $from->toIso8601String(),
+            'window_hours' => $window['hours'],
+            'window_limit' => $window['limit'],
             'summary' => [
                 'mirror_enabled' => (bool) ($settings?->mirror_trades_enabled),
                 'mirror_ready' => $settings?->canMirrorTrades() ?? false,

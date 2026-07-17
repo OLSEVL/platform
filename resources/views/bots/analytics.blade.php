@@ -39,23 +39,35 @@
                 <option value="{{ $sec }}" @selected((int) ($interval ?? 3600) === (int) $sec)>{{ $label }}</option>
             @endforeach
         </select>
-        <span class="text-xs text-zinc-500">Ось X — время с шагом выбранного интервала; ось Y — winrate 0–100% в каждом интервале.</span>
+        <span class="text-xs text-zinc-500">Ось X — время; ось Y — winrate 0–100%. Красный — платформа, голубой — фактический PO.</span>
     </form>
 
-    {{-- Сводка по всем ботам за период — фиксированный блок под формой, не привязан к первому графику. --}}
-    @if($overallWinrate !== null || $overallWins > 0 || $overallLosses > 0)
+    {{-- Сводка по всем ботам за период — paper и PO рядом. --}}
+    @if($overallWinrate !== null || $overallWins > 0 || $overallLosses > 0 || $overallPoWinrate !== null || ($overallPoWins ?? 0) > 0 || ($overallPoLosses ?? 0) > 0)
         <div class="flex flex-wrap items-center gap-3 text-sm">
             <span class="rounded border border-zinc-700 bg-zinc-900/70 px-3 py-1.5 text-zinc-200">
-                Общий winrate:
+                Платформа:
                 @if($overallWinrate !== null)
-                    <span class="font-semibold text-emerald-400">{{ number_format((float) $overallWinrate, 2) }}%</span>
+                    <span class="font-semibold text-rose-400">{{ number_format((float) $overallWinrate, 2) }}%</span>
                 @else
                     <span class="font-semibold text-zinc-400">нет данных</span>
                 @endif
+                <span class="text-xs text-zinc-500 ml-1">
+                    W <span class="text-emerald-400">{{ (int) $overallWins }}</span>
+                    / L <span class="text-rose-400">{{ (int) $overallLosses }}</span>
+                </span>
             </span>
-            <span class="text-xs text-zinc-500">
-                Wins: <span class="text-emerald-400">{{ (int) $overallWins }}</span>,
-                Losses: <span class="text-rose-400">{{ (int) $overallLosses }}</span>
+            <span class="rounded border border-sky-800/70 bg-sky-950/40 px-3 py-1.5 text-zinc-200">
+                PO:
+                @if(($overallPoWinrate ?? null) !== null)
+                    <span class="font-semibold text-sky-400">{{ number_format((float) $overallPoWinrate, 2) }}%</span>
+                @else
+                    <span class="font-semibold text-zinc-400">нет данных</span>
+                @endif
+                <span class="text-xs text-zinc-500 ml-1">
+                    W <span class="text-emerald-400">{{ (int) ($overallPoWins ?? 0) }}</span>
+                    / L <span class="text-rose-400">{{ (int) ($overallPoLosses ?? 0) }}</span>
+                </span>
             </span>
         </div>
     @endif
@@ -66,20 +78,37 @@
             @foreach($chartSeries as $series)
                 <div class="rounded border border-zinc-800 bg-zinc-950/40 p-4">
                     <div class="mb-3 space-y-2">
-                        <h2 class="text-sm font-medium text-zinc-200">{{ $series['name'] }}</h2>
-                        {{-- Winrate конкретного бота за период — у каждого графика своя строка. --}}
+                        <div class="flex flex-wrap items-center justify-between gap-2">
+                            <h2 class="text-sm font-medium text-zinc-200">{{ $series['name'] }}</h2>
+                            {{-- Переход к winrate по каждой валютной паре этого бота. --}}
+                            <a href="{{ route('bots.analytics.pairs', ['bot_id' => $series['bot_id'], 'hours' => $hours, 'interval' => $interval]) }}"
+                               class="text-xs text-blue-400 hover:text-blue-300">Аналитика пар →</a>
+                        </div>
+                        {{-- Winrate платформы и фактический PO за период — две строки под заголовком. --}}
                         <div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-zinc-300 sm:text-sm">
                             <span class="rounded border border-zinc-700 bg-zinc-900/70 px-2.5 py-1">
-                                Winrate:
+                                Платформа:
                                 @if($series['winrate'] !== null)
-                                    <span class="font-semibold text-emerald-400">{{ number_format((float) $series['winrate'], 2) }}%</span>
+                                    <span class="font-semibold text-rose-400">{{ number_format((float) $series['winrate'], 2) }}%</span>
                                 @else
                                     <span class="font-semibold text-zinc-400">нет данных</span>
                                 @endif
+                                <span class="text-zinc-500 ml-1">
+                                    W <span class="text-emerald-400">{{ (int) $series['wins'] }}</span>
+                                    / L <span class="text-rose-400">{{ (int) $series['losses'] }}</span>
+                                </span>
                             </span>
-                            <span class="text-zinc-500">
-                                Wins: <span class="text-emerald-400">{{ (int) $series['wins'] }}</span>,
-                                Losses: <span class="text-rose-400">{{ (int) $series['losses'] }}</span>
+                            <span class="rounded border border-sky-800/70 bg-sky-950/40 px-2.5 py-1">
+                                PO:
+                                @if(($series['po_winrate'] ?? null) !== null)
+                                    <span class="font-semibold text-sky-400">{{ number_format((float) $series['po_winrate'], 2) }}%</span>
+                                @else
+                                    <span class="font-semibold text-zinc-400">нет данных</span>
+                                @endif
+                                <span class="text-zinc-500 ml-1">
+                                    W <span class="text-emerald-400">{{ (int) ($series['po_wins'] ?? 0) }}</span>
+                                    / L <span class="text-rose-400">{{ (int) ($series['po_losses'] ?? 0) }}</span>
+                                </span>
                             </span>
                         </div>
                     </div>
@@ -160,29 +189,53 @@
                     type: 'line',
                     data: {
                         labels: labels,
-                        datasets: [{
-                            label: 'Winrate, %',
-                            data: series.values,
-                            // Wins/Losses по каждому бакету — для tooltip при наведении на точку графика.
-                            bucketWins: series.bucket_wins,
-                            bucketLosses: series.bucket_losses,
-                            // Пропуски (null) между интервалами с данными — рисуем линию без обрыва на пустых бакетах.
-                            spanGaps: true,
-                            borderColor: 'rgb(239, 68, 68)',
-                            backgroundColor: 'rgba(239, 68, 68, 0.12)',
-                            borderWidth: 2,
-                            tension: 0.35,
-                            fill: true,
-                            pointRadius: 0,
-                            pointHoverRadius: 4,
-                        }],
+                        datasets: [
+                            {
+                                // Paper / платформенный winrate по свечам.
+                                label: 'Платформа',
+                                data: series.values,
+                                bucketWins: series.bucket_wins,
+                                bucketLosses: series.bucket_losses,
+                                spanGaps: true,
+                                borderColor: 'rgb(239, 68, 68)',
+                                backgroundColor: 'rgba(239, 68, 68, 0.08)',
+                                borderWidth: 2,
+                                tension: 0.35,
+                                fill: false,
+                                pointRadius: 0,
+                                pointHoverRadius: 4,
+                            },
+                            {
+                                // Фактический winrate по сделкам, закрытым на Pocket Option.
+                                label: 'PO',
+                                data: series.po_values || [],
+                                bucketWins: series.po_bucket_wins || [],
+                                bucketLosses: series.po_bucket_losses || [],
+                                spanGaps: true,
+                                borderColor: 'rgb(56, 189, 248)',
+                                backgroundColor: 'rgba(56, 189, 248, 0.08)',
+                                borderWidth: 2,
+                                tension: 0.35,
+                                fill: false,
+                                pointRadius: 0,
+                                pointHoverRadius: 4,
+                            },
+                        ],
                     },
                     options: {
                         responsive: true,
                         maintainAspectRatio: false,
                         interaction: { mode: 'index', intersect: false },
                         plugins: {
-                            legend: { display: false },
+                            legend: {
+                                display: true,
+                                labels: {
+                                    color: text,
+                                    boxWidth: 12,
+                                    boxHeight: 2,
+                                    padding: 12,
+                                },
+                            },
                             tooltip: {
                                 callbacks: {
                                     label: function (ctx) {
@@ -191,20 +244,13 @@
                                         const losses = ctx.dataset.bucketLosses[idx] ?? 0;
                                         const total = wins + losses;
                                         const v = ctx.parsed.y;
+                                        const name = ctx.dataset.label || 'Winrate';
 
                                         if (total === 0 || v === null || typeof v === 'undefined') {
-                                            return [
-                                                'Winrate: нет данных',
-                                                'Win: 0',
-                                                'Loss: 0',
-                                            ];
+                                            return name + ': нет данных';
                                         }
 
-                                        return [
-                                            'Winrate: ' + v + '%',
-                                            'Win: ' + wins,
-                                            'Loss: ' + losses,
-                                        ];
+                                        return name + ': ' + v + '% (W ' + wins + ' / L ' + losses + ')';
                                     },
                                 },
                             },

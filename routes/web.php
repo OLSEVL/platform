@@ -31,6 +31,8 @@ Route::middleware('auth')->group(function () {
     Route::prefix('bots')->name('bots.')->group(function () {
         Route::get('/', [BotController::class, 'index'])->name('index');
         Route::get('/analytics', [BotController::class, 'analytics'])->name('analytics');
+        // Winrate по валютным парам одного бота (графики как на /bots/analytics, но ось «пара», не «бот»).
+        Route::get('/analytics/pairs', [BotController::class, 'analyticsPairs'])->name('analytics.pairs');
         Route::get('/trades', [BotController::class, 'trades'])->name('trades');
         Route::get('/live-trades', [BotController::class, 'liveTrades'])->name('live-trades');
         Route::get('/live-trades/data', [BotController::class, 'liveTradesData'])->name('live-trades.data');
@@ -82,6 +84,7 @@ Route::middleware('auth')->group(function () {
     Route::put('/profile/mirror-proxies', [ProfileMirrorProxiesController::class, 'update'])->name('profile.mirror-proxies.update');
     Route::get('/profile/mirror-queue', [ProfileMirrorQueueController::class, 'index'])->name('profile.mirror-queue.index');
     Route::get('/profile/mirror-queue/data', [ProfileMirrorQueueController::class, 'data'])->name('profile.mirror-queue.data');
+    Route::put('/profile/mirror-queue/window', [ProfileMirrorQueueController::class, 'updateWindow'])->name('profile.mirror-queue.window');
 
     Route::get('/settings/processes', [PlatformDiagnosticsController::class, 'index'])->name('settings.processes.index');
     Route::get('/settings/processes/live-ajax', [PlatformDiagnosticsController::class, 'liveAjax'])->name('settings.processes.live-ajax');

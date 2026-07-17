@@ -4,6 +4,7 @@ Professional Async PocketOption API Client
 
 import asyncio
 import json
+import re
 import time
 import uuid
 from typing import Optional, List, Dict, Any, Union, Callable
@@ -1349,13 +1350,19 @@ class AsyncPocketOptionClient:
         await self._on_balance_updated(data)
 
     async def _on_order_opened(self, data: Dict[str, Any]) -> None:
-        """Handle order opened event"""
+        """Handle order opened event (KeepAlive typed emit или WS)."""
+        # Трекинг здесь: KeepAlive теперь эмитит order_opened напрямую,
+        # а не только через message_received → иначе _order_results пустой.
+        if isinstance(data, dict):
+            await self._track_success_open_order(data)
         if self.enable_logging:
             logger.info(f"Order opened: {data}")
         await self._emit_event("order_opened", data)
 
-    async def _on_order_closed(self, data: Dict[str, Any]) -> None:
-        """Handle order closed event"""
+    async def _on_order_closed(self, data: Any) -> None:
+        """Handle order closed event (dict / OrderResult / deals[])."""
+        if isinstance(data, dict):
+            await self._track_success_close_order(data)
         if self.enable_logging:
             logger.info(f"📊 Order closed: {data}")
         await self._emit_event("order_closed", data)
@@ -1560,36 +1567,82 @@ class AsyncPocketOptionClient:
             except Exception as e:
                 logger.error(f"Error in reconnected callback: {e}")
 
-    async def _on_keep_alive_message(self, message):
-        """Handle messages received via keep-alive connection"""
-        # Process the message
-        if message.startswith("42"):
+    async def _on_keep_alive_message(self, payload):
+        """
+        Handle messages received via keep-alive connection.
+
+        KeepAlive emits message_received as {"message": "42[...]"} или 451-[...].
+        Раньше payload принимали за строку / игнорировали 451 — success* не парсились.
+        Typed order_opened/closed уже обрабатываются отдельно; здесь — запасной путь.
+        """
+        message = payload
+        if isinstance(payload, dict):
+            message = payload.get("message", "")
+        if isinstance(message, bytes):
+            message = message.decode("utf-8", errors="replace")
+        if not isinstance(message, str):
+            return
+
+        data = None
+        # Binary preview Socket.IO: 451-["event", {...}]
+        if message.startswith("451-["):
             try:
-                # Parse the message (remove the 42 prefix and parse JSON)
-                data_str = message[2:]
-                data = json.loads(data_str)
-
-                if isinstance(data, list) and len(data) >= 2:
-                    event_type = data[0]
-                    event_data = data[1]
-
-                    # Process different event types
-                    if event_type == "authenticated":
-                        await self._on_authenticated(event_data)
-                    elif event_type == "balance_data":
-                        await self._on_balance_data(event_data)
-                    elif event_type == "balance_updated":
-                        await self._on_balance_updated(event_data)
-                    elif event_type == "order_opened":
-                        await self._on_order_opened(event_data)
-                    elif event_type == "order_closed":
-                        await self._on_order_closed(event_data)
-                    elif event_type == "stream_update":
-                        await self._on_stream_update(event_data)
+                data = json.loads(message.split("-", 1)[1])
             except Exception as e:
-                logger.error(f"Error processing keep-alive message: {e}")
+                logger.error(f"Error processing keep-alive 451 message: {e}")
+                return
+        elif message.startswith("42"):
+            # 42[...] или 42<ackId>[...]
+            try:
+                m = re.match(r"^42\d*(\[.*\])\s*$", message, re.DOTALL)
+                raw = m.group(1) if m else message[2:]
+                data = json.loads(raw)
+            except Exception as e:
+                logger.error(f"Error processing keep-alive 42 message: {e}")
+                return
+        else:
+            return
 
-        # Emit raw message event
+        try:
+            if isinstance(data, list) and len(data) >= 1:
+                event_type = data[0]
+                event_data = data[1] if len(data) > 1 else {}
+
+                # PO шлёт success* имена; маппим как websocket_client.
+                # Трекинг/hooks уже сработают через typed KeepAlive emit → _on_order_*;
+                # дублируем только для кадров, которые KeepAlive не разобрал в typed.
+                if event_type in ("authenticated", "successauth"):
+                    await self._on_authenticated(
+                        event_data if isinstance(event_data, dict) else {}
+                    )
+                elif event_type == "balance_data":
+                    await self._on_balance_data(
+                        event_data if isinstance(event_data, dict) else {}
+                    )
+                elif event_type in ("balance_updated", "successupdateBalance"):
+                    await self._on_balance_updated(
+                        event_data if isinstance(event_data, dict) else {}
+                    )
+                elif event_type in ("order_opened", "successopenOrder"):
+                    # Typed KeepAlive уже вызвал _on_order_opened (track + hooks).
+                    pass
+                elif event_type in ("order_closed", "successcloseOrder"):
+                    # Typed KeepAlive уже вызвал _on_order_closed.
+                    pass
+                elif event_type == "stream_update":
+                    await self._on_stream_update(
+                        event_data if isinstance(event_data, dict) else {}
+                    )
+                elif event_type == "updateStream":
+                    await self._on_stream_update(
+                        event_data if isinstance(event_data, dict) else {}
+                    )
+                elif isinstance(event_data, dict):
+                    await self._on_json_data(event_data)
+        except Exception as e:
+            logger.error(f"Error processing keep-alive message: {e}")
+
+        # Emit raw message event (строка), для внешних подписчиков.
         for callback in self._event_callbacks.get("message", []):
             try:
                 if asyncio.iscoroutinefunction(callback):
@@ -1598,6 +1651,135 @@ class AsyncPocketOptionClient:
                     callback(message)
             except Exception as e:
                 logger.error(f"Error in message callback: {e}")
+
+    async def _track_success_open_order(self, data: Dict[str, Any]) -> None:
+        """Кэш активного ордера по requestId и/или deal id из successopenOrder."""
+        request_id = str(data.get("requestId") or data.get("request_id") or "")
+        deal_id = str(data.get("id") or data.get("orderId") or data.get("order_id") or "")
+        if not request_id and not deal_id:
+            return
+
+        order_key = request_id or deal_id
+        placed = datetime.now()
+        duration = int(data.get("time") or data.get("duration") or 60)
+        direction_raw = data.get("command", data.get("action", data.get("direction", 0)))
+        if isinstance(direction_raw, str):
+            direction = (
+                OrderDirection.CALL
+                if direction_raw.lower() == "call"
+                else OrderDirection.PUT
+            )
+        else:
+            direction = (
+                OrderDirection.CALL if int(direction_raw or 0) == 0 else OrderDirection.PUT
+            )
+
+        result = OrderResult(
+            order_id=deal_id or order_key,
+            asset=str(data.get("asset") or "UNKNOWN"),
+            amount=float(data.get("amount") or 0),
+            direction=direction,
+            duration=duration,
+            status=OrderStatus.ACTIVE,
+            placed_at=placed,
+            expires_at=placed + timedelta(seconds=duration),
+            profit=float(data["profit"]) if "profit" in data else None,
+            payout=data.get("payout"),
+        )
+
+        if request_id:
+            self._active_orders[request_id] = result
+        if deal_id:
+            self._active_orders[deal_id] = result
+            # Связка requestId → deal id для check_win / order-result.
+            if request_id:
+                self._order_results[f"map:{request_id}"] = result
+
+        if self.enable_logging:
+            logger.success(
+                f" Tracked open order requestId={request_id or '-'} dealId={deal_id or '-'}"
+            )
+
+    async def _track_success_close_order(self, data: Dict[str, Any]) -> None:
+        """Пишем win/loss из successcloseOrder (profit / deals[]) в _order_results."""
+        deals = data.get("deals")
+        if isinstance(deals, list) and deals:
+            for deal in deals:
+                if isinstance(deal, dict):
+                    await self._store_closed_deal(deal)
+            return
+
+        # Иногда close приходит одним объектом сделки.
+        if isinstance(data, dict) and (
+            "id" in data or "profit" in data or "requestId" in data
+        ):
+            await self._store_closed_deal(data)
+
+    async def _store_closed_deal(self, deal: Dict[str, Any]) -> None:
+        deal_id = str(deal.get("id") or deal.get("orderId") or deal.get("order_id") or "")
+        request_id = str(deal.get("requestId") or deal.get("request_id") or "")
+        profit = float(deal.get("profit") or 0)
+
+        if profit > 0:
+            status = OrderStatus.WIN
+        elif profit < 0:
+            status = OrderStatus.LOSE
+        else:
+            status = OrderStatus.LOSE
+
+        active = None
+        if deal_id and deal_id in self._active_orders:
+            active = self._active_orders[deal_id]
+        elif request_id and request_id in self._active_orders:
+            active = self._active_orders[request_id]
+
+        order_id = deal_id or (active.order_id if active else request_id)
+        if not order_id:
+            return
+
+        result = OrderResult(
+            order_id=order_id,
+            asset=str(
+                deal.get("asset")
+                or (active.asset if active else "UNKNOWN")
+            ),
+            amount=float(
+                deal.get("amount")
+                or (active.amount if active else 0)
+            ),
+            direction=(
+                active.direction
+                if active
+                else (
+                    OrderDirection.CALL
+                    if str(deal.get("action", "call")).lower() == "call"
+                    else OrderDirection.PUT
+                )
+            ),
+            duration=int(
+                deal.get("time")
+                or deal.get("duration")
+                or (active.duration if active else 60)
+            ),
+            status=status,
+            placed_at=active.placed_at if active else datetime.now(),
+            expires_at=active.expires_at if active else datetime.now(),
+            profit=profit,
+            payout=deal.get("payout"),
+        )
+
+        self._order_results[order_id] = result
+        if request_id:
+            self._order_results[request_id] = result
+        if deal_id and deal_id in self._active_orders:
+            del self._active_orders[deal_id]
+        if request_id and request_id in self._active_orders:
+            del self._active_orders[request_id]
+
+        if self.enable_logging:
+            logger.success(
+                f" Closed deal {order_id}: {status.value} profit={profit}"
+            )
 
     async def _attempt_reconnection(self, max_attempts: int = 3) -> bool:
         """

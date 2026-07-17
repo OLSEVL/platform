@@ -187,6 +187,37 @@
                         <p class="text-[11px] text-zinc-500">Если последняя M1 не обновлялась дольше N секунд — пара пропускается (нет живого потока котировок).</p>
                         @error('stale_after_sec')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
+                    <div class="space-y-1">
+                        <label for="min_body_to_range_ratio" class="block text-xs font-medium text-zinc-400">Мин. доля тела в диапазоне (0 = выкл.)</label>
+                        <input type="number" name="min_body_to_range_ratio" id="min_body_to_range_ratio" min="0" max="1" step="0.01"
+                            value="{{ old('min_body_to_range_ratio', $cfg['min_body_to_range_ratio'] ?? 0) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        <p class="text-[11px] text-zinc-500">Средняя доля тела/range по 3 свечам серии. Golden-сетап: 0.65 — отсекает слабые/доджи-импульсы.</p>
+                        @error('min_body_to_range_ratio')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                    <div class="space-y-1">
+                        <label for="trade_hour_utc_from" class="block text-xs font-medium text-zinc-400">Час UTC с (пусто = 24/7)</label>
+                        <input type="number" name="trade_hour_utc_from" id="trade_hour_utc_from" min="0" max="23" step="1"
+                            value="{{ old('trade_hour_utc_from', $cfg['trade_hour_utc_from'] ?? '') }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        <p class="text-[11px] text-zinc-500">Начало торгового окна включительно. Вместе с «по» задаёт часы, когда бот торгует.</p>
+                        @error('trade_hour_utc_from')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                    <div class="space-y-1">
+                        <label for="trade_hour_utc_to" class="block text-xs font-medium text-zinc-400">Час UTC по (включительно)</label>
+                        <input type="number" name="trade_hour_utc_to" id="trade_hour_utc_to" min="0" max="23" step="1"
+                            value="{{ old('trade_hour_utc_to', $cfg['trade_hour_utc_to'] ?? '') }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        <p class="text-[11px] text-zinc-500">Golden: 7–21 UTC (EU/US сессии). Оба поля пустые = круглосуточно.</p>
+                        @error('trade_hour_utc_to')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                    <div class="space-y-1 sm:col-span-2">
+                        <label for="blocked_instruments_text" class="block text-xs font-medium text-zinc-400">Blacklist инструментов</label>
+                        <textarea name="blocked_instruments_text" id="blocked_instruments_text" rows="3"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 font-mono text-xs text-zinc-100">{{ old('blocked_instruments_text', \App\Services\Telegram\TelegramAnalystInstrumentService::formatInstrumentListForInput($cfg['blocked_instruments'] ?? null)) }}</textarea>
+                        <p class="text-[11px] text-zinc-500">По одному символу на строку. Golden: AUD-base пары (AUDCAD/AUDJPY/…), не GBPAUD — он как раз сильный.</p>
+                        @error('blocked_instruments_text')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
                 </div>
 
             </div>

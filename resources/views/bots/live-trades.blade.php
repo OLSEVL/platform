@@ -30,14 +30,15 @@
                     <th class="px-4 py-3 text-left" title="Вход + expiry_sec">Экспирация</th>
                     <th class="px-4 py-3 text-left" title="Когда платформа зафиксировала итог">Закрыта (факт)</th>
                     <th class="px-4 py-3 text-left">До конца</th>
-                    <th class="px-4 py-3 text-left">Результат</th>
+                    <th class="px-4 py-3 text-left" title="Итог paper-сделки по свечам платформы">Paper</th>
+                    <th class="px-4 py-3 text-left" title="Итог на Pocket Option (для мартингейла)">PO</th>
                     <th class="px-4 py-3 text-left">PnL</th>
                     <th class="px-4 py-3 text-left">Анализ</th>
                 </tr>
             </thead>
             <tbody id="live-trades-body" class="divide-y divide-zinc-800 bg-zinc-950/40">
                 <tr>
-                    <td colspan="17" class="px-4 py-8 text-center text-zinc-500">Загрузка…</td>
+                    <td colspan="18" class="px-4 py-8 text-center text-zinc-500">Загрузка…</td>
                 </tr>
             </tbody>
         </table>
@@ -66,11 +67,46 @@
         return side ?? '—';
     }
 
-    function resultCell(result) {
-        if (result === 'win') return '<span class="text-emerald-400">win</span>';
-        if (result === 'loss') return '<span class="text-rose-400">loss</span>';
-        if (result === 'draw') return '<span class="text-amber-400">draw</span>';
-        return '<span class="text-zinc-400">pending</span>';
+    function resultCell(result, title) {
+        const r = String(result ?? '').toLowerCase();
+        const tip = title ? ` title="${escapeAttr(title)}"` : '';
+        if (r === 'win') return `<span class="text-emerald-400"${tip}>win</span>`;
+        if (r === 'loss') return `<span class="text-rose-400"${tip}>loss</span>`;
+        if (r === 'draw') return `<span class="text-amber-400"${tip}>draw</span>`;
+        if (r === 'pending' || r === '') return '<span class="text-zinc-400">pending</span>';
+        return `<span class="text-zinc-400"${tip}>${escapeHtml(r)}</span>`;
+    }
+
+    function poResultCell(t) {
+        const src = t.mirror_po_result_source ? String(t.mirror_po_result_source) : '';
+        const mirrorStatus = t.mirror_status ? String(t.mirror_status) : '';
+        // После всех retry PO-result не получен → считаем, что вход на PO не подтверждён.
+        if (src === 'po_assume_not_opened' || mirrorStatus === 'assumed_not_opened') {
+            return '<span class="text-amber-400" title="PO: не подтверждено открытие; мартингейл не изменяется">не подтверждено</span>';
+        }
+        // Legacy: старые сделки с paper_fallback (до смены алгоритма).
+        if (src === 'paper_fallback') {
+            return '<span class="text-amber-400" title="Не удалось получить successcloseOrder с PO; мартингейл по paper">ошибка</span>';
+        }
+        if (!t.mirror_po_result) {
+            if (t.mirror_status === 'executed' && t.status === 'open') {
+                return '<span class="text-zinc-500" title="Ждём successcloseOrder после экспирации">…</span>';
+            }
+            if (t.mirror_status === 'executed') {
+                return '<span class="text-zinc-600" title="PO-итог ещё не получен">—</span>';
+            }
+            return '<span class="text-zinc-600" title="Не зеркалилось на PO">—</span>';
+        }
+        const profit = t.mirror_po_profit != null ? ` profit=${t.mirror_po_profit}` : '';
+        const title = src ? `Источник: ${src}${profit}` : (profit ? profit.trim() : 'Итог PO');
+        return resultCell(t.mirror_po_result, title);
+    }
+
+    function escapeHtml(s) {
+        return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    }
+    function escapeAttr(s) {
+        return escapeHtml(s).replace(/"/g, '&quot;');
     }
 
     function secondsToClock(total) {
@@ -96,7 +132,7 @@
 
     function renderRows(trades) {
         if (!trades.length) {
-            body.innerHTML = '<tr><td colspan="17" class="px-4 py-8 text-center text-zinc-500">За последние 2 часа сделок нет.</td></tr>';
+            body.innerHTML = '<tr><td colspan="18" class="px-4 py-8 text-center text-zinc-500">За последние 2 часа сделок нет.</td></tr>';
             return;
         }
 
@@ -126,7 +162,8 @@
                     <td class="px-4 py-3 text-zinc-400 text-xs">${t.expiry_time ?? '—'}</td>
                     <td class="px-4 py-3 text-zinc-100">${t.settled_at ?? '<span class="text-zinc-500">—</span>'}</td>
                     <td class="px-4 py-3">${timeLeftCell(t)}</td>
-                    <td class="px-4 py-3">${resultCell(t.result)}</td>
+                    <td class="px-4 py-3">${resultCell(t.paper_result ?? t.result, 'Paper (свечи платформы)')}</td>
+                    <td class="px-4 py-3">${poResultCell(t)}</td>
                     <td class="px-4 py-3 text-zinc-300">${t.pnl ?? '—'}</td>
                     <td class="px-4 py-3">
                         ${activityUrl

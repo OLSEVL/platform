@@ -214,14 +214,23 @@ class PocketMirrorProxy
      * Active (не dead) endpoint с минимальной нагрузкой (число пар).
      * При ничьей — случайный среди лидеров.
      *
+     * @param  list<int>  $excludeIds  Не брать эти endpoint (уже пробовали на retry).
      * @return array{id:int,url:string}|null
      */
-    public static function pickLeastLoadedActive(): ?array
+    public static function pickLeastLoadedActive(array $excludeIds = []): ?array
     {
-        $rows = ProxyEndpoint::query()
+        $exclude = array_values(array_unique(array_filter(array_map(
+            static fn ($id): int => (int) $id,
+            $excludeIds
+        ), static fn (int $id): bool => $id > 0)));
+
+        $query = ProxyEndpoint::query()
             ->readyForAssignment()
-            ->withCount('instruments')
-            ->get(['id', 'url']);
+            ->withCount('instruments');
+        if ($exclude !== []) {
+            $query->whereNotIn('id', $exclude);
+        }
+        $rows = $query->get(['id', 'url']);
 
         if ($rows->isEmpty()) {
             return null;
@@ -244,6 +253,77 @@ class PocketMirrorProxy
             'id' => (int) $chosen->id,
             'url' => (string) $chosen->url,
         ];
+    }
+
+    /**
+     * Другой прокси для retry order-result / warm после connect fail.
+     * Учитывает auto / ручной пул; исключает уже испробованные id.
+     *
+     * @param  list<int>  $excludeIds
+     * @return array{id:int,url:string}|null
+     */
+    public static function pickAlternateForMirror(
+        ?UserTradingSetting $settings,
+        array $excludeIds = [],
+        ?string $instrument = null,
+    ): ?array {
+        $exclude = array_values(array_unique(array_filter(array_map(
+            static fn ($id): int => (int) $id,
+            $excludeIds
+        ), static fn (int $id): bool => $id > 0)));
+
+        if ($settings !== null && (bool) $settings->mirror_proxy_auto) {
+            $picked = self::pickLeastLoadedActive($exclude);
+            if ($picked !== null) {
+                return $picked;
+            }
+        }
+
+        if ($settings !== null) {
+            $poolIds = $settings->mirrorProxyEndpointIds();
+            if ($poolIds !== []) {
+                $poolIds = array_values(array_diff($poolIds, $exclude));
+                if ($poolIds !== []) {
+                    $rows = ProxyEndpoint::query()
+                        ->readyForAssignment()
+                        ->whereIn('id', $poolIds)
+                        ->get(['id', 'url'])
+                        ->filter(fn (ProxyEndpoint $p) => is_string($p->url) && $p->url !== '')
+                        ->values();
+                    if ($rows->isNotEmpty()) {
+                        /** @var ProxyEndpoint $chosen */
+                        $chosen = $rows->random();
+
+                        return [
+                            'id' => (int) $chosen->id,
+                            'url' => (string) $chosen->url,
+                        ];
+                    }
+                }
+            }
+        }
+
+        // Любой другой active (в т.ч. прокси пары), кроме exclude.
+        $picked = self::pickLeastLoadedActive($exclude);
+        if ($picked !== null) {
+            return $picked;
+        }
+
+        // Крайний случай: прокси инструмента, если он не в exclude.
+        $fromInstrument = self::resolveEndpointForInstrument($instrument);
+        if (
+            ($fromInstrument['id'] ?? null) !== null
+            && ! in_array((int) $fromInstrument['id'], $exclude, true)
+            && is_string($fromInstrument['url'] ?? null)
+            && $fromInstrument['url'] !== ''
+        ) {
+            return [
+                'id' => (int) $fromInstrument['id'],
+                'url' => (string) $fromInstrument['url'],
+            ];
+        }
+
+        return null;
     }
 
     /**

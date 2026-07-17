@@ -279,4 +279,73 @@ class PocketOptionsProxyClient
             'error' => isset($data['error']) ? (string) $data['error'] : null,
         ];
     }
+
+    /**
+     * Итог закрытой сделки на PO (win/loss) из кэша successcloseOrder.
+     *
+     * @return array{
+     *   ok: bool,
+     *   found?: bool,
+     *   completed?: bool,
+     *   result?: string|null,
+     *   profit?: float|null,
+     *   order_id?: string|null,
+     *   deal_id?: string|null,
+     *   request_id?: string|null,
+     *   source?: string|null,
+     *   error?: string|null
+     * }
+     */
+    public function getOrderResult(
+        string $ssid,
+        string $orderId,
+        bool $isDemo = true,
+        ?string $proxyUrl = null,
+    ): array {
+        $payload = [
+            'ssid' => $ssid,
+            'order_id' => $orderId,
+            'is_demo' => $isDemo,
+        ];
+        if ($proxyUrl !== null && $proxyUrl !== '') {
+            $payload['proxy_url'] = $proxyUrl;
+        }
+
+        try {
+            $response = Http::timeout(20)->post("{$this->baseUrl}/api/order-result", $payload);
+        } catch (\Throwable $e) {
+            return [
+                'ok' => false,
+                'found' => false,
+                'completed' => false,
+                'error' => $e->getMessage(),
+            ];
+        }
+
+        if (! $response->successful()) {
+            $detail = $response->json('detail') ?? $response->body();
+
+            return [
+                'ok' => false,
+                'found' => false,
+                'completed' => false,
+                'error' => is_string($detail) ? $detail : json_encode($detail),
+            ];
+        }
+
+        $data = $response->json() ?? [];
+
+        return [
+            'ok' => (bool) ($data['ok'] ?? false),
+            'found' => (bool) ($data['found'] ?? false),
+            'completed' => (bool) ($data['completed'] ?? false),
+            'result' => isset($data['result']) ? (string) $data['result'] : null,
+            'profit' => isset($data['profit']) && is_numeric($data['profit']) ? (float) $data['profit'] : null,
+            'order_id' => isset($data['order_id']) ? (string) $data['order_id'] : null,
+            'deal_id' => isset($data['deal_id']) ? (string) $data['deal_id'] : null,
+            'request_id' => isset($data['request_id']) ? (string) $data['request_id'] : null,
+            'source' => isset($data['source']) ? (string) $data['source'] : null,
+            'error' => isset($data['error']) ? (string) $data['error'] : null,
+        ];
+    }
 }

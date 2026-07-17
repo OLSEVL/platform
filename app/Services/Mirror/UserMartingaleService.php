@@ -8,6 +8,8 @@ use Illuminate\Support\Facades\DB;
 
 /**
  * Сдвиг шага мартингейла после settle paper-сделки (только если зеркало на PO было executed).
+ *
+ * Результат для шага: предпочтительно итог PO (mirror_po_result), иначе paper.
  */
 class UserMartingaleService
 {
@@ -15,6 +17,13 @@ class UserMartingaleService
     {
         if ($mirrorStatusBeforeSettle !== 'executed') {
             return;
+        }
+
+        // Для зеркальных сделок шаг берём из PO-итога в meta (если уже записан).
+        $meta = is_array($trade->meta_json) ? $trade->meta_json : [];
+        $poResult = strtolower((string) ($meta['mirror_po_result'] ?? ''));
+        if (in_array($poResult, [BotTrade::RESULT_WIN, BotTrade::RESULT_LOSS, BotTrade::RESULT_DRAW], true)) {
+            $result = $poResult;
         }
 
         if ($result === BotTrade::RESULT_DRAW) {

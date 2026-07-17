@@ -16,6 +16,8 @@ class ProxyRotationService
     }
     private const SETTING_AUTO_ROTATION_ENABLED = 'proxy_auto_rotation_enabled';
     private const SETTING_DEAD_STREAK_THRESHOLD = 'proxy_dead_streak_threshold';
+    /** Накопленный failure_count >= порога → dead (отдельно от session streak). */
+    private const SETTING_DEAD_FAILURE_COUNT_THRESHOLD = 'proxy_dead_failure_count_threshold';
     /** @deprecated читается как fallback при миграции с proxy_cooldown_streak_threshold */
     private const LEGACY_COOLDOWN_STREAK_THRESHOLD = 'proxy_cooldown_streak_threshold';
     private const SETTING_MAX_INSTRUMENTS_PER_PROXY = 'proxy_max_instruments_per_endpoint';
@@ -28,6 +30,8 @@ class ProxyRotationService
     public const SETTING_POOL_REFRESHED_AT = 'proxy_pool_refreshed_at';
     private const POOL_REFRESH_GRACE_MINUTES = 15;
     private const DEFAULT_DEAD_STREAK_THRESHOLD = 10;
+    /** По умолчанию выше streak: failure_count накопительный и не сбрасывается при успехе. */
+    private const DEFAULT_DEAD_FAILURE_COUNT_THRESHOLD = 50;
     private const DEFAULT_MAX_INSTRUMENTS_PER_PROXY = 1;
     private const DEFAULT_DEAD_ON_PO_STALE_MINUTES = 30;
 
@@ -75,6 +79,40 @@ class ProxyRotationService
 
         DB::table('app_settings')->updateOrInsert(
             ['key' => self::SETTING_DEAD_STREAK_THRESHOLD],
+            [
+                'value' => (string) $normalized,
+                'updated_at' => now(),
+                'created_at' => now(),
+            ]
+        );
+    }
+
+    /**
+     * Порог по колонке «ошибки» (failure_count): накопленные fail за жизнь endpoint.
+     * Если настройка ещё не задана — fallback на streak-порог (старое поведение зеркала).
+     */
+    public function getDeadFailureCountThreshold(): int
+    {
+        $value = DB::table('app_settings')
+            ->where('key', self::SETTING_DEAD_FAILURE_COUNT_THRESHOLD)
+            ->value('value');
+
+        if ($value === null) {
+            // До появления отдельного параметра зеркало сравнивало failure_count со streak-порогом.
+            return $this->getDeadStreakThreshold();
+        }
+
+        $threshold = (int) $value;
+
+        return max(1, min(10000, $threshold));
+    }
+
+    public function setDeadFailureCountThreshold(int $threshold): void
+    {
+        $normalized = max(1, min(10000, $threshold));
+
+        DB::table('app_settings')->updateOrInsert(
+            ['key' => self::SETTING_DEAD_FAILURE_COUNT_THRESHOLD],
             [
                 'value' => (string) $normalized,
                 'updated_at' => now(),
@@ -481,19 +519,22 @@ class ProxyRotationService
         }
 
         $autoRotationEnabled = $this->isAutoRotationEnabled();
-        $deadThreshold = $this->getDeadStreakThreshold();
+        $deadStreakThreshold = $this->getDeadStreakThreshold();
+        $deadFailureCountThreshold = $this->getDeadFailureCountThreshold();
 
         ProxyEndpoint::query()->whereKey($proxy->id)->increment('failure_count');
         $proxy->refresh();
 
-        // Ingest передаёт streak сессии WS; для зеркала без сессии берём накопленный failure_count.
-        $streakValue = $streak !== null
-            ? max(0, (int) $streak)
-            : max(0, (int) $proxy->failure_count);
+        $failureCount = max(0, (int) $proxy->failure_count);
+        // Ingest: session streak (сбрасывается при успехе). Зеркало: streak=null.
+        $streakValue = $streak !== null ? max(0, (int) $streak) : null;
+
+        $hitByStreak = $streakValue !== null && $streakValue >= $deadStreakThreshold;
+        $hitByFailureCount = $failureCount >= $deadFailureCountThreshold;
 
         // После «Обновить прокси» кратковременные connect_failed не уводят свежий пул в dead.
         $shouldMarkDead = $autoRotationEnabled
-            && $streakValue >= $deadThreshold
+            && ($hitByStreak || $hitByFailureCount)
             && ! $this->isWithinPoolRefreshGracePeriod();
 
         $errorText = mb_substr($error, 0, 1000);
@@ -510,7 +551,10 @@ class ProxyRotationService
         $proxy->refresh();
         $this->appendDeadReasonLogOnly($proxy, $instrument, $errorText, array_merge($meta, [
             'streak' => $streakValue,
-            'dead_streak_threshold' => $deadThreshold,
+            'failure_count' => $failureCount,
+            'dead_streak_threshold' => $deadStreakThreshold,
+            'dead_failure_count_threshold' => $deadFailureCountThreshold,
+            'dead_by' => $hitByStreak ? 'streak' : 'failure_count',
         ]));
 
         if ($instrument !== null) {

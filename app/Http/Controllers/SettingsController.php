@@ -36,6 +36,7 @@ class SettingsController extends Controller
             'proxyDeadOnPoStaleEnabled' => $proxyRotation->isDeadOnPoStaleEnabled(),
             'proxyDeadOnPoStaleMinutes' => $proxyRotation->getDeadOnPoStaleMinutes(),
             'proxyDeadStreakThreshold' => $proxyRotation->getDeadStreakThreshold(),
+            'proxyDeadFailureCountThreshold' => $proxyRotation->getDeadFailureCountThreshold(),
             'proxyMaxInstrumentsPerEndpoint' => $proxyRotation->getMaxInstrumentsPerProxy(),
             'payoutStaleMinutesThreshold' => $payoutStaleMinutesThreshold,
             'proxyHealthFilter' => $healthFilter,
@@ -181,6 +182,7 @@ class SettingsController extends Controller
     {
         $validated = $request->validate([
             'proxy_dead_streak_threshold' => 'nullable|integer|min:1|max:1000',
+            'proxy_dead_failure_count_threshold' => 'nullable|integer|min:1|max:10000',
             'proxy_max_instruments_per_endpoint' => 'nullable|integer|min:1|max:100',
             'proxy_dead_on_po_stale_minutes' => 'nullable|integer|min:1|max:1440',
             'proxy_reactivation_probe_instrument' => 'nullable|string|max:63',
@@ -191,12 +193,14 @@ class SettingsController extends Controller
         $enabled = $request->boolean('proxy_auto_rotation_enabled');
         $deadOnPoStaleEnabled = $request->boolean('proxy_dead_on_po_stale_enabled');
         $threshold = (int) ($validated['proxy_dead_streak_threshold'] ?? $proxyRotation->getDeadStreakThreshold());
+        $failureCountThreshold = (int) ($validated['proxy_dead_failure_count_threshold'] ?? $proxyRotation->getDeadFailureCountThreshold());
         $deadOnPoStaleMinutes = (int) ($validated['proxy_dead_on_po_stale_minutes'] ?? $proxyRotation->getDeadOnPoStaleMinutes());
         $maxInstrumentsPerProxy = (int) ($validated['proxy_max_instruments_per_endpoint'] ?? $proxyRotation->getMaxInstrumentsPerProxy());
         $proxyRotation->setAutoRotationEnabled($enabled);
         $proxyRotation->setDeadOnPoStaleEnabled($deadOnPoStaleEnabled);
         $proxyRotation->setDeadOnPoStaleMinutes($deadOnPoStaleMinutes);
         $proxyRotation->setDeadStreakThreshold($threshold);
+        $proxyRotation->setDeadFailureCountThreshold($failureCountThreshold);
         $proxyRotation->setMaxInstrumentsPerProxy($maxInstrumentsPerProxy);
         // Параметр "контрольного инструмента" для авто-реанимации dead:
         // возвращаем прокси в active только если по этой паре есть признаки живого PO/WS.

@@ -157,6 +157,7 @@ class ProxyRotationServiceTest extends TestCase
         $rotation = app(ProxyRotationService::class);
         $rotation->setAutoRotationEnabled(true);
         $rotation->setDeadStreakThreshold(3);
+        $rotation->setDeadFailureCountThreshold(3);
         $rotation->setMaxInstrumentsPerProxy(2);
 
         $badProxy = ProxyEndpoint::query()->create([

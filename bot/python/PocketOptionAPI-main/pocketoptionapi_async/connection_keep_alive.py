@@ -3,7 +3,9 @@ Enhanced Keep-Alive Connection Manager for PocketOption Async API
 """
 
 import asyncio
-from typing import Optional, List, Callable, Dict, Any
+import json
+import re
+from typing import Optional, List, Callable, Dict, Any, Union
 from datetime import datetime, timedelta
 from loguru import logger
 from websockets.exceptions import ConnectionClosed
@@ -11,6 +13,9 @@ from websockets.legacy.client import connect, WebSocketClientProtocol
 
 from .models import ConnectionInfo, ConnectionStatus
 from .constants import REGIONS
+
+# Socket.IO EVENT: "42[...]" или с ack-id "4212[...]" / binary preview "451-[...]".
+_SIO_EVENT_RE = re.compile(r"^42\d*(\[.*\])\s*$", re.DOTALL)
 
 
 class ConnectionKeepAlive:
@@ -46,6 +51,9 @@ class ConnectionKeepAlive:
 
         # Event handlers
         self._event_handlers: Dict[str, List[Callable]] = {}
+
+        # Socket.IO binary EVENT: после `451-[...]` ждём N binary frames.
+        self._binary_pending: Optional[Dict[str, Any]] = None
 
         # Connection pool with multiple regions
         self.available_urls = (
@@ -249,22 +257,36 @@ class ConnectionKeepAlive:
             raise
 
     async def _start_background_tasks(self):
-        """Start all background tasks (like old API's concurrent tasks)"""
+        """Start all background tasks (like old API's concurrent tasks)."""
         logger.info("Persistent: Starting background keep-alive tasks...")
+        print("[INFO] KeepAlive starting background tasks (ping/message/health/reconnect)", flush=True)
 
-        # Ping task (every 20 seconds like old API)
+        # Не плодим дубликаты при reconnect — отменяем старые завершившиеся/живые таски.
+        for task_name in ("_ping_task", "_message_task", "_health_task", "_reconnect_task"):
+            old = getattr(self, task_name, None)
+            if old is not None and not old.done():
+                # message/ping/health нужно пересоздать после reconnect; reconnect monitor — один.
+                if task_name == "_reconnect_task":
+                    continue
+                old.cancel()
+                try:
+                    await old
+                except (asyncio.CancelledError, Exception):
+                    pass
+
         self._ping_task = asyncio.create_task(self._ping_loop())
-
-        # Message receiving task
         self._message_task = asyncio.create_task(self._message_loop())
-
-        # Health monitoring task
         self._health_task = asyncio.create_task(self._health_monitor_loop())
 
-        # Reconnection monitoring task
-        self._reconnect_task = asyncio.create_task(self._reconnection_monitor())
+        if self._reconnect_task is None or self._reconnect_task.done():
+            self._reconnect_task = asyncio.create_task(self._reconnection_monitor())
 
         logger.success("Success: All background tasks started")
+
+    def message_loop_alive(self) -> bool:
+        """True, если приём WS ещё жив (после disconnect таск мог умереть)."""
+        t = self._message_task
+        return t is not None and not t.done()
 
     async def _ping_loop(self):
         """
@@ -272,60 +294,95 @@ class ConnectionKeepAlive:
         Sends '42["ps"]' every 20 seconds
         """
         logger.info("Ping: Starting ping loop...")
+        print("[INFO] KeepAlive ping loop started", flush=True)
 
         while self.should_reconnect:
             try:
                 if self.is_connected and self.websocket:
-                    # Send ping message (exact format from old API)
                     await self.websocket.send('42["ps"]')
                     self.connection_stats["last_ping_time"] = datetime.now()
                     self.connection_stats["total_messages_sent"] += 1
-
                     logger.debug("Ping: Ping sent")
 
                 await asyncio.sleep(self.ping_interval)
 
             except ConnectionClosed:
                 logger.warning("Connecting: Connection closed during ping")
+                print("[WARN] KeepAlive ping: connection closed", flush=True)
                 self.is_connected = False
-                break
+                await asyncio.sleep(1)
+            except asyncio.CancelledError:
+                raise
             except Exception as e:
                 logger.error(f"Error: Ping failed: {e}")
+                print(f"[WARN] KeepAlive ping error: {e}", flush=True)
                 self.is_connected = False
-                break
+                await asyncio.sleep(1)
 
     async def _message_loop(self):
         """
-        Continuous message receiving loop (like old API's websocket_listener)
+        Continuous message receiving loop.
+
+        Важно: при ConnectionClosed НЕ выходим из while — иначе после reconnect
+        ордера отправляются, а successopen/close никто не читает (это и ломало PO-итог).
         """
         logger.info("Message: Starting message loop...")
+        print("[INFO] KeepAlive message loop started", flush=True)
 
         while self.should_reconnect:
             try:
                 if self.is_connected and self.websocket:
                     try:
-                        # Receive message with timeout
                         message = await asyncio.wait_for(
                             self.websocket.recv(), timeout=30.0
                         )
 
                         self.connection_stats["total_messages_received"] += 1
+
+                        # Binary attachment после 451-N-[...] — не декодируем как текст.
+                        if (
+                            isinstance(message, bytes)
+                            and self._binary_pending is not None
+                        ):
+                            await self._consume_binary_attachment(message)
+                            continue
+
+                        # Диагностика текстовых success*/Order кадров.
+                        preview = (
+                            message
+                            if isinstance(message, str)
+                            else (message[:80] if isinstance(message, bytes) else repr(message))
+                        )
+                        if isinstance(preview, str) and (
+                            "successopen" in preview
+                            or "successclose" in preview
+                            or "successauth" in preview
+                            or "openOrder" in preview
+                            or preview.startswith("451-")
+                            or preview.startswith("45")
+                        ):
+                            print(f"[MIRROR] WS in: {preview[:240]}", flush=True)
+
                         await self._process_message(message)
 
                     except asyncio.TimeoutError:
                         logger.debug("Message: Message receive timeout (normal)")
                         continue
                 else:
-                    await asyncio.sleep(1)
+                    await asyncio.sleep(0.5)
 
             except ConnectionClosed:
                 logger.warning("Connecting: Connection closed during message receive")
+                print("[WARN] KeepAlive message loop: connection closed — wait reconnect", flush=True)
                 self.is_connected = False
-                break
+                await asyncio.sleep(1)
+            except asyncio.CancelledError:
+                raise
             except Exception as e:
                 logger.error(f"Error: Message loop error: {e}")
+                print(f"[WARN] KeepAlive message loop error: {e}", flush=True)
                 self.is_connected = False
-                break
+                await asyncio.sleep(1)
 
     async def _health_monitor_loop(self):
         """Monitor connection health and trigger reconnects if needed"""
@@ -396,6 +453,10 @@ class ConnectionKeepAlive:
 
                         if success:
                             logger.success("Success: Reconnection successful!")
+                            print("[INFO] KeepAlive reconnected — restarting recv/ping tasks", flush=True)
+                            # После disconnect старый message/ping loop мог завершиться —
+                            # поднимаем приём заново, иначе openOrder send есть, а close нет.
+                            await self._start_background_tasks()
                             await self._emit_event(
                                 "reconnected",
                                 {
@@ -424,15 +485,21 @@ class ConnectionKeepAlive:
                 logger.error(f"Error: Reconnection monitor error: {e}")
 
     async def _process_message(self, message):
-        """Process incoming messages (like old API's on_message)"""
+        """
+        Process incoming messages.
+
+        PO шлёт итоги ордеров как Socket.IO BINARY_EVENT:
+          451-["successopenOrder",{"_placeholder":true,"num":0}]
+          <binary JSON>
+        Раньше placeholder диспатчили без body, а binary кадр теряли — кэш зеркала пустой.
+        """
         try:
-            # Convert bytes to string if needed
             if isinstance(message, bytes):
-                message = message.decode("utf-8")
+                # Если не ждали attachment — пробуем как UTF-8 текст.
+                message = message.decode("utf-8", errors="replace")
 
             logger.debug(f"Message: Received: {message[:100]}...")
 
-            # Handle ping-pong (like old API)
             if message == "2":
                 if self.websocket:
                     await self.websocket.send("3")
@@ -440,17 +507,207 @@ class ConnectionKeepAlive:
                     logger.debug("Ping: Pong sent")
                 return
 
-            # Handle authentication success (like old API)
-            if "successauth" in message:
-                logger.success("Success: Authentication successful")
-                await self._emit_event("authenticated", {})
+            # BINARY_EVENT header: 45<N>-[event, placeholder...]
+            bin_header = self._parse_binary_event_header(message)
+            if bin_header is not None:
+                n_att, packet = bin_header
+                self._binary_pending = {
+                    "expected": n_att,
+                    "packet": packet,
+                    "buffers": [],
+                }
+                print(
+                    f"[MIRROR] binary header event={packet[0] if packet else '?'} "
+                    f"attachments={n_att}",
+                    flush=True,
+                )
+                # Не диспатчим до прихода binary frames.
                 return
 
-            # Handle other message types
             await self._emit_event("message_received", {"message": message})
+
+            parsed = self._parse_socketio_event(message)
+            if parsed is not None:
+                await self._dispatch_socketio_event(parsed)
 
         except Exception as e:
             logger.error(f"Error: Error processing message: {e}")
+            print(f"[WARN] KeepAlive _process_message: {e}", flush=True)
+
+    def _parse_binary_event_header(
+        self, message: str
+    ) -> Optional[tuple]:
+        """
+        Socket.IO BINARY_EVENT: 45<count>-[...].
+        Пример: 451-["successcloseOrder",{"_placeholder":true,"num":0}]
+        """
+        if not isinstance(message, str) or not message.startswith("45"):
+            return None
+        # Не путать с обычным EVENT 42.
+        m = re.match(r"^45(\d+)-(\[.*\])\s*$", message, re.DOTALL)
+        if not m:
+            return None
+        try:
+            n_att = int(m.group(1))
+            packet = json.loads(m.group(2))
+            if not isinstance(packet, list) or n_att <= 0:
+                return None
+            return n_att, packet
+        except (json.JSONDecodeError, ValueError, TypeError):
+            return None
+
+    async def _consume_binary_attachment(self, raw: bytes) -> None:
+        """Дописываем binary frame к pending 451- и диспатчим событие."""
+        pending = self._binary_pending
+        if not pending:
+            return
+        pending["buffers"].append(raw)
+        print(
+            f"[MIRROR] binary chunk #{len(pending['buffers'])}/"
+            f"{pending['expected']} bytes={len(raw)}",
+            flush=True,
+        )
+        if len(pending["buffers"]) < int(pending["expected"]):
+            return
+
+        reconstructed = self._reconstruct_binary_packet(
+            pending["packet"], pending["buffers"]
+        )
+        self._binary_pending = None
+        if not reconstructed:
+            return
+
+        event_name = reconstructed[0] if reconstructed else "?"
+        print(
+            f"[MIRROR] binary reconstructed event={event_name} "
+            f"payload_type={type(reconstructed[1]).__name__ if len(reconstructed) > 1 else '-'}",
+            flush=True,
+        )
+
+        # Для совместимости с client._on_keep_alive_message — синтетический 42-кадр.
+        try:
+            fake_42 = "42" + json.dumps(reconstructed, ensure_ascii=False, default=str)
+            await self._emit_event("message_received", {"message": fake_42})
+        except Exception as exc:
+            print(f"[WARN] KeepAlive fake_42 emit failed: {exc}", flush=True)
+
+        await self._dispatch_socketio_event(reconstructed)
+
+    def _reconstruct_binary_packet(
+        self, packet: List[Any], buffers: List[bytes]
+    ) -> Optional[List[Any]]:
+        """Подставляем buffers[num] вместо {_placeholder:true,num:N}."""
+
+        def walk(obj: Any) -> Any:
+            if isinstance(obj, dict) and obj.get("_placeholder") is True:
+                num = int(obj.get("num", 0))
+                if num < 0 or num >= len(buffers):
+                    return obj
+                blob = buffers[num]
+                # PO кладёт JSON объекта сделки в binary attachment.
+                for decoder in (
+                    lambda b: json.loads(b.decode("utf-8")),
+                    lambda b: json.loads(b.decode("utf-8-sig")),
+                    lambda b: json.loads(b),
+                ):
+                    try:
+                        return decoder(blob)
+                    except Exception:
+                        continue
+                return {"_raw_binary": True, "size": len(blob)}
+            if isinstance(obj, list):
+                return [walk(x) for x in obj]
+            if isinstance(obj, dict):
+                return {k: walk(v) for k, v in obj.items()}
+            return obj
+
+        try:
+            out = walk(packet)
+            return out if isinstance(out, list) else None
+        except Exception as e:
+            print(f"[WARN] KeepAlive reconstruct failed: {e}", flush=True)
+            return None
+
+    def _parse_socketio_event(self, message: str) -> Optional[List[Any]]:
+        """Достаём ["eventName", payload] из обычных 42… кадров (не 451)."""
+        if not message or message.startswith("45"):
+            return None
+        try:
+            if message.startswith("42"):
+                m = _SIO_EVENT_RE.match(message)
+                raw = m.group(1) if m else message[2:]
+                data = json.loads(raw)
+                if isinstance(data, list) and len(data) >= 1:
+                    return data
+        except (json.JSONDecodeError, IndexError, TypeError):
+            return None
+        return None
+
+    async def _dispatch_socketio_event(self, data: List[Any]) -> None:
+        """Эмитим типизированные события KeepAlive → клиент / mirror hooks."""
+        event_type = data[0]
+        event_data: Union[Dict[str, Any], List[Any], Any] = (
+            data[1] if len(data) > 1 else {}
+        )
+
+        if event_type in ("successauth", "authenticated"):
+            logger.success("Success: Authentication successful")
+            await self._emit_event(
+                "authenticated",
+                event_data if isinstance(event_data, dict) else {},
+            )
+        elif event_type in ("successupdateBalance", "balance_updated"):
+            await self._emit_event(
+                "balance_updated",
+                event_data if isinstance(event_data, dict) else {},
+            )
+        elif event_type in ("successopenOrder", "order_opened"):
+            await self._emit_event(
+                "order_opened",
+                event_data if isinstance(event_data, dict) else {},
+            )
+        elif event_type in ("successcloseOrder", "order_closed"):
+            await self._emit_event(
+                "order_closed",
+                event_data if isinstance(event_data, dict) else {},
+            )
+        elif event_type == "updateClosedDeals":
+            # PO часто шлёт закрытые сделки пачкой в list (не successcloseOrder).
+            await self._emit_event(
+                "closed_deals",
+                event_data if isinstance(event_data, (dict, list)) else {},
+            )
+            if isinstance(event_data, list):
+                await self._emit_event("order_closed", {"deals": event_data})
+            elif isinstance(event_data, dict):
+                deals = event_data.get("deals")
+                if isinstance(deals, list):
+                    await self._emit_event("order_closed", event_data)
+                else:
+                    await self._emit_event("order_closed", event_data)
+        elif event_type == "updateHistoryNew":
+            # Иногда итог приходит историей сделок, а не successcloseOrder.
+            await self._emit_event(
+                "history_update",
+                event_data if isinstance(event_data, dict) else {},
+            )
+            if isinstance(event_data, dict) and isinstance(event_data.get("deals"), list):
+                await self._emit_event("order_closed", event_data)
+            elif isinstance(event_data, list):
+                await self._emit_event("order_closed", {"deals": event_data})
+        elif event_type in ("updateStream", "stream_update"):
+            await self._emit_event(
+                "stream_update",
+                event_data if isinstance(event_data, dict) else {},
+            )
+        elif event_type == "updateAssets":
+            await self._emit_event(
+                "assets_update",
+                event_data if isinstance(event_data, dict) else {},
+            )
+            await self._emit_event("authenticated", {"via": "updateAssets"})
+        elif isinstance(event_data, (dict, list)):
+            await self._emit_event("json_data", event_data)
 
     async def send_message(self, message: str) -> bool:
         """Send message with connection check"""
