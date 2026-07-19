@@ -3,6 +3,7 @@
 namespace App\Services\Bots\Strategies;
 
 use App\Services\Bots\OpenRouterClient;
+use App\Support\HybridAnalystConfig;
 use App\Support\OpenRouterChartLevelsParser;
 use App\Support\OpenRouterLlmConfig;
 use Illuminate\Support\Facades\DB;
@@ -61,6 +62,15 @@ class OpenRouterLlmAnalystStrategy implements BotStrategyInterface
             ? $context['smc_flow_summary']
             : [];
 
+        // Гибрид: полный decision source-бота (runtime), без изменения сохранённого system_prompt.
+        /** @var array<string,mixed>|null $hybridSourceSignal */
+        $hybridSourceSignal = is_array($context['hybrid_source_signal'] ?? null)
+            ? $context['hybrid_source_signal']
+            : null;
+        if ($hybridSourceSignal !== null) {
+            $systemPrompt .= HybridAnalystConfig::systemPromptSection();
+        }
+
         $payload = [
             'instrument' => $instrument,
             'payout' => $payout,
@@ -88,6 +98,9 @@ class OpenRouterLlmAnalystStrategy implements BotStrategyInterface
         if ($analystSmcEnabled) {
             $payload['smc_flow_summary'] = $smcFlowSummary;
             $payload['expiry_focus_min'] = [3, 6];
+        }
+        if ($hybridSourceSignal !== null) {
+            $payload['hybrid_source_signal'] = $hybridSourceSignal;
         }
 
         if ($shortPromptMode) {
@@ -208,6 +221,11 @@ class OpenRouterLlmAnalystStrategy implements BotStrategyInterface
                 'request_cost_usd' => $requestCostUsd,
                 'chart_levels_ok' => $chartParsed['ok'],
                 'analyst_prompt_mode' => OpenRouterLlmConfig::analystPromptMode($cfg),
+                // Метка гибрида — чтобы в логах отличать от ручного/Telegram анализа.
+                'hybrid_mode' => $hybridSourceSignal !== null,
+                'hybrid_source_bot_id' => $hybridSourceSignal['source_bot_id'] ?? null,
+                'hybrid_source_signal_id' => $hybridSourceSignal['source_signal_id'] ?? null,
+                'hybrid_source_side' => $hybridSourceSignal['side'] ?? null,
             ],
             'llm_log_id' => $llmLogId,
         ];

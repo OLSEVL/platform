@@ -72,7 +72,7 @@
         </div>
     @endif
 
-    {{-- График для каждого включённого бота; пустой canvas, если за период нет сделок. --}}
+    {{-- График для активных ботов и ботов со сделками за период (в т.ч. гибридный Chart Analyst). --}}
     @if(!empty($chartSeries))
         <div class="space-y-6">
             @foreach($chartSeries as $series)

@@ -96,7 +96,10 @@
             </label>
         </div>
         @else
-        <p class="text-sm text-zinc-500">Этот бот не участвует в плановом сканировании — анализ только по кнопке «Сделать анализ» на графике.</p>
+        <p class="text-sm text-zinc-500">
+            Плановый <code class="text-zinc-400">bots:scan</code> для Chart Analyst не запускается.
+            Статус <strong class="text-zinc-300">active</strong> включается автоматически при галочке «Гибридный режим» ниже (для списка ботов и аналитики).
+        </p>
         @endunless
 
         <div class="flex items-start gap-2">
@@ -657,6 +660,184 @@
                         @error('blocked_instruments_text')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                 </div>
+
+                <div class="space-y-3 rounded border border-zinc-800 bg-zinc-900/40 p-4">
+                    <p class="text-sm font-medium text-zinc-300">Гибрид (сигнал другого бота → этот Chart Analyst)</p>
+                    <p class="text-[11px] text-zinc-500">
+                        Когда выбранный бот даёт CALL/PUT, этот аналитик получает те же данные, что и обычный Chart Analyst (MTF/S5/SMC),
+                        плюс полный decision source, и пишет результат в логи/Telegram.
+                        Опционально — своя paper-сделка (и PO) на этом Chart Analyst, поверх сделки source.
+                        Кнопка «Доп. анализ SMC Flow» у source-ботов работает параллельно.
+                    </p>
+                    <label class="flex items-start gap-2">
+                        <input type="checkbox" name="hybrid_enabled" id="hybrid_enabled" value="1"
+                            class="mt-0.5 rounded border-zinc-600 bg-zinc-800 text-blue-500"
+                            @checked(old('hybrid_enabled', $cfg['hybrid_enabled'] ?? false))>
+                        <span>
+                            <span class="text-sm font-medium text-zinc-300">Включить гибридный режим</span>
+                            <span class="mt-0.5 block text-[11px] font-normal text-zinc-500">Нужны queue worker <code class="text-zinc-400">telegram-analyst</code> (при сохранении перезапускается сам). Бот станет <strong class="text-zinc-300">active</strong> в списке. Для Telegram-алертов — token и chat_id ниже.</span>
+                        </span>
+                    </label>
+                    @error('hybrid_enabled')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    @php
+                        $hybridSourceMode = old('hybrid_source_mode', $cfg['hybrid_source_mode'] ?? \App\Support\HybridAnalystConfig::SOURCE_MODE_FIXED);
+                        $hybridSourceId = (int) old('hybrid_source_bot_id', $cfg['hybrid_source_bot_id'] ?? 0);
+                        $hybridLeaderWindow = (int) old('hybrid_leader_window_sec', $cfg['hybrid_leader_window_sec'] ?? \App\Support\HybridAnalystConfig::LEADER_WINDOW_1H);
+                        $hybridLeaderMinTrades = (int) old('hybrid_leader_min_trades', $cfg['hybrid_leader_min_trades'] ?? \App\Support\HybridAnalystConfig::LEADER_MIN_TRADES_DEFAULT);
+                        $hybridLeaderId = (int) ($cfg['hybrid_leader_bot_id'] ?? 0);
+                    @endphp
+                    <div class="grid gap-4 sm:grid-cols-2">
+                        <div class="space-y-1 sm:col-span-2">
+                            <label for="hybrid_source_mode" class="block text-xs font-medium text-zinc-400">Источник сигнала</label>
+                            <select name="hybrid_source_mode" id="hybrid_source_mode" required
+                                class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                                <option value="fixed" @selected($hybridSourceMode === 'fixed')>Фиксированный бот</option>
+                                <option value="best_winrate" @selected($hybridSourceMode === 'best_winrate')>Лучший по paper winrate за период</option>
+                            </select>
+                            <p class="text-[11px] text-zinc-500">
+                                В режиме winrate гибрид слушает только текущего лидера среди <strong class="text-zinc-400">active</strong> торговых ботов (Chart Analyst исключён).
+                                Пересчёт с кэшем ~{{ \App\Support\HybridAnalystConfig::LEADER_CACHE_TTL_SEC }} сек — на каждый сигнал БД не долбится.
+                                @if($hybridLeaderId > 0)
+                                    Текущий сохранённый лидер: <code class="text-zinc-400">#{{ $hybridLeaderId }}</code>.
+                                @endif
+                            </p>
+                            @error('hybrid_source_mode')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                        </div>
+                        <div class="space-y-1 sm:col-span-2" id="hybrid-source-bot-wrap">
+                            <label for="hybrid_source_bot_id" class="block text-xs font-medium text-zinc-400">Бот первичного анализа</label>
+                            <select name="hybrid_source_bot_id" id="hybrid_source_bot_id"
+                                class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 disabled:opacity-50 disabled:cursor-not-allowed">
+                                <option value="">— не выбран —</option>
+                                @foreach ($hybridSourceBots ?? [] as $srcBot)
+                                    <option value="{{ $srcBot->id }}" @selected($hybridSourceId === (int) $srcBot->id)>
+                                        #{{ $srcBot->id }} {{ $srcBot->name }} ({{ $srcBot->type }}){{ $srcBot->is_active ? '' : ' · выкл' }}
+                                    </option>
+                                @endforeach
+                            </select>
+                            <p class="text-[11px] text-zinc-500" id="hybrid-source-bot-hint">Один конкретный бот. Сигналы других ботов игнорируются.</p>
+                            @error('hybrid_source_bot_id')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                        </div>
+                        <div class="space-y-1 hybrid-leader-only">
+                            <label for="hybrid_leader_window_sec" class="block text-xs font-medium text-zinc-400">Окно рейтинга</label>
+                            <select name="hybrid_leader_window_sec" id="hybrid_leader_window_sec" required
+                                class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                                <option value="1800" @selected($hybridLeaderWindow === 1800)>30 минут</option>
+                                <option value="3600" @selected($hybridLeaderWindow === 3600)>1 час</option>
+                                <option value="7200" @selected($hybridLeaderWindow === 7200)>2 часа</option>
+                                <option value="10800" @selected($hybridLeaderWindow === 10800)>3 часа</option>
+                                <option value="21600" @selected($hybridLeaderWindow === 21600)>6 часов</option>
+                            </select>
+                            <p class="text-[11px] text-zinc-500">Paper winrate W/(W+L) по всем парам за это окно.</p>
+                            @error('hybrid_leader_window_sec')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                        </div>
+                        <div class="space-y-1 hybrid-leader-only">
+                            <label for="hybrid_leader_min_trades" class="block text-xs font-medium text-zinc-400">Мин. сделок для рейтинга</label>
+                            <input type="number" name="hybrid_leader_min_trades" id="hybrid_leader_min_trades" min="1" max="500" required
+                                value="{{ $hybridLeaderMinTrades }}"
+                                class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                            <p class="text-[11px] text-zinc-500">Иначе бот с 1/1 = 100% не станет лидером. При нехватке данных / ничьей — остаётся прошлый лидер.</p>
+                            @error('hybrid_leader_min_trades')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                        </div>
+                        <div class="space-y-1">
+                            <label for="hybrid_trigger" class="block text-xs font-medium text-zinc-400">Когда запускать</label>
+                            @php $hybridTrigger = old('hybrid_trigger', $cfg['hybrid_trigger'] ?? \App\Support\HybridAnalystConfig::TRIGGER_ON_SIGNAL); @endphp
+                            <select name="hybrid_trigger" id="hybrid_trigger" required
+                                class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                                <option value="on_signal" @selected($hybridTrigger === 'on_signal')>При каждом CALL/PUT (запись сигнала)</option>
+                                <option value="on_po_mirror" @selected($hybridTrigger === 'on_po_mirror')>Когда paper-сделка уходит на PO (mirror)</option>
+                            </select>
+                            <p class="text-[11px] text-zinc-500">
+                                <strong>PO</strong> — только если у source включено зеркало сделок. Alert-only боты без сделки не попадут в этот режим.
+                            </p>
+                            @error('hybrid_trigger')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                        </div>
+                        <div class="space-y-1">
+                            <label for="hybrid_publish" class="block text-xs font-medium text-zinc-400">Публикация в Telegram</label>
+                            @php $hybridPublish = old('hybrid_publish', $cfg['hybrid_publish'] ?? \App\Support\HybridAnalystConfig::PUBLISH_ALWAYS); @endphp
+                            <select name="hybrid_publish" id="hybrid_publish" required
+                                class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                                <option value="always" @selected($hybridPublish === 'always')>Всегда (если LLM ответил)</option>
+                                <option value="agree_source" @selected($hybridPublish === 'agree_source')>Только если LLM согласен с side source</option>
+                                <option value="call_put_only" @selected($hybridPublish === 'call_put_only')>Только если LLM дал CALL или PUT</option>
+                            </select>
+                            <p class="text-[11px] text-zinc-500">Фильтр по стороне. Лог на странице Chart Analyst пишется всегда.</p>
+                            @error('hybrid_publish')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                        </div>
+                        <div class="space-y-1">
+                            <label for="hybrid_min_success_percent" class="block text-xs font-medium text-zinc-400">Мин. вероятность успеха (%)</label>
+                            <input type="number" name="hybrid_min_success_percent" id="hybrid_min_success_percent" min="0" max="100" required
+                                value="{{ old('hybrid_min_success_percent', $cfg['hybrid_min_success_percent'] ?? 0) }}"
+                                class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                            <p class="text-[11px] text-zinc-500">
+                                Берётся строка <code class="text-zinc-400">Вероятность успеха: NN%</code> из ответа LLM.
+                                В Telegram уходит только если NN ≥ порога. <strong>0</strong> = не фильтровать по вероятности.
+                                Работает вместе с режимом публикации выше.
+                            </p>
+                            @error('hybrid_min_success_percent')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                        </div>
+                    </div>
+                    <div class="space-y-3 border-t border-zinc-800 pt-3">
+                        <p class="text-xs font-semibold uppercase tracking-wide text-zinc-500">Торговля гибрида</p>
+                        <p class="text-[11px] text-zinc-500">
+                            Те же фильтры, что для Telegram. Side — только из LLM (CALL/PUT). Экспирация — из source.
+                            Сумма на PO — из профиля «Торговля». Сделка пишется на этот Chart Analyst (поверх source).
+                        </p>
+                        <label class="flex items-start gap-2">
+                            <input type="hidden" name="hybrid_paper_trades_enabled" value="0">
+                            <input type="checkbox" name="hybrid_paper_trades_enabled" id="hybrid_paper_trades_enabled" value="1"
+                                class="mt-0.5 rounded border-zinc-600 bg-zinc-800 text-blue-500"
+                                @checked(old('hybrid_paper_trades_enabled', $cfg['hybrid_paper_trades_enabled'] ?? false))>
+                            <span>
+                                <span class="text-sm font-medium text-zinc-300">Paper-сделки</span>
+                                <span class="mt-0.5 block text-[11px] font-normal text-zinc-500">Создавать paper signal/trade на этом боте после успешного гибрид-фильтра.</span>
+                            </span>
+                        </label>
+                        @error('hybrid_paper_trades_enabled')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                        <label class="flex items-start gap-2">
+                            <input type="hidden" name="hybrid_mirror_trades_enabled" value="0">
+                            <input type="checkbox" name="hybrid_mirror_trades_enabled" id="hybrid_mirror_trades_enabled" value="1"
+                                class="mt-0.5 rounded border-zinc-600 bg-zinc-800 text-blue-500"
+                                @checked(old('hybrid_mirror_trades_enabled', $cfg['hybrid_mirror_trades_enabled'] ?? false))>
+                            <span>
+                                <span class="text-sm font-medium text-zinc-300">Зеркалировать на Pocket Option</span>
+                                <span class="mt-0.5 block text-[11px] font-normal text-zinc-500">Как у других ботов: нужен paper + зеркало в профиле «Торговля». Без paper чекбокс выше PO не отправится.</span>
+                            </span>
+                        </label>
+                        @error('hybrid_mirror_trades_enabled')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                </div>
+                <script>
+                (function () {
+                    // Режим source: fixed → селект бота активен; best_winrate → селект disabled.
+                    const modeEl = document.getElementById('hybrid_source_mode');
+                    const sourceEl = document.getElementById('hybrid_source_bot_id');
+                    const hintEl = document.getElementById('hybrid-source-bot-hint');
+                    const leaderBlocks = document.querySelectorAll('.hybrid-leader-only');
+                    if (!modeEl || !sourceEl) return;
+
+                    function sync() {
+                        const auto = modeEl.value === 'best_winrate';
+                        sourceEl.disabled = auto;
+                        if (hintEl) {
+                            hintEl.textContent = auto
+                                ? 'Селект неактивен: source выбирается автоматически по лучшему paper winrate.'
+                                : 'Один конкретный бот. Сигналы других ботов игнорируются.';
+                        }
+                        leaderBlocks.forEach(function (el) {
+                            el.classList.toggle('opacity-50', !auto);
+                        });
+                    }
+                    modeEl.addEventListener('change', sync);
+                    sync();
+                    // disabled select не уходит в POST — перед submit включаем, чтобы сохранить выбранный fixed id.
+                    const form = modeEl.closest('form');
+                    if (form) {
+                        form.addEventListener('submit', function () {
+                            sourceEl.disabled = false;
+                        });
+                    }
+                })();
+                </script>
 
                 <div class="space-y-3 rounded border border-zinc-800 bg-zinc-900/40 p-4">
                     <p class="text-sm font-medium text-zinc-300">Telegram (Chart Analyst bot)</p>

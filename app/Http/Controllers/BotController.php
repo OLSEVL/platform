@@ -20,6 +20,7 @@ use App\Services\Indicators\SmcFlowIndicatorService;
 use App\Services\Telegram\StrongLevelTelegramLlmButton;
 use App\Services\Telegram\StrongLevelTelegramProcessManager;
 use App\Services\Telegram\TelegramAlertService;
+use App\Services\Telegram\TelegramAnalystProcessManager;
 use App\Support\BotScanProgress;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
@@ -237,18 +238,34 @@ class BotController extends Controller
             ];
         }
 
-        // Все включённые боты пользователя — график для каждого, даже без сделок за период.
-        $activeBots = Bot::query()
+        // Боты для графиков: активные + любые, у кого за период были сделки
+        // (Chart Analyst / гибрид всегда is_active=false — scan выключен, но paper/PO есть).
+        $tradeBotIds = DB::table('bot_trades as t')
+            ->join('bots as b', 'b.id', '=', 't.bot_id')
+            ->where('b.user_id', auth()->id())
+            ->where('t.entry_time', '>=', $from)
+            ->distinct()
+            ->pluck('b.id')
+            ->map(static fn ($id): int => (int) $id)
+            ->all();
+
+        $chartBots = Bot::query()
             ->where('user_id', auth()->id())
-            ->where('is_active', true)
+            ->where(function ($q) use ($tradeBotIds): void {
+                $q->where('is_active', true);
+                if ($tradeBotIds !== []) {
+                    $q->orWhereIn('id', $tradeBotIds);
+                }
+            })
             ->orderBy('name')
             ->get(['id', 'name']);
 
         // Winrate за период по каждому боту (для подписи под заголовком графика).
+        // Не фильтруем is_active: иначе гибридный Chart Analyst не попадёт в подписи.
         $botPeriodStats = DB::table('bot_trades as t')
             ->join('bots as b', 'b.id', '=', 't.bot_id')
             ->where('b.user_id', auth()->id())
-            ->where('b.is_active', true)
+            ->whereIn('b.id', $chartBots->pluck('id')->all() ?: [0])
             ->where('t.entry_time', '>=', $from)
             ->whereIn('t.result', [BotTrade::RESULT_WIN, BotTrade::RESULT_LOSS])
             ->groupBy('b.id', 'b.name')
@@ -264,7 +281,7 @@ class BotController extends Controller
         $botPoPeriodStats = DB::table('bot_trades as t')
             ->join('bots as b', 'b.id', '=', 't.bot_id')
             ->where('b.user_id', auth()->id())
-            ->where('b.is_active', true)
+            ->whereIn('b.id', $chartBots->pluck('id')->all() ?: [0])
             ->where('t.entry_time', '>=', $from)
             ->whereRaw("{$poResultSql} IN (?, ?)", [BotTrade::RESULT_WIN, BotTrade::RESULT_LOSS])
             ->groupBy('b.id')
@@ -285,7 +302,7 @@ class BotController extends Controller
         // Ось Y: winrate в процентах по каждому бакету (0..100), без кумулятивного накопления.
         // Две серии: paper (платформа) и фактический PO.
         $chartSeries = [];
-        foreach ($activeBots as $bot) {
+        foreach ($chartBots as $bot) {
             $botId = (int) $bot->id;
             $byTs = $bucketStats[$botId]['by_ts'] ?? [];
             $poByTs = $poBucketStats[$botId]['by_ts'] ?? [];
@@ -842,6 +859,14 @@ class BotController extends Controller
                     ->orderBy('id')
                     ->get(['id', 'name', 'is_active'])
                 : collect(),
+            // Для гибрида Chart Analyst — список ботов пользователя, чьи сигналы можно слушать.
+            'hybridSourceBots' => $bot->type === 'openrouter_llm_analyst'
+                ? Bot::query()
+                    ->where('user_id', $bot->user_id)
+                    ->whereIn('type', \App\Support\HybridAnalystConfig::SOURCE_BOT_TYPES)
+                    ->orderBy('name')
+                    ->get(['id', 'name', 'type', 'is_active'])
+                : collect(),
         ]);
     }
 
@@ -1242,6 +1267,17 @@ class BotController extends Controller
                 'telegram_skip_user_question' => ['sometimes', 'boolean'],
                 'telegram_bot_token' => ['nullable', 'string', 'max:128'],
                 'telegram_chat_id' => ['nullable', 'string', 'max:64'],
+                // Гибрид: слушать сигналы другого бота и прогонять через этот Chart Analyst.
+                'hybrid_enabled' => ['sometimes', 'boolean'],
+                'hybrid_source_mode' => ['required', 'string', Rule::in(\App\Support\HybridAnalystConfig::SOURCE_MODES)],
+                'hybrid_source_bot_id' => ['nullable', 'integer', 'min:1'],
+                'hybrid_leader_window_sec' => ['required', 'integer', Rule::in(\App\Support\HybridAnalystConfig::LEADER_WINDOWS)],
+                'hybrid_leader_min_trades' => ['required', 'integer', 'min:1', 'max:500'],
+                'hybrid_trigger' => ['required', 'string', Rule::in(\App\Support\HybridAnalystConfig::TRIGGERS)],
+                'hybrid_publish' => ['required', 'string', Rule::in(\App\Support\HybridAnalystConfig::PUBLISH_MODES)],
+                'hybrid_min_success_percent' => ['required', 'integer', 'min:0', 'max:100'],
+                'hybrid_paper_trades_enabled' => ['sometimes', 'boolean'],
+                'hybrid_mirror_trades_enabled' => ['sometimes', 'boolean'],
             ]);
             $existingToken = trim((string) (($bot->config ?? [])['telegram_bot_token'] ?? ''));
             $tokenInput = trim((string) ($extra['telegram_bot_token'] ?? ''));
@@ -1251,6 +1287,29 @@ class BotController extends Controller
             $blockedList = \App\Services\Telegram\TelegramAnalystInstrumentService::parseInstrumentListInput(
                 $extra['blocked_instruments_text'] ?? null
             );
+
+            $hybridEnabled = $request->boolean('hybrid_enabled');
+            $hybridSourceMode = (string) $extra['hybrid_source_mode'];
+            $hybridSourceId = (int) ($extra['hybrid_source_bot_id'] ?? 0);
+            $hybridSourceOk = false;
+            if ($hybridSourceId > 0) {
+                $hybridSourceOk = Bot::query()
+                    ->whereKey($hybridSourceId)
+                    ->where('user_id', $bot->user_id)
+                    ->whereIn('type', \App\Support\HybridAnalystConfig::SOURCE_BOT_TYPES)
+                    ->exists();
+            }
+            // Фиксированный source обязателен только в режиме fixed.
+            if (
+                $hybridEnabled
+                && $hybridSourceMode === \App\Support\HybridAnalystConfig::SOURCE_MODE_FIXED
+                && ! $hybridSourceOk
+            ) {
+                return back()->withInput()->withErrors([
+                    'hybrid_source_bot_id' => 'Выберите бота первичного анализа (из списка своих торговых/сигнальных ботов).',
+                ]);
+            }
+
             $config = \App\Support\OpenRouterLlmConfig::withoutLegacyCandlesTake(array_merge($bot->config ?? [], [
                 'count' => (int) $extra['count'],
                 's5_take' => (int) $extra['s5_take'],
@@ -1273,10 +1332,27 @@ class BotController extends Controller
                 'telegram_skip_user_question' => $request->boolean('telegram_skip_user_question'),
                 'telegram_bot_token' => $tokenInput !== '' ? $tokenInput : $existingToken,
                 'telegram_chat_id' => trim((string) ($extra['telegram_chat_id'] ?? '')),
+                'hybrid_enabled' => $hybridEnabled,
+                'hybrid_source_mode' => $hybridSourceMode,
+                'hybrid_source_bot_id' => $hybridSourceOk ? $hybridSourceId : ($bot->config['hybrid_source_bot_id'] ?? null),
+                'hybrid_leader_window_sec' => (int) $extra['hybrid_leader_window_sec'],
+                'hybrid_leader_min_trades' => (int) $extra['hybrid_leader_min_trades'],
+                // hybrid_leader_bot_id не трогаем здесь — обновляет HybridAnalystLeaderService.
+                'hybrid_trigger' => (string) $extra['hybrid_trigger'],
+                'hybrid_publish' => (string) $extra['hybrid_publish'],
+                'hybrid_min_success_percent' => (int) $extra['hybrid_min_success_percent'],
+                'hybrid_paper_trades_enabled' => $request->boolean('hybrid_paper_trades_enabled'),
+                // PO mirror для гибридных paper; дублируем в mirror_trades_enabled, чтобы BotTradeMirrorService видел флаг.
+                'hybrid_mirror_trades_enabled' => $request->boolean('hybrid_mirror_trades_enabled'),
+                'mirror_trades_enabled' => $request->boolean('hybrid_mirror_trades_enabled'),
                 'version' => 'openrouter_llm_analyst_v1',
             ]));
-            // Плановый scan для аналитика не используется — всегда выключаем флаг активности.
-            $isActive = false;
+            // Плановый scan для аналитика не выполняется (scanBot сразу выходит).
+            // is_active=true при гибриде — чтобы бот был «active» в списке/аналитике.
+            $isActive = $hybridEnabled;
+
+            // Сброс кэша лидера после смены окна/режима.
+            app(\App\Services\Bots\HybridAnalystLeaderService::class)->forgetCache($bot->id);
         } else {
             $json = $request->validate([
                 'config_json' => ['required', 'string', 'max:65535'],
@@ -1324,6 +1400,43 @@ class BotController extends Controller
             Artisan::call('queue:restart');
         } catch (Throwable $e) {
             Log::warning('bot_settings_queue_restart_failed', [
+                'bot_id' => $bot->id,
+                'bot_type' => $bot->type,
+                'error' => $e->getMessage(),
+            ]);
+        }
+
+        // Жёсткий перезапуск telegram-analyst (и poll при наличии token):
+        // мягкий queue:restart не всегда убивает долгоживущий worker — гибрид/LLM остаются на старом коде.
+        $bot = $bot->fresh() ?? $bot;
+        try {
+            if ($bot->type === 'openrouter_llm_analyst') {
+                $restart = app(TelegramAnalystProcessManager::class)->restart($bot);
+                if (! ($restart['ok'] ?? false)) {
+                    Log::warning('bot_settings_telegram_analyst_restart_failed', [
+                        'bot_id' => $bot->id,
+                        'error' => $restart['error'] ?? 'unknown',
+                        'message' => $restart['message'] ?? null,
+                    ]);
+                }
+            } elseif (StrongLevelTelegramLlmButton::supportsBotType($bot->type)) {
+                $cfgAfter = is_array($bot->config) ? $bot->config : [];
+                if (trim((string) ($cfgAfter['telegram_bot_token'] ?? '')) !== '') {
+                    $restart = app(StrongLevelTelegramProcessManager::class)->restart($bot);
+                    if (! ($restart['ok'] ?? false)) {
+                        Log::warning('bot_settings_strong_level_telegram_restart_failed', [
+                            'bot_id' => $bot->id,
+                            'bot_type' => $bot->type,
+                            'error' => $restart['error'] ?? 'unknown',
+                        ]);
+                    }
+                } else {
+                    // Token нет — всё равно перезапускаем общий queue (кнопка LLM / гибрид).
+                    app(TelegramAnalystProcessManager::class)->restartQueueWorkerHard();
+                }
+            }
+        } catch (Throwable $e) {
+            Log::warning('bot_settings_telegram_process_restart_failed', [
                 'bot_id' => $bot->id,
                 'bot_type' => $bot->type,
                 'error' => $e->getMessage(),

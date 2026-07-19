@@ -127,6 +127,37 @@ class TelegramAnalystProcessManager
     }
 
     /**
+     * Жёсткий перезапуск только queue worker telegram-analyst (без poll).
+     * Нужен после деплоя/сохранения настроек гибрида: мягкий queue:restart
+     * не всегда убивает долгоживущий worker, и старый код продолжает крутить jobs.
+     *
+     * @return array{ok:bool,stopped:int,started:bool,queue_running:bool,queue_pids:list<int>}
+     */
+    public function restartQueueWorkerHard(): array
+    {
+        $stopped = $this->stopQueueWorker();
+        usleep(400_000);
+        $started = $this->startQueueWorker();
+        usleep(300_000);
+        $pids = $this->queueWorkerPids();
+
+        if ($pids === []) {
+            Log::warning('telegram_analyst_queue_hard_restart_failed', [
+                'stopped' => $stopped,
+                'started' => $started,
+            ]);
+        }
+
+        return [
+            'ok' => $pids !== [],
+            'stopped' => $stopped,
+            'started' => $started,
+            'queue_running' => $pids !== [],
+            'queue_pids' => $pids,
+        ];
+    }
+
+    /**
      * Останавливает poll + queue worker и поднимает заново (подхватывает config из БД).
      *
      * @return array{ok:bool,error?:string,status?:array<string,mixed>,stopped?:array<string,int>,started?:array<string,bool>}
@@ -140,7 +171,22 @@ class TelegramAnalystProcessManager
         /** @var array<string, mixed> $cfg */
         $cfg = is_array($bot->config) ? $bot->config : [];
         if (trim((string) ($cfg['telegram_bot_token'] ?? '')) === '') {
-            return ['ok' => false, 'error' => 'telegram_token_missing'];
+            // Без token poll не нужен — всё равно поднимаем queue (гибрид paper/PO).
+            $queue = $this->restartQueueWorkerHard();
+            if (! $queue['ok']) {
+                return [
+                    'ok' => false,
+                    'error' => 'queue_start_failed',
+                    'status' => $this->status($bot->id),
+                    'message' => 'Не удалось перезапустить queue telegram-analyst.',
+                ];
+            }
+
+            return [
+                'ok' => true,
+                'status' => $this->status($bot->id),
+                'message' => 'Queue telegram-analyst перезапущен (poll без token не стартовал).',
+            ];
         }
 
         $stopped = [

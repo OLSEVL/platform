@@ -266,6 +266,7 @@ class BotEngineService
                         $entryAt = now();
                         $payoutSnapshot = $instrumentRow->current_payout !== null ? (float) $instrumentRow->current_payout : null;
                         $telegramResult = null;
+                        $createdSignalId = 0;
 
                         DB::transaction(function () use (
                             $bot,
@@ -277,10 +278,11 @@ class BotEngineService
                             $decision,
                             $dedupeKey,
                             $signalDedupeBucketSec,
-                            &$signals
+                            &$signals,
+                            &$createdSignalId
 
                         ): void {
-                            BotSignal::query()->create([
+                            $signal = BotSignal::query()->create([
                                 'bot_id' => $bot->id,
                                 'instrument' => $instrument,
                                 'side' => $side,
@@ -295,8 +297,22 @@ class BotEngineService
                                 'decision_version' => (string) ($decision['decision_version'] ?? 'v1'),
                                 'dedupe_key' => $dedupeKey,
                             ]);
+                            $createdSignalId = (int) $signal->id;
                             $signals++;
                         });
+
+                        // Гибрид Chart Analyst: on_signal (alert-only path, без paper/PO).
+                        if ($createdSignalId > 0) {
+                            app(HybridAnalystDispatcher::class)->maybeDispatch(
+                                $bot,
+                                $createdSignalId,
+                                $instrument,
+                                $side,
+                                $confidence,
+                                $decision,
+                                \App\Support\HybridAnalystConfig::TRIGGER_ON_SIGNAL,
+                            );
+                        }
 
                         $telegramResult = app(TelegramAlertService::class)->sendTrendAlert(
                             $bot,
@@ -343,6 +359,8 @@ class BotEngineService
                     $payoutSnapshot = $instrumentRow->current_payout !== null ? (float) $instrumentRow->current_payout : null;
 
                     $mirrorTradeIds = [];
+                    $createdSignalId = 0;
+                    $createdTradeId = 0;
                     DB::transaction(function () use (
                         $bot,
                         $instrument,
@@ -357,7 +375,9 @@ class BotEngineService
                         $entryPrice,
                         &$signals,
                         &$trades,
-                        &$mirrorTradeIds
+                        &$mirrorTradeIds,
+                        &$createdSignalId,
+                        &$createdTradeId
                     ): void {
                         $signal = BotSignal::query()->create([
                             'bot_id' => $bot->id,
@@ -373,6 +393,7 @@ class BotEngineService
                             'decision_version' => (string) ($decision['decision_version'] ?? 'v1'),
                             'dedupe_key' => $dedupeKey,
                         ]);
+                        $createdSignalId = (int) $signal->id;
 
                         $trade = BotTrade::query()->create([
                             'bot_id' => $bot->id,
@@ -392,6 +413,7 @@ class BotEngineService
                                 'expiry_sec_used' => $decisionExpirySec,
                             ],
                         ]);
+                        $createdTradeId = (int) $trade->id;
 
                         // Если стратегия вернула id LLM-лога, привязываем лог к созданным signal/trade.
                         // Это соединяет "сырые request/response модели" с реальной сделкой.
@@ -417,6 +439,33 @@ class BotEngineService
                         }
                         $mirrorTradeIds = [];
                     });
+
+                    // Гибрид Chart Analyst после paper-сигнала:
+                    // on_signal — любой CALL/PUT с записью сигнала;
+                    // on_po_mirror — только если у source включено зеркало (dispatch уже поставлен).
+                    if ($createdSignalId > 0) {
+                        $hybrid = app(HybridAnalystDispatcher::class);
+                        $hybrid->maybeDispatch(
+                            $bot,
+                            $createdSignalId,
+                            $instrument,
+                            $side,
+                            $confidence,
+                            $decision,
+                            \App\Support\HybridAnalystConfig::TRIGGER_ON_SIGNAL,
+                            $createdTradeId > 0 ? $createdTradeId : null,
+                        );
+                        $hybrid->maybeDispatch(
+                            $bot,
+                            $createdSignalId,
+                            $instrument,
+                            $side,
+                            $confidence,
+                            $decision,
+                            \App\Support\HybridAnalystConfig::TRIGGER_ON_PO_MIRROR,
+                            $createdTradeId > 0 ? $createdTradeId : null,
+                        );
+                    }
 
                     // Strong Level / Candle Reversal: push в Telegram после paper-сделки.
                     $telegramResult = null;
@@ -488,9 +537,10 @@ class BotEngineService
      * @return array<string,mixed>
      */
     /**
-     * Ручной анализ графика для бота openrouter_llm_analyst: без фильтров payout/confidence/stale,
+     * Ручной / гибридный анализ графика для бота openrouter_llm_analyst: без фильтров payout/confidence/stale,
      * свечи отправляются в LLM в любом объёме, который удалось загрузить.
      *
+     * @param  array<string, mixed>|null  $hybridSourceSignal  полный decision source (гибрид); null = обычный анализ
      * @return array{
      *   instrument:string,
      *   summary:string,
@@ -501,7 +551,12 @@ class BotEngineService
      *   error:?string
      * }
      */
-    public function runManualChartAnalysis(Bot $bot, string $instrument, string $userQuestion = ''): array
+    public function runManualChartAnalysis(
+        Bot $bot,
+        string $instrument,
+        string $userQuestion = '',
+        ?array $hybridSourceSignal = null,
+    ): array
     {
         if ($bot->type !== 'openrouter_llm_analyst') {
             return [
@@ -572,6 +627,10 @@ class BotEngineService
         if ($analystSmcEnabled && is_array($smcFlowPack)) {
             $analyzeContext['smc_flow_summary'] = $smcFlowPack['snapshot'];
         }
+        // Гибрид: полный прогноз source-бота уходит в payload LLM (+ секция в system prompt).
+        if (is_array($hybridSourceSignal) && $hybridSourceSignal !== []) {
+            $analyzeContext['hybrid_source_signal'] = $hybridSourceSignal;
+        }
 
         $decision = $strategy->analyze($closed, $partial, $analyzeContext);
 
@@ -620,6 +679,7 @@ class BotEngineService
             'smc_flow_modules' => $analystSmcEnabled && is_array($smcFlowPack)
                 ? ($smcFlowPack['overlay']['modules'] ?? [])
                 : [],
+            'hybrid_mode' => is_array($hybridSourceSignal) && $hybridSourceSignal !== [],
         ];
     }
 
