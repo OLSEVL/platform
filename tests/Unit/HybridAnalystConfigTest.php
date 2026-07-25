@@ -7,10 +7,35 @@ use PHPUnit\Framework\TestCase;
 
 class HybridAnalystConfigTest extends TestCase
 {
+    public function test_system_prompt_section_requires_independent_verdict_first(): void
+    {
+        $section = HybridAnalystConfig::systemPromptSection();
+        $this->assertStringContainsString('Независимый вердикт', $section);
+        $this->assertStringContainsString('ДО чтения hybrid_source_signal', $section);
+        $this->assertStringContainsString('Фаза B', $section);
+    }
+
     public function test_extract_recommendation_side_from_full_line(): void
     {
         $text = "Разбор...\nРекомендация: CALL\nВероятность успеха: 70%";
         $this->assertSame('CALL', HybridAnalystConfig::extractRecommendationSide($text));
+    }
+
+    public function test_extract_recommendation_prefers_final_over_independent(): void
+    {
+        // Гибрид: независимый вердикт ≠ итоговая Рекомендация — фильтры берут итог.
+        $text = "Независимый вердикт: CALL\n"
+            ."Сверка: не согласен с source PUT\n"
+            ."Рекомендация: NONE\n"
+            ."Вероятность успеха: 40%";
+        $this->assertSame('NONE', HybridAnalystConfig::extractRecommendationSide($text));
+        $this->assertSame(40, HybridAnalystConfig::extractSuccessPercent($text));
+    }
+
+    public function test_extract_recommendation_last_of_two_rekomendatsiya(): void
+    {
+        $text = "Рекомендация: CALL\nпотом сверка\nРекомендация: PUT\nВероятность успеха: 55%";
+        $this->assertSame('PUT', HybridAnalystConfig::extractRecommendationSide($text));
     }
 
     public function test_extract_recommendation_side_none(): void
@@ -162,5 +187,21 @@ class HybridAnalystConfigTest extends TestCase
         $this->assertSame(55, $payload['source_bot_trade_id']);
         $this->assertSame('CALL', $payload['side']);
         $this->assertSame(1.1, $payload['features']['level_price']);
+    }
+
+    public function test_format_source_reply_for_telegram(): void
+    {
+        $text = HybridAnalystConfig::formatSourceReplyForTelegram([
+            'source_bot_name' => 'Strong Level',
+            'source_bot_type' => 'strong_level',
+            'side' => 'PUT',
+            'confidence' => 0.8,
+            'analysis_text' => 'Отскок от уровня',
+            'reasons_short' => ['touch', 'rsi'],
+        ]);
+        $this->assertStringContainsString('📥 Ответ source: Strong Level (strong_level) → PUT · conf 80%', $text);
+        $this->assertStringContainsString('Отскок от уровня', $text);
+        $this->assertStringContainsString('• touch', $text);
+        $this->assertStringContainsString('• rsi', $text);
     }
 }

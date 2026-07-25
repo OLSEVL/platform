@@ -176,6 +176,57 @@ final class ArtisanProcessFinder
     }
 
     /**
+     * SIGKILL для процессов, не завершившихся после SIGTERM (перезапуск из php-fpm).
+     *
+     * @param  list<int>  $pids
+     */
+    public static function killPids(array $pids): int
+    {
+        $killed = 0;
+        foreach ($pids as $pid) {
+            $pid = (int) $pid;
+            if ($pid <= 0) {
+                continue;
+            }
+            if (self::signalKill($pid)) {
+                $killed++;
+            }
+        }
+
+        return $killed;
+    }
+
+    /**
+     * Ждём завершения PID (poll /proc), максимум $timeoutMs.
+     *
+     * @param  list<int>  $pids
+     */
+    public static function waitUntilPidsGone(array $pids, int $timeoutMs = 2000): void
+    {
+        if ($pids === [] || $timeoutMs <= 0) {
+            return;
+        }
+
+        $deadline = microtime(true) + ($timeoutMs / 1000);
+        do {
+            $alive = [];
+            foreach ($pids as $pid) {
+                $pid = (int) $pid;
+                if ($pid <= 0) {
+                    continue;
+                }
+                if (is_readable("/proc/{$pid}/cmdline")) {
+                    $alive[] = $pid;
+                }
+            }
+            if ($alive === []) {
+                return;
+            }
+            usleep(100_000);
+        } while (microtime(true) < $deadline);
+    }
+
+    /**
      * PHP CLI для фоновых artisan-процессов. В php-fpm PHP_BINARY указывает на php-fpm — не подходит.
      */
     public static function cliPhpBinary(): string
@@ -370,6 +421,20 @@ final class ArtisanProcessFinder
         }
 
         exec(sprintf('kill -TERM %d 2>/dev/null', $pid), $_, $exitCode);
+
+        return $exitCode === 0;
+    }
+
+    private static function signalKill(int $pid): bool
+    {
+        if (function_exists('posix_kill')) {
+            $sig = defined('SIGKILL') ? (int) constant('SIGKILL') : 9;
+            if (@posix_kill($pid, $sig)) {
+                return true;
+            }
+        }
+
+        exec(sprintf('kill -KILL %d 2>/dev/null', $pid), $_, $exitCode);
 
         return $exitCode === 0;
     }

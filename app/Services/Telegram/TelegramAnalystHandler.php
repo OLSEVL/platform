@@ -4,6 +4,7 @@ namespace App\Services\Telegram;
 
 use App\Jobs\RunTelegramAnalystAnalysisJob;
 use App\Models\Bot;
+use App\Services\Telegram\StrongLevelTelegramLlmButton;
 use App\Support\OpenRouterLlmConfig;
 use Illuminate\Support\Facades\Log;
 
@@ -164,7 +165,68 @@ class TelegramAnalystHandler
             return;
         }
 
+        // Кнопка «Доп. анализ SMC Flow» с гибрид-алерта (sllm:analystId:instrument) — без hybrid_source_signal.
+        $parsedLlm = StrongLevelTelegramLlmButton::parseCallbackData($data);
+        if ($parsedLlm !== null && $parsedLlm['analyst_bot_id'] === (int) $bot->id) {
+            $this->handleSelfLlmButton($bot, $token, $callbackId, $chatId, $parsedLlm);
+
+            return;
+        }
+
         $this->telegram->answerCallbackQuery($token, $callbackId);
+    }
+
+    /**
+     * Повторный независимый анализ по inline-кнопке под гибрид-сообщением.
+     *
+     * @param  array{analyst_bot_id:int,instrument:string}  $parsed
+     */
+    private function handleSelfLlmButton(Bot $bot, string $token, string $callbackId, string $chatId, array $parsed): void
+    {
+        $instrument = $this->instruments->resolveActiveInstrument($parsed['instrument']);
+        if ($instrument === null) {
+            $this->telegram->answerCallbackQuery($token, $callbackId, 'Пара не найдена');
+            $this->sendReplyText(
+                $token,
+                $chatId,
+                '❌ Инструмент <b>'.htmlspecialchars($parsed['instrument'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8').'</b> не найден.',
+                TelegramAnalystReplyKeyboard::mainMarkup()
+            );
+
+            return;
+        }
+
+        /** @var array<string, mixed> $cfg */
+        $cfg = is_array($bot->config) ? $bot->config : [];
+        $question = StrongLevelTelegramLlmButton::llmQuestionFromConfig($cfg);
+
+        try {
+            RunTelegramAnalystAnalysisJob::dispatch($bot->id, $chatId, $instrument, $question);
+        } catch (\Throwable $e) {
+            Log::error('telegram_analyst_hybrid_llm_dispatch_failed', [
+                'analyst_bot_id' => $bot->id,
+                'instrument' => $instrument,
+                'error' => $e->getMessage(),
+            ]);
+            $this->telegram->answerCallbackQuery($token, $callbackId, 'Ошибка очереди');
+            $this->sendReplyText(
+                $token,
+                $chatId,
+                '❌ Не удалось поставить анализ в очередь. Проверьте queue worker telegram-analyst.',
+                TelegramAnalystReplyKeyboard::mainMarkup()
+            );
+
+            return;
+        }
+
+        $this->telegram->answerCallbackQuery($token, $callbackId, 'Запускаю LLM…');
+        $this->sendReplyText(
+            $token,
+            $chatId,
+            '⏳ Запущен независимый LLM-анализ <b>'.htmlspecialchars($instrument, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8')."</b>.\n".
+            'Без гибрида и сигнала source (обычно 1–3 мин).',
+            TelegramAnalystReplyKeyboard::mainMarkup()
+        );
     }
 
     private function startAnalysis(Bot $bot, string $token, string $chatId, string $instrument, string $question): void

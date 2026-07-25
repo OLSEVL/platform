@@ -210,6 +210,95 @@ class BotController extends Controller
             $timeline = array_slice($timeline, -$maxChartBuckets);
         }
 
+        // Текущий (последний) бакет размера Interval — окно для «самого удачного бота».
+        $latestBucketTs = $timeline !== [] ? (int) end($timeline) : null;
+        $bestBotInInterval = null;
+        if ($latestBucketTs !== null) {
+            // Фильтр по тому же FLOOR(UNIX_TIMESTAMP)/step, что и у точек графика — без рассинхрона TZ.
+            $intervalBotStats = DB::table('bot_trades as t')
+                ->join('bots as b', 'b.id', '=', 't.bot_id')
+                ->where('b.user_id', auth()->id())
+                ->whereRaw(
+                    'FLOOR(UNIX_TIMESTAMP(t.entry_time) / ?) * ? = ?',
+                    [$bucketSeconds, $bucketSeconds, $latestBucketTs]
+                )
+                ->whereIn('t.result', [BotTrade::RESULT_WIN, BotTrade::RESULT_LOSS])
+                ->groupBy('b.id', 'b.name')
+                ->selectRaw("
+                    b.id as bot_id,
+                    b.name as bot_name,
+                    SUM(CASE WHEN t.result = 'win' THEN 1 ELSE 0 END) as wins,
+                    SUM(CASE WHEN t.result = 'loss' THEN 1 ELSE 0 END) as losses
+                ")
+                ->get();
+
+            $intervalPoStats = DB::table('bot_trades as t')
+                ->join('bots as b', 'b.id', '=', 't.bot_id')
+                ->where('b.user_id', auth()->id())
+                ->whereRaw(
+                    'FLOOR(UNIX_TIMESTAMP(t.entry_time) / ?) * ? = ?',
+                    [$bucketSeconds, $bucketSeconds, $latestBucketTs]
+                )
+                ->whereRaw("{$poResultSql} IN (?, ?)", [BotTrade::RESULT_WIN, BotTrade::RESULT_LOSS])
+                ->groupBy('b.id')
+                ->selectRaw("
+                    b.id as bot_id,
+                    SUM(CASE WHEN {$poResultSql} = 'win' THEN 1 ELSE 0 END) as wins,
+                    SUM(CASE WHEN {$poResultSql} = 'loss' THEN 1 ELSE 0 END) as losses
+                ")
+                ->get()
+                ->keyBy('bot_id');
+
+            // Минимум сделок, чтобы 1 win не выигрывал рейтинг на коротком интервале.
+            $minTradesForBest = match (true) {
+                $bucketSeconds <= 60 => 2,
+                $bucketSeconds <= 300 => 3,
+                $bucketSeconds <= 900 => 5,
+                default => 8,
+            };
+
+            $bestRow = null;
+            $bestWr = -1.0;
+            $bestTotal = 0;
+            foreach ($intervalBotStats as $row) {
+                $w = (int) $row->wins;
+                $l = (int) $row->losses;
+                $total = $w + $l;
+                if ($total < $minTradesForBest) {
+                    continue;
+                }
+                $wr = 100.0 * $w / $total;
+                // Выше winrate; при равенстве — больше сделок.
+                if ($wr > $bestWr || (abs($wr - $bestWr) < 1e-9 && $total > $bestTotal)) {
+                    $bestWr = $wr;
+                    $bestTotal = $total;
+                    $bestRow = $row;
+                }
+            }
+
+            if ($bestRow !== null) {
+                $poRow = $intervalPoStats->get((int) $bestRow->bot_id);
+                $poW = (int) ($poRow->wins ?? 0);
+                $poL = (int) ($poRow->losses ?? 0);
+                $poTotal = $poW + $poL;
+                $bucketTz = config('app.timezone');
+                $bestBotInInterval = [
+                    'bot_id' => (int) $bestRow->bot_id,
+                    'name' => (string) $bestRow->bot_name,
+                    'wins' => (int) $bestRow->wins,
+                    'losses' => (int) $bestRow->losses,
+                    'winrate' => round($bestWr, 2),
+                    'po_wins' => $poW,
+                    'po_losses' => $poL,
+                    'po_winrate' => $poTotal > 0 ? round(100.0 * $poW / $poTotal, 2) : null,
+                    'bucket_from' => Carbon::createFromTimestamp($latestBucketTs)->timezone($bucketTz)->format('d.m H:i'),
+                    'bucket_to' => Carbon::createFromTimestamp($latestBucketTs + $bucketSeconds)->timezone($bucketTz)->format('H:i'),
+                    'interval_label' => $intervalPresets[$bucketSeconds] ?? ($bucketSeconds.' сек'),
+                    'min_trades' => $minTradesForBest,
+                ];
+            }
+        }
+
         // Группируем win/loss по бакетам для расчёта winrate в каждого интервала времени.
         $bucketStats = [];
         foreach ($netByBucket as $row) {
@@ -377,6 +466,7 @@ class BotController extends Controller
             'overallPoWins' => $overallPoWins,
             'overallPoLosses' => $overallPoLosses,
             'overallPoWinrate' => $overallPoWinrate,
+            'bestBotInInterval' => $bestBotInInterval,
         ]);
     }
 
@@ -1083,6 +1173,8 @@ class BotController extends Controller
                 'telegram_analyst_bot_id' => ['nullable', 'integer', 'min:1'],
                 'telegram_analyst_llm_question' => ['nullable', 'string', 'max:500'],
                 'telegram_send_chart' => ['required', 'string', Rule::in(['1', '0'])],
+                // Второй PNG: старший контекст M5 (как у Strong Level / CRC).
+                'telegram_send_chart_m5' => ['required', 'string', Rule::in(['1', '0'])],
             ]);
             $existingToken = trim((string) (($bot->config ?? [])['telegram_bot_token'] ?? ''));
             $tokenInput = trim((string) ($extra['telegram_bot_token'] ?? ''));
@@ -1116,6 +1208,7 @@ class BotController extends Controller
                     'telegram_analyst_llm_question' => $extra['telegram_analyst_llm_question'] ?? null,
                 ]),
                 'telegram_send_chart' => ($extra['telegram_send_chart'] ?? '1') === '1',
+                'telegram_send_chart_m5' => ($extra['telegram_send_chart_m5'] ?? '1') === '1',
                 // Для обратной совместимости и удобства движка дублируем режим в bool-ключ.
                 'notify_only' => (string) $extra['execution_mode'] === 'alert_only',
                 'version' => 'strong_trend_telegram_v2',
@@ -1278,6 +1371,8 @@ class BotController extends Controller
                 'hybrid_min_success_percent' => ['required', 'integer', 'min:0', 'max:100'],
                 'hybrid_paper_trades_enabled' => ['sometimes', 'boolean'],
                 'hybrid_mirror_trades_enabled' => ['sometimes', 'boolean'],
+                'hybrid_telegram_llm_button_enabled' => ['sometimes', 'boolean'],
+                'telegram_analyst_llm_question' => ['nullable', 'string', 'max:500'],
             ]);
             $existingToken = trim((string) (($bot->config ?? [])['telegram_bot_token'] ?? ''));
             $tokenInput = trim((string) ($extra['telegram_bot_token'] ?? ''));
@@ -1345,6 +1440,10 @@ class BotController extends Controller
                 // PO mirror для гибридных paper; дублируем в mirror_trades_enabled, чтобы BotTradeMirrorService видел флаг.
                 'hybrid_mirror_trades_enabled' => $request->boolean('hybrid_mirror_trades_enabled'),
                 'mirror_trades_enabled' => $request->boolean('hybrid_mirror_trades_enabled'),
+                'hybrid_telegram_llm_button_enabled' => $request->boolean('hybrid_telegram_llm_button_enabled'),
+                'telegram_analyst_llm_question' => StrongLevelTelegramLlmButton::llmQuestionFromConfig([
+                    'telegram_analyst_llm_question' => $extra['telegram_analyst_llm_question'] ?? null,
+                ]),
                 'version' => 'openrouter_llm_analyst_v1',
             ]));
             // Плановый scan для аналитика не выполняется (scanBot сразу выходит).
@@ -1406,13 +1505,15 @@ class BotController extends Controller
             ]);
         }
 
-        // Жёсткий перезапуск telegram-analyst (и poll при наличии token):
-        // мягкий queue:restart не всегда убивает долгоживущий worker — гибрид/LLM остаются на старом коде.
+        // Жёсткий перезапуск telegram-analyst (и poll при наличии token).
         $bot = $bot->fresh() ?? $bot;
+        $restartFlash = null;
         try {
             if ($bot->type === 'openrouter_llm_analyst') {
                 $restart = app(TelegramAnalystProcessManager::class)->restart($bot);
-                if (! ($restart['ok'] ?? false)) {
+                if (($restart['deferred'] ?? false) && isset($restart['message'])) {
+                    $restartFlash = (string) $restart['message'];
+                } elseif (! ($restart['ok'] ?? false)) {
                     Log::warning('bot_settings_telegram_analyst_restart_failed', [
                         'bot_id' => $bot->id,
                         'error' => $restart['error'] ?? 'unknown',
@@ -1443,7 +1544,12 @@ class BotController extends Controller
             ]);
         }
 
-        return redirect()->route('bots.settings', $bot)->with('status', 'Настройки сохранены.');
+        $statusMessage = 'Настройки сохранены.';
+        if ($restartFlash !== null && $restartFlash !== '') {
+            $statusMessage .= ' '.$restartFlash;
+        }
+
+        return redirect()->route('bots.settings', $bot)->with('status', $statusMessage);
     }
 
     /**

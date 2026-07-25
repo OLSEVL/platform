@@ -107,7 +107,8 @@
                             <span class="text-emerald-500/90">Winrate<br><span class="text-zinc-500">100%</span></span>
                             <span class="text-zinc-500">0%</span>
                         </div>
-                        <div class="relative h-56 flex-1 min-w-0">
+                        {{-- Чуть выше — место под точки и подписи w/l. --}}
+                        <div class="relative h-72 flex-1 min-w-0">
                             <canvas id="pair-chart-{{ $series['slug'] }}"
                                     aria-label="График winrate пары {{ $series['instrument'] }}"></canvas>
                         </div>
@@ -170,6 +171,33 @@
             const grid = 'rgba(82, 82, 91, 0.45)';
             const text = 'rgb(161, 161, 170)';
 
+            // Подпись wN/lN над каждой точкой с данными.
+            const wlPointLabelsPlugin = {
+                id: 'wlPointLabels',
+                afterDatasetsDraw: function (chart) {
+                    const ctx = chart.ctx;
+                    chart.data.datasets.forEach(function (dataset, datasetIndex) {
+                        const meta = chart.getDatasetMeta(datasetIndex);
+                        if (!meta || meta.hidden) return;
+                        meta.data.forEach(function (el, i) {
+                            const v = dataset.data[i];
+                            if (v === null || typeof v === 'undefined') return;
+                            const w = (dataset.bucketWins && dataset.bucketWins[i]) || 0;
+                            const l = (dataset.bucketLosses && dataset.bucketLosses[i]) || 0;
+                            if (w + l === 0) return;
+                            const pos = el.getProps(['x', 'y'], true);
+                            ctx.save();
+                            ctx.font = 'bold 9px ui-sans-serif, system-ui, sans-serif';
+                            ctx.fillStyle = dataset.borderColor || text;
+                            ctx.textAlign = 'center';
+                            ctx.textBaseline = 'bottom';
+                            ctx.fillText('w' + w + '/l' + l, pos.x, pos.y - 7);
+                            ctx.restore();
+                        });
+                    });
+                },
+            };
+
             seriesList.forEach(function (series) {
                 const canvas = document.getElementById('pair-chart-' + series.slug);
                 if (!canvas || typeof Chart === 'undefined') return;
@@ -181,24 +209,28 @@
                         datasets: [{
                             label: 'Winrate, %',
                             data: series.values,
-                            // Wins/Losses по бакету — всплывают в tooltip при наведении.
+                            // Wins/Losses по бакету — на точке и в tooltip.
                             bucketWins: series.bucket_wins,
                             bucketLosses: series.bucket_losses,
                             // Пустые бакеты (null) не рвут линию между интервалами с данными.
                             spanGaps: true,
-                            borderColor: 'rgb(239, 68, 68)',
-                            backgroundColor: 'rgba(239, 68, 68, 0.12)',
+                            borderColor: 'rgb(244, 244, 245)',
+                            backgroundColor: 'rgba(244, 244, 245, 0.12)',
                             borderWidth: 2,
                             tension: 0.35,
                             fill: true,
-                            pointRadius: 0,
-                            pointHoverRadius: 4,
+                            pointRadius: 3,
+                            pointHoverRadius: 5,
+                            pointBackgroundColor: 'rgb(244, 244, 245)',
                         }],
                     },
                     options: {
                         responsive: true,
                         maintainAspectRatio: false,
                         interaction: { mode: 'index', intersect: false },
+                        layout: {
+                            padding: { top: 14, bottom: 4 },
+                        },
                         plugins: {
                             legend: { display: false },
                             tooltip: {
@@ -231,10 +263,13 @@
                             x: {
                                 ticks: {
                                     color: text,
+                                    // Чаще подписываем ось времени: до ~1 подписи на бакет при умеренной длине шкалы.
                                     maxRotation: 45,
-                                    minRotation: 0,
+                                    minRotation: 45,
                                     autoSkip: true,
-                                    maxTicksLimit: 12,
+                                    autoSkipPadding: 4,
+                                    maxTicksLimit: Math.min(Math.max(labels.length, 12), 48),
+                                    font: { size: 10 },
                                 },
                                 grid: { color: grid },
                             },
@@ -259,6 +294,7 @@
                             },
                         },
                     },
+                    plugins: [wlPointLabelsPlugin],
                 });
             });
         })();

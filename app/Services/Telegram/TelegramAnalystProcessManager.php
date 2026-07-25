@@ -11,12 +11,16 @@ use Illuminate\Support\Facades\Log;
 /**
  * Запуск/остановка фоновых процессов Telegram Chart Analyst:
  * queue:work (анализ) и telegram:analyst-poll (long polling).
- * Ищем процессы по cmdline в /proc (как bots:scan в routes/console.php).
+ *
+ * Важно: php-fpm (www-data) не может убить worker, запущенный от CLI/cron (user o).
+ * В этом случае requestDeferredRestart() + cron telegram:ensure-analyst-services.
  */
 class TelegramAnalystProcessManager
 {
     /** Таймаут queue worker для OpenRouter-анализа (сек). */
     public const QUEUE_TIMEOUT_SEC = 600;
+
+    public const RESTART_FLAG_RELATIVE = 'framework/telegram-analyst-restart.flag';
 
     /**
      * @return array{
@@ -25,7 +29,7 @@ class TelegramAnalystProcessManager
      *   queue_running:bool,
      *   poll_pids:list<int>,
      *   queue_pids:list<int>,
-     *   message?:string
+     *   restart_pending?:bool
      * }
      */
     public function status(int $botId): array
@@ -39,12 +43,10 @@ class TelegramAnalystProcessManager
             'queue_running' => $queuePids !== [],
             'poll_pids' => $pollPids,
             'queue_pids' => $queuePids,
+            'restart_pending' => $this->hasDeferredRestartRequest(),
         ];
     }
 
-    /**
-     * Поднять poll Chart Analyst, если не запущен (/menu, callback инструментов).
-     */
     public function ensurePollRunning(int $botId): bool
     {
         if ($this->pollPids($botId) !== []) {
@@ -63,9 +65,6 @@ class TelegramAnalystProcessManager
         return $this->pollPids($botId) !== [];
     }
 
-    /**
-     * Поднять queue worker telegram-analyst, если не запущен.
-     */
     public function ensureQueueRunning(): bool
     {
         if ($this->queueWorkerPids() !== []) {
@@ -85,12 +84,12 @@ class TelegramAnalystProcessManager
     }
 
     /**
-     * Poll + queue для всех openrouter_llm_analyst с telegram_bot_token (cron watchdog).
-     *
-     * @return array{queue_running:bool,bots:list<array{bot_id:int,poll_running:bool}>}
+     * @return array{queue_running:bool,bots:list<array{bot_id:int,poll_running:bool}>,deferred_restart?:bool}
      */
     public function ensureConfiguredServices(): array
     {
+        $deferred = $this->processDeferredRestartIfRequested();
+
         $queueRunning = $this->ensureQueueRunning();
         $bots = [];
 
@@ -105,6 +104,173 @@ class TelegramAnalystProcessManager
         return [
             'queue_running' => $queueRunning,
             'bots' => $bots,
+            'deferred_restart' => $deferred !== null,
+        ];
+    }
+
+    /**
+     * Запрос отложенного перезапуска (cron под user CLI выполнит kill+start).
+     */
+    public function requestDeferredRestart(?int $botId = null): void
+    {
+        $path = storage_path(self::RESTART_FLAG_RELATIVE);
+        File::ensureDirectoryExists(dirname($path));
+        File::put($path, json_encode([
+            'bot_id' => $botId,
+            'requested_at' => now()->toIso8601String(),
+        ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+    }
+
+    public function hasDeferredRestartRequest(): bool
+    {
+        return File::exists(storage_path(self::RESTART_FLAG_RELATIVE));
+    }
+
+    /**
+     * Выполняет отложенный перезапуск (вызывается из cron под user CLI).
+     *
+     * @return array<string, mixed>|null
+     */
+    public function processDeferredRestartIfRequested(): ?array
+    {
+        $path = storage_path(self::RESTART_FLAG_RELATIVE);
+        if (! File::exists($path)) {
+            return null;
+        }
+
+        $payload = json_decode((string) File::get($path), true);
+        File::delete($path);
+
+        $botId = isset($payload['bot_id']) ? (int) $payload['bot_id'] : null;
+        $bot = $botId > 0 ? Bot::query()->find($botId) : null;
+
+        if ($bot !== null && $bot->type === 'openrouter_llm_analyst') {
+            $result = $this->restart($bot);
+        } else {
+            $result = $this->restartQueueWorkerHard();
+            foreach ($this->analystBotsWithTelegramToken() as $analystBot) {
+                $beforePoll = $this->pollPids($analystBot->id);
+                $this->stopProcessesHard($beforePoll);
+                $this->startPoll($analystBot->id);
+            }
+        }
+
+        Log::info('telegram_analyst_deferred_restart_done', [
+            'bot_id' => $botId,
+            'result' => $result,
+        ]);
+
+        return $result;
+    }
+
+    /**
+     * @return array{ok:bool,stopped:int,started:bool,queue_running:bool,queue_pids:list<int>,same_pids?:bool,message?:string,deferred?:bool}
+     */
+    public function restartQueueWorkerHard(): array
+    {
+        $before = $this->queueWorkerPids();
+        $stopped = $this->stopProcessesHard($before);
+        $still = array_values(array_intersect($before, $this->queueWorkerPids()));
+
+        if ($still !== []) {
+            $this->requestDeferredRestart();
+
+            return [
+                'ok' => false,
+                'stopped' => $stopped,
+                'started' => false,
+                'queue_running' => true,
+                'queue_pids' => $still,
+                'same_pids' => true,
+                'deferred' => true,
+                'message' => $this->deferredRestartMessage($still, []),
+            ];
+        }
+
+        $started = $this->startQueueWorker();
+        usleep(300_000);
+        $pids = $this->queueWorkerPids();
+
+        if ($pids === []) {
+            Log::warning('telegram_analyst_queue_hard_restart_failed', [
+                'stopped' => $stopped,
+                'started' => $started,
+            ]);
+        }
+
+        return [
+            'ok' => $pids !== [],
+            'stopped' => $stopped,
+            'started' => $started,
+            'queue_running' => $pids !== [],
+            'queue_pids' => $pids,
+        ];
+    }
+
+    /**
+     * @return array{ok:bool,error?:string,status?:array<string,mixed>,stopped?:array<string,int>,started?:array<string,bool>,message?:string,deferred?:bool}
+     */
+    public function restart(Bot $bot): array
+    {
+        if ($bot->type !== 'openrouter_llm_analyst') {
+            return ['ok' => false, 'error' => 'unsupported_bot_type'];
+        }
+
+        /** @var array<string, mixed> $cfg */
+        $cfg = is_array($bot->config) ? $bot->config : [];
+        $hasToken = trim((string) ($cfg['telegram_bot_token'] ?? '')) !== '';
+
+        $beforeQueue = $this->queueWorkerPids();
+        $beforePoll = $hasToken ? $this->pollPids($bot->id) : [];
+
+        $stopped = [
+            'poll' => $hasToken ? $this->stopProcessesHard($beforePoll) : 0,
+            'queue' => $this->stopProcessesHard($beforeQueue),
+        ];
+
+        $stillPoll = array_values(array_intersect($beforePoll, $this->pollPids($bot->id)));
+        $stillQueue = array_values(array_intersect($beforeQueue, $this->queueWorkerPids()));
+
+        if ($stillPoll !== [] || $stillQueue !== []) {
+            $this->requestDeferredRestart($bot->id);
+
+            return [
+                'ok' => true,
+                'deferred' => true,
+                'error' => 'worker_kill_failed',
+                'stopped' => $stopped,
+                'status' => $this->status($bot->id),
+                'message' => $this->deferredRestartMessage($stillQueue, $stillPoll),
+                'stale_queue_pids' => $stillQueue,
+                'stale_poll_pids' => $stillPoll,
+            ];
+        }
+
+        $started = [
+            'queue' => $this->startQueueWorker(),
+            'poll' => $hasToken ? $this->startPoll($bot->id) : true,
+        ];
+
+        usleep(300_000);
+        $status = $this->status($bot->id);
+
+        if (! ($started['queue'] && $started['poll'] && $status['queue_running'] && ($status['poll_running'] || ! $hasToken))) {
+            return [
+                'ok' => false,
+                'error' => 'start_failed',
+                'stopped' => $stopped,
+                'started' => $started,
+                'status' => $status,
+                'message' => 'Не удалось подтвердить запуск poll/queue после перезапуска.',
+            ];
+        }
+
+        return [
+            'ok' => true,
+            'stopped' => $stopped,
+            'started' => $started,
+            'status' => $status,
+            'message' => 'Процессы перезапущены. Poll и queue worker подхватили настройки из БД.',
         ];
     }
 
@@ -127,102 +293,6 @@ class TelegramAnalystProcessManager
     }
 
     /**
-     * Жёсткий перезапуск только queue worker telegram-analyst (без poll).
-     * Нужен после деплоя/сохранения настроек гибрида: мягкий queue:restart
-     * не всегда убивает долгоживущий worker, и старый код продолжает крутить jobs.
-     *
-     * @return array{ok:bool,stopped:int,started:bool,queue_running:bool,queue_pids:list<int>}
-     */
-    public function restartQueueWorkerHard(): array
-    {
-        $stopped = $this->stopQueueWorker();
-        usleep(400_000);
-        $started = $this->startQueueWorker();
-        usleep(300_000);
-        $pids = $this->queueWorkerPids();
-
-        if ($pids === []) {
-            Log::warning('telegram_analyst_queue_hard_restart_failed', [
-                'stopped' => $stopped,
-                'started' => $started,
-            ]);
-        }
-
-        return [
-            'ok' => $pids !== [],
-            'stopped' => $stopped,
-            'started' => $started,
-            'queue_running' => $pids !== [],
-            'queue_pids' => $pids,
-        ];
-    }
-
-    /**
-     * Останавливает poll + queue worker и поднимает заново (подхватывает config из БД).
-     *
-     * @return array{ok:bool,error?:string,status?:array<string,mixed>,stopped?:array<string,int>,started?:array<string,bool>}
-     */
-    public function restart(Bot $bot): array
-    {
-        if ($bot->type !== 'openrouter_llm_analyst') {
-            return ['ok' => false, 'error' => 'unsupported_bot_type'];
-        }
-
-        /** @var array<string, mixed> $cfg */
-        $cfg = is_array($bot->config) ? $bot->config : [];
-        if (trim((string) ($cfg['telegram_bot_token'] ?? '')) === '') {
-            // Без token poll не нужен — всё равно поднимаем queue (гибрид paper/PO).
-            $queue = $this->restartQueueWorkerHard();
-            if (! $queue['ok']) {
-                return [
-                    'ok' => false,
-                    'error' => 'queue_start_failed',
-                    'status' => $this->status($bot->id),
-                    'message' => 'Не удалось перезапустить queue telegram-analyst.',
-                ];
-            }
-
-            return [
-                'ok' => true,
-                'status' => $this->status($bot->id),
-                'message' => 'Queue telegram-analyst перезапущен (poll без token не стартовал).',
-            ];
-        }
-
-        $stopped = [
-            'poll' => $this->stopPoll($bot->id),
-            'queue' => $this->stopQueueWorker(),
-        ];
-
-        // Даём процессам завершиться после SIGTERM.
-        usleep(400_000);
-
-        $started = [
-            'queue' => $this->startQueueWorker(),
-            'poll' => $this->startPoll($bot->id),
-        ];
-
-        $status = $this->status($bot->id);
-        if (! ($started['poll'] && $started['queue'])) {
-            return [
-                'ok' => false,
-                'error' => 'start_failed',
-                'stopped' => $stopped,
-                'started' => $started,
-                'status' => $status,
-            ];
-        }
-
-        return [
-            'ok' => true,
-            'stopped' => $stopped,
-            'started' => $started,
-            'status' => $status,
-            'message' => 'Процессы перезапущены. Poll и queue worker подхватили настройки из БД.',
-        ];
-    }
-
-    /**
      * @return list<int>
      */
     public function pollPids(int $botId, ?int $exceptPid = null): array
@@ -230,9 +300,10 @@ class TelegramAnalystProcessManager
         $needle = 'telegram:analyst-poll';
         $botFlag = '--bot='.$botId;
 
-        return $this->findArtisanPids(static function (string $cmdline) use ($needle, $botFlag): bool {
-            return str_contains($cmdline, $needle) && str_contains($cmdline, $botFlag);
-        }, $exceptPid);
+        return ArtisanProcessFinder::findArtisanPids(
+            static fn (string $cmdline): bool => str_contains($cmdline, $needle) && str_contains($cmdline, $botFlag),
+            $exceptPid,
+        );
     }
 
     /**
@@ -240,14 +311,12 @@ class TelegramAnalystProcessManager
      */
     public function queueWorkerPids(?int $exceptPid = null): array
     {
-        return $this->findArtisanPids(static function (string $cmdline): bool {
-            return self::isAnalystQueueWorkerCmdline($cmdline);
-        }, $exceptPid);
+        return ArtisanProcessFinder::findArtisanPids(
+            static fn (string $cmdline): bool => self::isAnalystQueueWorkerCmdline($cmdline),
+            $exceptPid,
+        );
     }
 
-    /**
-     * Воркер очереди telegram-analyst или устаревший запуск без --queue= (не обрабатывает jobs).
-     */
     private static function isAnalystQueueWorkerCmdline(string $cmdline): bool
     {
         if (! str_contains($cmdline, 'queue:work')) {
@@ -256,19 +325,49 @@ class TelegramAnalystProcessManager
         if (str_contains($cmdline, RunTelegramAnalystAnalysisJob::QUEUE_NAME)) {
             return true;
         }
-        // Старый вариант: queue:work --timeout=600 без --queue=telegram-analyst (jobs зависают).
+
         return str_contains($cmdline, '--timeout='.self::QUEUE_TIMEOUT_SEC)
             && ! str_contains($cmdline, '--queue=');
     }
 
     public function stopPoll(int $botId): int
     {
-        return $this->terminatePids($this->pollPids($botId));
+        return $this->stopProcessesHard($this->pollPids($botId));
     }
 
     public function stopQueueWorker(): int
     {
-        return $this->terminatePids($this->queueWorkerPids());
+        return $this->stopProcessesHard($this->queueWorkerPids());
+    }
+
+    /**
+     * SIGTERM → wait → SIGKILL → wait.
+     *
+     * @param  list<int>  $pids
+     */
+    private function stopProcessesHard(array $pids): int
+    {
+        if ($pids === []) {
+            return 0;
+        }
+
+        $killed = ArtisanProcessFinder::terminatePids($pids);
+        ArtisanProcessFinder::waitUntilPidsGone($pids, 2500);
+
+        $stillAlive = [];
+        foreach ($pids as $pid) {
+            $pid = (int) $pid;
+            if ($pid > 0 && is_readable("/proc/{$pid}/cmdline")) {
+                $stillAlive[] = $pid;
+            }
+        }
+
+        if ($stillAlive !== []) {
+            $killed += ArtisanProcessFinder::killPids($stillAlive);
+            ArtisanProcessFinder::waitUntilPidsGone($stillAlive, 1500);
+        }
+
+        return $killed;
     }
 
     public function startPoll(int $botId): bool
@@ -278,9 +377,8 @@ class TelegramAnalystProcessManager
         }
 
         $log = storage_path('logs/telegram-analyst-poll-'.$botId.'.log');
-        File::ensureDirectoryExists(dirname($log));
 
-        return $this->spawnBackground([
+        return ArtisanProcessFinder::spawnBackground([
             ArtisanProcessFinder::cliPhpBinary(),
             'artisan',
             'telegram:analyst-poll',
@@ -295,9 +393,8 @@ class TelegramAnalystProcessManager
         }
 
         $log = storage_path('logs/telegram-analyst-queue.log');
-        File::ensureDirectoryExists(dirname($log));
 
-        return $this->spawnBackground([
+        return ArtisanProcessFinder::spawnBackground([
             ArtisanProcessFinder::cliPhpBinary(),
             'artisan',
             'queue:work',
@@ -307,78 +404,25 @@ class TelegramAnalystProcessManager
     }
 
     /**
-     * @param  list<string>  $command
+     * @param  list<int>  $queuePids
+     * @param  list<int>  $pollPids
      */
-    private function spawnBackground(array $command, string $logPath): bool
+    private function deferredRestartMessage(array $queuePids, array $pollPids): string
     {
-        return ArtisanProcessFinder::spawnBackground($command, $logPath);
-    }
-
-    /**
-     * @param  callable(string):bool  $matcher
-     * @return list<int>
-     */
-    private function findArtisanPids(callable $matcher, ?int $exceptPid = null): array
-    {
-        $exceptPid ??= getmypid();
-        $pids = [];
-
-        foreach (glob('/proc/[0-9]*/cmdline') ?: [] as $path) {
-            if (! preg_match('#/proc/(\d+)/cmdline#', $path, $matches)) {
-                continue;
-            }
-            $pid = (int) $matches[1];
-            if ($pid === $exceptPid) {
-                continue;
-            }
-            $cmdline = @file_get_contents($path);
-            if ($cmdline === false) {
-                continue;
-            }
-            $cmdline = str_replace("\0", ' ', $cmdline);
-            if (! preg_match('#(?:^|/)(php\d*(?:\.\d+)?)\s+artisan\s+#', $cmdline)) {
-                continue;
-            }
-            if ($matcher($cmdline)) {
-                $pids[] = $pid;
-            }
+        $parts = [];
+        if ($queuePids !== []) {
+            $parts[] = 'queue PID '.implode(',', $queuePids);
+        }
+        if ($pollPids !== []) {
+            $parts[] = 'poll PID '.implode(',', $pollPids);
         }
 
-        sort($pids);
+        $detail = $parts !== [] ? implode('; ', $parts) : 'процессы';
 
-        return $pids;
-    }
-
-    /**
-     * @param  list<int>  $pids
-     */
-    private function terminatePids(array $pids): int
-    {
-        $killed = 0;
-        foreach ($pids as $pid) {
-            if ($pid <= 0) {
-                continue;
-            }
-            if ($this->signalTerm($pid)) {
-                $killed++;
-            }
-        }
-
-        return $killed;
-    }
-
-    /** SIGTERM: в PHP-FPM константа часто не определена — используем 15 (Linux). */
-    private function signalTerm(int $pid): bool
-    {
-        if (function_exists('posix_kill')) {
-            $sig = defined('SIGTERM') ? (int) constant('SIGTERM') : 15;
-            if (@posix_kill($pid, $sig)) {
-                return true;
-            }
-        }
-
-        exec(sprintf('kill -TERM %d 2>/dev/null', $pid), $_, $exitCode);
-
-        return $exitCode === 0;
+        // Не ошибка: worker/poll подняты cron/CLI (user o), php-fpm (www-data) не может послать SIGTERM.
+        // Флаг telegram-analyst-restart.flag подхватывает telegram:ensure-analyst-services (~1 мин).
+        return 'Прямой перезапуск из браузера недоступен для '.$detail.' (процессы запущены от пользователя ОС, не от веб-сервера). '
+            .'Запрос на перезапуск поставлен в очередь cron — обычно завершается за 1 минуту. '
+            .'Статус обновится автоматически.';
     }
 }

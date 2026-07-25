@@ -121,6 +121,38 @@ class StrongLevelTelegramLlmButton
     }
 
     /**
+     * Inline-кнопка повторного LLM на алертах Chart Analyst (гибрид + обычный Telegram-анализ).
+     * Callback тот же (sllm:analystId:instrument), обрабатывает TelegramAnalystHandler.
+     *
+     * @param  array<string, mixed>  $analystCfg
+     * @return array{inline_keyboard:list<list<array{text:string,callback_data:string}>>}|null
+     */
+    public static function inlineKeyboardMarkupForAnalystSelf(Bot $analystBot, string $instrument, array $analystCfg): ?array
+    {
+        if ($analystBot->type !== 'openrouter_llm_analyst') {
+            return null;
+        }
+
+        if (! \App\Support\HybridAnalystConfig::isHybridTelegramLlmButtonEnabled($analystCfg)) {
+            return null;
+        }
+
+        $callbackData = self::encodeCallbackData($analystBot->id, $instrument);
+        if ($callbackData === null) {
+            return null;
+        }
+
+        return [
+            'inline_keyboard' => [[
+                [
+                    'text' => self::BUTTON_LABEL,
+                    'callback_data' => $callbackData,
+                ],
+            ]],
+        ];
+    }
+
+    /**
      * @param  array<string, mixed>  $sourceCfg
      * @return array{inline_keyboard:list<list<array{text:string,callback_data:string}>>}|null
      */

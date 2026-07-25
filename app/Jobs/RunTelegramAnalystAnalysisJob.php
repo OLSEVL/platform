@@ -5,6 +5,7 @@ namespace App\Jobs;
 use App\Models\Bot;
 use App\Services\Bots\BotDataService;
 use App\Services\Bots\BotEngineService;
+use App\Services\Telegram\StrongLevelTelegramLlmButton;
 use App\Services\Telegram\TelegramAlertService;
 use App\Services\Telegram\TelegramAnalystReplyKeyboard;
 use App\Services\Telegram\TelegramAnalystStateStore;
@@ -121,17 +122,32 @@ class RunTelegramAnalystAnalysisJob implements ShouldQueue
 
         $billingLabel = trim((string) ($analysis['billing_label'] ?? ''));
         $levelsText = $telegram->formatChartLevelsText($chartLevels);
+        /** @var array<string, mixed> $cfg */
+        $cfg = is_array($bot->config) ? $bot->config : [];
+        // Та же inline-кнопка, что у гибрид-алерта: повторный LLM без hybrid_source_signal.
+        $llmMarkup = StrongLevelTelegramLlmButton::inlineKeyboardMarkupForAnalystSelf($bot, $this->instrument, $cfg);
         $footerParts = array_filter([
             $billingLabel !== '' ? '💰 '.htmlspecialchars($billingLabel, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') : '',
             $levelsText,
             "\n".TelegramAnalystReplyKeyboard::menuHint().' — новый анализ',
         ]);
         if ($footerParts !== []) {
+            if ($llmMarkup !== null) {
+                $telegram->sendMessageWithMarkup($token, $this->chatId, implode("\n\n", $footerParts), $llmMarkup);
+            } else {
+                $telegram->sendMessageWithMarkup(
+                    $token,
+                    $this->chatId,
+                    implode("\n\n", $footerParts),
+                    TelegramAnalystReplyKeyboard::mainMarkup()
+                );
+            }
+        } elseif ($llmMarkup !== null) {
             $telegram->sendMessageWithMarkup(
                 $token,
                 $this->chatId,
-                implode("\n\n", $footerParts),
-                TelegramAnalystReplyKeyboard::mainMarkup()
+                '📊 Повторить анализ по этой паре:',
+                $llmMarkup
             );
         }
 

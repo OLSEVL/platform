@@ -8,6 +8,7 @@ use App\Services\Bots\BotEngineService;
 use App\Services\Bots\HybridAnalystTradeService;
 use App\Services\Telegram\TelegramAlertService;
 use App\Services\Telegram\TelegramChartImageRenderer;
+use App\Services\Telegram\StrongLevelTelegramLlmButton;
 use App\Support\HybridAnalystConfig;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldBeUnique;
@@ -69,11 +70,12 @@ class RunHybridAnalystAnalysisJob implements ShouldQueue, ShouldBeUnique
         $sourceSide = strtoupper((string) ($this->sourceSignal['side'] ?? ''));
         $sourceName = (string) ($this->sourceSignal['source_bot_name'] ?? 'source');
         $sourceType = (string) ($this->sourceSignal['source_bot_type'] ?? '');
+        // Side source намеренно не пишем в вопрос — иначе модель якорится до независимого вердикта.
+        // Side/decision лежат только в hybrid_source_signal (фаза B промпта).
         $question = sprintf(
-            'Гибридный анализ: учти сигнал бота «%s» (%s), side=%s.',
+            'Гибридный анализ: сначала независимый вердикт по рынку, затем сверка с ботом «%s» (%s). Не подглядывай side source до независимого вердикта.',
             $sourceName,
-            $sourceType !== '' ? $sourceType : 'bot',
-            $sourceSide !== '' ? $sourceSide : '?'
+            $sourceType !== '' ? $sourceType : 'bot'
         );
 
         $analysis = $engine->runManualChartAnalysis(
@@ -176,7 +178,10 @@ class RunHybridAnalystAnalysisJob implements ShouldQueue, ShouldBeUnique
             .' ('.htmlspecialchars($sourceType, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8').') → '.$sourceSide
             .$tradeNote."\n\n";
         $body = htmlspecialchars($analysisText, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
-        $telegram->sendLongMessage($token, $chatId, $header.$body);
+        // После LLM — исходный ответ/decision source (уже был в payload гибрида).
+        $sourceReply = HybridAnalystConfig::formatSourceReplyForTelegram($this->sourceSignal);
+        $sourceBlock = "\n\n————\n".htmlspecialchars($sourceReply, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+        $telegram->sendLongMessage($token, $chatId, $header.$body.$sourceBlock);
 
         $billingLabel = trim((string) ($analysis['billing_label'] ?? ''));
         $levelsText = $telegram->formatChartLevelsText($chartLevels);
@@ -184,8 +189,21 @@ class RunHybridAnalystAnalysisJob implements ShouldQueue, ShouldBeUnique
             $billingLabel !== '' ? '💰 '.htmlspecialchars($billingLabel, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') : '',
             $levelsText,
         ]);
+        // Inline-кнопка: независимый LLM без hybrid_source_signal (как у source-ботов).
+        $llmMarkup = StrongLevelTelegramLlmButton::inlineKeyboardMarkupForAnalystSelf($bot, $this->instrument, $cfg);
         if ($footerParts !== []) {
-            $telegram->sendMessage($token, $chatId, implode("\n\n", $footerParts));
+            if ($llmMarkup !== null) {
+                $telegram->sendMessageWithMarkup($token, $chatId, implode("\n\n", $footerParts), $llmMarkup);
+            } else {
+                $telegram->sendMessage($token, $chatId, implode("\n\n", $footerParts));
+            }
+        } elseif ($llmMarkup !== null) {
+            $telegram->sendMessageWithMarkup(
+                $token,
+                $chatId,
+                '📊 Независимый анализ по этой паре (без гибрида):',
+                $llmMarkup
+            );
         }
     }
 }

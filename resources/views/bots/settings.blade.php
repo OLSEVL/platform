@@ -668,6 +668,7 @@
                         плюс полный decision source, и пишет результат в логи/Telegram.
                         Опционально — своя paper-сделка (и PO) на этом Chart Analyst, поверх сделки source.
                         Кнопка «Доп. анализ SMC Flow» у source-ботов работает параллельно.
+                        Под гибрид-алертом можно включить такую же кнопку для независимого повторного анализа.
                     </p>
                     <label class="flex items-start gap-2">
                         <input type="checkbox" name="hybrid_enabled" id="hybrid_enabled" value="1"
@@ -805,6 +806,26 @@
                         </label>
                         @error('hybrid_mirror_trades_enabled')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
+                    <div class="space-y-3 border-t border-zinc-800 pt-3">
+                        <label class="flex items-start gap-2">
+                            <input type="hidden" name="hybrid_telegram_llm_button_enabled" value="0">
+                            <input type="checkbox" name="hybrid_telegram_llm_button_enabled" id="hybrid_telegram_llm_button_enabled" value="1"
+                                class="mt-0.5 rounded border-zinc-600 bg-zinc-800 text-blue-500"
+                                @checked(old('hybrid_telegram_llm_button_enabled', $cfg['hybrid_telegram_llm_button_enabled'] ?? true))>
+                            <span>
+                                <span class="text-sm font-medium text-zinc-300">Кнопка «{{ \App\Services\Telegram\StrongLevelTelegramLlmButton::BUTTON_LABEL }}»</span>
+                                <span class="mt-0.5 block text-[11px] font-normal text-zinc-500">Под гибрид-алертом и обычным ответом Chart Analyst в Telegram — повторный LLM по той же паре (без hybrid_source_signal). Нужен polling (<code class="text-zinc-400">telegram_enabled</code>).</span>
+                            </span>
+                        </label>
+                        @error('hybrid_telegram_llm_button_enabled')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                        <div class="space-y-1">
+                            <label for="telegram_analyst_llm_question_hybrid" class="block text-xs font-medium text-zinc-400">Вопрос к LLM по кнопке</label>
+                            <textarea name="telegram_analyst_llm_question" id="telegram_analyst_llm_question_hybrid" rows="2"
+                                class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">{{ old('telegram_analyst_llm_question', $cfg['telegram_analyst_llm_question'] ?? \App\Services\Telegram\StrongLevelTelegramLlmButton::DEFAULT_LLM_QUESTION) }}</textarea>
+                            <p class="text-[11px] text-zinc-500">Используется при нажатии кнопки под гибрид-сообщением. Пусто — дефолтный краткий вопрос.</p>
+                            @error('telegram_analyst_llm_question')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                        </div>
+                    </div>
                 </div>
                 <script>
                 (function () {
@@ -916,38 +937,71 @@
                 const analystStatusUrl = @json(route('bots.telegram.analyst-status', $bot));
                 const analystRestartUrl = @json(route('bots.telegram.analyst-restart', $bot));
 
-                function setStatus(text, isError) {
+                function setStatus(text, tone) {
                     if (!statusEl) return;
                     statusEl.textContent = text || '';
-                    statusEl.className = 'text-xs ' + (isError ? 'text-rose-400' : 'text-emerald-300');
+                    const cls = tone === 'error' ? 'text-rose-400'
+                        : tone === 'pending' ? 'text-amber-300'
+                        : 'text-emerald-300';
+                    statusEl.className = 'text-xs ' + cls;
                 }
 
                 function renderProcessStatus(data) {
                     if (!processStatusEl || !data) return;
                     const poll = data.poll_running ? 'poll ✓' : 'poll ✗';
                     const queue = data.queue_running ? 'queue ✓' : 'queue ✗';
-                    const color = data.poll_running && data.queue_running ? 'text-emerald-300' : 'text-amber-300';
-                    processStatusEl.textContent = 'Процессы: ' + poll + ', ' + queue;
+                    const pending = data.restart_pending ? ' · ожидание cron' : '';
+                    const pids = [];
+                    if (Array.isArray(data.poll_pids) && data.poll_pids.length) {
+                        pids.push('poll ' + data.poll_pids.join(','));
+                    }
+                    if (Array.isArray(data.queue_pids) && data.queue_pids.length) {
+                        pids.push('queue ' + data.queue_pids.join(','));
+                    }
+                    const pidHint = pids.length ? ' (' + pids.join('; ') + ')' : '';
+                    const color = data.restart_pending
+                        ? 'text-amber-300'
+                        : (data.poll_running && data.queue_running ? 'text-emerald-300' : 'text-amber-300');
+                    processStatusEl.textContent = 'Процессы: ' + poll + ', ' + queue + pending + pidHint;
                     processStatusEl.className = 'text-xs ' + color;
                 }
 
                 async function refreshProcessStatus() {
-                    if (!processStatusEl) return;
+                    if (!processStatusEl) return null;
                     try {
                         const res = await fetch(analystStatusUrl, { headers: { 'Accept': 'application/json' } });
                         const data = await res.json();
-                        if (res.ok && data.ok) renderProcessStatus(data);
-                        else processStatusEl.textContent = 'Не удалось проверить процессы';
+                        if (res.ok && data.ok) {
+                            renderProcessStatus(data);
+                            return data;
+                        }
+                        processStatusEl.textContent = 'Не удалось проверить процессы';
                     } catch (e) {
                         processStatusEl.textContent = 'Ошибка проверки процессов';
                     }
+                    return null;
+                }
+
+                /** Ждём, пока cron (user o) выполнит отложенный перезапуск по флагу в storage. */
+                async function waitForDeferredRestart(maxMs) {
+                    const deadline = Date.now() + (maxMs || 90000);
+                    while (Date.now() < deadline) {
+                        await new Promise(function (r) { setTimeout(r, 3000); });
+                        const data = await refreshProcessStatus();
+                        if (data && !data.restart_pending) {
+                            setStatus('Перезапуск выполнен. Poll и queue worker подхватили настройки из БД.', 'ok');
+                            return true;
+                        }
+                    }
+                    setStatus('Cron ещё не завершил перезапуск. Подождите ~1 мин или выполните на сервере: php artisan telegram:ensure-analyst-services', 'error');
+                    return false;
                 }
 
                 refreshProcessStatus();
 
                 if (restartBtn) {
                     restartBtn.addEventListener('click', async function () {
-                        setStatus('Перезапуск poll и queue worker…', false);
+                        setStatus('Перезапуск poll и queue worker…', 'pending');
                         restartBtn.disabled = true;
                         try {
                             const res = await fetch(analystRestartUrl, {
@@ -956,14 +1010,20 @@
                             });
                             const data = await res.json();
                             if (!res.ok || !data.ok) {
-                                setStatus(data.error || data.message || 'Не удалось перезапустить', true);
+                                setStatus(data.error || data.message || 'Не удалось перезапустить', 'error');
                                 if (data.status) renderProcessStatus(data.status);
                                 return;
                             }
-                            setStatus(data.message || 'Перезапущено', false);
-                            renderProcessStatus(data.status);
+                            if (data.deferred) {
+                                setStatus(data.message || 'Отложенный перезапуск запрошен, ждём cron…', 'pending');
+                                if (data.status) renderProcessStatus(data.status);
+                                await waitForDeferredRestart(90000);
+                                return;
+                            }
+                            setStatus(data.message || 'Перезапущено', 'ok');
+                            if (data.status) renderProcessStatus(data.status);
                         } catch (e) {
-                            setStatus('Сеть: ' + e.message, true);
+                            setStatus('Сеть: ' + e.message, 'error');
                         } finally {
                             restartBtn.disabled = false;
                         }
@@ -1753,11 +1813,27 @@
                             @endphp
                             <select name="telegram_send_chart" id="telegram_send_chart_trend" required
                                 class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-                                <option value="1" @selected((string) $telegramSendChartTrend === '1')>Текст + миниатюра M1 (PNG)</option>
+                                <option value="1" @selected((string) $telegramSendChartTrend === '1')>Текст + графики PNG</option>
                                 <option value="0" @selected((string) $telegramSendChartTrend === '0')>Только текст (без графика)</option>
                             </select>
-                            <p class="text-[11px] text-zinc-500">PNG 640×360: последние свечи M1, зона серии, маркер последнего close. Отправляется отдельным сообщением перед текстом алерта.</p>
+                            <p class="text-[11px] text-zinc-500">PNG 640×360: M1 (зона серии + маркер close) и опционально M5. Отправляются отдельными сообщениями перед текстом алерта.</p>
                             @error('telegram_send_chart')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                        </div>
+                        <div class="space-y-1 sm:col-span-2">
+                            <label for="telegram_send_chart_m5_trend" class="block text-xs font-medium text-zinc-400">Доп. график M5</label>
+                            @php
+                                $telegramSendChartM5Trend = old('telegram_send_chart_m5');
+                                if ($telegramSendChartM5Trend === null) {
+                                    $telegramSendChartM5Trend = ($cfg['telegram_send_chart_m5'] ?? true) ? '1' : '0';
+                                }
+                            @endphp
+                            <select name="telegram_send_chart_m5" id="telegram_send_chart_m5_trend" required
+                                class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                                <option value="1" @selected((string) $telegramSendChartM5Trend === '1')>Отправлять второй PNG M5</option>
+                                <option value="0" @selected((string) $telegramSendChartM5Trend === '0')>Только M1 (без M5)</option>
+                            </select>
+                            <p class="text-[11px] text-zinc-500">Как у Strong Level / Candle Reversal: старший контекст M5 (агрегация из M1) отдельным фото перед миниатюрой M1.</p>
+                            @error('telegram_send_chart_m5')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                         </div>
                         <div class="space-y-1 sm:col-span-2">
                             @include('bots._telegram-bot-token-field', [

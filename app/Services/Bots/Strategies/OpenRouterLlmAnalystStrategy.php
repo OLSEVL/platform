@@ -103,7 +103,16 @@ class OpenRouterLlmAnalystStrategy implements BotStrategyInterface
             $payload['hybrid_source_signal'] = $hybridSourceSignal;
         }
 
-        if ($shortPromptMode) {
+        // Гибрид: в user-сообщении тоже фиксируем двухфазный порядок (якорь на source слабее).
+        if ($hybridSourceSignal !== null) {
+            if ($shortPromptMode) {
+                $userContent = "Гибрид, краткий формат: 1) Независимый вердикт: CALL|PUT|NONE (без hybrid_source_signal). "
+                    ."2) Одна фраза сверки с source. 3) Рекомендация: CALL|PUT|NONE. 4) Вероятность успеха: NN%.\n";
+            } else {
+                $userContent = "Гибридный разбор: сначала независимый вердикт по рынку (без hybrid_source_signal), "
+                    ."затем сверка с source и итоговая Рекомендация. Ответ — связный текст на русском.\n";
+            }
+        } elseif ($shortPromptMode) {
             $userContent = "Дай краткий вердикт по данным ниже: только направление (CALL/PUT/NONE) и вероятность успеха в процентах.\n";
         } else {
             $userContent = "Проанализируй график по данным ниже. Ответ — связный текст на русском.\n";

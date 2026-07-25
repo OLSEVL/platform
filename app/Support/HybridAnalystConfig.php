@@ -205,6 +205,20 @@ final class HybridAnalystConfig
     }
 
     /**
+     * Кнопка «Доп. анализ SMC Flow» под гибрид-алертом и обычным Telegram-ответом Chart Analyst.
+     *
+     * @param  array<string, mixed>  $config
+     */
+    public static function isHybridTelegramLlmButtonEnabled(array $config): bool
+    {
+        if (! array_key_exists('hybrid_telegram_llm_button_enabled', $config)) {
+            return true;
+        }
+
+        return (bool) $config['hybrid_telegram_llm_button_enabled'];
+    }
+
+    /**
      * Expiry гибридной сделки: из source decision / длительности source-сделки.
      * Fallback 180 сек, если в payload нет валидного значения.
      *
@@ -226,6 +240,9 @@ final class HybridAnalystConfig
     /**
      * Секция system prompt: как учитывать сигнал source-бота.
      * Добавляется к активному промпту только в гибридном запросе (runtime).
+     *
+     * Двухфазный формат снижает якорение на side source: сначала независимый вердикт,
+     * потом сверка. Фильтры/торговля читают только итоговую «Рекомендация:».
      */
     public static function systemPromptSection(): string
     {
@@ -233,22 +250,34 @@ final class HybridAnalystConfig
 
 ---
 Гибридный режим (сигнал другого бота):
-В запросе есть поле hybrid_source_signal — полный прогноз/decision бота первичного анализа
+В JSON есть поле hybrid_source_signal — decision бота первичного анализа
 (side, confidence, analysis_text, reasons_short, features, decision_version, bot meta).
 
-Правила учёта:
-1) Сначала оцени рынок по своим данным (MTF, S5, SMC Flow если есть), как обычно.
-2) Затем сравни свой вывод с hybrid_source_signal.side (CALL/PUT).
-3) Если твой разбор согласуется с side source — можешь подтвердить CALL/PUT и явно упомянуть согласие с ботом.
-4) Если разбор противоречит source или сетап слабый — Рекомендация: NONE (или низкая вероятность), кратко объясни расхождение.
-5) Не копируй side source слепо: source — дополнительный вход, не единственный источник истины.
-6) В тексте ответа укажи имя/тип source-бота и его side, если они есть в hybrid_source_signal.
-7) Обязательно укажи строку «Вероятность успеха: NN%» (целое 0–100) — по ней фильтруется публикация сигнала.
+СТРОГИЙ ПОРЯДОК ОТВЕТА (две фазы, не нарушай):
+
+Фаза A — независимый вердикт (ДО чтения hybrid_source_signal):
+1) Оцени рынок только по своим данным: MTF, S5, SMC Flow (если есть), payout.
+2) Пока НЕ смотри hybrid_source_signal (ни side, ни analysis_text, ни reasons).
+3) Запиши строку ровно в формате: «Независимый вердикт: CALL» или PUT или NONE.
+4) Кратко (1–3 предложения) обоснуй независимый вывод.
+
+Фаза B — сверка с source (ПОСЛЕ фазы A):
+5) Только теперь открой hybrid_source_signal и сравни с независимым вердиктом.
+6) Напиши: согласен / не согласен с source (укажи имя/тип бота и его side).
+7) Итоговая строка ровно: «Рекомендация: CALL» или PUT или NONE — это финальный side для публикации/торговли.
+8) Если независимый вердикт противоречит source или сетап слабый — чаще Рекомендация: NONE (или низкая вероятность), кратко объясни расхождение.
+9) Не копируй side source слепо и не подгоняй фазу A под source задним числом.
+10) Обязательно одна строка «Вероятность успеха: NN%» (целое 0–100) — только после итоговой Рекомендации; по ней фильтруется публикация.
+
+Краткий режим: те же метки по порядку —
+«Независимый вердикт: …» → одна фраза сверки → «Рекомендация: …» → «Вероятность успеха: …%».
 PROMPT;
     }
 
     /**
-     * Достаёт CALL|PUT|NONE из текста ответа аналитика.
+     * Достаёт итоговый CALL|PUT|NONE из текста ответа аналитика.
+     * В гибриде приоритет у последней «Рекомендация:» (после независимого вердикта).
+     * «Независимый вердикт:» для фильтров/торговли не используется.
      */
     public static function extractRecommendationSide(string $analysisText): ?string
     {
@@ -257,8 +286,11 @@ PROMPT;
             return null;
         }
 
-        if (preg_match('/Рекомендация\s*:\s*(CALL|PUT|NONE)\b/iu', $text, $m)) {
-            return strtoupper($m[1]);
+        // Последнее вхождение — итоговая рекомендация после сверки с source.
+        if (preg_match_all('/Рекомендация\s*:\s*(CALL|PUT|NONE)\b/iu', $text, $matches) > 0) {
+            $last = $matches[1][count($matches[1]) - 1] ?? null;
+
+            return $last !== null ? strtoupper((string) $last) : null;
         }
 
         // Fallback: первая явная метка в начале ответа (краткий режим без «Рекомендация:»).
@@ -271,6 +303,7 @@ PROMPT;
 
     /**
      * Достаёт «Вероятность успеха: NN%» из текста ответа LLM (0–100).
+     * Берём последнее вхождение — в гибриде это вероятность после итоговой Рекомендации.
      */
     public static function extractSuccessPercent(string $analysisText): ?int
     {
@@ -279,13 +312,17 @@ PROMPT;
             return null;
         }
 
-        if (preg_match('/Вероятность\s+успеха\s*:\s*(\d{1,3})\s*%/iu', $text, $m)) {
-            return max(0, min(100, (int) $m[1]));
+        if (preg_match_all('/Вероятность\s+успеха\s*:\s*(\d{1,3})\s*%/iu', $text, $matches) > 0) {
+            $last = $matches[1][count($matches[1]) - 1] ?? null;
+
+            return $last !== null ? max(0, min(100, (int) $last)) : null;
         }
 
-        // Краткий/английский fallback.
-        if (preg_match('/success\s*(?:probability|rate)?\s*[:=]\s*(\d{1,3})\s*%/iu', $text, $m)) {
-            return max(0, min(100, (int) $m[1]));
+        // Краткий/английский fallback (тоже последнее вхождение).
+        if (preg_match_all('/success\s*(?:probability|rate)?\s*[:=]\s*(\d{1,3})\s*%/iu', $text, $matches) > 0) {
+            $last = $matches[1][count($matches[1]) - 1] ?? null;
+
+            return $last !== null ? max(0, min(100, (int) $last)) : null;
         }
 
         return null;
@@ -394,5 +431,63 @@ PROMPT;
             'expiry_sec' => isset($decision['expiry_sec']) ? (int) $decision['expiry_sec'] : null,
             'notify_only' => (bool) ($decision['notify_only'] ?? false),
         ];
+    }
+
+    /**
+     * Текст ответа source-бота для дописывания в Telegram после гибрид-анализа LLM.
+     * Plain text (без HTML) — экранирование делает вызывающий код.
+     *
+     * @param  array<string, mixed>  $sourceSignal
+     */
+    public static function formatSourceReplyForTelegram(array $sourceSignal): string
+    {
+        $name = trim((string) ($sourceSignal['source_bot_name'] ?? 'source'));
+        $type = trim((string) ($sourceSignal['source_bot_type'] ?? ''));
+        $side = strtoupper(trim((string) ($sourceSignal['side'] ?? '')));
+        $confidence = isset($sourceSignal['confidence']) ? (float) $sourceSignal['confidence'] : null;
+        $analysisText = trim((string) ($sourceSignal['analysis_text'] ?? ''));
+        /** @var list<mixed> $reasons */
+        $reasons = is_array($sourceSignal['reasons_short'] ?? null)
+            ? array_values($sourceSignal['reasons_short'])
+            : [];
+
+        $meta = $name;
+        if ($type !== '') {
+            $meta .= ' ('.$type.')';
+        }
+        if (in_array($side, ['CALL', 'PUT', 'NONE'], true)) {
+            $meta .= ' → '.$side;
+        }
+        // Confidence у rule-based часто 0..1; если >1 — уже проценты.
+        if ($confidence !== null && $confidence > 0) {
+            $pct = $confidence <= 1.0 ? (int) round($confidence * 100) : (int) round($confidence);
+            $meta .= ' · conf '.$pct.'%';
+        }
+
+        $lines = ['📥 Ответ source: '.$meta];
+        if ($analysisText !== '') {
+            // Ограничиваем, чтобы гибрид-сообщение не раздувалось бесконечно.
+            if (mb_strlen($analysisText) > 2500) {
+                $analysisText = mb_substr($analysisText, 0, 2500).'…';
+            }
+            $lines[] = $analysisText;
+        }
+
+        $reasonLines = [];
+        foreach ($reasons as $reason) {
+            $r = trim(is_scalar($reason) ? (string) $reason : '');
+            if ($r !== '') {
+                $reasonLines[] = '• '.$r;
+            }
+            if (count($reasonLines) >= 8) {
+                break;
+            }
+        }
+        if ($reasonLines !== []) {
+            $lines[] = implode("\n", $reasonLines);
+        }
+
+        // Если нет ни текста, ни причин — всё равно оставляем meta (side source полезен в чате).
+        return implode("\n", $lines);
     }
 }

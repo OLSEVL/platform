@@ -2,6 +2,7 @@
 
 namespace Tests\Unit;
 
+use App\Jobs\RunTelegramAnalystAnalysisJob;
 use App\Models\Bot;
 use App\Models\PocketInstrument;
 use App\Models\User;
@@ -347,6 +348,73 @@ class TelegramAnalystServicesTest extends TestCase
         $this->assertNotNull($parsed);
         $this->assertSame($analyst->id, $parsed['analyst_bot_id']);
         $this->assertSame('GBPUSD_otc', $parsed['instrument']);
+    }
+
+    public function test_hybrid_analyst_self_llm_button_markup(): void
+    {
+        $user = User::factory()->create();
+        $analyst = Bot::query()->create([
+            'user_id' => $user->id,
+            'name' => 'Chart Analyst SMC Flow',
+            'type' => 'openrouter_llm_analyst',
+            'is_active' => true,
+            'config' => ['hybrid_telegram_llm_button_enabled' => true],
+        ]);
+
+        $markup = StrongLevelTelegramLlmButton::inlineKeyboardMarkupForAnalystSelf(
+            $analyst,
+            'USDCNH_otc',
+            $analyst->config,
+        );
+
+        $this->assertNotNull($markup);
+        $parsed = StrongLevelTelegramLlmButton::parseCallbackData($markup['inline_keyboard'][0][0]['callback_data']);
+        $this->assertSame($analyst->id, $parsed['analyst_bot_id']);
+        $this->assertSame('USDCNH_otc', $parsed['instrument']);
+    }
+
+    public function test_analyst_handler_dispatches_self_llm_button_without_hybrid(): void
+    {
+        Queue::fake();
+
+        PocketInstrument::query()->create([
+            'instrument' => 'USDCNH_otc',
+            'display_name' => 'USD/CNH OTC',
+            'is_active' => true,
+            'current_payout' => 72,
+            'priority' => 1,
+        ]);
+
+        $user = User::factory()->create();
+        $analyst = Bot::query()->create([
+            'user_id' => $user->id,
+            'name' => 'Chart Analyst SMC Flow',
+            'type' => 'openrouter_llm_analyst',
+            'is_active' => true,
+            'config' => [
+                'telegram_enabled' => true,
+                'telegram_bot_token' => 'analyst-token',
+                'telegram_analyst_llm_question' => 'краткий вердикт',
+            ],
+        ]);
+
+        $callbackData = StrongLevelTelegramLlmButton::encodeCallbackData($analyst->id, 'USDCNH_otc');
+        $this->assertNotNull($callbackData);
+
+        app(TelegramAnalystHandler::class)->handleUpdate($analyst, [
+            'callback_query' => [
+                'id' => 'cb-hybrid-self',
+                'data' => $callbackData,
+                'message' => ['chat' => ['id' => 77777]],
+            ],
+        ]);
+
+        Queue::assertPushed(RunTelegramAnalystAnalysisJob::class, function ($job) use ($analyst): bool {
+            return $job->botId === $analyst->id
+                && $job->chatId === '77777'
+                && $job->instrument === 'USDCNH_otc'
+                && $job->userQuestion === 'краткий вердикт';
+        });
     }
 
     public function test_resolve_active_instrument_ignores_analyst_filters(): void

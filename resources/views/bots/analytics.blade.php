@@ -39,8 +39,53 @@
                 <option value="{{ $sec }}" @selected((int) ($interval ?? 3600) === (int) $sec)>{{ $label }}</option>
             @endforeach
         </select>
-        <span class="text-xs text-zinc-500">Ось X — время; ось Y — winrate 0–100%. Красный — платформа, голубой — фактический PO.</span>
+        <span class="text-xs text-zinc-500">Ось X — время; ось Y — winrate 0–100%. Белый — платформа, голубой — фактический PO.</span>
     </form>
+
+    {{-- Самый удачный бот в текущем бакете размера «Интервал» (последнее окно на шкале). --}}
+    @if(!empty($bestBotInInterval))
+        <div class="rounded border border-emerald-800/60 bg-emerald-950/30 px-4 py-3">
+            <div class="flex flex-wrap items-baseline justify-between gap-2">
+                <p class="text-sm text-emerald-100/90">
+                    <span class="text-emerald-400/80">Лучший бот за интервал</span>
+                    <span class="text-zinc-500">({{ $bestBotInInterval['interval_label'] }}:
+                        {{ $bestBotInInterval['bucket_from'] }}–{{ $bestBotInInterval['bucket_to'] }})</span>
+                </p>
+                <a href="{{ route('bots.analytics.pairs', ['bot_id' => $bestBotInInterval['bot_id'], 'hours' => $hours, 'interval' => $interval]) }}"
+                   class="text-xs text-emerald-400/90 hover:text-emerald-300">Аналитика пар →</a>
+            </div>
+            <div class="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1">
+                <span class="text-lg font-semibold text-zinc-50">{{ $bestBotInInterval['name'] }}</span>
+                <span class="text-sm text-zinc-300">
+                    Платформа:
+                    <span class="font-semibold text-emerald-400">{{ number_format((float) $bestBotInInterval['winrate'], 2) }}%</span>
+                    <span class="text-xs text-zinc-500 ml-1">
+                        W <span class="text-emerald-400">{{ (int) $bestBotInInterval['wins'] }}</span>
+                        / L <span class="text-rose-400">{{ (int) $bestBotInInterval['losses'] }}</span>
+                    </span>
+                </span>
+                <span class="text-sm text-zinc-300">
+                    PO:
+                    @if($bestBotInInterval['po_winrate'] !== null)
+                        <span class="font-semibold text-sky-400">{{ number_format((float) $bestBotInInterval['po_winrate'], 2) }}%</span>
+                        <span class="text-xs text-zinc-500 ml-1">
+                            W <span class="text-emerald-400">{{ (int) $bestBotInInterval['po_wins'] }}</span>
+                            / L <span class="text-rose-400">{{ (int) $bestBotInInterval['po_losses'] }}</span>
+                        </span>
+                    @else
+                        <span class="font-semibold text-zinc-500">нет данных</span>
+                    @endif
+                </span>
+            </div>
+            <p class="mt-1 text-[11px] text-zinc-500">
+                Рейтинг по paper winrate; минимум {{ (int) $bestBotInInterval['min_trades'] }} сделок win/loss в этом интервале.
+            </p>
+        </div>
+    @else
+        <div class="rounded border border-zinc-800 bg-zinc-900/40 px-4 py-2.5 text-sm text-zinc-500">
+            Нет бота с достаточным числом сделок в текущем интервале ({{ $intervalPresets[$interval] ?? ($interval.' сек') }}).
+        </div>
+    @endif
 
     {{-- Сводка по всем ботам за период — paper и PO рядом. --}}
     @if($overallWinrate !== null || $overallWins > 0 || $overallLosses > 0 || $overallPoWinrate !== null || ($overallPoWins ?? 0) > 0 || ($overallPoLosses ?? 0) > 0)
@@ -48,7 +93,7 @@
             <span class="rounded border border-zinc-700 bg-zinc-900/70 px-3 py-1.5 text-zinc-200">
                 Платформа:
                 @if($overallWinrate !== null)
-                    <span class="font-semibold text-rose-400">{{ number_format((float) $overallWinrate, 2) }}%</span>
+                    <span class="font-semibold text-zinc-100">{{ number_format((float) $overallWinrate, 2) }}%</span>
                 @else
                     <span class="font-semibold text-zinc-400">нет данных</span>
                 @endif
@@ -89,7 +134,7 @@
                             <span class="rounded border border-zinc-700 bg-zinc-900/70 px-2.5 py-1">
                                 Платформа:
                                 @if($series['winrate'] !== null)
-                                    <span class="font-semibold text-rose-400">{{ number_format((float) $series['winrate'], 2) }}%</span>
+                                    <span class="font-semibold text-zinc-100">{{ number_format((float) $series['winrate'], 2) }}%</span>
                                 @else
                                     <span class="font-semibold text-zinc-400">нет данных</span>
                                 @endif
@@ -119,7 +164,8 @@
                             <span class="text-zinc-500">0%</span>
                         </div>
                         {{-- Фиксированная высота — Chart.js заполняет контейнер --}}
-                        <div class="relative h-56 flex-1 min-w-0">
+                        {{-- Чуть выше h-56 — место под точки и подписи w/l. --}}
+                        <div class="relative h-72 flex-1 min-w-0">
                             <canvas id="bot-chart-{{ $series['bot_id'] }}" aria-label="График winrate бота {{ $series['name'] }}"></canvas>
                         </div>
                     </div>
@@ -181,6 +227,34 @@
             const grid = 'rgba(82, 82, 91, 0.45)';
             const text = 'rgb(161, 161, 170)';
 
+            // Подпись wN/lN у каждой точки с данными (платформа сверху, PO снизу).
+            const wlPointLabelsPlugin = {
+                id: 'wlPointLabels',
+                afterDatasetsDraw: function (chart) {
+                    const ctx = chart.ctx;
+                    chart.data.datasets.forEach(function (dataset, datasetIndex) {
+                        const meta = chart.getDatasetMeta(datasetIndex);
+                        if (!meta || meta.hidden) return;
+                        meta.data.forEach(function (el, i) {
+                            const v = dataset.data[i];
+                            if (v === null || typeof v === 'undefined') return;
+                            const w = (dataset.bucketWins && dataset.bucketWins[i]) || 0;
+                            const l = (dataset.bucketLosses && dataset.bucketLosses[i]) || 0;
+                            if (w + l === 0) return;
+                            const pos = el.getProps(['x', 'y'], true);
+                            const above = datasetIndex === 0;
+                            ctx.save();
+                            ctx.font = 'bold 9px ui-sans-serif, system-ui, sans-serif';
+                            ctx.fillStyle = dataset.borderColor || text;
+                            ctx.textAlign = 'center';
+                            ctx.textBaseline = above ? 'bottom' : 'top';
+                            ctx.fillText('w' + w + '/l' + l, pos.x, pos.y + (above ? -7 : 8));
+                            ctx.restore();
+                        });
+                    });
+                },
+            };
+
             seriesList.forEach(function (series) {
                 const canvas = document.getElementById('bot-chart-' + series.bot_id);
                 if (!canvas || typeof Chart === 'undefined') return;
@@ -197,13 +271,15 @@
                                 bucketWins: series.bucket_wins,
                                 bucketLosses: series.bucket_losses,
                                 spanGaps: true,
-                                borderColor: 'rgb(239, 68, 68)',
-                                backgroundColor: 'rgba(239, 68, 68, 0.08)',
+                                borderColor: 'rgb(244, 244, 245)',
+                                backgroundColor: 'rgba(244, 244, 245, 0.08)',
                                 borderWidth: 2,
                                 tension: 0.35,
                                 fill: false,
-                                pointRadius: 0,
-                                pointHoverRadius: 4,
+                                // Все бакеты с данными — видимые точки.
+                                pointRadius: 3,
+                                pointHoverRadius: 5,
+                                pointBackgroundColor: 'rgb(244, 244, 245)',
                             },
                             {
                                 // Фактический winrate по сделкам, закрытым на Pocket Option.
@@ -217,8 +293,9 @@
                                 borderWidth: 2,
                                 tension: 0.35,
                                 fill: false,
-                                pointRadius: 0,
-                                pointHoverRadius: 4,
+                                pointRadius: 3,
+                                pointHoverRadius: 5,
+                                pointBackgroundColor: 'rgb(56, 189, 248)',
                             },
                         ],
                     },
@@ -226,6 +303,10 @@
                         responsive: true,
                         maintainAspectRatio: false,
                         interaction: { mode: 'index', intersect: false },
+                        layout: {
+                            // Место под подписи w/l над/под точками.
+                            padding: { top: 14, bottom: 10 },
+                        },
                         plugins: {
                             legend: {
                                 display: true,
@@ -259,10 +340,13 @@
                             x: {
                                 ticks: {
                                     color: text,
+                                    // Чаще подписываем ось времени: до ~1 подписи на бакет при умеренной длине шкалы.
                                     maxRotation: 45,
-                                    minRotation: 0,
+                                    minRotation: 45,
                                     autoSkip: true,
-                                    maxTicksLimit: 12,
+                                    autoSkipPadding: 4,
+                                    maxTicksLimit: Math.min(Math.max(labels.length, 12), 48),
+                                    font: { size: 10 },
                                 },
                                 grid: { color: grid },
                             },
@@ -287,6 +371,7 @@
                             },
                         },
                     },
+                    plugins: [wlPointLabelsPlugin],
                 });
             });
         })();

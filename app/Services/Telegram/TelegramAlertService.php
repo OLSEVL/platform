@@ -105,15 +105,69 @@ class TelegramAlertService
 
         $text = implode("\n", $lines);
 
-        // Миниатюра M1: компактный PNG + зона серии + маркер последнего close (как у Strong Level, но меньше).
+        // Как у Strong Level / CRC: сначала старший контекст M5 (агрегация из M1), затем миниатюра M1.
         $sendChart = (bool) ($cfg['telegram_send_chart'] ?? true);
+        $sendChartM5 = (bool) ($cfg['telegram_send_chart_m5'] ?? true);
         $photoOk = null;
         $photoError = null;
         if ($sendChart && $m1Candles !== [] && extension_loaded('gd')) {
             $chartLevels = app(StrongTrendTelegramChartBuilder::class)
                 ->chartLevelsFromDecision($decision, $m1Candles);
+            $side = strtoupper((string) ($decision['side'] ?? ''));
+            $captionBase = $icon.' <b>'.htmlspecialchars($instrument, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8').'</b>';
+            if ($side !== '') {
+                $captionBase .= ' · '.$side;
+            }
+
+            // 1) M5 из тех же M1 (5×1m → 5m) — без лишнего запроса к БД/сети.
+            $m5Candles = $this->aggregateCandlesToTimeframe($m1Candles, 300);
+            if ($sendChartM5 && count($m5Candles) >= 12) {
+                $m5PngPath = app(TelegramChartImageRenderer::class)->render($instrument, $m5Candles, $chartLevels, [
+                    'width' => 640,
+                    'height' => 360,
+                    'max_bars' => 60,
+                    'margin_left' => 56,
+                    'margin_top' => 32,
+                    'margin_bottom' => 28,
+                    'font_size_title' => 10,
+                    'font_size_axis' => 8,
+                    'font_size_label' => 8,
+                ]);
+                if ($m5PngPath !== null) {
+                    $m5PhotoResult = $this->sendPhoto($token, $chatId, $m5PngPath, $captionBase.' · M5');
+                    $m5Ok = (bool) ($m5PhotoResult['ok'] ?? false);
+                    $photoOk = $m5Ok;
+                    if (! $m5Ok) {
+                        $m5Error = (string) ($m5PhotoResult['error'] ?? 'telegram_photo_failed');
+                        $photoError = 'm5:'.$m5Error;
+                        Log::warning('strong_trend_telegram_photo_m5_failed', [
+                            'bot_id' => $bot->id,
+                            'instrument' => $instrument,
+                            'error' => $m5Error,
+                        ]);
+                    }
+                    @unlink($m5PngPath);
+                } else {
+                    $photoOk = false;
+                    $photoError = 'm5:render_failed';
+                    Log::warning('strong_trend_telegram_photo_m5_skipped', [
+                        'bot_id' => $bot->id,
+                        'instrument' => $instrument,
+                        'reason' => 'render_returned_null',
+                    ]);
+                }
+            } elseif ($sendChartM5) {
+                Log::info('strong_trend_telegram_photo_m5_skipped', [
+                    'bot_id' => $bot->id,
+                    'instrument' => $instrument,
+                    'reason' => 'not_enough_m1_bars_for_m5',
+                    'm1_count' => count($m1Candles),
+                ]);
+            }
+
+            // 2) Компактная миниатюра M1: зона серии + маркер последнего close.
             $maxBars = max(24, $streakLen + 12);
-            $pngPath = app(TelegramChartImageRenderer::class)->render($instrument, $m1Candles, $chartLevels, [
+            $m1PngPath = app(TelegramChartImageRenderer::class)->render($instrument, $m1Candles, $chartLevels, [
                 'width' => 640,
                 'height' => 360,
                 'max_bars' => $maxBars,
@@ -124,27 +178,27 @@ class TelegramAlertService
                 'font_size_axis' => 8,
                 'font_size_label' => 8,
             ]);
-            if ($pngPath !== null) {
-                $side = strtoupper((string) ($decision['side'] ?? ''));
-                $caption = $icon.' <b>'.htmlspecialchars($instrument, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8').'</b>';
-                if ($side !== '') {
-                    $caption .= ' · '.$side;
+            if ($m1PngPath !== null) {
+                $photoResult = $this->sendPhoto($token, $chatId, $m1PngPath, $captionBase.' · M1');
+                $m1Ok = (bool) ($photoResult['ok'] ?? false);
+                if ($photoOk === null) {
+                    $photoOk = $m1Ok;
+                } else {
+                    $photoOk = $photoOk && $m1Ok;
                 }
-                $caption .= ' · M1';
-                $photoResult = $this->sendPhoto($token, $chatId, $pngPath, $caption);
-                $photoOk = (bool) ($photoResult['ok'] ?? false);
-                if (! $photoOk) {
-                    $photoError = (string) ($photoResult['error'] ?? 'telegram_photo_failed');
+                if (! $m1Ok) {
+                    $m1Error = (string) ($photoResult['error'] ?? 'telegram_photo_failed');
+                    $photoError = $photoError !== null ? $photoError.';m1:'.$m1Error : 'm1:'.$m1Error;
                     Log::warning('strong_trend_telegram_photo_failed', [
                         'bot_id' => $bot->id,
                         'instrument' => $instrument,
-                        'error' => $photoError,
+                        'error' => $m1Error,
                     ]);
                 }
-                @unlink($pngPath);
+                @unlink($m1PngPath);
             } else {
-                $photoOk = false;
-                $photoError = 'chart_render_failed';
+                $photoOk = $photoOk === null ? false : $photoOk;
+                $photoError = $photoError !== null ? $photoError.';m1:render_failed' : 'm1:render_failed';
                 Log::warning('strong_trend_telegram_photo_skipped', [
                     'bot_id' => $bot->id,
                     'instrument' => $instrument,
