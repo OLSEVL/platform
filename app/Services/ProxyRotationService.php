@@ -444,6 +444,26 @@ class ProxyRotationService
             return $proxy;
         }
 
+        // Если на том же endpoint есть другие active-пары с живым ingest/WS —
+        // не убиваем общий прокси из‑за одной молчащей пары (AEDCNY vs AUDNZD на одном IP).
+        // Только пересаживаем проблемный инструмент на другой endpoint.
+        $hasHealthyPeers = PocketInstrument::query()
+            ->where('proxy_endpoint_id', $proxy->id)
+            ->where('is_active', true)
+            ->where('id', '!=', $instrument->id)
+            ->get()
+            ->contains(function (PocketInstrument $peer): bool {
+                return ! IngestHealth::isIngestSilent($peer)
+                    || IngestHealth::isWsRecentlyConnected($peer);
+            });
+
+        if ($hasHealthyPeers) {
+            $replacement = $this->rotateInstrumentProxy($instrument, false);
+            $instrument->load('proxyEndpoint');
+
+            return $replacement ?? $instrument->proxyEndpoint;
+        }
+
         $this->markProxyAsDead($proxy, $instrument, 'po_stale', [
             'last_payout_event_at' => $instrument->last_payout_event_at?->toIso8601String(),
             'last_payout_at' => $instrument->last_payout_at?->toIso8601String(),

@@ -272,6 +272,52 @@ class ProxyRotationServiceTest extends TestCase
         $this->assertSame($instrument->id, $log[0]['instrument_id'] ?? null);
     }
 
+    public function test_handle_stale_po_proxy_rotates_instrument_only_when_peers_are_healthy(): void
+    {
+        $rotation = app(ProxyRotationService::class);
+        $rotation->setAutoRotationEnabled(true);
+        $rotation->setDeadOnPoStaleEnabled(true);
+        $rotation->setDeadOnPoStaleMinutes(30);
+        $rotation->setMaxInstrumentsPerProxy(4);
+
+        $sharedProxy = ProxyEndpoint::query()->create([
+            'url' => 'http://shared:1@1.1.1.1:1',
+            'status' => ProxyEndpoint::STATUS_ACTIVE,
+        ]);
+        $freshProxy = ProxyEndpoint::query()->create([
+            'url' => 'http://fresh:1@2.2.2.2:2',
+            'status' => ProxyEndpoint::STATUS_ACTIVE,
+        ]);
+
+        // Здоровый сосед на том же прокси — общий endpoint нельзя убивать из‑за одной молчащей пары.
+        PocketInstrument::query()->create([
+            'instrument' => 'AUDNZD_otc',
+            'is_active' => true,
+            'proxy_endpoint_id' => $sharedProxy->id,
+            'last_ingest_at' => now()->subSeconds(30),
+            'last_ws_connected_at' => now()->subSeconds(60),
+            'last_payout_event_at' => now()->subMinutes(5),
+        ]);
+
+        $silent = PocketInstrument::query()->create([
+            'instrument' => 'AEDCNY_otc',
+            'is_active' => true,
+            'proxy_endpoint_id' => $sharedProxy->id,
+            'last_payout_event_at' => now()->subMinutes(45),
+            'last_payout_at' => now()->subMinutes(45),
+            'last_ingest_at' => now()->subHours(2),
+        ]);
+
+        $replacement = $rotation->handleStalePoProxy($silent->fresh());
+
+        $sharedProxy->refresh();
+        $silent->refresh();
+
+        $this->assertSame(ProxyEndpoint::STATUS_ACTIVE, $sharedProxy->status);
+        $this->assertNotNull($replacement);
+        $this->assertSame($freshProxy->id, $silent->proxy_endpoint_id);
+    }
+
     public function test_handle_stale_po_proxy_ignores_payout_is_stale_flag_when_event_fresh(): void
     {
         $rotation = app(ProxyRotationService::class);

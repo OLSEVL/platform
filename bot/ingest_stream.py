@@ -30,6 +30,11 @@ MAX_CONNECTIONS = int(os.environ.get("INGEST_MAX_CONNECTIONS", "100"))
 INSTRUMENTS_REFRESH_SEC = int(os.environ.get("INSTRUMENTS_REFRESH_SEC", "300"))
 # Как часто проверять proxy_pool_version после «Обновить прокси» в настройках платформы.
 PROXY_POOL_VERSION_POLL_SEC = int(os.environ.get("PROXY_POOL_VERSION_POLL_SEC", "15"))
+# После N неудачных connect выходим из воркера — supervisor пересоздаст его с актуальным proxy_url
+# (иначе воркер навсегда крутит sleep 300s со старым proxy в памяти, а БД уже ротирует endpoint).
+CONNECT_FAIL_EXIT_STREAK = int(os.environ.get("INGEST_CONNECT_FAIL_EXIT_STREAK", "3"))
+# Макс. backoff до выхода/ретрая — не 300с: иначе одна мёртвая пара «молчит» часами.
+CONNECT_FAIL_MAX_SLEEP_SEC = int(os.environ.get("INGEST_CONNECT_FAIL_MAX_SLEEP_SEC", "45"))
 # Базовый период свечи в секундах.
 # Для нового секундного режима по умолчанию используем S5.
 BASE_BAR_PERIOD_SEC = int(os.environ.get("INGEST_BASE_BAR_SECONDS", "5"))
@@ -668,7 +673,10 @@ async def run_instrument_worker(
             ok = await client.connect()
             if not ok:
                 connect_fail_streak += 1
-                delay = min(300, 5 * (2 ** min(connect_fail_streak - 1, 6)))
+                delay = min(
+                    CONNECT_FAIL_MAX_SLEEP_SEC,
+                    5 * (2 ** min(connect_fail_streak - 1, 4)),
+                )
                 # Деталь из WebSocket-клиента (регион, последняя ошибка) — иначе только «connect_failed».
                 connect_detail = "connect_failed"
                 try:
@@ -694,6 +702,15 @@ async def run_instrument_worker(
                     error=connect_detail,
                     streak=connect_fail_streak,
                 )
+                # После серии фейлов выходим: Laravel уже мог ротировать proxy_endpoint_id,
+                # а этот воркер всё ещё держит старый proxy_url до cancel/reload.
+                if connect_fail_streak >= CONNECT_FAIL_EXIT_STREAK:
+                    print(
+                        f"[INGEST] {instrument}: {connect_detail} (streak={connect_fail_streak}), "
+                        f"exiting worker to reload proxy from platform",
+                        flush=True,
+                    )
+                    return
                 print(
                     f"[INGEST] {instrument}: {connect_detail} (streak={connect_fail_streak}), "
                     f"sleep {delay}s",
@@ -706,7 +723,10 @@ async def run_instrument_worker(
 
             if not client.is_connected:
                 connect_fail_streak += 1
-                delay = min(300, 5 * (2 ** min(connect_fail_streak - 1, 6)))
+                delay = min(
+                    CONNECT_FAIL_MAX_SLEEP_SEC,
+                    5 * (2 ** min(connect_fail_streak - 1, 4)),
+                )
                 await post_ingest_proxy_health(
                     instrument=instrument,
                     event="not_connected_after_wait",
@@ -718,6 +738,13 @@ async def run_instrument_worker(
                     error="not_connected_after_wait",
                     streak=connect_fail_streak,
                 )
+                if connect_fail_streak >= CONNECT_FAIL_EXIT_STREAK:
+                    print(
+                        f"[INGEST] {instrument}: not connected after wait "
+                        f"(streak={connect_fail_streak}), exiting worker to reload proxy",
+                        flush=True,
+                    )
+                    return
                 print(
                     f"[INGEST] {instrument}: not connected after wait, sleep {delay}s",
                     flush=True,
@@ -1015,6 +1042,32 @@ async def run_ingest_forever() -> None:
 
     try:
         while True:
+            need_fetch = False
+
+            # Сначала снимаем завершённых воркеров — их нужно пересоздать с актуальным proxy_url.
+            # Важно сделать это ДО сборки to_run, иначе respawn возьмёт устаревший cache.
+            finished_keys = [key for key, task in workers.items() if task.done()]
+            if finished_keys:
+                for key in finished_keys:
+                    task = workers.pop(key)
+                    worker_specs.pop(key, None)
+                    try:
+                        exc = task.exception()
+                    except (asyncio.CancelledError, asyncio.InvalidStateError):
+                        exc = None
+                    if exc is not None:
+                        print(
+                            f"[INGEST] worker for {key} finished with error: {exc!r}",
+                            flush=True,
+                        )
+                    else:
+                        print(
+                            f"[INGEST] worker for {key} exited — will respawn with fresh proxy",
+                            flush=True,
+                        )
+                # Форсируем refresh: Laravel мог уже ротировать endpoint после connect_failed.
+                need_fetch = True
+
             current_pool_version = await fetch_proxy_pool_version()
             pool_version_changed = (
                 current_pool_version > 0
@@ -1024,7 +1077,7 @@ async def run_ingest_forever() -> None:
             if current_pool_version > 0:
                 last_pool_version = current_pool_version
 
-            need_fetch = (
+            need_fetch = need_fetch or (
                 not instruments_cache
                 or pool_version_changed
                 or (time.time() - last_instruments_fetch_at) >= INSTRUMENTS_REFRESH_SEC
