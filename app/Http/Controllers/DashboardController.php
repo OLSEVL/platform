@@ -9,8 +9,13 @@ use App\Models\PocketInstrument;
 use App\Services\CandleService;
 use App\Services\CandleStructureZoneDetector;
 use App\Services\CurrentCandleCacheService;
+use App\Services\Indicators\AtrIndicatorService;
+use App\Services\Indicators\BollingerIndicatorService;
+use App\Services\Indicators\EmaIndicatorService;
 use App\Services\Indicators\LiquiditySwingsIndicatorService;
 use App\Services\Indicators\PriceActionDgtIndicatorService;
+use App\Services\Indicators\RsiIndicatorService;
+use App\Services\Indicators\SmaIndicatorService;
 use App\Services\Indicators\SmcFlowIndicatorService;
 use App\Support\M1CandleCountdown;
 use App\Support\PriceScale;
@@ -414,6 +419,95 @@ class DashboardController extends Controller
         ]);
     }
 
+    /**
+     * Классика OsEngine (BB/RSI/SMA/EMA/ATR) для главного графика.
+     * Параметры — с якорного бота (как PA/SMC); без бота — defaultParams сервисов.
+     * Query layers[] — считаем только включённые слои.
+     */
+    public function classicIndicatorsData(
+        Request $request,
+        CandleService $candleService,
+        BollingerIndicatorService $bollinger,
+        RsiIndicatorService $rsi,
+        SmaIndicatorService $sma,
+        EmaIndicatorService $ema,
+        AtrIndicatorService $atr,
+    ): JsonResponse {
+        $validated = $request->validate([
+            'instrument' => ['required', 'string', 'max:64'],
+            'timeframe' => ['nullable', 'integer', Rule::in(CandleService::DASHBOARD_TIMEFRAMES)],
+            'layers' => ['nullable', 'array'],
+            'layers.*' => ['string', Rule::in(['bollinger', 'rsi', 'sma', 'ema', 'atr'])],
+        ]);
+
+        $instrument = (string) $validated['instrument'];
+        $timeframe = (int) ($validated['timeframe'] ?? 1);
+        $layers = $validated['layers'] ?? [];
+        $want = array_fill_keys($layers, true);
+
+        // Пустой layers[] — ничего не считаем (фронт так и шлёт, когда все сняты).
+        if ($want === []) {
+            return response()->json([
+                'instrument' => $instrument,
+                'timeframe' => $timeframe,
+                'server_time' => now()->toIso8601String(),
+            ]);
+        }
+
+        [$since, $maxBars] = $this->overlayHistoryWindow($timeframe);
+        $rows = $candleService->seriesForDashboard($instrument, $timeframe, $since, null, $maxBars);
+        $anchorBot = $this->chartIndicatorBotForUser();
+
+        $json = [
+            'instrument' => $instrument,
+            'timeframe' => $timeframe,
+            'server_time' => now()->toIso8601String(),
+        ];
+
+        if (! empty($want['bollinger'])) {
+            $json['bollinger'] = $bollinger->compute(
+                $rows,
+                $anchorBot !== null
+                    ? IndicatorSetting::mergedBollingerParams($anchorBot)
+                    : BollingerIndicatorService::defaultParams()
+            );
+        }
+        if (! empty($want['rsi'])) {
+            $json['rsi'] = $rsi->compute(
+                $rows,
+                $anchorBot !== null
+                    ? IndicatorSetting::mergedRsiParams($anchorBot)
+                    : RsiIndicatorService::defaultParams()
+            );
+        }
+        if (! empty($want['sma'])) {
+            $json['sma'] = $sma->compute(
+                $rows,
+                $anchorBot !== null
+                    ? IndicatorSetting::mergedSmaParams($anchorBot)
+                    : SmaIndicatorService::defaultParams()
+            );
+        }
+        if (! empty($want['ema'])) {
+            $json['ema'] = $ema->compute(
+                $rows,
+                $anchorBot !== null
+                    ? IndicatorSetting::mergedEmaParams($anchorBot)
+                    : EmaIndicatorService::defaultParams()
+            );
+        }
+        if (! empty($want['atr'])) {
+            $json['atr'] = $atr->compute(
+                $rows,
+                $anchorBot !== null
+                    ? IndicatorSetting::mergedAtrParams($anchorBot)
+                    : AtrIndicatorService::defaultParams()
+            );
+        }
+
+        return response()->json($json);
+    }
+
     public function payouts(): JsonResponse
     {
         $rows = PocketInstrument::active()
@@ -424,6 +518,103 @@ class DashboardController extends Controller
             ]);
 
         return response()->json(['payouts' => $rows->values()->all()]);
+    }
+
+    /**
+     * Сделки пользователя по инструменту для маркеров на главном графике.
+     * Берём все боты текущего юзера: открытые + недавняя история (24ч / до 500).
+     * Формат signals совместим с bots/show (chartSignalsPayload).
+     */
+    public function chartTradesData(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'instrument' => ['required', 'string', 'max:64'],
+        ]);
+        $instrument = (string) $validated['instrument'];
+        $userId = (int) auth()->id();
+
+        if ($userId <= 0) {
+            return response()->json([
+                'signals' => [],
+                'open_trades' => [],
+                'count' => 0,
+                'server_time' => now()->toIso8601String(),
+            ]);
+        }
+
+        $base = BotTrade::query()
+            ->where('instrument', $instrument)
+            ->whereHas('bot', static fn ($q) => $q->where('user_id', $userId));
+
+        // Открытые позиции — для маркеров ● OPEN.
+        $openTrades = (clone $base)
+            ->where('status', BotTrade::STATUS_OPEN)
+            ->where('expiry_time', '>', now())
+            ->orderBy('expiry_time')
+            ->limit(50)
+            ->get([
+                'id',
+                'instrument',
+                'side',
+                'entry_price',
+                'entry_time',
+                'expiry_time',
+                'status',
+                'result',
+            ]);
+
+        // История для ВВЕРХ/ВНИЗ + WIN/LOSE: открытые + закрытые за сутки.
+        $historyTrades = (clone $base)
+            ->with('signal')
+            ->where(function ($q) {
+                $q->where(function ($open) {
+                    $open->where('status', BotTrade::STATUS_OPEN)
+                        ->where('expiry_time', '>', now());
+                })->orWhere(function ($settled) {
+                    $settled->where('status', BotTrade::STATUS_SETTLED)
+                        ->where('entry_time', '>=', now()->subDay());
+                });
+            })
+            ->orderBy('entry_time')
+            ->limit(500)
+            ->get();
+
+        $signals = $historyTrades->map(function (BotTrade $t): array {
+            $sig = $t->relationLoaded('signal') ? $t->signal : null;
+
+            return [
+                'id' => $sig !== null ? (int) $sig->id : 0,
+                'instrument' => (string) $t->instrument,
+                'side' => (string) $t->side,
+                // Время входа: signal_at предпочтительнее entry_time (как на bots/show).
+                'signal_at' => optional($sig?->signal_at ?? $t->entry_time)->toIso8601String(),
+                'expiry_time' => optional($t->expiry_time)->toIso8601String(),
+                'result' => (string) ($t->result ?? ''),
+                'trade' => [
+                    'id' => (int) $t->id,
+                    'expiry_time' => optional($t->expiry_time)->toIso8601String(),
+                    'result' => (string) ($t->result ?? ''),
+                    'entry_price' => $t->entry_price !== null ? (float) $t->entry_price : null,
+                    'expiry_price' => $t->expiry_price !== null ? (float) $t->expiry_price : null,
+                ],
+            ];
+        })->values()->all();
+
+        $openPayload = $openTrades->map(static fn (BotTrade $t): array => [
+            'id' => (int) $t->id,
+            'instrument' => (string) $t->instrument,
+            'side' => (string) $t->side,
+            'entry_price' => $t->entry_price !== null ? (float) $t->entry_price : null,
+            'entry_ts' => optional($t->entry_time)?->timestamp,
+            'expiry_ts' => optional($t->expiry_time)?->timestamp,
+        ])->values()->all();
+
+        return response()->json([
+            'signals' => $signals,
+            'open_trades' => $openPayload,
+            'count' => count($signals),
+            'server_time' => now()->toIso8601String(),
+        ]);
     }
 
 }

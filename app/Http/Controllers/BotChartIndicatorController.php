@@ -4,13 +4,23 @@ namespace App\Http\Controllers;
 
 use App\Models\Bot;
 use App\Models\IndicatorSetting;
+use App\Services\Indicators\AtrIndicatorService;
+use App\Services\Indicators\BollingerIndicatorService;
+use App\Services\Indicators\EmaIndicatorService;
 use App\Services\Indicators\OrderBlocksIndicatorService;
+use App\Support\AtrSettingsForm;
+use App\Support\BollingerSettingsForm;
+use App\Support\EmaSettingsForm;
 use App\Support\OrderBlocksSettingsForm;
 use App\Services\Indicators\LiquiditySwingsIndicatorService;
 use App\Services\Indicators\PriceActionDgtIndicatorService;
+use App\Services\Indicators\RsiIndicatorService;
+use App\Services\Indicators\SmaIndicatorService;
 use App\Services\Indicators\SmcFlowIndicatorService;
 use App\Support\LiquiditySwingsSettingsForm;
 use App\Support\PriceActionDgtSettingsForm;
+use App\Support\RsiSettingsForm;
+use App\Support\SmaSettingsForm;
 use App\Support\SmcFlowSettingsForm;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -182,6 +192,122 @@ class BotChartIndicatorController extends Controller
 
         return redirect()->route('bots.indicators.smc-flow.edit', $bot)
             ->with('status', 'Настройки SMC Flow сохранены.');
+    }
+
+    public function editBollinger(Bot $bot): View
+    {
+        $this->ensureBotOwner($bot);
+
+        return view('bots.indicators.bollinger', [
+            'bot' => $bot,
+            'p' => IndicatorSetting::mergedBollingerParams($bot),
+        ]);
+    }
+
+    public function updateBollinger(Request $request, Bot $bot): RedirectResponse
+    {
+        return $this->saveClassic($request, $bot, IndicatorSetting::KEY_BOLLINGER, BollingerIndicatorService::class, BollingerSettingsForm::class, 'bots.indicators.bollinger.edit', 'Bollinger');
+    }
+
+    public function editRsi(Bot $bot): View
+    {
+        $this->ensureBotOwner($bot);
+
+        return view('bots.indicators.rsi', [
+            'bot' => $bot,
+            'p' => IndicatorSetting::mergedRsiParams($bot),
+        ]);
+    }
+
+    public function updateRsi(Request $request, Bot $bot): RedirectResponse
+    {
+        return $this->saveClassic($request, $bot, IndicatorSetting::KEY_RSI, RsiIndicatorService::class, RsiSettingsForm::class, 'bots.indicators.rsi.edit', 'RSI');
+    }
+
+    public function editSma(Bot $bot): View
+    {
+        $this->ensureBotOwner($bot);
+
+        return view('bots.indicators.sma', [
+            'bot' => $bot,
+            'p' => IndicatorSetting::mergedSmaParams($bot),
+        ]);
+    }
+
+    public function updateSma(Request $request, Bot $bot): RedirectResponse
+    {
+        return $this->saveClassic($request, $bot, IndicatorSetting::KEY_SMA, SmaIndicatorService::class, SmaSettingsForm::class, 'bots.indicators.sma.edit', 'SMA');
+    }
+
+    public function editEma(Bot $bot): View
+    {
+        $this->ensureBotOwner($bot);
+
+        return view('bots.indicators.ema', [
+            'bot' => $bot,
+            'p' => IndicatorSetting::mergedEmaParams($bot),
+        ]);
+    }
+
+    public function updateEma(Request $request, Bot $bot): RedirectResponse
+    {
+        return $this->saveClassic($request, $bot, IndicatorSetting::KEY_EMA, EmaIndicatorService::class, EmaSettingsForm::class, 'bots.indicators.ema.edit', 'EMA');
+    }
+
+    public function editAtr(Bot $bot): View
+    {
+        $this->ensureBotOwner($bot);
+
+        return view('bots.indicators.atr', [
+            'bot' => $bot,
+            'p' => IndicatorSetting::mergedAtrParams($bot),
+        ]);
+    }
+
+    public function updateAtr(Request $request, Bot $bot): RedirectResponse
+    {
+        return $this->saveClassic($request, $bot, IndicatorSetting::KEY_ATR, AtrIndicatorService::class, AtrSettingsForm::class, 'bots.indicators.atr.edit', 'ATR');
+    }
+
+    /**
+     * Общее сохранение классического индикатора (форма или expert JSON).
+     *
+     * @param  class-string  $serviceClass
+     * @param  class-string  $formClass
+     */
+    private function saveClassic(
+        Request $request,
+        Bot $bot,
+        string $key,
+        string $serviceClass,
+        string $formClass,
+        string $redirectRoute,
+        string $label,
+    ): RedirectResponse {
+        $this->ensureBotOwner($bot);
+        if ($request->boolean('use_expert_json')) {
+            $request->validate([
+                'expert_settings_json' => ['required', 'string', 'max:65535'],
+            ]);
+            $raw = trim((string) $request->input('expert_settings_json', ''));
+            $decoded = json_decode($raw, true);
+            if (! is_array($decoded)) {
+                return back()->withInput()->withErrors(['expert_settings_json' => 'Некорректный JSON.']);
+            }
+            $params = array_replace($serviceClass::defaultParams(), $decoded);
+        } else {
+            $params = $formClass::buildFromRequest($request);
+        }
+        IndicatorSetting::updateOrCreate(
+            ['bot_id' => $bot->id, 'indicator_key' => $key],
+            ['settings' => $params]
+        );
+        $config = is_array($bot->config) ? $bot->config : [];
+        unset($config[$key]);
+        $bot->update(['config' => $config]);
+
+        return redirect()->route($redirectRoute, $bot)
+            ->with('status', "Настройки {$label} сохранены.");
     }
 
     private function ensureBotOwner(Bot $bot): void

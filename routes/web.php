@@ -26,8 +26,12 @@ Route::middleware('auth')->group(function () {
     Route::get('/indicators/price-action-dgt', [DashboardController::class, 'priceActionDgtIndicatorData'])->name('dashboard.indicators.price-action-dgt');
     Route::get('/indicators/liquidity-swings', [DashboardController::class, 'liquiditySwingsIndicatorData'])->name('dashboard.indicators.liquidity-swings');
     Route::get('/indicators/smc-flow', [DashboardController::class, 'smcFlowIndicatorData'])->name('dashboard.indicators.smc-flow');
+    // Классика OsEngine (BB/RSI/SMA/EMA/ATR) — те же сервисы, что у bots/show; params с якорного бота.
+    Route::get('/indicators/classic', [DashboardController::class, 'classicIndicatorsData'])->name('dashboard.indicators.classic');
     Route::get('/payouts', [DashboardController::class, 'payouts'])->name('payouts.data');
     Route::get('/instruments/data', [DashboardController::class, 'instrumentsSidebarData'])->name('dashboard.instruments.data');
+    // Маркеры сделок на главном графике (все боты текущего пользователя по инструменту).
+    Route::get('/chart-trades', [DashboardController::class, 'chartTradesData'])->name('dashboard.chart-trades.data');
     Route::prefix('bots')->name('bots.')->group(function () {
         Route::get('/', [BotController::class, 'index'])->name('index');
         Route::get('/analytics', [BotController::class, 'analytics'])->name('analytics');
@@ -52,6 +56,16 @@ Route::middleware('auth')->group(function () {
         Route::put('/{bot}/indicators/liquidity-swings', [BotChartIndicatorController::class, 'updateLiquiditySwings'])->name('indicators.liquidity-swings.update');
         Route::get('/{bot}/indicators/smc-flow', [BotChartIndicatorController::class, 'editSmcFlow'])->name('indicators.smc-flow.edit');
         Route::put('/{bot}/indicators/smc-flow', [BotChartIndicatorController::class, 'updateSmcFlow'])->name('indicators.smc-flow.update');
+        Route::get('/{bot}/indicators/bollinger', [BotChartIndicatorController::class, 'editBollinger'])->name('indicators.bollinger.edit');
+        Route::put('/{bot}/indicators/bollinger', [BotChartIndicatorController::class, 'updateBollinger'])->name('indicators.bollinger.update');
+        Route::get('/{bot}/indicators/rsi', [BotChartIndicatorController::class, 'editRsi'])->name('indicators.rsi.edit');
+        Route::put('/{bot}/indicators/rsi', [BotChartIndicatorController::class, 'updateRsi'])->name('indicators.rsi.update');
+        Route::get('/{bot}/indicators/sma', [BotChartIndicatorController::class, 'editSma'])->name('indicators.sma.edit');
+        Route::put('/{bot}/indicators/sma', [BotChartIndicatorController::class, 'updateSma'])->name('indicators.sma.update');
+        Route::get('/{bot}/indicators/ema', [BotChartIndicatorController::class, 'editEma'])->name('indicators.ema.edit');
+        Route::put('/{bot}/indicators/ema', [BotChartIndicatorController::class, 'updateEma'])->name('indicators.ema.update');
+        Route::get('/{bot}/indicators/atr', [BotChartIndicatorController::class, 'editAtr'])->name('indicators.atr.edit');
+        Route::put('/{bot}/indicators/atr', [BotChartIndicatorController::class, 'updateAtr'])->name('indicators.atr.update');
         Route::get('/{bot}/activity', [BotController::class, 'activity'])->name('activity');
         Route::get('/{bot}/cards', [BotController::class, 'cards'])->name('cards');
         Route::get('/{bot}/cards/data', [BotController::class, 'cardsData'])->name('cards.data');

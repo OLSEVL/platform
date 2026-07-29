@@ -46,23 +46,20 @@
         </div>
         <ul id="instrument-list" class="min-h-0 flex-1 overflow-y-auto overscroll-y-contain divide-y divide-zinc-800">
             @forelse($instruments as $inst)
-                @php($isOpenTradeInstrument = $openTradeInstruments->contains($inst->instrument))
-            <li>
-                <button type="button"
-                    class="instrument-btn w-full text-left px-4 py-3 hover:bg-zinc-800 focus:bg-zinc-800 focus:outline-none transition-colors {{ $isOpenTradeInstrument ? 'bg-stone-800/45' : '' }}"
-                    data-instrument="{{ $inst->instrument }}"
-                    data-display-name="{{ e($inst->display_name ?? $inst->instrument) }}"
-                    data-search="{{ mb_strtolower(($inst->display_name ?? $inst->instrument).' '.$inst->instrument) }}"
-                    data-open-trade="{{ $isOpenTradeInstrument ? '1' : '0' }}">
-                    <div class="flex items-center justify-between gap-2">
-                        <div class="flex min-w-0 flex-1 items-center gap-1.5">
-                            <span class="font-medium text-zinc-100 truncate">{{ $inst->display_name ?? $inst->instrument }}</span>
-                            @if($isOpenTradeInstrument && isset($nearestExpiryByInstrument[$inst->instrument]))
-                                @php($expTs = (int) $nearestExpiryByInstrument[$inst->instrument])
-                                @php($secLeft = max(0, $expTs - now()->timestamp))
-                                <span class="instrument-trade-timer shrink-0 text-xs font-mono tabular-nums text-stone-200" data-expiry-ts="{{ $expTs }}">{{ str_pad((string) intdiv($secLeft, 60), 2, '0', STR_PAD_LEFT) }}:{{ str_pad((string) ($secLeft % 60), 2, '0', STR_PAD_LEFT) }}</span>
-                            @endif
-                        </div>
+                <li>
+                    <button type="button"
+                        class="instrument-btn w-full text-left px-4 py-3 hover:bg-zinc-800 focus:bg-zinc-800 focus:outline-none transition-colors {{ $openTradeInstruments->contains($inst->instrument) ? 'bg-stone-800/45' : '' }}"
+                        data-instrument="{{ $inst->instrument }}"
+                        data-display-name="{{ e($inst->display_name ?? $inst->instrument) }}"
+                        data-search="{{ mb_strtolower(($inst->display_name ?? $inst->instrument).' '.$inst->instrument) }}"
+                        data-open-trade="{{ $openTradeInstruments->contains($inst->instrument) ? '1' : '0' }}">
+                        <div class="flex items-center justify-between gap-2">
+                            <div class="flex min-w-0 flex-1 items-center gap-1.5">
+                                <span class="font-medium text-zinc-100 truncate">{{ $inst->display_name ?? $inst->instrument }}</span>
+                                @if($openTradeInstruments->contains($inst->instrument) && isset($nearestExpiryByInstrument[$inst->instrument]))
+                                    <span class="instrument-trade-timer shrink-0 text-xs font-mono tabular-nums text-stone-200" data-expiry-ts="{{ (int) $nearestExpiryByInstrument[$inst->instrument] }}">{{ str_pad((string) intdiv(max(0, (int) $nearestExpiryByInstrument[$inst->instrument] - now()->timestamp), 60), 2, '0', STR_PAD_LEFT) }}:{{ str_pad((string) (max(0, (int) $nearestExpiryByInstrument[$inst->instrument] - now()->timestamp) % 60), 2, '0', STR_PAD_LEFT) }}</span>
+                                @endif
+                            </div>
                         <span
                             class="instrument-payout text-xs font-medium {{ $inst->current_payout === null ? 'text-zinc-500' : (((float) $inst->current_payout >= 80) ? 'text-emerald-400' : (((float) $inst->current_payout >= 60) ? 'text-amber-400' : 'text-rose-400')) }}"
                             data-instrument="{{ $inst->instrument }}"
@@ -244,6 +241,62 @@
                                 </a>
                             @endif
                         </div>
+                        {{-- OsEngine classic v1: BB/SMA/EMA на цене, RSI/ATR в отдельных panes (как bots/show). --}}
+                        <div class="flex items-center justify-between gap-1">
+                            <label for="layer-bollinger" class="flex min-w-0 flex-1 items-center gap-2 text-sm text-zinc-300 cursor-pointer">
+                                <input type="checkbox" id="layer-bollinger" class="rounded border-zinc-600 bg-zinc-800 text-blue-500 shrink-0">
+                                <span class="truncate">Bollinger</span>
+                            </label>
+                            @if($chartIndicatorBot)
+                                <a href="{{ route('bots.indicators.bollinger.edit', $chartIndicatorBot) }}" class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-zinc-700 bg-zinc-800/80 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-100 text-xs" title="Настройки Bollinger">⚙</a>
+                            @else
+                                <a href="{{ route('bots.index') }}" class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-zinc-700 bg-zinc-800/40 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300 text-xs" title="Создайте бота — страницы настроек индикаторов привязаны к боту">⚙</a>
+                            @endif
+                        </div>
+                        <div class="flex items-center justify-between gap-1">
+                            <label for="layer-rsi" class="flex min-w-0 flex-1 items-center gap-2 text-sm text-zinc-300 cursor-pointer">
+                                <input type="checkbox" id="layer-rsi" class="rounded border-zinc-600 bg-zinc-800 text-blue-500 shrink-0">
+                                <span class="truncate">RSI</span>
+                            </label>
+                            @if($chartIndicatorBot)
+                                <a href="{{ route('bots.indicators.rsi.edit', $chartIndicatorBot) }}" class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-zinc-700 bg-zinc-800/80 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-100 text-xs" title="Настройки RSI">⚙</a>
+                            @else
+                                <a href="{{ route('bots.index') }}" class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-zinc-700 bg-zinc-800/40 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300 text-xs" title="Создайте бота — страницы настроек индикаторов привязаны к боту">⚙</a>
+                            @endif
+                        </div>
+                        <div class="flex items-center justify-between gap-1">
+                            <label for="layer-sma" class="flex min-w-0 flex-1 items-center gap-2 text-sm text-zinc-300 cursor-pointer">
+                                <input type="checkbox" id="layer-sma" class="rounded border-zinc-600 bg-zinc-800 text-blue-500 shrink-0">
+                                <span class="truncate">SMA</span>
+                            </label>
+                            @if($chartIndicatorBot)
+                                <a href="{{ route('bots.indicators.sma.edit', $chartIndicatorBot) }}" class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-zinc-700 bg-zinc-800/80 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-100 text-xs" title="Настройки SMA">⚙</a>
+                            @else
+                                <a href="{{ route('bots.index') }}" class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-zinc-700 bg-zinc-800/40 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300 text-xs" title="Создайте бота — страницы настроек индикаторов привязаны к боту">⚙</a>
+                            @endif
+                        </div>
+                        <div class="flex items-center justify-between gap-1">
+                            <label for="layer-ema" class="flex min-w-0 flex-1 items-center gap-2 text-sm text-zinc-300 cursor-pointer">
+                                <input type="checkbox" id="layer-ema" class="rounded border-zinc-600 bg-zinc-800 text-blue-500 shrink-0">
+                                <span class="truncate">EMA</span>
+                            </label>
+                            @if($chartIndicatorBot)
+                                <a href="{{ route('bots.indicators.ema.edit', $chartIndicatorBot) }}" class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-zinc-700 bg-zinc-800/80 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-100 text-xs" title="Настройки EMA">⚙</a>
+                            @else
+                                <a href="{{ route('bots.index') }}" class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-zinc-700 bg-zinc-800/40 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300 text-xs" title="Создайте бота — страницы настроек индикаторов привязаны к боту">⚙</a>
+                            @endif
+                        </div>
+                        <div class="flex items-center justify-between gap-1">
+                            <label for="layer-atr" class="flex min-w-0 flex-1 items-center gap-2 text-sm text-zinc-300 cursor-pointer">
+                                <input type="checkbox" id="layer-atr" class="rounded border-zinc-600 bg-zinc-800 text-blue-500 shrink-0">
+                                <span class="truncate">ATR</span>
+                            </label>
+                            @if($chartIndicatorBot)
+                                <a href="{{ route('bots.indicators.atr.edit', $chartIndicatorBot) }}" class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-zinc-700 bg-zinc-800/80 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-100 text-xs" title="Настройки ATR">⚙</a>
+                            @else
+                                <a href="{{ route('bots.index') }}" class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-zinc-700 bg-zinc-800/40 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300 text-xs" title="Создайте бота — страницы настроек индикаторов привязаны к боту">⚙</a>
+                            @endif
+                        </div>
                     </div>
                 </div>
             </div>
@@ -274,7 +327,8 @@
     </div>
 </div>
 
-<script src="https://unpkg.com/lightweight-charts@4.1.0/dist/lightweight-charts.standalone.production.js"></script>
+@include('partials.chart-markers-helper')
+<script src="https://unpkg.com/lightweight-charts@5.2.0/dist/lightweight-charts.standalone.production.js"></script>
 <script>
 (function() {
     const CANDLES_URL = '{{ route("candles.data") }}';
@@ -282,7 +336,11 @@
     const PA_INDICATOR_URL = '{{ route("dashboard.indicators.price-action-dgt") }}';
     const LS_INDICATOR_URL = '{{ route("dashboard.indicators.liquidity-swings") }}';
     const SMC_INDICATOR_URL = '{{ route("dashboard.indicators.smc-flow") }}';
+    // Классика OsEngine: BB/RSI/SMA/EMA/ATR (params с якорного бота).
+    const CLASSIC_INDICATORS_URL = '{{ route("dashboard.indicators.classic") }}';
     const INSTRUMENTS_SIDEBAR_URL = '{{ route("dashboard.instruments.data") }}';
+    // Сделки всех ботов пользователя по текущему инструменту → маркеры WIN/LOSE/OPEN.
+    const CHART_TRADES_URL = '{{ route("dashboard.chart-trades.data") }}';
 
     // Окна загрузки разделены на три режима, чтобы переключение между инструментами
     // было быстрым, но при этом сохранялись lazy-догрузка истории и live-обновление.
@@ -414,6 +472,11 @@
     const layerPa = document.getElementById('layer-pa-dgt');
     const layerLiquidity = document.getElementById('layer-liquidity-swings');
     const layerSmc = document.getElementById('layer-smc-flow');
+    const layerBollinger = document.getElementById('layer-bollinger');
+    const layerRsi = document.getElementById('layer-rsi');
+    const layerSma = document.getElementById('layer-sma');
+    const layerEma = document.getElementById('layer-ema');
+    const layerAtr = document.getElementById('layer-atr');
     const priceActionOverlay = document.getElementById('price-action-overlay');
     const liquiditySwingsOverlay = document.getElementById('liquidity-swings-overlay');
     const smcFlowOverlay = document.getElementById('smc-flow-overlay');
@@ -421,14 +484,15 @@
     const instrumentSearchClearBtn = document.getElementById('instrument-search-clear');
     const instrumentListEl = document.getElementById('instrument-list');
 
-    // Ключ localStorage для видимости слоёв. Без сохранённых prefs чекбоксы остаются
-    // снятыми (HTML по умолчанию) — при первом входе график без индикаторов.
-    const LAYER_PREFS_KEY = 'platform.dashboard.chartLayers.v3';
+    // v4: classic OsEngine (bollinger/rsi/sma/ema/atr). При отсутствии ключа тянем v3 без потери старых prefs.
+    const LAYER_PREFS_KEY = 'platform.dashboard.chartLayers.v4';
 
     function loadLayerPrefs() {
         try {
             let raw = localStorage.getItem(LAYER_PREFS_KEY);
-            // v3 добавляет smcFlow; при отсутствии ключа подтягиваем v2 без потери OB/FVG/PA/LS.
+            if (raw == null) {
+                raw = localStorage.getItem('platform.dashboard.chartLayers.v3');
+            }
             if (raw == null) {
                 raw = localStorage.getItem('platform.dashboard.chartLayers.v2');
             }
@@ -448,6 +512,11 @@
             if (layerPa && typeof o.paDgt === 'boolean') layerPa.checked = o.paDgt;
             if (layerLiquidity && typeof o.liquiditySwings === 'boolean') layerLiquidity.checked = o.liquiditySwings;
             if (layerSmc && typeof o.smcFlow === 'boolean') layerSmc.checked = o.smcFlow;
+            if (layerBollinger && typeof o.bollinger === 'boolean') layerBollinger.checked = o.bollinger;
+            if (layerRsi && typeof o.rsi === 'boolean') layerRsi.checked = o.rsi;
+            if (layerSma && typeof o.sma === 'boolean') layerSma.checked = o.sma;
+            if (layerEma && typeof o.ema === 'boolean') layerEma.checked = o.ema;
+            if (layerAtr && typeof o.atr === 'boolean') layerAtr.checked = o.atr;
         } catch (_) { /* ignore */ }
     }
 
@@ -459,6 +528,11 @@
                 paDgt: layerPa ? layerPa.checked : false,
                 liquiditySwings: layerLiquidity ? layerLiquidity.checked : false,
                 smcFlow: layerSmc ? layerSmc.checked : false,
+                bollinger: layerBollinger ? layerBollinger.checked : false,
+                rsi: layerRsi ? layerRsi.checked : false,
+                sma: layerSma ? layerSma.checked : false,
+                ema: layerEma ? layerEma.checked : false,
+                atr: layerAtr ? layerAtr.checked : false,
             }));
         } catch (_) { /* ignore */ }
     }
@@ -467,6 +541,12 @@
 
     let chart = null;
     let candlestickSeries = null;
+    /**
+     * Единый markers-plugin v5 (как на странице бота).
+     * Сейчас dashboard не рисует торговые маркеры, но держим ту же точку расширения:
+     * при добавлении markers достаточно вызвать PlatformChartMarkers.applyMarkers(...).
+     */
+    let candlestickMarkers = null;
     let currentInstrument = null;
     let currentDisplayName = '';
     let currentTimeframeMinutes = 1;
@@ -492,6 +572,20 @@
     /** JSON с сервера: boxes / lines / labels для Liquidity Swings. */
     let lastLsPayload = null;
     let lastSmcPayload = null;
+    /** Сигналы/сделки для маркеров (формат как на bots/show). */
+    let lastChartSignals = [];
+    let lastOpenTrades = [];
+    let chartTradesFetchSeq = 0;
+    /** Payloads классики OsEngine (BB/RSI/SMA/EMA/ATR). */
+    let lastBollingerPayload = null;
+    let lastRsiPayload = null;
+    let lastSmaPayload = null;
+    let lastEmaPayload = null;
+    let lastAtrPayload = null;
+    let classicLineSeries = {};
+    let rsiLevelLines = [];
+    let classicOscPaneCount = 0;
+    let classicIndicatorsFetchSeq = 0;
 
     function payoutClassByValue(value) {
         if (value == null || Number.isNaN(value)) return 'text-zinc-500';
@@ -908,13 +1002,316 @@
                     lastPaPayload = d && d.indicator ? d.indicator : null;
                     redrawPriceActionOverlay();
                     applyPaBarColors({ fullResync: true });
+                    // PA отдаёт собственные markers (v_spike/atr) — пересобираем серию маркеров.
+                    renderChartMarkers();
                 } catch (e) {
                     console.error('[PriceAction DGT] dashboard apply', e);
                     lastPaPayload = null;
                     try {
                         redrawPriceActionOverlay();
                         applyPaBarColors({ fullResync: true });
+                        renderChartMarkers();
                     } catch (_) {}
+                }
+            })
+            .catch(() => {});
+    }
+
+    /**
+     * Тянем сделки пользователя по текущему инструменту и рисуем маркеры
+     * тем же helper, что и на странице бота (ВВЕРХ/ВНИЗ/WIN/LOSE/OPEN).
+     */
+    function fetchChartTrades() {
+        if (!currentInstrument) {
+            lastChartSignals = [];
+            lastOpenTrades = [];
+            renderChartMarkers();
+            return;
+        }
+        const seq = ++chartTradesFetchSeq;
+        const params = new URLSearchParams({ instrument: currentInstrument });
+        fetch(CHART_TRADES_URL + '?' + params.toString(), {
+            headers: { 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+        })
+            .then((r) => r.json())
+            .then((d) => {
+                if (seq !== chartTradesFetchSeq) return;
+                lastChartSignals = Array.isArray(d && d.signals) ? d.signals : [];
+                lastOpenTrades = Array.isArray(d && d.open_trades) ? d.open_trades : [];
+                renderChartMarkers();
+            })
+            .catch(() => {
+                if (seq !== chartTradesFetchSeq) return;
+                // При ошибке сети не стираем уже показанные маркеры.
+            });
+    }
+
+    /**
+     * Собирает и применяет маркеры: история сделок + открытые + PA (если слой включён).
+     * Через PlatformChartMarkers — тот же код, что на bots/show.
+     */
+    function renderChartMarkers() {
+        if (!candlestickSeries || !currentInstrument) return;
+        const PCM = window.PlatformChartMarkers;
+        if (!PCM) return;
+
+        const history = typeof PCM.buildHistoryMarkers === 'function'
+            ? PCM.buildHistoryMarkers(lastChartSignals, { instrument: currentInstrument })
+            : [];
+        const open = typeof PCM.buildOpenTradeMarkers === 'function'
+            ? PCM.buildOpenTradeMarkers(lastOpenTrades, {
+                instrument: currentInstrument,
+                nowSec: Math.floor(Date.now() / 1000),
+            })
+            : [];
+        const paMk = (layerPa && layerPa.checked && lastPaPayload && Array.isArray(lastPaPayload.markers))
+            ? lastPaPayload.markers
+            : [];
+        const all = typeof PCM.mergeMarkers === 'function'
+            ? PCM.mergeMarkers(history, open, paMk)
+            : [...history, ...open, ...paMk].sort((a, b) => a.time - b.time);
+
+        if (typeof PCM.applyMarkers === 'function') {
+            PCM.applyMarkers(candlestickMarkers, all);
+        }
+    }
+
+    /** Включён ли хотя бы один classic-слой OsEngine. */
+    function anyClassicLayerOn() {
+        return !!(
+            (layerBollinger && layerBollinger.checked) ||
+            (layerRsi && layerRsi.checked) ||
+            (layerSma && layerSma.checked) ||
+            (layerEma && layerEma.checked) ||
+            (layerAtr && layerAtr.checked)
+        );
+    }
+
+    /**
+     * Удаляет line-series классики и лишние pane осцилляторов (LWC v5).
+     * Логика 1:1 с bots/show — иначе RSI останется поверх свечей.
+     */
+    function clearClassicOsEngineSeries() {
+        if (!chart) {
+            classicLineSeries = {};
+            rsiLevelLines = [];
+            classicOscPaneCount = 0;
+            return;
+        }
+        Object.keys(classicLineSeries).forEach((k) => {
+            try { chart.removeSeries(classicLineSeries[k]); } catch (_) {}
+        });
+        classicLineSeries = {};
+        rsiLevelLines = [];
+        try {
+            while (typeof chart.panes === 'function' && chart.panes().length > 1) {
+                chart.removePane(chart.panes().length - 1);
+            }
+        } catch (_) {}
+        classicOscPaneCount = 0;
+        try {
+            chart.priceScale('right').applyOptions({
+                scaleMargins: { top: 0.08, bottom: 0.05 },
+            });
+        } catch (_) {}
+    }
+
+    /** Рисует BB/SMA/EMA на pane 0; RSI и ATR — в отдельных addPane(). */
+    function applyClassicOsEngineSeries() {
+        if (!chart || !candlestickSeries) return;
+        clearClassicOsEngineSeries();
+
+        const LineSeries = LightweightCharts.LineSeries;
+        if (!LineSeries || typeof chart.addSeries !== 'function') {
+            console.error('[dashboard indicators] LWC v5 addSeries/LineSeries недоступны');
+            return;
+        }
+
+        const wantBb = layerBollinger && layerBollinger.checked && lastBollingerPayload;
+        const wantRsi = layerRsi && layerRsi.checked && lastRsiPayload;
+        const wantSma = layerSma && layerSma.checked && lastSmaPayload;
+        const wantEma = layerEma && layerEma.checked && lastEmaPayload;
+        const wantAtr = layerAtr && layerAtr.checked && lastAtrPayload;
+
+        const addMainLine = (key, data, color, width) => {
+            if (!Array.isArray(data) || !data.length) return;
+            const s = chart.addSeries(LineSeries, {
+                color: color || '#22c55e',
+                lineWidth: width || 1,
+                priceLineVisible: false,
+                lastValueVisible: false,
+                crosshairMarkerVisible: false,
+            }, 0);
+            s.setData(data.map((p) => ({ time: p.time, value: p.value })));
+            classicLineSeries[key] = s;
+        };
+
+        if (wantBb) {
+            const st = lastBollingerPayload.style || {};
+            const ser = lastBollingerPayload.series || {};
+            const w = st.line_width || 1;
+            addMainLine('bb_up', ser.up, st.color_up, w);
+            addMainLine('bb_mid', ser.mid, st.color_mid, w);
+            addMainLine('bb_down', ser.down, st.color_down, w);
+        }
+        if (wantSma) {
+            const st = lastSmaPayload.style || {};
+            addMainLine('sma', (lastSmaPayload.series || {}).ma, st.color, st.line_width);
+        }
+        if (wantEma) {
+            const st = lastEmaPayload.style || {};
+            addMainLine('ema', (lastEmaPayload.series || {}).ema, st.color, st.line_width);
+        }
+
+        const oscCount = (wantRsi ? 1 : 0) + (wantAtr ? 1 : 0);
+        if (oscCount > 0) {
+            try {
+                const mainPane = chart.panes()[0];
+                if (mainPane && typeof mainPane.setStretchFactor === 'function') {
+                    mainPane.setStretchFactor(1);
+                }
+            } catch (_) {}
+        }
+
+        if (wantRsi) {
+            const st = lastRsiPayload.style || {};
+            const levels = lastRsiPayload.levels || {};
+            let paneIndex = 1;
+            let rsiPane = null;
+            try {
+                rsiPane = chart.addPane(false);
+                if (rsiPane && typeof rsiPane.setStretchFactor === 'function') {
+                    rsiPane.setStretchFactor(0.28);
+                }
+                paneIndex = Math.max(1, chart.panes().length - 1);
+                classicOscPaneCount += 1;
+            } catch (e) {
+                console.error('[dashboard indicators] addPane RSI', e);
+            }
+            const s = chart.addSeries(LineSeries, {
+                color: st.color || '#1e90ff',
+                lineWidth: st.line_width || 1,
+                priceLineVisible: false,
+                baseLineVisible: false,
+                // Показываем текущее значение RSI справа, чтобы видеть актуальный уровень.
+                lastValueVisible: true,
+                crosshairMarkerVisible: false,
+                // RSI — осциллятор в шкале 0..100, отображаем целые значения.
+                priceFormat: { type: 'price', precision: 0, minMove: 1 },
+                // Жёсткий диапазон нужен, чтобы уровни 70/30 всегда были видимыми.
+                autoscaleInfoProvider: () => ({ priceRange: { minValue: 0, maxValue: 100 } }),
+            }, paneIndex);
+            const data = ((lastRsiPayload.series || {}).rsi) || [];
+            s.setData(data.map((p) => ({ time: p.time, value: p.value })));
+            classicLineSeries['rsi'] = s;
+            // Небольшие внешние отступы для более аккуратного расположения линии RSI.
+            try {
+                s.priceScale().applyOptions({
+                    scaleMargins: { top: 0.08, bottom: 0.08 },
+                    borderVisible: false,
+                    entireTextOnly: true,
+                });
+            } catch (_) {}
+
+            // Накладываем однотонный фон именно на RSI-pane, чтобы визуально погасить сетку.
+            try {
+                const paneApi = rsiPane || (typeof chart.panes === 'function' ? chart.panes()[paneIndex] : null);
+                if (paneApi && typeof paneApi.attachPrimitive === 'function'
+                    && window.PlatformChartMarkers
+                    && typeof window.PlatformChartMarkers.createPaneSolidBackdrop === 'function') {
+                    paneApi.attachPrimitive(window.PlatformChartMarkers.createPaneSolidBackdrop('#0e1018'));
+                }
+            } catch (e) {
+                console.error('[dashboard indicators] RSI pane backdrop', e);
+            }
+
+            // Подписи 70/30 на правой шкале для быстрого чтения перекупленности/перепроданности.
+            try {
+                const lines = (window.PlatformChartMarkers
+                    && typeof window.PlatformChartMarkers.attachRsiLevelLines === 'function')
+                    ? window.PlatformChartMarkers.attachRsiLevelLines(s, levels)
+                    : [];
+                rsiLevelLines.push(...lines);
+            } catch (_) {}
+        }
+
+        if (wantAtr) {
+            const st = lastAtrPayload.style || {};
+            let paneIndex = wantRsi ? 2 : 1;
+            try {
+                const pane = chart.addPane(false);
+                if (pane && typeof pane.setStretchFactor === 'function') {
+                    pane.setStretchFactor(0.28);
+                }
+                paneIndex = Math.max(1, chart.panes().length - 1);
+                classicOscPaneCount += 1;
+            } catch (e) {
+                console.error('[dashboard indicators] addPane ATR', e);
+            }
+            const s = chart.addSeries(LineSeries, {
+                color: st.color || '#1e90ff',
+                lineWidth: st.line_width || 1,
+                priceLineVisible: false,
+                lastValueVisible: true,
+                crosshairMarkerVisible: false,
+            }, paneIndex);
+            const data = ((lastAtrPayload.series || {}).atr) || [];
+            s.setData(data.map((p) => ({ time: p.time, value: p.value })));
+            classicLineSeries['atr'] = s;
+        }
+    }
+
+    /** Тянем только включённые classic-слои и рисуем series/panes. */
+    function fetchClassicIndicators() {
+        if (!currentInstrument || !anyClassicLayerOn()) {
+            lastBollingerPayload = null;
+            lastRsiPayload = null;
+            lastSmaPayload = null;
+            lastEmaPayload = null;
+            lastAtrPayload = null;
+            applyClassicOsEngineSeries();
+            return;
+        }
+        const wantBb = layerBollinger && layerBollinger.checked;
+        const wantRsi = layerRsi && layerRsi.checked;
+        const wantSma = layerSma && layerSma.checked;
+        const wantEma = layerEma && layerEma.checked;
+        const wantAtr = layerAtr && layerAtr.checked;
+        const layers = [];
+        if (wantBb) layers.push('bollinger');
+        if (wantRsi) layers.push('rsi');
+        if (wantSma) layers.push('sma');
+        if (wantEma) layers.push('ema');
+        if (wantAtr) layers.push('atr');
+
+        const seq = ++classicIndicatorsFetchSeq;
+        const params = new URLSearchParams({
+            instrument: currentInstrument,
+            timeframe: String(currentTimeframeMinutes),
+        });
+        layers.forEach((l) => params.append('layers[]', l));
+
+        fetch(CLASSIC_INDICATORS_URL + '?' + params.toString(), {
+            headers: { 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+        })
+            .then((r) => r.json())
+            .then((d) => {
+                if (seq !== classicIndicatorsFetchSeq) return;
+                try {
+                    lastBollingerPayload = wantBb && d && d.bollinger ? d.bollinger : null;
+                    lastRsiPayload = wantRsi && d && d.rsi ? d.rsi : null;
+                    lastSmaPayload = wantSma && d && d.sma ? d.sma : null;
+                    lastEmaPayload = wantEma && d && d.ema ? d.ema : null;
+                    lastAtrPayload = wantAtr && d && d.atr ? d.atr : null;
+                    applyClassicOsEngineSeries();
+                } catch (e) {
+                    console.error('[dashboard classic indicators] apply', e);
+                    lastBollingerPayload = null;
+                    lastRsiPayload = null;
+                    lastSmaPayload = null;
+                    lastEmaPayload = null;
+                    lastAtrPayload = null;
+                    try { applyClassicOsEngineSeries(); } catch (_) {}
                 }
             })
             .catch(() => {});
@@ -1570,6 +1967,10 @@
             if (layerPa && layerPa.checked) fetchPriceActionIndicator();
             if (layerLiquidity && layerLiquidity.checked) fetchLiquiditySwingsIndicator();
             if (layerSmc && layerSmc.checked) fetchSmcFlowIndicator();
+            // Маркеры сделок: лёгкий JSON, обновляем вместе с оверлеями (не в 500мс poll свечей).
+            fetchChartTrades();
+            // Классика OsEngine — только если чекбоксы включены.
+            if (anyClassicLayerOn()) fetchClassicIndicators();
         }, OVERLAYS_REFRESH_MS);
     }
 
@@ -1786,7 +2187,9 @@
         chart = LightweightCharts.createChart(chartWrapper, {
             layout: {
                 background: { type: 'solid', color: '#191c30' },
-                textColor: '#a1a1aa'
+                textColor: '#a1a1aa',
+                // Скрываем логотип TradingView в углу графика (licensing: attributionLogo).
+                attributionLogo: false,
             },
             grid: { vertLines: { color: '#27272a' }, horzLines: { color: '#27272a' } },
             rightPriceScale: { borderColor: '#3f3f46', scaleMargins: { top: 0.1, bottom: 0.2 } },
@@ -1800,16 +2203,32 @@
             height: chartWrapper.clientHeight
         });
 
-        candlestickSeries = chart.addCandlestickSeries({
+        candlestickSeries = chart.addSeries(LightweightCharts.CandlestickSeries, {
             upColor: '#26a69a',
             downColor: '#ef5350',
             borderVisible: false,
+            wickUpColor: '#26a69a',
+            wickDownColor: '#ef5350',
             priceFormat: {
                 type: 'price',
                 precision: 5,
                 minMove: 0.00001
             }
         });
+        // Инициализируем markers-plugin единообразно с bots/show.
+        candlestickMarkers = null;
+        try {
+            if (window.PlatformChartMarkers && typeof window.PlatformChartMarkers.createPluginForSeries === 'function') {
+                candlestickMarkers = window.PlatformChartMarkers.createPluginForSeries(candlestickSeries, []);
+            } else if (typeof LightweightCharts.createSeriesMarkers === 'function') {
+                candlestickMarkers = LightweightCharts.createSeriesMarkers(candlestickSeries, []);
+            }
+        } catch (e) {
+            console.error('[dashboard chart] createSeriesMarkers', e);
+        }
+        classicLineSeries = {};
+        rsiLevelLines = [];
+        classicOscPaneCount = 0;
 
         try {
             candlestickSeries.attachPrimitive(createChartDomOverlaySyncPrimitive());
@@ -1857,6 +2276,7 @@
                 fetchStructures();
                 if (layerPa && layerPa.checked) fetchPriceActionIndicator();
                 if (layerLiquidity && layerLiquidity.checked) fetchLiquiditySwingsIndicator();
+                if (anyClassicLayerOn()) fetchClassicIndicators();
             })
             .catch(() => { loadingMore = false; setLoading(false); });
     }
@@ -1878,6 +2298,8 @@
                     fetchPriceActionIndicator();
                     fetchLiquiditySwingsIndicator();
                     fetchSmcFlowIndicator();
+                    fetchChartTrades();
+                    fetchClassicIndicators();
                 } else {
                     candlestickSeries.setData([]);
                     lastZones = [];
@@ -1885,9 +2307,18 @@
                     lastPaPayload = null;
                     lastLsPayload = null;
                     lastSmcPayload = null;
+                    lastChartSignals = [];
+                    lastOpenTrades = [];
+                    lastBollingerPayload = null;
+                    lastRsiPayload = null;
+                    lastSmaPayload = null;
+                    lastEmaPayload = null;
+                    lastAtrPayload = null;
                     if (priceActionOverlay) priceActionOverlay.innerHTML = '';
                     if (liquiditySwingsOverlay) liquiditySwingsOverlay.innerHTML = '';
                     if (smcFlowOverlay) smcFlowOverlay.innerHTML = '';
+                    renderChartMarkers();
+                    applyClassicOsEngineSeries();
                 }
                 updateChartTitle();
                 tickCandleCloseTimer();
@@ -1910,6 +2341,13 @@
         lastPaPayload = null;
         lastLsPayload = null;
         lastSmcPayload = null;
+        lastChartSignals = [];
+        lastOpenTrades = [];
+        lastBollingerPayload = null;
+        lastRsiPayload = null;
+        lastSmaPayload = null;
+        lastEmaPayload = null;
+        lastAtrPayload = null;
         if (priceActionOverlay) priceActionOverlay.innerHTML = '';
         if (liquiditySwingsOverlay) liquiditySwingsOverlay.innerHTML = '';
         if (smcFlowOverlay) smcFlowOverlay.innerHTML = '';
@@ -1940,10 +2378,14 @@
                         fetchPriceActionIndicator();
                         fetchLiquiditySwingsIndicator();
                         fetchSmcFlowIndicator();
+                        fetchChartTrades();
+                        fetchClassicIndicators();
                     });
                 } else {
                     if (refreshInterval) clearInterval(refreshInterval);
                     stopOverlaysRefresh();
+                    renderChartMarkers();
+                    applyClassicOsEngineSeries();
                 }
                 updateChartTitle();
                 tickCandleCloseTimer();
@@ -2005,6 +2447,7 @@
             if (!layerPa.checked) lastPaPayload = null;
             fetchPriceActionIndicator();
             applyPaBarColors({ fullResync: true });
+            renderChartMarkers();
             requestAnimationFrame(redrawStructureOverlay);
         });
     }
@@ -2024,6 +2467,21 @@
             requestAnimationFrame(redrawPriceActionOverlay);
         });
     }
+    // Classic OsEngine: пересчитываем только при смене чекбокса (как на bots/show).
+    [
+        [layerBollinger, () => { lastBollingerPayload = null; }],
+        [layerRsi, () => { lastRsiPayload = null; }],
+        [layerSma, () => { lastSmaPayload = null; }],
+        [layerEma, () => { lastEmaPayload = null; }],
+        [layerAtr, () => { lastAtrPayload = null; }],
+    ].forEach(([el, clearFn]) => {
+        if (!el) return;
+        el.addEventListener('change', () => {
+            saveLayerPrefs();
+            clearFn();
+            fetchClassicIndicators();
+        });
+    });
 
     new ResizeObserver(() => {
         if (!chart || !chartWrapper.clientWidth) return;

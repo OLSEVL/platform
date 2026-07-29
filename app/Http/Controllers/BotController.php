@@ -14,8 +14,13 @@ use App\Services\Bots\OpenRouterClient;
 use App\Services\CandleService;
 use App\Services\CandleStructureZoneDetector;
 use App\Services\DataCleanupService;
+use App\Services\Indicators\AtrIndicatorService;
+use App\Services\Indicators\BollingerIndicatorService;
+use App\Services\Indicators\EmaIndicatorService;
 use App\Services\Indicators\LiquiditySwingsIndicatorService;
 use App\Services\Indicators\PriceActionDgtIndicatorService;
+use App\Services\Indicators\RsiIndicatorService;
+use App\Services\Indicators\SmaIndicatorService;
 use App\Services\Indicators\SmcFlowIndicatorService;
 use App\Services\Telegram\StrongLevelTelegramLlmButton;
 use App\Services\Telegram\StrongLevelTelegramProcessManager;
@@ -2351,8 +2356,9 @@ class BotController extends Controller
      * Нужен отдельный endpoint, чтобы UI подхватывал закрытие сделок без перезагрузки страницы.
      */
     /**
-     * Индикатор Price Action (DGT): расчёт на сервере по тем же свечам, что и график.
-     * Параметры: таблица indicator_settings (ключ price_action_dgt), иначе legacy из config бота, иначе дефолты сервиса.
+     * Расчёт оверлей-индикаторов для графика бота.
+     * Query `layers[]` — какие слои считать (экономия CPU): pa, ls, smc, bollinger, rsi, sma, ema, atr.
+     * Без layers — для обратной совместимости считаем pa+ls+smc (старое поведение).
      */
     public function indicatorsData(
         Request $request,
@@ -2361,39 +2367,67 @@ class BotController extends Controller
         PriceActionDgtIndicatorService $pa,
         LiquiditySwingsIndicatorService $liquiditySwings,
         SmcFlowIndicatorService $smcFlow,
+        BollingerIndicatorService $bollinger,
+        RsiIndicatorService $rsi,
+        SmaIndicatorService $sma,
+        EmaIndicatorService $ema,
+        AtrIndicatorService $atr,
     ): JsonResponse {
         $this->ensureBotOwner($bot);
 
         $validated = $request->validate([
             'instrument' => ['required', 'string', 'max:64'],
             'timeframe' => ['nullable', 'integer', Rule::in(CandleService::DASHBOARD_TIMEFRAMES)],
+            'layers' => ['nullable', 'array'],
+            'layers.*' => ['string', Rule::in(['pa', 'ls', 'smc', 'bollinger', 'rsi', 'sma', 'ema', 'atr'])],
         ]);
 
         $instrument = (string) $validated['instrument'];
         $timeframe = (int) ($validated['timeframe'] ?? 1);
+        $layers = $validated['layers'] ?? null;
+        // Без явного списка — legacy: три старых слоя (чтобы старый фронт не ломался).
+        if ($layers === null) {
+            $want = ['pa' => true, 'ls' => true, 'smc' => true];
+        } else {
+            $want = array_fill_keys($layers, true);
+        }
 
-        // Тот же горизонт, что у /structures: последние сутки + до 5000 баров (как max_bars_back в Pine).
         $since = time() - 86400;
         $rows = $candleService->seriesForDashboard($instrument, $timeframe, $since, null, 5000);
 
-        $params = IndicatorSetting::mergedPriceActionDgtParams($bot);
-
-        $barSeconds = PriceActionDgtIndicatorService::barSecondsForTimeframe($timeframe);
-        $payload = $pa->compute($rows, $params, $barSeconds);
-        // Один проход по свечам: Liquidity Swings лёгкий относительно DGT, отдаём в том же JSON (слой на графике включается отдельно).
-        $lsParams = IndicatorSetting::mergedLiquiditySwingsParams($bot);
-        $liquidityPayload = $liquiditySwings->compute($rows, $lsParams);
-        $smcParams = IndicatorSetting::mergedSmcFlowParams($bot);
-        $smcPayload = $smcFlow->compute($rows, $smcParams);
-
-        return response()->json([
-            'indicator' => $payload,
-            'liquidity_swings' => $liquidityPayload,
-            'smc_flow' => $smcPayload,
+        $json = [
             'instrument' => $instrument,
             'timeframe' => $timeframe,
             'server_time' => now()->toIso8601String(),
-        ]);
+        ];
+
+        if (! empty($want['pa'])) {
+            $barSeconds = PriceActionDgtIndicatorService::barSecondsForTimeframe($timeframe);
+            $json['indicator'] = $pa->compute($rows, IndicatorSetting::mergedPriceActionDgtParams($bot), $barSeconds);
+        }
+        if (! empty($want['ls'])) {
+            $json['liquidity_swings'] = $liquiditySwings->compute($rows, IndicatorSetting::mergedLiquiditySwingsParams($bot));
+        }
+        if (! empty($want['smc'])) {
+            $json['smc_flow'] = $smcFlow->compute($rows, IndicatorSetting::mergedSmcFlowParams($bot));
+        }
+        if (! empty($want['bollinger'])) {
+            $json['bollinger'] = $bollinger->compute($rows, IndicatorSetting::mergedBollingerParams($bot));
+        }
+        if (! empty($want['rsi'])) {
+            $json['rsi'] = $rsi->compute($rows, IndicatorSetting::mergedRsiParams($bot));
+        }
+        if (! empty($want['sma'])) {
+            $json['sma'] = $sma->compute($rows, IndicatorSetting::mergedSmaParams($bot));
+        }
+        if (! empty($want['ema'])) {
+            $json['ema'] = $ema->compute($rows, IndicatorSetting::mergedEmaParams($bot));
+        }
+        if (! empty($want['atr'])) {
+            $json['atr'] = $atr->compute($rows, IndicatorSetting::mergedAtrParams($bot));
+        }
+
+        return response()->json($json);
     }
 
     /**
