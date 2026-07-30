@@ -5,6 +5,7 @@ namespace Tests\Unit;
 use App\Services\Indicators\AtrIndicatorService;
 use App\Services\Indicators\BollingerIndicatorService;
 use App\Services\Indicators\EmaIndicatorService;
+use App\Services\Indicators\MacdIndicatorService;
 use App\Services\Indicators\OsEngineCandleMath;
 use App\Services\Indicators\RsiIndicatorService;
 use App\Services\Indicators\SmaIndicatorService;
@@ -39,6 +40,7 @@ class OsEngineClassicIndicatorsTest extends TestCase
         $bb = (new BollingerIndicatorService)->computeSeries($rows, $p['bollinger']);
         $rsi = (new RsiIndicatorService)->computeSeries($rows, $p['rsi']);
         $atr = (new AtrIndicatorService)->computeSeries($rows, $p['atr']);
+        $macd = (new MacdIndicatorService)->computeSeries($rows, $p['macd']);
 
         foreach ($g['at'] as $idxStr => $expect) {
             $i = (int) $idxStr;
@@ -49,7 +51,31 @@ class OsEngineClassicIndicatorsTest extends TestCase
             $this->assertEqualsWithDelta($expect['bb_down'], $bb['down'][$i], 1e-6, "bb_down@$i");
             $this->assertEqualsWithDelta($expect['rsi'], $rsi[$i], 1e-2, "rsi@$i");
             $this->assertEqualsWithDelta($expect['atr'], $atr[$i], 1e-9, "atr@$i");
+            $this->assertEqualsWithDelta($expect['macd'], (float) $macd['macd'][$i], 1e-8, "macd@$i");
+            $this->assertEqualsWithDelta($expect['macd_signal'], (float) $macd['signal'][$i], 1e-8, "macd_signal@$i");
+            $this->assertEqualsWithDelta($expect['macd_hist'], (float) $macd['histogram'][$i], 1e-8, "macd_hist@$i");
         }
+    }
+
+    /** MACD = EMA(fast)−EMA(slow); hist = macd−signal; прогрев с max(fast,slow). */
+    public function test_macd_equals_ema_diff_independent(): void
+    {
+        $g = $this->golden();
+        $rows = $g['rows'];
+        $fast = 3;
+        $slow = 5;
+        $index = 10;
+        $emaSvc = new EmaIndicatorService;
+        $emaFast = $emaSvc->computeSeries($rows, ['length' => $fast, 'candle_point' => 'Close']);
+        $emaSlow = $emaSvc->computeSeries($rows, ['length' => $slow, 'candle_point' => 'Close']);
+        $expected = round($emaFast[$index] - $emaSlow[$index], 8);
+        $macd = (new MacdIndicatorService)->computeSeries($rows, [
+            'length_fast' => $fast,
+            'length_slow' => $slow,
+            'length_signal' => 3,
+        ]);
+        $this->assertEqualsWithDelta($expected, (float) $macd['macd'][$index], 1e-12);
+        $this->assertNull($macd['macd'][$slow - 1]);
     }
 
     /** Независимая проверка SMA = среднее Close[index-length+1 .. index] (OsEngine Summ). */

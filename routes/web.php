@@ -66,6 +66,8 @@ Route::middleware('auth')->group(function () {
         Route::put('/{bot}/indicators/ema', [BotChartIndicatorController::class, 'updateEma'])->name('indicators.ema.update');
         Route::get('/{bot}/indicators/atr', [BotChartIndicatorController::class, 'editAtr'])->name('indicators.atr.edit');
         Route::put('/{bot}/indicators/atr', [BotChartIndicatorController::class, 'updateAtr'])->name('indicators.atr.update');
+        Route::get('/{bot}/indicators/macd', [BotChartIndicatorController::class, 'editMacd'])->name('indicators.macd.edit');
+        Route::put('/{bot}/indicators/macd', [BotChartIndicatorController::class, 'updateMacd'])->name('indicators.macd.update');
         Route::get('/{bot}/activity', [BotController::class, 'activity'])->name('activity');
         Route::get('/{bot}/cards', [BotController::class, 'cards'])->name('cards');
         Route::get('/{bot}/cards/data', [BotController::class, 'cardsData'])->name('cards.data');

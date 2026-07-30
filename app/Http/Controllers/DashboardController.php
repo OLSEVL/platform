@@ -13,6 +13,7 @@ use App\Services\Indicators\AtrIndicatorService;
 use App\Services\Indicators\BollingerIndicatorService;
 use App\Services\Indicators\EmaIndicatorService;
 use App\Services\Indicators\LiquiditySwingsIndicatorService;
+use App\Services\Indicators\MacdIndicatorService;
 use App\Services\Indicators\PriceActionDgtIndicatorService;
 use App\Services\Indicators\RsiIndicatorService;
 use App\Services\Indicators\SmaIndicatorService;
@@ -420,7 +421,7 @@ class DashboardController extends Controller
     }
 
     /**
-     * Классика OsEngine (BB/RSI/SMA/EMA/ATR) для главного графика.
+     * Классика OsEngine (BB/RSI/SMA/EMA/ATR/MACD) для главного графика.
      * Параметры — с якорного бота (как PA/SMC); без бота — defaultParams сервисов.
      * Query layers[] — считаем только включённые слои.
      */
@@ -432,12 +433,13 @@ class DashboardController extends Controller
         SmaIndicatorService $sma,
         EmaIndicatorService $ema,
         AtrIndicatorService $atr,
+        MacdIndicatorService $macd,
     ): JsonResponse {
         $validated = $request->validate([
             'instrument' => ['required', 'string', 'max:64'],
             'timeframe' => ['nullable', 'integer', Rule::in(CandleService::DASHBOARD_TIMEFRAMES)],
             'layers' => ['nullable', 'array'],
-            'layers.*' => ['string', Rule::in(['bollinger', 'rsi', 'sma', 'ema', 'atr'])],
+            'layers.*' => ['string', Rule::in(['bollinger', 'rsi', 'sma', 'ema', 'atr', 'macd'])],
         ]);
 
         $instrument = (string) $validated['instrument'];
@@ -502,6 +504,14 @@ class DashboardController extends Controller
                 $anchorBot !== null
                     ? IndicatorSetting::mergedAtrParams($anchorBot)
                     : AtrIndicatorService::defaultParams()
+            );
+        }
+        if (! empty($want['macd'])) {
+            $json['macd'] = $macd->compute(
+                $rows,
+                $anchorBot !== null
+                    ? IndicatorSetting::mergedMacdParams($anchorBot)
+                    : MacdIndicatorService::defaultParams()
             );
         }
 

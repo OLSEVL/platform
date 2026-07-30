@@ -18,6 +18,7 @@ use App\Services\Indicators\AtrIndicatorService;
 use App\Services\Indicators\BollingerIndicatorService;
 use App\Services\Indicators\EmaIndicatorService;
 use App\Services\Indicators\LiquiditySwingsIndicatorService;
+use App\Services\Indicators\MacdIndicatorService;
 use App\Services\Indicators\PriceActionDgtIndicatorService;
 use App\Services\Indicators\RsiIndicatorService;
 use App\Services\Indicators\SmaIndicatorService;
@@ -2357,7 +2358,7 @@ class BotController extends Controller
      */
     /**
      * Расчёт оверлей-индикаторов для графика бота.
-     * Query `layers[]` — какие слои считать (экономия CPU): pa, ls, smc, bollinger, rsi, sma, ema, atr.
+     * Query `layers[]` — какие слои считать (экономия CPU): pa, ls, smc, bollinger, rsi, sma, ema, atr, macd.
      * Без layers — для обратной совместимости считаем pa+ls+smc (старое поведение).
      */
     public function indicatorsData(
@@ -2372,6 +2373,7 @@ class BotController extends Controller
         SmaIndicatorService $sma,
         EmaIndicatorService $ema,
         AtrIndicatorService $atr,
+        MacdIndicatorService $macd,
     ): JsonResponse {
         $this->ensureBotOwner($bot);
 
@@ -2379,7 +2381,7 @@ class BotController extends Controller
             'instrument' => ['required', 'string', 'max:64'],
             'timeframe' => ['nullable', 'integer', Rule::in(CandleService::DASHBOARD_TIMEFRAMES)],
             'layers' => ['nullable', 'array'],
-            'layers.*' => ['string', Rule::in(['pa', 'ls', 'smc', 'bollinger', 'rsi', 'sma', 'ema', 'atr'])],
+            'layers.*' => ['string', Rule::in(['pa', 'ls', 'smc', 'bollinger', 'rsi', 'sma', 'ema', 'atr', 'macd'])],
         ]);
 
         $instrument = (string) $validated['instrument'];
@@ -2425,6 +2427,9 @@ class BotController extends Controller
         }
         if (! empty($want['atr'])) {
             $json['atr'] = $atr->compute($rows, IndicatorSetting::mergedAtrParams($bot));
+        }
+        if (! empty($want['macd'])) {
+            $json['macd'] = $macd->compute($rows, IndicatorSetting::mergedMacdParams($bot));
         }
 
         return response()->json($json);

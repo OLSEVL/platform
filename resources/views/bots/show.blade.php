@@ -258,6 +258,13 @@
                                 </label>
                                 <a href="{{ route('bots.indicators.atr.edit', $bot) }}" class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-zinc-700 bg-zinc-800/80 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-100 text-xs" title="Настройки ATR">⚙</a>
                             </div>
+                            <div class="flex items-center justify-between gap-1">
+                                <label for="layer-macd" class="flex min-w-0 flex-1 items-center gap-2 text-sm text-zinc-300 cursor-pointer">
+                                    <input type="checkbox" id="layer-macd" class="rounded border-zinc-600 bg-zinc-800 text-blue-500 shrink-0">
+                                    <span class="truncate">MACD</span>
+                                </label>
+                                <a href="{{ route('bots.indicators.macd.edit', $bot) }}" class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-zinc-700 bg-zinc-800/80 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-100 text-xs" title="Настройки MACD">⚙</a>
+                            </div>
                         </div>
                         @if($isChartAnalystBot ?? false)
                         <div class="flex items-center justify-between gap-1 border-t border-zinc-800 pt-2 mt-1">
@@ -616,6 +623,7 @@
     const layerSma = document.getElementById('layer-sma');
     const layerEma = document.getElementById('layer-ema');
     const layerAtr = document.getElementById('layer-atr');
+    const layerMacd = document.getElementById('layer-macd');
     const instrumentSearchInput = document.getElementById('instrument-search');
     const instrumentSearchClearBtn = document.getElementById('instrument-search-clear');
     const botAnalysisBtn = document.getElementById('bot-analysis-btn');
@@ -651,6 +659,7 @@
     let lastSmaPayload = null;
     let lastEmaPayload = null;
     let lastAtrPayload = null;
+    let lastMacdPayload = null;
     /** Line-series handles для классики OsEngine (пересоздаём при apply). */
     let classicLineSeries = {};
     let rsiLevelLines = [];
@@ -823,6 +832,7 @@
             if (layerSma && typeof obj.sma === 'boolean') layerSma.checked = obj.sma;
             if (layerEma && typeof obj.ema === 'boolean') layerEma.checked = obj.ema;
             if (layerAtr && typeof obj.atr === 'boolean') layerAtr.checked = obj.atr;
+            if (layerMacd && typeof obj.macd === 'boolean') layerMacd.checked = obj.macd;
             if (BOT_IS_CHART_ANALYST && layerLlmLevels && typeof obj.llmLevels === 'boolean') layerLlmLevels.checked = obj.llmLevels;
         } catch (_) {}
     }
@@ -840,6 +850,7 @@
                 sma: layerSma ? layerSma.checked : false,
                 ema: layerEma ? layerEma.checked : false,
                 atr: layerAtr ? layerAtr.checked : false,
+                macd: layerMacd ? layerMacd.checked : false,
                 llmLevels: (BOT_IS_CHART_ANALYST && layerLlmLevels) ? layerLlmLevels.checked : false,
             }));
         } catch (_) {}
@@ -1061,7 +1072,8 @@
         const wantSma = layerSma && layerSma.checked;
         const wantEma = layerEma && layerEma.checked;
         const wantAtr = layerAtr && layerAtr.checked;
-        if (!wantPa && !wantLs && !wantSmc && !wantBb && !wantRsi && !wantSma && !wantEma && !wantAtr) {
+        const wantMacd = layerMacd && layerMacd.checked;
+        if (!wantPa && !wantLs && !wantSmc && !wantBb && !wantRsi && !wantSma && !wantEma && !wantAtr && !wantMacd) {
             lastPaPayload = null;
             lastLsPayload = null;
             lastSmcPayload = null;
@@ -1070,6 +1082,7 @@
             lastSmaPayload = null;
             lastEmaPayload = null;
             lastAtrPayload = null;
+            lastMacdPayload = null;
             redrawPriceActionOverlay();
             applyPaBarColors({ fullResync: true });
             renderChartMarkers();
@@ -1086,6 +1099,7 @@
         if (wantSma) layers.push('sma');
         if (wantEma) layers.push('ema');
         if (wantAtr) layers.push('atr');
+        if (wantMacd) layers.push('macd');
         layers.forEach((l) => params.append('layers[]', l));
         fetch(`${PA_INDICATOR_URL}?${params.toString()}`, { headers: { 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' } })
             .then((r) => r.json())
@@ -1099,6 +1113,7 @@
                     lastSmaPayload = wantSma && d && d.sma ? d.sma : null;
                     lastEmaPayload = wantEma && d && d.ema ? d.ema : null;
                     lastAtrPayload = wantAtr && d && d.atr ? d.atr : null;
+                    lastMacdPayload = wantMacd && d && d.macd ? d.macd : null;
                     redrawPriceActionOverlay();
                     applyPaBarColors({ fullResync: wantPa });
                     renderChartMarkers();
@@ -1113,6 +1128,7 @@
                     lastSmaPayload = null;
                     lastEmaPayload = null;
                     lastAtrPayload = null;
+                    lastMacdPayload = null;
                     try {
                         redrawPriceActionOverlay();
                         applyPaBarColors({ fullResync: true });
@@ -1163,6 +1179,7 @@
         clearClassicOsEngineSeries();
 
         const LineSeries = LightweightCharts.LineSeries;
+        const HistogramSeries = LightweightCharts.HistogramSeries;
         if (!LineSeries || typeof chart.addSeries !== 'function') {
             console.error('[indicators] LWC v5 addSeries/LineSeries недоступны');
             return;
@@ -1173,6 +1190,7 @@
         const wantSma = layerSma && layerSma.checked && lastSmaPayload;
         const wantEma = layerEma && layerEma.checked && lastEmaPayload;
         const wantAtr = layerAtr && layerAtr.checked && lastAtrPayload;
+        const wantMacd = layerMacd && layerMacd.checked && lastMacdPayload;
 
         // Линии на основной pane (индекс 0) — рядом со свечами.
         const addMainLine = (key, data, color, width) => {
@@ -1205,7 +1223,7 @@
             addMainLine('ema', (lastEmaPayload.series || {}).ema, st.color, st.line_width);
         }
 
-        const oscCount = (wantRsi ? 1 : 0) + (wantAtr ? 1 : 0);
+        const oscCount = (wantRsi ? 1 : 0) + (wantMacd ? 1 : 0) + (wantAtr ? 1 : 0);
         if (oscCount > 0) {
             // Главная pane крупнее осцилляторов (~1 : 0.28 на каждый нижний pane).
             try {
@@ -1279,10 +1297,83 @@
             } catch (_) {}
         }
 
-        // ATR — ещё один pane под RSI (или единственный нижний, если RSI выключен).
+        // MACD — отдельный pane: histogram + MACD line + signal (+ нулевая линия).
+        if (wantMacd) {
+            const st = lastMacdPayload.style || {};
+            const ser = lastMacdPayload.series || {};
+            const histColor = st.color_histogram || '#1e90ff';
+            const histNeg = st.color_histogram_neg || '#f43f5e';
+            const lineW = st.line_width || 1;
+            let paneIndex = 1;
+            try {
+                const pane = chart.addPane(false);
+                if (pane && typeof pane.setStretchFactor === 'function') {
+                    pane.setStretchFactor(0.32);
+                }
+                paneIndex = Math.max(1, chart.panes().length - 1);
+                classicOscPaneCount += 1;
+            } catch (e) {
+                console.error('[indicators] addPane MACD', e);
+            }
+
+            // Гистограмма первой — визуально «под» линиями.
+            if (HistogramSeries && Array.isArray(ser.histogram) && ser.histogram.length) {
+                try {
+                    const hs = chart.addSeries(HistogramSeries, {
+                        priceLineVisible: false,
+                        lastValueVisible: false,
+                        baseLineVisible: true,
+                        baseLineColor: 'rgba(161,161,170,0.45)',
+                        baseLineWidth: 1,
+                        baseLineStyle: 2,
+                    }, paneIndex);
+                    hs.setData(ser.histogram.map((p) => ({
+                        time: p.time,
+                        value: p.value,
+                        color: Number(p.value) >= 0 ? histColor : histNeg,
+                    })));
+                    classicLineSeries['macd_hist'] = hs;
+                } catch (e) {
+                    console.error('[indicators] MACD histogram', e);
+                }
+            }
+
+            const addMacdLine = (key, data, color) => {
+                if (!Array.isArray(data) || !data.length) return;
+                const s = chart.addSeries(LineSeries, {
+                    color: color || '#006400',
+                    lineWidth: lineW,
+                    priceLineVisible: false,
+                    lastValueVisible: key === 'macd_line',
+                    crosshairMarkerVisible: false,
+                }, paneIndex);
+                s.setData(data.map((p) => ({ time: p.time, value: p.value })));
+                classicLineSeries[key] = s;
+                return s;
+            };
+            const macdLine = addMacdLine('macd_line', ser.macd, st.color_macd || '#006400');
+            addMacdLine('macd_signal', ser.signal, st.color_signal || '#8b0000');
+
+            // Нулевая линия на шкале MACD (если гистограммы нет — рисуем priceLine на line series).
+            try {
+                const anchor = macdLine || classicLineSeries['macd_signal'] || classicLineSeries['macd_hist'];
+                if (anchor && typeof anchor.createPriceLine === 'function') {
+                    rsiLevelLines.push(anchor.createPriceLine({
+                        price: 0,
+                        color: 'rgba(161,161,170,0.55)',
+                        lineWidth: 1,
+                        lineStyle: 2,
+                        axisLabelVisible: true,
+                        title: '0',
+                    }));
+                }
+            } catch (_) {}
+        }
+
+        // ATR — ещё один pane под RSI/MACD (или единственный нижний).
         if (wantAtr) {
             const st = lastAtrPayload.style || {};
-            let paneIndex = wantRsi ? 2 : 1;
+            let paneIndex = 1;
             try {
                 const pane = chart.addPane(false);
                 if (pane && typeof pane.setStretchFactor === 'function') {
@@ -1316,7 +1407,8 @@
             (layerRsi && layerRsi.checked) ||
             (layerSma && layerSma.checked) ||
             (layerEma && layerEma.checked) ||
-            (layerAtr && layerAtr.checked)
+            (layerAtr && layerAtr.checked) ||
+            (layerMacd && layerMacd.checked)
         );
     }
 
@@ -3861,6 +3953,7 @@
         lastSmaPayload = null;
         lastEmaPayload = null;
         lastAtrPayload = null;
+        lastMacdPayload = null;
         clearClassicOsEngineSeries();
         if (priceActionOverlay) priceActionOverlay.innerHTML = '';
         if (liquiditySwingsOverlay) liquiditySwingsOverlay.innerHTML = '';
@@ -3947,6 +4040,7 @@
         [layerSma, () => { lastSmaPayload = null; }],
         [layerEma, () => { lastEmaPayload = null; }],
         [layerAtr, () => { lastAtrPayload = null; }],
+        [layerMacd, () => { lastMacdPayload = null; }],
     ].forEach(([el, clearFn]) => {
         if (!el) return;
         el.addEventListener('change', () => {

@@ -297,6 +297,17 @@
                                 <a href="{{ route('bots.index') }}" class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-zinc-700 bg-zinc-800/40 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300 text-xs" title="Создайте бота — страницы настроек индикаторов привязаны к боту">⚙</a>
                             @endif
                         </div>
+                        <div class="flex items-center justify-between gap-1">
+                            <label for="layer-macd" class="flex min-w-0 flex-1 items-center gap-2 text-sm text-zinc-300 cursor-pointer">
+                                <input type="checkbox" id="layer-macd" class="rounded border-zinc-600 bg-zinc-800 text-blue-500 shrink-0">
+                                <span class="truncate">MACD</span>
+                            </label>
+                            @if($chartIndicatorBot)
+                                <a href="{{ route('bots.indicators.macd.edit', $chartIndicatorBot) }}" class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-zinc-700 bg-zinc-800/80 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-100 text-xs" title="Настройки MACD">⚙</a>
+                            @else
+                                <a href="{{ route('bots.index') }}" class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-zinc-700 bg-zinc-800/40 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300 text-xs" title="Создайте бота — страницы настроек индикаторов привязаны к боту">⚙</a>
+                            @endif
+                        </div>
                     </div>
                 </div>
             </div>
@@ -477,6 +488,7 @@
     const layerSma = document.getElementById('layer-sma');
     const layerEma = document.getElementById('layer-ema');
     const layerAtr = document.getElementById('layer-atr');
+    const layerMacd = document.getElementById('layer-macd');
     const priceActionOverlay = document.getElementById('price-action-overlay');
     const liquiditySwingsOverlay = document.getElementById('liquidity-swings-overlay');
     const smcFlowOverlay = document.getElementById('smc-flow-overlay');
@@ -517,6 +529,7 @@
             if (layerSma && typeof o.sma === 'boolean') layerSma.checked = o.sma;
             if (layerEma && typeof o.ema === 'boolean') layerEma.checked = o.ema;
             if (layerAtr && typeof o.atr === 'boolean') layerAtr.checked = o.atr;
+            if (layerMacd && typeof o.macd === 'boolean') layerMacd.checked = o.macd;
         } catch (_) { /* ignore */ }
     }
 
@@ -533,6 +546,7 @@
                 sma: layerSma ? layerSma.checked : false,
                 ema: layerEma ? layerEma.checked : false,
                 atr: layerAtr ? layerAtr.checked : false,
+                macd: layerMacd ? layerMacd.checked : false,
             }));
         } catch (_) { /* ignore */ }
     }
@@ -582,6 +596,7 @@
     let lastSmaPayload = null;
     let lastEmaPayload = null;
     let lastAtrPayload = null;
+    let lastMacdPayload = null;
     let classicLineSeries = {};
     let rsiLevelLines = [];
     let classicOscPaneCount = 0;
@@ -1083,7 +1098,8 @@
             (layerRsi && layerRsi.checked) ||
             (layerSma && layerSma.checked) ||
             (layerEma && layerEma.checked) ||
-            (layerAtr && layerAtr.checked)
+            (layerAtr && layerAtr.checked) ||
+            (layerMacd && layerMacd.checked)
         );
     }
 
@@ -1122,6 +1138,7 @@
         clearClassicOsEngineSeries();
 
         const LineSeries = LightweightCharts.LineSeries;
+        const HistogramSeries = LightweightCharts.HistogramSeries;
         if (!LineSeries || typeof chart.addSeries !== 'function') {
             console.error('[dashboard indicators] LWC v5 addSeries/LineSeries недоступны');
             return;
@@ -1132,6 +1149,7 @@
         const wantSma = layerSma && layerSma.checked && lastSmaPayload;
         const wantEma = layerEma && layerEma.checked && lastEmaPayload;
         const wantAtr = layerAtr && layerAtr.checked && lastAtrPayload;
+        const wantMacd = layerMacd && layerMacd.checked && lastMacdPayload;
 
         const addMainLine = (key, data, color, width) => {
             if (!Array.isArray(data) || !data.length) return;
@@ -1163,7 +1181,7 @@
             addMainLine('ema', (lastEmaPayload.series || {}).ema, st.color, st.line_width);
         }
 
-        const oscCount = (wantRsi ? 1 : 0) + (wantAtr ? 1 : 0);
+        const oscCount = (wantRsi ? 1 : 0) + (wantMacd ? 1 : 0) + (wantAtr ? 1 : 0);
         if (oscCount > 0) {
             try {
                 const mainPane = chart.panes()[0];
@@ -1235,9 +1253,80 @@
             } catch (_) {}
         }
 
+        // MACD pane: histogram + lines + нулевая линия (как на bots/show).
+        if (wantMacd) {
+            const st = lastMacdPayload.style || {};
+            const ser = lastMacdPayload.series || {};
+            const histColor = st.color_histogram || '#1e90ff';
+            const histNeg = st.color_histogram_neg || '#f43f5e';
+            const lineW = st.line_width || 1;
+            let paneIndex = 1;
+            try {
+                const pane = chart.addPane(false);
+                if (pane && typeof pane.setStretchFactor === 'function') {
+                    pane.setStretchFactor(0.32);
+                }
+                paneIndex = Math.max(1, chart.panes().length - 1);
+                classicOscPaneCount += 1;
+            } catch (e) {
+                console.error('[dashboard indicators] addPane MACD', e);
+            }
+
+            if (HistogramSeries && Array.isArray(ser.histogram) && ser.histogram.length) {
+                try {
+                    const hs = chart.addSeries(HistogramSeries, {
+                        priceLineVisible: false,
+                        lastValueVisible: false,
+                        baseLineVisible: true,
+                        baseLineColor: 'rgba(161,161,170,0.45)',
+                        baseLineWidth: 1,
+                        baseLineStyle: 2,
+                    }, paneIndex);
+                    hs.setData(ser.histogram.map((p) => ({
+                        time: p.time,
+                        value: p.value,
+                        color: Number(p.value) >= 0 ? histColor : histNeg,
+                    })));
+                    classicLineSeries['macd_hist'] = hs;
+                } catch (e) {
+                    console.error('[dashboard indicators] MACD histogram', e);
+                }
+            }
+
+            const addMacdLine = (key, data, color) => {
+                if (!Array.isArray(data) || !data.length) return;
+                const s = chart.addSeries(LineSeries, {
+                    color: color || '#006400',
+                    lineWidth: lineW,
+                    priceLineVisible: false,
+                    lastValueVisible: key === 'macd_line',
+                    crosshairMarkerVisible: false,
+                }, paneIndex);
+                s.setData(data.map((p) => ({ time: p.time, value: p.value })));
+                classicLineSeries[key] = s;
+                return s;
+            };
+            const macdLine = addMacdLine('macd_line', ser.macd, st.color_macd || '#006400');
+            addMacdLine('macd_signal', ser.signal, st.color_signal || '#8b0000');
+
+            try {
+                const anchor = macdLine || classicLineSeries['macd_signal'] || classicLineSeries['macd_hist'];
+                if (anchor && typeof anchor.createPriceLine === 'function') {
+                    rsiLevelLines.push(anchor.createPriceLine({
+                        price: 0,
+                        color: 'rgba(161,161,170,0.55)',
+                        lineWidth: 1,
+                        lineStyle: 2,
+                        axisLabelVisible: true,
+                        title: '0',
+                    }));
+                }
+            } catch (_) {}
+        }
+
         if (wantAtr) {
             const st = lastAtrPayload.style || {};
-            let paneIndex = wantRsi ? 2 : 1;
+            let paneIndex = 1;
             try {
                 const pane = chart.addPane(false);
                 if (pane && typeof pane.setStretchFactor === 'function') {
@@ -1269,6 +1358,7 @@
             lastSmaPayload = null;
             lastEmaPayload = null;
             lastAtrPayload = null;
+            lastMacdPayload = null;
             applyClassicOsEngineSeries();
             return;
         }
@@ -1277,12 +1367,14 @@
         const wantSma = layerSma && layerSma.checked;
         const wantEma = layerEma && layerEma.checked;
         const wantAtr = layerAtr && layerAtr.checked;
+        const wantMacd = layerMacd && layerMacd.checked;
         const layers = [];
         if (wantBb) layers.push('bollinger');
         if (wantRsi) layers.push('rsi');
         if (wantSma) layers.push('sma');
         if (wantEma) layers.push('ema');
         if (wantAtr) layers.push('atr');
+        if (wantMacd) layers.push('macd');
 
         const seq = ++classicIndicatorsFetchSeq;
         const params = new URLSearchParams({
@@ -1303,6 +1395,7 @@
                     lastSmaPayload = wantSma && d && d.sma ? d.sma : null;
                     lastEmaPayload = wantEma && d && d.ema ? d.ema : null;
                     lastAtrPayload = wantAtr && d && d.atr ? d.atr : null;
+                    lastMacdPayload = wantMacd && d && d.macd ? d.macd : null;
                     applyClassicOsEngineSeries();
                 } catch (e) {
                     console.error('[dashboard classic indicators] apply', e);
@@ -1311,6 +1404,7 @@
                     lastSmaPayload = null;
                     lastEmaPayload = null;
                     lastAtrPayload = null;
+                    lastMacdPayload = null;
                     try { applyClassicOsEngineSeries(); } catch (_) {}
                 }
             })
@@ -2314,6 +2408,7 @@
                     lastSmaPayload = null;
                     lastEmaPayload = null;
                     lastAtrPayload = null;
+                    lastMacdPayload = null;
                     if (priceActionOverlay) priceActionOverlay.innerHTML = '';
                     if (liquiditySwingsOverlay) liquiditySwingsOverlay.innerHTML = '';
                     if (smcFlowOverlay) smcFlowOverlay.innerHTML = '';
@@ -2348,6 +2443,7 @@
         lastSmaPayload = null;
         lastEmaPayload = null;
         lastAtrPayload = null;
+        lastMacdPayload = null;
         if (priceActionOverlay) priceActionOverlay.innerHTML = '';
         if (liquiditySwingsOverlay) liquiditySwingsOverlay.innerHTML = '';
         if (smcFlowOverlay) smcFlowOverlay.innerHTML = '';
@@ -2474,6 +2570,7 @@
         [layerSma, () => { lastSmaPayload = null; }],
         [layerEma, () => { lastEmaPayload = null; }],
         [layerAtr, () => { lastAtrPayload = null; }],
+        [layerMacd, () => { lastMacdPayload = null; }],
     ].forEach(([el, clearFn]) => {
         if (!el) return;
         el.addEventListener('change', () => {

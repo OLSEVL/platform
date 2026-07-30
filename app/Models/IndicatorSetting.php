@@ -6,6 +6,7 @@ use App\Services\Indicators\AtrIndicatorService;
 use App\Services\Indicators\BollingerIndicatorService;
 use App\Services\Indicators\EmaIndicatorService;
 use App\Services\Indicators\LiquiditySwingsIndicatorService;
+use App\Services\Indicators\MacdIndicatorService;
 use App\Services\Indicators\OrderBlocksIndicatorService;
 use App\Services\Indicators\PriceActionDgtIndicatorService;
 use App\Services\Indicators\RsiIndicatorService;
@@ -38,6 +39,8 @@ class IndicatorSetting extends Model
     public const KEY_EMA = 'ema';
 
     public const KEY_ATR = 'atr';
+
+    public const KEY_MACD = 'macd';
 
     protected $fillable = ['bot_id', 'indicator_key', 'settings'];
 
@@ -175,5 +178,11 @@ class IndicatorSetting extends Model
     public static function mergedAtrParams(Bot $bot): array
     {
         return self::mergedByKey($bot, self::KEY_ATR, [AtrIndicatorService::class, 'defaultParams']);
+    }
+
+    /** @return array<string, mixed> */
+    public static function mergedMacdParams(Bot $bot): array
+    {
+        return self::mergedByKey($bot, self::KEY_MACD, [MacdIndicatorService::class, 'defaultParams']);
     }
 }

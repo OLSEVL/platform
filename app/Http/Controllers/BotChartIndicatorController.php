@@ -7,10 +7,12 @@ use App\Models\IndicatorSetting;
 use App\Services\Indicators\AtrIndicatorService;
 use App\Services\Indicators\BollingerIndicatorService;
 use App\Services\Indicators\EmaIndicatorService;
+use App\Services\Indicators\MacdIndicatorService;
 use App\Services\Indicators\OrderBlocksIndicatorService;
 use App\Support\AtrSettingsForm;
 use App\Support\BollingerSettingsForm;
 use App\Support\EmaSettingsForm;
+use App\Support\MacdSettingsForm;
 use App\Support\OrderBlocksSettingsForm;
 use App\Services\Indicators\LiquiditySwingsIndicatorService;
 use App\Services\Indicators\PriceActionDgtIndicatorService;
@@ -267,6 +269,21 @@ class BotChartIndicatorController extends Controller
     public function updateAtr(Request $request, Bot $bot): RedirectResponse
     {
         return $this->saveClassic($request, $bot, IndicatorSetting::KEY_ATR, AtrIndicatorService::class, AtrSettingsForm::class, 'bots.indicators.atr.edit', 'ATR');
+    }
+
+    public function editMacd(Bot $bot): View
+    {
+        $this->ensureBotOwner($bot);
+
+        return view('bots.indicators.macd', [
+            'bot' => $bot,
+            'p' => IndicatorSetting::mergedMacdParams($bot),
+        ]);
+    }
+
+    public function updateMacd(Request $request, Bot $bot): RedirectResponse
+    {
+        return $this->saveClassic($request, $bot, IndicatorSetting::KEY_MACD, MacdIndicatorService::class, MacdSettingsForm::class, 'bots.indicators.macd.edit', 'MACD');
     }
 
     /**
