@@ -3,14 +3,19 @@
 namespace Tests\Unit;
 
 use App\Services\Indicators\AtrIndicatorService;
+use App\Services\Indicators\AdxIndicatorService;
 use App\Services\Indicators\BollingerIndicatorService;
 use App\Services\Indicators\EmaIndicatorService;
+use App\Services\Indicators\EnvelopsIndicatorService;
 use App\Services\Indicators\CciIndicatorService;
+use App\Services\Indicators\KeltnerIndicatorService;
 use App\Services\Indicators\MacdIndicatorService;
 use App\Services\Indicators\OsEngineCandleMath;
+use App\Services\Indicators\ParabolicSarIndicatorService;
 use App\Services\Indicators\RsiIndicatorService;
 use App\Services\Indicators\SmaIndicatorService;
 use App\Services\Indicators\StochasticIndicatorService;
+use App\Services\Indicators\SuperTrendIndicatorService;
 use App\Services\Indicators\VwmaIndicatorService;
 use PHPUnit\Framework\TestCase;
 
@@ -47,6 +52,11 @@ class OsEngineClassicIndicatorsTest extends TestCase
         $stoch = (new StochasticIndicatorService)->computeSeries($rows, $p['stochastic']);
         $cci = (new CciIndicatorService)->computeSeries($rows, $p['cci']);
         $vwma = (new VwmaIndicatorService)->computeSeries($rows, $p['vwma']);
+        $keltner = (new KeltnerIndicatorService)->computeSeries($rows, $p['keltner']);
+        $envelops = (new EnvelopsIndicatorService)->computeSeries($rows, $p['envelops']);
+        $sar = (new ParabolicSarIndicatorService)->computeSeries($rows, $p['parabolic_sar']);
+        $superTrend = (new SuperTrendIndicatorService)->computeSeries($rows, $p['supertrend']);
+        $adx = (new AdxIndicatorService)->computeSeries($rows, $p['adx']);
 
         foreach ($g['at'] as $idxStr => $expect) {
             $i = (int) $idxStr;
@@ -66,6 +76,17 @@ class OsEngineClassicIndicatorsTest extends TestCase
             $cciGot = $cci[$i] === null ? 0.0 : (float) $cci[$i];
             $this->assertEqualsWithDelta($expect['cci'], $cciGot, 1e-5, "cci@$i");
             $this->assertEqualsWithDelta($expect['vwma'], $vwma[$i], 1e-8, "vwma@$i");
+            $this->assertEqualsWithDelta($expect['keltner_mid'], $keltner['mid'][$i], 1e-8, "keltner_mid@$i");
+            $this->assertEqualsWithDelta($expect['keltner_up'], $keltner['up'][$i], 1e-6, "keltner_up@$i");
+            $this->assertEqualsWithDelta($expect['keltner_down'], $keltner['down'][$i], 1e-6, "keltner_down@$i");
+            $this->assertEqualsWithDelta($expect['envelops_mid'], $envelops['mid'][$i], 1e-8, "envelops_mid@$i");
+            $this->assertEqualsWithDelta($expect['envelops_up'], $envelops['up'][$i], 1e-6, "envelops_up@$i");
+            $this->assertEqualsWithDelta($expect['envelops_down'], $envelops['down'][$i], 1e-6, "envelops_down@$i");
+            $this->assertEqualsWithDelta($expect['parabolic_sar'], $sar[$i], 1e-8, "parabolic_sar@$i");
+            $this->assertEqualsWithDelta($expect['supertrend'], $superTrend['center'][$i], 1e-8, "supertrend@$i");
+            $this->assertEqualsWithDelta($expect['adx'], $adx['adx'][$i], 1e-4, "adx@$i");
+            $this->assertEqualsWithDelta($expect['adx_plus'], $adx['plus'][$i], 1e-4, "adx_plus@$i");
+            $this->assertEqualsWithDelta($expect['adx_minus'], $adx['minus'][$i], 1e-4, "adx_minus@$i");
         }
     }
 
@@ -234,5 +255,50 @@ class OsEngineClassicIndicatorsTest extends TestCase
         $rsi = (new RsiIndicatorService)->computeSeries($g['rows'], ['length' => 5]);
         $this->assertSame(0.0, $rsi[25]);
         $this->assertGreaterThan(0.0, $rsi[26]);
+    }
+
+    /** Envelops: up/down = SMA ± SMA×dev/100; прогрев index<=length. */
+    public function test_envelops_percent_bands(): void
+    {
+        $g = $this->golden();
+        $rows = $g['rows'];
+        $length = 5;
+        $dev = 2.0;
+        $index = 10;
+        $series = (new EnvelopsIndicatorService)->computeSeries($rows, [
+            'length' => $length,
+            'deviation' => $dev,
+        ]);
+        $this->assertSame(0.0, $series['mid'][$length]);
+        $sma = OsEngineCandleMath::smaAt($rows, $index, $length, 'Close');
+        $this->assertEqualsWithDelta($sma, $series['mid'][$index], 1e-12);
+        $this->assertEqualsWithDelta(round($sma + $sma * $dev / 100, 6), $series['up'][$index], 1e-12);
+        $this->assertEqualsWithDelta(round($sma - $sma * $dev / 100, 6), $series['down'][$index], 1e-12);
+    }
+
+    /** ADX: до length*2-1 значение 0; после — в диапазоне 0..100. */
+    public function test_adx_warmup_and_range(): void
+    {
+        $g = $this->golden();
+        $length = 5;
+        $adx = (new AdxIndicatorService)->computeSeries($g['rows'], ['length' => $length]);
+        $this->assertSame(0.0, $adx['adx'][$length * 2 - 2]);
+        $this->assertGreaterThan(0.0, $adx['adx'][$length * 2 - 1]);
+        $this->assertGreaterThanOrEqual(0.0, $adx['adx'][30]);
+        $this->assertLessThanOrEqual(100.0, $adx['adx'][30]);
+    }
+
+    /** Keltner mid = EMA; up = mid + coef*EMA(ATR) после прогрева atr+atrEma. */
+    public function test_keltner_mid_equals_ema(): void
+    {
+        $g = $this->golden();
+        $rows = $g['rows'];
+        $p = ['ema_period' => 5, 'atr_period' => 5, 'atr_ema_period' => 5, 'atr_coef' => 2.0];
+        $k = (new KeltnerIndicatorService)->computeSeries($rows, $p);
+        $ema = (new EmaIndicatorService)->computeSeries($rows, ['length' => 5, 'candle_point' => 'Close']);
+        $index = 20;
+        $this->assertEqualsWithDelta($ema[$index], $k['mid'][$index], 1e-12);
+        $this->assertGreaterThan($k['mid'][$index], $k['up'][$index]);
+        $this->assertLessThan($k['mid'][$index], $k['down'][$index]);
     }
 }

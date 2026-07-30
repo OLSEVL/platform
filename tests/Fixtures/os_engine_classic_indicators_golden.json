@@ -438,6 +438,29 @@
         "vwma": {
             "length": 5,
             "candle_point": "Close"
+        },
+        "keltner": {
+            "ema_period": 5,
+            "atr_period": 5,
+            "atr_ema_period": 5,
+            "atr_coef": 2
+        },
+        "envelops": {
+            "length": 5,
+            "deviation": 2
+        },
+        "parabolic_sar": {
+            "step": 0.02,
+            "max_step": 0.2
+        },
+        "supertrend": {
+            "length": 5,
+            "deviation": 1,
+            "candle_point": "Median",
+            "use_wicks": true
+        },
+        "adx": {
+            "length": 5
         }
     },
     "at": {
@@ -455,7 +478,18 @@
             "stoch_k": 0,
             "stoch_d": 0,
             "cci": 0,
-            "vwma": 101.6592865
+            "vwma": 101.6592865,
+            "keltner_mid": 0,
+            "keltner_up": 0,
+            "keltner_down": 0,
+            "envelops_mid": 0,
+            "envelops_up": 0,
+            "envelops_down": 0,
+            "parabolic_sar": 101.24812826,
+            "supertrend": 101.51054521,
+            "adx": 0,
+            "adx_plus": 47.9839,
+            "adx_minus": 0
         },
         "10": {
             "sma": 101.21608319,
@@ -471,7 +505,18 @@
             "stoch_k": 15.71,
             "stoch_d": 12.06,
             "cci": -115.66265,
-            "vwma": 101.20670654
+            "vwma": 101.20670654,
+            "keltner_mid": 100.93149919,
+            "keltner_up": 102.496424,
+            "keltner_down": 99.366574,
+            "envelops_mid": 101.21608319,
+            "envelops_up": 103.240405,
+            "envelops_down": 99.191762,
+            "parabolic_sar": 102.38357635,
+            "supertrend": 100.9778834,
+            "adx": 51.1924,
+            "adx_plus": 14.2387,
+            "adx_minus": 38.4308
         },
         "14": {
             "sma": 99.24935323,
@@ -487,7 +532,18 @@
             "stoch_k": 13.4,
             "stoch_d": 12.52,
             "cci": -78.11771,
-            "vwma": 99.24294426
+            "vwma": 99.24294426,
+            "keltner_mid": 99.30286676,
+            "keltner_up": 100.936485,
+            "keltner_down": 97.669249,
+            "envelops_mid": 99.24935323,
+            "envelops_up": 101.23434,
+            "envelops_down": 97.264366,
+            "parabolic_sar": 100.96276495,
+            "supertrend": 99.53687222,
+            "adx": 61.7601,
+            "adx_plus": 6.0068,
+            "adx_minus": 38.7631
         },
         "20": {
             "sma": 100.40133404,
@@ -503,7 +559,18 @@
             "stoch_k": 86.18,
             "stoch_d": 82.28,
             "cci": 112.4786,
-            "vwma": 100.41236213
+            "vwma": 100.41236213,
+            "keltner_mid": 100.66954327,
+            "keltner_up": 102.439887,
+            "keltner_down": 98.899199,
+            "envelops_mid": 100.40133404,
+            "envelops_up": 102.409361,
+            "envelops_down": 98.393307,
+            "parabolic_sar": 98.69635386,
+            "supertrend": 100.82504442,
+            "adx": 50.9312,
+            "adx_plus": 46.2376,
+            "adx_minus": 8.6776
         },
         "26": {
             "sma": 102.96568329,
@@ -519,7 +586,18 @@
             "stoch_k": 62.84,
             "stoch_d": 75.88,
             "cci": -114.96213,
-            "vwma": 102.96502166
+            "vwma": 102.96502166,
+            "keltner_mid": 102.69162318,
+            "keltner_up": 104.423664,
+            "keltner_down": 100.959583,
+            "envelops_mid": 102.96568329,
+            "envelops_up": 105.024997,
+            "envelops_down": 100.90637,
+            "parabolic_sar": 101.25902119,
+            "supertrend": 103.52939959,
+            "adx": 61.1639,
+            "adx_plus": 27.8187,
+            "adx_minus": 14.0032
         },
         "30": {
             "sma": 101.56297162,
@@ -535,7 +613,18 @@
             "stoch_k": 12.86,
             "stoch_d": 15.89,
             "cci": -110.05688,
-            "vwma": 101.55401912
+            "vwma": 101.55401912,
+            "keltner_mid": 101.33396318,
+            "keltner_up": 103.072381,
+            "keltner_down": 99.595546,
+            "envelops_mid": 101.56297162,
+            "envelops_up": 103.594231,
+            "envelops_down": 99.531712,
+            "parabolic_sar": 103.25649806,
+            "supertrend": 101.31995866,
+            "adx": 48.9576,
+            "adx_plus": 10.7015,
+            "adx_minus": 43.516
         },
         "40": {
             "sma": 102.07869595,
@@ -551,7 +640,18 @@
             "stoch_k": 87.76,
             "stoch_d": 85.98,
             "cci": 106.8354,
-            "vwma": 102.08844131
+            "vwma": 102.08844131,
+            "keltner_mid": 102.26033536,
+            "keltner_up": 104.100999,
+            "keltner_down": 100.419672,
+            "envelops_mid": 102.07869595,
+            "envelops_up": 104.12027,
+            "envelops_down": 100.037122,
+            "parabolic_sar": 99.98449821,
+            "supertrend": 102.4482377,
+            "adx": 56.0595,
+            "adx_plus": 49.3719,
+            "adx_minus": 6.6714
         },
         "49": {
             "sma": 102.42368008,
@@ -567,7 +667,18 @@
             "stoch_k": 12.65,
             "stoch_d": 15.42,
             "cci": -109.375,
-            "vwma": 102.4158564
+            "vwma": 102.4158564,
+            "keltner_mid": 102.20631278,
+            "keltner_up": 103.946586,
+            "keltner_down": 100.466039,
+            "envelops_mid": 102.42368008,
+            "envelops_up": 104.472154,
+            "envelops_down": 100.375206,
+            "parabolic_sar": 104.18248773,
+            "supertrend": 102.18620089,
+            "adx": 49.894,
+            "adx_plus": 10.3026,
+            "adx_minus": 43.9599
         }
     }
 }

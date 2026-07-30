@@ -26,6 +26,11 @@ use App\Services\Indicators\SmcFlowIndicatorService;
 use App\Services\Indicators\CciIndicatorService;
 use App\Services\Indicators\StochasticIndicatorService;
 use App\Services\Indicators\VwmaIndicatorService;
+use App\Services\Indicators\KeltnerIndicatorService;
+use App\Services\Indicators\EnvelopsIndicatorService;
+use App\Services\Indicators\ParabolicSarIndicatorService;
+use App\Services\Indicators\SuperTrendIndicatorService;
+use App\Services\Indicators\AdxIndicatorService;
 use App\Services\Telegram\StrongLevelTelegramLlmButton;
 use App\Services\Telegram\StrongLevelTelegramProcessManager;
 use App\Services\Telegram\TelegramAlertService;
@@ -2361,7 +2366,7 @@ class BotController extends Controller
      */
     /**
      * Расчёт оверлей-индикаторов для графика бота.
-     * Query `layers[]` — какие слои считать (экономия CPU): pa, ls, smc, bollinger, rsi, sma, ema, vwma, atr, macd, stochastic, cci.
+     * Query `layers[]` — какие слои считать (экономия CPU): pa, ls, smc, bollinger, rsi, sma, ema, vwma, atr, macd, stochastic, cci, keltner, envelops, parabolic_sar, supertrend, adx.
      * Без layers — для обратной совместимости считаем pa+ls+smc (старое поведение).
      */
     public function indicatorsData(
@@ -2380,6 +2385,11 @@ class BotController extends Controller
         StochasticIndicatorService $stochastic,
         CciIndicatorService $cci,
         VwmaIndicatorService $vwma,
+        KeltnerIndicatorService $keltner,
+        EnvelopsIndicatorService $envelops,
+        ParabolicSarIndicatorService $parabolicSar,
+        SuperTrendIndicatorService $superTrend,
+        AdxIndicatorService $adx,
     ): JsonResponse {
         $this->ensureBotOwner($bot);
 
@@ -2387,7 +2397,7 @@ class BotController extends Controller
             'instrument' => ['required', 'string', 'max:64'],
             'timeframe' => ['nullable', 'integer', Rule::in(CandleService::DASHBOARD_TIMEFRAMES)],
             'layers' => ['nullable', 'array'],
-            'layers.*' => ['string', Rule::in(['pa', 'ls', 'smc', 'bollinger', 'rsi', 'sma', 'ema', 'vwma', 'atr', 'macd', 'stochastic', 'cci'])],
+            'layers.*' => ['string', Rule::in(['pa', 'ls', 'smc', 'bollinger', 'rsi', 'sma', 'ema', 'vwma', 'atr', 'macd', 'stochastic', 'cci', 'keltner', 'envelops', 'parabolic_sar', 'supertrend', 'adx'])],
         ]);
 
         $instrument = (string) $validated['instrument'];
@@ -2445,6 +2455,21 @@ class BotController extends Controller
         }
         if (! empty($want['cci'])) {
             $json['cci'] = $cci->compute($rows, IndicatorSetting::mergedCciParams($bot));
+        }
+        if (! empty($want['keltner'])) {
+            $json['keltner'] = $keltner->compute($rows, IndicatorSetting::mergedKeltnerParams($bot));
+        }
+        if (! empty($want['envelops'])) {
+            $json['envelops'] = $envelops->compute($rows, IndicatorSetting::mergedEnvelopsParams($bot));
+        }
+        if (! empty($want['parabolic_sar'])) {
+            $json['parabolic_sar'] = $parabolicSar->compute($rows, IndicatorSetting::mergedParabolicSarParams($bot));
+        }
+        if (! empty($want['supertrend'])) {
+            $json['supertrend'] = $superTrend->compute($rows, IndicatorSetting::mergedSuperTrendParams($bot));
+        }
+        if (! empty($want['adx'])) {
+            $json['adx'] = $adx->compute($rows, IndicatorSetting::mergedAdxParams($bot));
         }
 
         return response()->json($json);

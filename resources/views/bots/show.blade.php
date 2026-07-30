@@ -287,6 +287,42 @@
                                 </label>
                                 <a href="{{ route('bots.indicators.cci.edit', $bot) }}" class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-zinc-700 bg-zinc-800/80 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-100 text-xs" title="Настройки CCI">⚙</a>
                             </div>
+
+                            <div class="flex items-center justify-between gap-1">
+                                <label for="layer-keltner" class="flex min-w-0 flex-1 items-center gap-2 text-sm text-zinc-300 cursor-pointer">
+                                    <input type="checkbox" id="layer-keltner" class="rounded border-zinc-600 bg-zinc-800 text-blue-500 shrink-0">
+                                    <span class="truncate">Keltner</span>
+                                </label>
+                                <a href="{{ route('bots.indicators.keltner.edit', $bot) }}" class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-zinc-700 bg-zinc-800/80 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-100 text-xs" title="Настройки Keltner">⚙</a>
+                            </div>
+                            <div class="flex items-center justify-between gap-1">
+                                <label for="layer-envelops" class="flex min-w-0 flex-1 items-center gap-2 text-sm text-zinc-300 cursor-pointer">
+                                    <input type="checkbox" id="layer-envelops" class="rounded border-zinc-600 bg-zinc-800 text-blue-500 shrink-0">
+                                    <span class="truncate">Envelops</span>
+                                </label>
+                                <a href="{{ route('bots.indicators.envelops.edit', $bot) }}" class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-zinc-700 bg-zinc-800/80 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-100 text-xs" title="Настройки Envelops">⚙</a>
+                            </div>
+                            <div class="flex items-center justify-between gap-1">
+                                <label for="layer-parabolic-sar" class="flex min-w-0 flex-1 items-center gap-2 text-sm text-zinc-300 cursor-pointer">
+                                    <input type="checkbox" id="layer-parabolic-sar" class="rounded border-zinc-600 bg-zinc-800 text-blue-500 shrink-0">
+                                    <span class="truncate">Parabolic SAR</span>
+                                </label>
+                                <a href="{{ route('bots.indicators.parabolic-sar.edit', $bot) }}" class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-zinc-700 bg-zinc-800/80 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-100 text-xs" title="Настройки Parabolic SAR">⚙</a>
+                            </div>
+                            <div class="flex items-center justify-between gap-1">
+                                <label for="layer-supertrend" class="flex min-w-0 flex-1 items-center gap-2 text-sm text-zinc-300 cursor-pointer">
+                                    <input type="checkbox" id="layer-supertrend" class="rounded border-zinc-600 bg-zinc-800 text-blue-500 shrink-0">
+                                    <span class="truncate">SuperTrend</span>
+                                </label>
+                                <a href="{{ route('bots.indicators.supertrend.edit', $bot) }}" class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-zinc-700 bg-zinc-800/80 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-100 text-xs" title="Настройки SuperTrend">⚙</a>
+                            </div>
+                            <div class="flex items-center justify-between gap-1">
+                                <label for="layer-adx" class="flex min-w-0 flex-1 items-center gap-2 text-sm text-zinc-300 cursor-pointer">
+                                    <input type="checkbox" id="layer-adx" class="rounded border-zinc-600 bg-zinc-800 text-blue-500 shrink-0">
+                                    <span class="truncate">ADX</span>
+                                </label>
+                                <a href="{{ route('bots.indicators.adx.edit', $bot) }}" class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-zinc-700 bg-zinc-800/80 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-100 text-xs" title="Настройки ADX">⚙</a>
+                            </div>
                         </div>
                         @if($isChartAnalystBot ?? false)
                         <div class="flex items-center justify-between gap-1 border-t border-zinc-800 pt-2 mt-1">
@@ -649,6 +685,11 @@
     const layerMacd = document.getElementById('layer-macd');
     const layerStochastic = document.getElementById('layer-stochastic');
     const layerCci = document.getElementById('layer-cci');
+    const layerKeltner = document.getElementById('layer-keltner');
+    const layerEnvelops = document.getElementById('layer-envelops');
+    const layerParabolicSar = document.getElementById('layer-parabolic-sar');
+    const layerSuperTrend = document.getElementById('layer-supertrend');
+    const layerAdx = document.getElementById('layer-adx');
     const instrumentSearchInput = document.getElementById('instrument-search');
     const instrumentSearchClearBtn = document.getElementById('instrument-search-clear');
     const botAnalysisBtn = document.getElementById('bot-analysis-btn');
@@ -688,6 +729,11 @@
     let lastMacdPayload = null;
     let lastStochasticPayload = null;
     let lastCciPayload = null;
+    let lastKeltnerPayload = null;
+    let lastEnvelopsPayload = null;
+    let lastParabolicSarPayload = null;
+    let lastSuperTrendPayload = null;
+    let lastAdxPayload = null;
     /** Line-series handles для классики OsEngine (пересоздаём при apply). */
     let classicLineSeries = {};
     let rsiLevelLines = [];
@@ -864,6 +910,11 @@
             if (layerMacd && typeof obj.macd === 'boolean') layerMacd.checked = obj.macd;
             if (layerStochastic && typeof obj.stochastic === 'boolean') layerStochastic.checked = obj.stochastic;
             if (layerCci && typeof obj.cci === 'boolean') layerCci.checked = obj.cci;
+            if (layerKeltner && typeof obj.keltner === 'boolean') layerKeltner.checked = obj.keltner;
+            if (layerEnvelops && typeof obj.envelops === 'boolean') layerEnvelops.checked = obj.envelops;
+            if (layerParabolicSar && typeof obj.parabolicSar === 'boolean') layerParabolicSar.checked = obj.parabolicSar;
+            if (layerSuperTrend && typeof obj.supertrend === 'boolean') layerSuperTrend.checked = obj.supertrend;
+            if (layerAdx && typeof obj.adx === 'boolean') layerAdx.checked = obj.adx;
             if (BOT_IS_CHART_ANALYST && layerLlmLevels && typeof obj.llmLevels === 'boolean') layerLlmLevels.checked = obj.llmLevels;
         } catch (_) {}
     }
@@ -885,6 +936,11 @@
                 macd: layerMacd ? layerMacd.checked : false,
                 stochastic: layerStochastic ? layerStochastic.checked : false,
                 cci: layerCci ? layerCci.checked : false,
+                keltner: layerKeltner ? layerKeltner.checked : false,
+                envelops: layerEnvelops ? layerEnvelops.checked : false,
+                parabolicSar: layerParabolicSar ? layerParabolicSar.checked : false,
+                supertrend: layerSuperTrend ? layerSuperTrend.checked : false,
+                adx: layerAdx ? layerAdx.checked : false,
                 llmLevels: (BOT_IS_CHART_ANALYST && layerLlmLevels) ? layerLlmLevels.checked : false,
             }));
         } catch (_) {}
@@ -1110,7 +1166,12 @@
         const wantMacd = layerMacd && layerMacd.checked;
         const wantStochastic = layerStochastic && layerStochastic.checked;
         const wantCci = layerCci && layerCci.checked;
-        if (!wantPa && !wantLs && !wantSmc && !wantBb && !wantRsi && !wantSma && !wantEma && !wantVwma && !wantAtr && !wantMacd && !wantStochastic && !wantCci) {
+        const wantKeltner = layerKeltner && layerKeltner.checked;
+        const wantEnvelops = layerEnvelops && layerEnvelops.checked;
+        const wantParabolicSar = layerParabolicSar && layerParabolicSar.checked;
+        const wantSuperTrend = layerSuperTrend && layerSuperTrend.checked;
+        const wantAdx = layerAdx && layerAdx.checked;
+        if (!wantPa && !wantLs && !wantSmc && !wantBb && !wantRsi && !wantSma && !wantEma && !wantVwma && !wantAtr && !wantMacd && !wantStochastic && !wantCci && !wantKeltner && !wantEnvelops && !wantParabolicSar && !wantSuperTrend && !wantAdx) {
             lastPaPayload = null;
             lastLsPayload = null;
             lastSmcPayload = null;
@@ -1123,6 +1184,11 @@
             lastMacdPayload = null;
             lastStochasticPayload = null;
             lastCciPayload = null;
+            lastKeltnerPayload = null;
+            lastEnvelopsPayload = null;
+            lastParabolicSarPayload = null;
+            lastSuperTrendPayload = null;
+            lastAdxPayload = null;
             redrawPriceActionOverlay();
             applyPaBarColors({ fullResync: true });
             renderChartMarkers();
@@ -1143,6 +1209,11 @@
         if (wantMacd) layers.push('macd');
         if (wantStochastic) layers.push('stochastic');
         if (wantCci) layers.push('cci');
+        if (wantKeltner) layers.push('keltner');
+        if (wantEnvelops) layers.push('envelops');
+        if (wantParabolicSar) layers.push('parabolic_sar');
+        if (wantSuperTrend) layers.push('supertrend');
+        if (wantAdx) layers.push('adx');
         layers.forEach((l) => params.append('layers[]', l));
         fetch(`${PA_INDICATOR_URL}?${params.toString()}`, { headers: { 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' } })
             .then((r) => r.json())
@@ -1160,6 +1231,11 @@
                     lastMacdPayload = wantMacd && d && d.macd ? d.macd : null;
                     lastStochasticPayload = wantStochastic && d && d.stochastic ? d.stochastic : null;
                     lastCciPayload = wantCci && d && d.cci ? d.cci : null;
+                    lastKeltnerPayload = wantKeltner && d && d.keltner ? d.keltner : null;
+                    lastEnvelopsPayload = wantEnvelops && d && d.envelops ? d.envelops : null;
+                    lastParabolicSarPayload = wantParabolicSar && d && d.parabolic_sar ? d.parabolic_sar : null;
+                    lastSuperTrendPayload = wantSuperTrend && d && d.supertrend ? d.supertrend : null;
+                    lastAdxPayload = wantAdx && d && d.adx ? d.adx : null;
                     redrawPriceActionOverlay();
                     applyPaBarColors({ fullResync: wantPa });
                     renderChartMarkers();
@@ -1178,6 +1254,11 @@
                     lastMacdPayload = null;
                     lastStochasticPayload = null;
                     lastCciPayload = null;
+                    lastKeltnerPayload = null;
+                    lastEnvelopsPayload = null;
+                    lastParabolicSarPayload = null;
+                    lastSuperTrendPayload = null;
+                    lastAdxPayload = null;
                     try {
                         redrawPriceActionOverlay();
                         applyPaBarColors({ fullResync: true });
@@ -1243,6 +1324,11 @@
         const wantMacd = layerMacd && layerMacd.checked && lastMacdPayload;
         const wantStochastic = layerStochastic && layerStochastic.checked && lastStochasticPayload;
         const wantCci = layerCci && layerCci.checked && lastCciPayload;
+        const wantKeltner = layerKeltner && layerKeltner.checked && lastKeltnerPayload;
+        const wantEnvelops = layerEnvelops && layerEnvelops.checked && lastEnvelopsPayload;
+        const wantParabolicSar = layerParabolicSar && layerParabolicSar.checked && lastParabolicSarPayload;
+        const wantSuperTrend = layerSuperTrend && layerSuperTrend.checked && lastSuperTrendPayload;
+        const wantAdx = layerAdx && layerAdx.checked && lastAdxPayload;
 
         // Линии на основной pane (индекс 0) — рядом со свечами.
         const addMainLine = (key, data, color, width) => {
@@ -1279,7 +1365,52 @@
             addMainLine('vwma', (lastVwmaPayload.series || {}).vwma, st.color, st.line_width);
         }
 
-        const oscCount = (wantRsi ? 1 : 0) + (wantMacd ? 1 : 0) + (wantStochastic ? 1 : 0) + (wantCci ? 1 : 0) + (wantAtr ? 1 : 0);
+        if (wantKeltner) {
+            const st = lastKeltnerPayload.style || {};
+            const ser = lastKeltnerPayload.series || {};
+            const w = st.line_width || 1;
+            addMainLine('keltner_up', ser.up, st.color_up, w);
+            addMainLine('keltner_mid', ser.mid, st.color_mid, w);
+            addMainLine('keltner_down', ser.down, st.color_down, w);
+        }
+        if (wantEnvelops) {
+            const st = lastEnvelopsPayload.style || {};
+            const ser = lastEnvelopsPayload.series || {};
+            const w = st.line_width || 1;
+            addMainLine('envelops_up', ser.up, st.color_up, w);
+            addMainLine('envelops_mid', ser.mid, st.color_mid, w);
+            addMainLine('envelops_down', ser.down, st.color_down, w);
+        }
+        if (wantParabolicSar) {
+            const st = lastParabolicSarPayload.style || {};
+            const data = (lastParabolicSarPayload.series || {}).sar;
+            if (Array.isArray(data) && data.length) {
+                // OsEngine Point: точки без соединяющей линии (LWC pointMarkers).
+                const s = chart.addSeries(LineSeries, {
+                    color: st.color || '#1e90ff',
+                    lineWidth: 1,
+                    lineVisible: false,
+                    pointMarkersVisible: true,
+                    pointMarkersRadius: st.point_radius || 2,
+                    priceLineVisible: false,
+                    lastValueVisible: false,
+                    crosshairMarkerVisible: false,
+                }, 0);
+                s.setData(data.map((p) => ({ time: p.time, value: p.value })));
+                classicLineSeries['parabolic_sar'] = s;
+            }
+        }
+        if (wantSuperTrend) {
+            const st = lastSuperTrendPayload.style || {};
+            const ser = lastSuperTrendPayload.series || {};
+            const w = st.line_width || 2;
+            addMainLine('supertrend_center', ser.center, st.color_center, w);
+            addMainLine('supertrend_upper', ser.upper, st.color_upper, w);
+            addMainLine('supertrend_lower', ser.lower, st.color_lower, w);
+        }
+
+
+        const oscCount = (wantRsi ? 1 : 0) + (wantMacd ? 1 : 0) + (wantStochastic ? 1 : 0) + (wantCci ? 1 : 0) + (wantAtr ? 1 : 0) + (wantAdx ? 1 : 0);
         if (oscCount > 0) {
             // Главная pane крупнее осцилляторов (~1 : 0.28 на каждый нижний pane).
             try {
@@ -1566,6 +1697,64 @@
             } catch (_) {}
         }
 
+
+        // ADX — отдельный pane (ADX / +DI / −DI), уровни 20/25.
+        if (wantAdx) {
+            const st = lastAdxPayload.style || {};
+            const levels = lastAdxPayload.levels || {};
+            const ser = lastAdxPayload.series || {};
+            const lineW = st.line_width || 1;
+            let paneIndex = 1;
+            let adxPane = null;
+            try {
+                adxPane = chart.addPane(false);
+                if (adxPane && typeof adxPane.setStretchFactor === 'function') {
+                    adxPane.setStretchFactor(0.28);
+                }
+                paneIndex = Math.max(1, chart.panes().length - 1);
+                classicOscPaneCount += 1;
+            } catch (e) {
+                console.error('[indicators] addPane ADX', e);
+            }
+
+            const mk = (key, data, color) => {
+                if (!Array.isArray(data) || !data.length) return null;
+                const s = chart.addSeries(LineSeries, {
+                    color: color || '#228b22',
+                    lineWidth: lineW,
+                    priceLineVisible: false,
+                    lastValueVisible: true,
+                    crosshairMarkerVisible: false,
+                    priceFormat: { type: 'price', precision: 2, minMove: 0.01 },
+                }, paneIndex);
+                s.setData(data.map((p) => ({ time: p.time, value: p.value })));
+                classicLineSeries[key] = s;
+                return s;
+            };
+            const adxLine = mk('adx', ser.adx, st.color_adx);
+            mk('adx_plus', ser.plus, st.color_plus);
+            mk('adx_minus', ser.minus, st.color_minus);
+
+            try {
+                const paneApi = adxPane || (typeof chart.panes === 'function' ? chart.panes()[paneIndex] : null);
+                if (paneApi && typeof paneApi.attachPrimitive === 'function'
+                    && window.PlatformChartMarkers
+                    && typeof window.PlatformChartMarkers.createPaneSolidBackdrop === 'function') {
+                    paneApi.attachPrimitive(window.PlatformChartMarkers.createPaneSolidBackdrop('#0e1018'));
+                }
+            } catch (e) {
+                console.error('[indicators] ADX pane backdrop', e);
+            }
+
+            try {
+                if (adxLine && levels.show && window.PlatformChartMarkers
+                    && typeof window.PlatformChartMarkers.attachRsiLevelLines === 'function') {
+                    const lines = window.PlatformChartMarkers.attachRsiLevelLines(adxLine, levels);
+                    rsiLevelLines.push(...lines);
+                }
+            } catch (_) {}
+        }
+
         // ATR — ещё один pane под RSI/MACD/Stochastic/CCI (или единственный нижний).
         if (wantAtr) {
             const st = lastAtrPayload.style || {};
@@ -1607,7 +1796,12 @@
             (layerAtr && layerAtr.checked) ||
             (layerMacd && layerMacd.checked) ||
             (layerStochastic && layerStochastic.checked) ||
-            (layerCci && layerCci.checked)
+            (layerCci && layerCci.checked) ||
+            (layerKeltner && layerKeltner.checked) ||
+            (layerEnvelops && layerEnvelops.checked) ||
+            (layerParabolicSar && layerParabolicSar.checked) ||
+            (layerSuperTrend && layerSuperTrend.checked) ||
+            (layerAdx && layerAdx.checked)
         );
     }
 
@@ -4156,6 +4350,11 @@
         lastMacdPayload = null;
         lastStochasticPayload = null;
         lastCciPayload = null;
+        lastKeltnerPayload = null;
+        lastEnvelopsPayload = null;
+        lastParabolicSarPayload = null;
+        lastSuperTrendPayload = null;
+        lastAdxPayload = null;
         clearClassicOsEngineSeries();
         if (priceActionOverlay) priceActionOverlay.innerHTML = '';
         if (liquiditySwingsOverlay) liquiditySwingsOverlay.innerHTML = '';
@@ -4246,6 +4445,11 @@
         [layerMacd, () => { lastMacdPayload = null; }],
         [layerStochastic, () => { lastStochasticPayload = null; }],
         [layerCci, () => { lastCciPayload = null; }],
+        [layerKeltner, () => { lastKeltnerPayload = null; }],
+        [layerEnvelops, () => { lastEnvelopsPayload = null; }],
+        [layerParabolicSar, () => { lastParabolicSarPayload = null; }],
+        [layerSuperTrend, () => { lastSuperTrendPayload = null; }],
+        [layerAdx, () => { lastAdxPayload = null; }],
     ].forEach(([el, clearFn]) => {
         if (!el) return;
         el.addEventListener('change', () => {

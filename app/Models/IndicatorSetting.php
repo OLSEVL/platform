@@ -2,18 +2,23 @@
 
 namespace App\Models;
 
+use App\Services\Indicators\AdxIndicatorService;
 use App\Services\Indicators\AtrIndicatorService;
 use App\Services\Indicators\BollingerIndicatorService;
 use App\Services\Indicators\EmaIndicatorService;
+use App\Services\Indicators\EnvelopsIndicatorService;
+use App\Services\Indicators\KeltnerIndicatorService;
 use App\Services\Indicators\LiquiditySwingsIndicatorService;
 use App\Services\Indicators\MacdIndicatorService;
 use App\Services\Indicators\OrderBlocksIndicatorService;
+use App\Services\Indicators\ParabolicSarIndicatorService;
 use App\Services\Indicators\PriceActionDgtIndicatorService;
 use App\Services\Indicators\RsiIndicatorService;
 use App\Services\Indicators\SmaIndicatorService;
 use App\Services\Indicators\SmcFlowIndicatorService;
 use App\Services\Indicators\CciIndicatorService;
 use App\Services\Indicators\StochasticIndicatorService;
+use App\Services\Indicators\SuperTrendIndicatorService;
 use App\Services\Indicators\VwmaIndicatorService;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -51,6 +56,21 @@ class IndicatorSetting extends Model
 
     /** VWMA (Volume Weighted MA) — линия на цене, ключи VwmaIndicatorService::defaultParams(). */
     public const KEY_VWMA = 'vwma';
+
+    /** Keltner Channel — оверлей на цене. */
+    public const KEY_KELTNER = 'keltner';
+
+    /** Envelops — процентный канал вокруг SMA. */
+    public const KEY_ENVELOPS = 'envelops';
+
+    /** Parabolic SAR — точки на цене. */
+    public const KEY_PARABOLIC_SAR = 'parabolic_sar';
+
+    /** SuperTrend — trailing-stop линия на цене. */
+    public const KEY_SUPERTREND = 'supertrend';
+
+    /** ADX / +DI / −DI — отдельная pane. */
+    public const KEY_ADX = 'adx';
 
     protected $fillable = ['bot_id', 'indicator_key', 'settings'];
 
@@ -212,5 +232,35 @@ class IndicatorSetting extends Model
     public static function mergedVwmaParams(Bot $bot): array
     {
         return self::mergedByKey($bot, self::KEY_VWMA, [VwmaIndicatorService::class, 'defaultParams']);
+    }
+
+    /** @return array<string, mixed> */
+    public static function mergedKeltnerParams(Bot $bot): array
+    {
+        return self::mergedByKey($bot, self::KEY_KELTNER, [KeltnerIndicatorService::class, 'defaultParams']);
+    }
+
+    /** @return array<string, mixed> */
+    public static function mergedEnvelopsParams(Bot $bot): array
+    {
+        return self::mergedByKey($bot, self::KEY_ENVELOPS, [EnvelopsIndicatorService::class, 'defaultParams']);
+    }
+
+    /** @return array<string, mixed> */
+    public static function mergedParabolicSarParams(Bot $bot): array
+    {
+        return self::mergedByKey($bot, self::KEY_PARABOLIC_SAR, [ParabolicSarIndicatorService::class, 'defaultParams']);
+    }
+
+    /** @return array<string, mixed> */
+    public static function mergedSuperTrendParams(Bot $bot): array
+    {
+        return self::mergedByKey($bot, self::KEY_SUPERTREND, [SuperTrendIndicatorService::class, 'defaultParams']);
+    }
+
+    /** @return array<string, mixed> */
+    public static function mergedAdxParams(Bot $bot): array
+    {
+        return self::mergedByKey($bot, self::KEY_ADX, [AdxIndicatorService::class, 'defaultParams']);
     }
 }

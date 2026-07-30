@@ -30,6 +30,16 @@ use App\Support\SmaSettingsForm;
 use App\Support\SmcFlowSettingsForm;
 use App\Support\VwmaSettingsForm;
 use App\Services\Indicators\VwmaIndicatorService;
+use App\Support\KeltnerSettingsForm;
+use App\Services\Indicators\KeltnerIndicatorService;
+use App\Support\EnvelopsSettingsForm;
+use App\Services\Indicators\EnvelopsIndicatorService;
+use App\Support\ParabolicSarSettingsForm;
+use App\Services\Indicators\ParabolicSarIndicatorService;
+use App\Support\SuperTrendSettingsForm;
+use App\Services\Indicators\SuperTrendIndicatorService;
+use App\Support\AdxSettingsForm;
+use App\Services\Indicators\AdxIndicatorService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\View\View;
@@ -335,6 +345,81 @@ class BotChartIndicatorController extends Controller
     public function updateVwma(Request $request, Bot $bot): RedirectResponse
     {
         return $this->saveClassic($request, $bot, IndicatorSetting::KEY_VWMA, VwmaIndicatorService::class, VwmaSettingsForm::class, 'bots.indicators.vwma.edit', 'VWMA');
+    }
+
+    public function editKeltner(Bot $bot): View
+    {
+        $this->ensureBotOwner($bot);
+
+        return view('bots.indicators.keltner', [
+            'bot' => $bot,
+            'p' => IndicatorSetting::mergedKeltnerParams($bot),
+        ]);
+    }
+
+    public function updateKeltner(Request $request, Bot $bot): RedirectResponse
+    {
+        return $this->saveClassic($request, $bot, IndicatorSetting::KEY_KELTNER, KeltnerIndicatorService::class, KeltnerSettingsForm::class, 'bots.indicators.keltner.edit', 'Keltner');
+    }
+
+    public function editEnvelops(Bot $bot): View
+    {
+        $this->ensureBotOwner($bot);
+
+        return view('bots.indicators.envelops', [
+            'bot' => $bot,
+            'p' => IndicatorSetting::mergedEnvelopsParams($bot),
+        ]);
+    }
+
+    public function updateEnvelops(Request $request, Bot $bot): RedirectResponse
+    {
+        return $this->saveClassic($request, $bot, IndicatorSetting::KEY_ENVELOPS, EnvelopsIndicatorService::class, EnvelopsSettingsForm::class, 'bots.indicators.envelops.edit', 'Envelops');
+    }
+
+    public function editParabolicSar(Bot $bot): View
+    {
+        $this->ensureBotOwner($bot);
+
+        return view('bots.indicators.parabolic_sar', [
+            'bot' => $bot,
+            'p' => IndicatorSetting::mergedParabolicSarParams($bot),
+        ]);
+    }
+
+    public function updateParabolicSar(Request $request, Bot $bot): RedirectResponse
+    {
+        return $this->saveClassic($request, $bot, IndicatorSetting::KEY_PARABOLIC_SAR, ParabolicSarIndicatorService::class, ParabolicSarSettingsForm::class, 'bots.indicators.parabolic-sar.edit', 'Parabolic SAR');
+    }
+
+    public function editSuperTrend(Bot $bot): View
+    {
+        $this->ensureBotOwner($bot);
+
+        return view('bots.indicators.supertrend', [
+            'bot' => $bot,
+            'p' => IndicatorSetting::mergedSuperTrendParams($bot),
+        ]);
+    }
+
+    public function updateSuperTrend(Request $request, Bot $bot): RedirectResponse
+    {
+        return $this->saveClassic($request, $bot, IndicatorSetting::KEY_SUPERTREND, SuperTrendIndicatorService::class, SuperTrendSettingsForm::class, 'bots.indicators.supertrend.edit', 'SuperTrend');
+    }
+
+    public function editAdx(Bot $bot): View
+    {
+        $this->ensureBotOwner($bot);
+
+        return view('bots.indicators.adx', [
+            'bot' => $bot,
+            'p' => IndicatorSetting::mergedAdxParams($bot),
+        ]);
+    }
+
+    public function updateAdx(Request $request, Bot $bot): RedirectResponse
+    {
+        return $this->saveClassic($request, $bot, IndicatorSetting::KEY_ADX, AdxIndicatorService::class, AdxSettingsForm::class, 'bots.indicators.adx.edit', 'ADX');
     }
 
     /**

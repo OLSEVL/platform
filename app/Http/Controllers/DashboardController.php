@@ -21,6 +21,11 @@ use App\Services\Indicators\SmcFlowIndicatorService;
 use App\Services\Indicators\CciIndicatorService;
 use App\Services\Indicators\StochasticIndicatorService;
 use App\Services\Indicators\VwmaIndicatorService;
+use App\Services\Indicators\KeltnerIndicatorService;
+use App\Services\Indicators\EnvelopsIndicatorService;
+use App\Services\Indicators\ParabolicSarIndicatorService;
+use App\Services\Indicators\SuperTrendIndicatorService;
+use App\Services\Indicators\AdxIndicatorService;
 use App\Support\M1CandleCountdown;
 use App\Support\PriceScale;
 use Illuminate\Http\JsonResponse;
@@ -440,12 +445,17 @@ class DashboardController extends Controller
         StochasticIndicatorService $stochastic,
         CciIndicatorService $cci,
         VwmaIndicatorService $vwma,
+        KeltnerIndicatorService $keltner,
+        EnvelopsIndicatorService $envelops,
+        ParabolicSarIndicatorService $parabolicSar,
+        SuperTrendIndicatorService $superTrend,
+        AdxIndicatorService $adx,
     ): JsonResponse {
         $validated = $request->validate([
             'instrument' => ['required', 'string', 'max:64'],
             'timeframe' => ['nullable', 'integer', Rule::in(CandleService::DASHBOARD_TIMEFRAMES)],
             'layers' => ['nullable', 'array'],
-            'layers.*' => ['string', Rule::in(['bollinger', 'rsi', 'sma', 'ema', 'vwma', 'atr', 'macd', 'stochastic', 'cci'])],
+            'layers.*' => ['string', Rule::in(['bollinger', 'rsi', 'sma', 'ema', 'vwma', 'atr', 'macd', 'stochastic', 'cci', 'keltner', 'envelops', 'parabolic_sar', 'supertrend', 'adx'])],
         ]);
 
         $instrument = (string) $validated['instrument'];
@@ -542,6 +552,46 @@ class DashboardController extends Controller
                 $anchorBot !== null
                     ? IndicatorSetting::mergedCciParams($anchorBot)
                     : CciIndicatorService::defaultParams()
+            );
+        }
+        if (! empty($want['keltner'])) {
+            $json['keltner'] = $keltner->compute(
+                $rows,
+                $anchorBot !== null
+                    ? IndicatorSetting::mergedKeltnerParams($anchorBot)
+                    : KeltnerIndicatorService::defaultParams()
+            );
+        }
+        if (! empty($want['envelops'])) {
+            $json['envelops'] = $envelops->compute(
+                $rows,
+                $anchorBot !== null
+                    ? IndicatorSetting::mergedEnvelopsParams($anchorBot)
+                    : EnvelopsIndicatorService::defaultParams()
+            );
+        }
+        if (! empty($want['parabolic_sar'])) {
+            $json['parabolic_sar'] = $parabolicSar->compute(
+                $rows,
+                $anchorBot !== null
+                    ? IndicatorSetting::mergedParabolicSarParams($anchorBot)
+                    : ParabolicSarIndicatorService::defaultParams()
+            );
+        }
+        if (! empty($want['supertrend'])) {
+            $json['supertrend'] = $superTrend->compute(
+                $rows,
+                $anchorBot !== null
+                    ? IndicatorSetting::mergedSuperTrendParams($anchorBot)
+                    : SuperTrendIndicatorService::defaultParams()
+            );
+        }
+        if (! empty($want['adx'])) {
+            $json['adx'] = $adx->compute(
+                $rows,
+                $anchorBot !== null
+                    ? IndicatorSetting::mergedAdxParams($anchorBot)
+                    : AdxIndicatorService::defaultParams()
             );
         }
 
