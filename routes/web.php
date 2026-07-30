@@ -72,6 +72,8 @@ Route::middleware('auth')->group(function () {
         Route::put('/{bot}/indicators/stochastic', [BotChartIndicatorController::class, 'updateStochastic'])->name('indicators.stochastic.update');
         Route::get('/{bot}/indicators/cci', [BotChartIndicatorController::class, 'editCci'])->name('indicators.cci.edit');
         Route::put('/{bot}/indicators/cci', [BotChartIndicatorController::class, 'updateCci'])->name('indicators.cci.update');
+        Route::get('/{bot}/indicators/vwma', [BotChartIndicatorController::class, 'editVwma'])->name('indicators.vwma.edit');
+        Route::put('/{bot}/indicators/vwma', [BotChartIndicatorController::class, 'updateVwma'])->name('indicators.vwma.update');
         Route::get('/{bot}/activity', [BotController::class, 'activity'])->name('activity');
         Route::get('/{bot}/cards', [BotController::class, 'cards'])->name('cards');
         Route::get('/{bot}/cards/data', [BotController::class, 'cardsData'])->name('cards.data');

@@ -25,6 +25,7 @@ use App\Services\Indicators\SmaIndicatorService;
 use App\Services\Indicators\SmcFlowIndicatorService;
 use App\Services\Indicators\CciIndicatorService;
 use App\Services\Indicators\StochasticIndicatorService;
+use App\Services\Indicators\VwmaIndicatorService;
 use App\Services\Telegram\StrongLevelTelegramLlmButton;
 use App\Services\Telegram\StrongLevelTelegramProcessManager;
 use App\Services\Telegram\TelegramAlertService;
@@ -2360,7 +2361,7 @@ class BotController extends Controller
      */
     /**
      * Расчёт оверлей-индикаторов для графика бота.
-     * Query `layers[]` — какие слои считать (экономия CPU): pa, ls, smc, bollinger, rsi, sma, ema, atr, macd, stochastic, cci.
+     * Query `layers[]` — какие слои считать (экономия CPU): pa, ls, smc, bollinger, rsi, sma, ema, vwma, atr, macd, stochastic, cci.
      * Без layers — для обратной совместимости считаем pa+ls+smc (старое поведение).
      */
     public function indicatorsData(
@@ -2378,6 +2379,7 @@ class BotController extends Controller
         MacdIndicatorService $macd,
         StochasticIndicatorService $stochastic,
         CciIndicatorService $cci,
+        VwmaIndicatorService $vwma,
     ): JsonResponse {
         $this->ensureBotOwner($bot);
 
@@ -2385,7 +2387,7 @@ class BotController extends Controller
             'instrument' => ['required', 'string', 'max:64'],
             'timeframe' => ['nullable', 'integer', Rule::in(CandleService::DASHBOARD_TIMEFRAMES)],
             'layers' => ['nullable', 'array'],
-            'layers.*' => ['string', Rule::in(['pa', 'ls', 'smc', 'bollinger', 'rsi', 'sma', 'ema', 'atr', 'macd', 'stochastic', 'cci'])],
+            'layers.*' => ['string', Rule::in(['pa', 'ls', 'smc', 'bollinger', 'rsi', 'sma', 'ema', 'vwma', 'atr', 'macd', 'stochastic', 'cci'])],
         ]);
 
         $instrument = (string) $validated['instrument'];
@@ -2428,6 +2430,9 @@ class BotController extends Controller
         }
         if (! empty($want['ema'])) {
             $json['ema'] = $ema->compute($rows, IndicatorSetting::mergedEmaParams($bot));
+        }
+        if (! empty($want['vwma'])) {
+            $json['vwma'] = $vwma->compute($rows, IndicatorSetting::mergedVwmaParams($bot));
         }
         if (! empty($want['atr'])) {
             $json['atr'] = $atr->compute($rows, IndicatorSetting::mergedAtrParams($bot));

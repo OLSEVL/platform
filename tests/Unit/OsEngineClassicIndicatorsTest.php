@@ -11,6 +11,7 @@ use App\Services\Indicators\OsEngineCandleMath;
 use App\Services\Indicators\RsiIndicatorService;
 use App\Services\Indicators\SmaIndicatorService;
 use App\Services\Indicators\StochasticIndicatorService;
+use App\Services\Indicators\VwmaIndicatorService;
 use PHPUnit\Framework\TestCase;
 
 /**
@@ -45,6 +46,7 @@ class OsEngineClassicIndicatorsTest extends TestCase
         $macd = (new MacdIndicatorService)->computeSeries($rows, $p['macd']);
         $stoch = (new StochasticIndicatorService)->computeSeries($rows, $p['stochastic']);
         $cci = (new CciIndicatorService)->computeSeries($rows, $p['cci']);
+        $vwma = (new VwmaIndicatorService)->computeSeries($rows, $p['vwma']);
 
         foreach ($g['at'] as $idxStr => $expect) {
             $i = (int) $idxStr;
@@ -63,6 +65,7 @@ class OsEngineClassicIndicatorsTest extends TestCase
             // CCI: null на прогреве в golden записан как 0.
             $cciGot = $cci[$i] === null ? 0.0 : (float) $cci[$i];
             $this->assertEqualsWithDelta($expect['cci'], $cciGot, 1e-5, "cci@$i");
+            $this->assertEqualsWithDelta($expect['vwma'], $vwma[$i], 1e-8, "vwma@$i");
         }
     }
 
@@ -132,6 +135,29 @@ class OsEngineClassicIndicatorsTest extends TestCase
             5
         );
         $this->assertEqualsWithDelta($expected, (float) $cci[$index], 1e-12);
+    }
+
+    /** VWMA = Σ(price×vol)/Σ(vol); при length>index → 0. */
+    public function test_vwma_equals_volume_weighted_average(): void
+    {
+        $g = $this->golden();
+        $rows = $g['rows'];
+        $length = 5;
+        $index = 10;
+        $num = 0.0;
+        $den = 0.0;
+        for ($i = $index; $i > $index - $length; $i--) {
+            $vol = (float) ($rows[$i]['volume'] ?? 0);
+            $num += (float) $rows[$i]['close'] * $vol;
+            $den += $vol;
+        }
+        $expected = $den != 0.0 ? $num / $den : 0.0;
+        $vwma = (new VwmaIndicatorService)->computeSeries($rows, [
+            'length' => $length,
+            'candle_point' => 'Close',
+        ]);
+        $this->assertEqualsWithDelta($expected, $vwma[$index], 1e-12);
+        $this->assertSame(0.0, $vwma[$length - 1]);
     }
 
     /** Независимая проверка SMA = среднее Close[index-length+1 .. index] (OsEngine Summ). */

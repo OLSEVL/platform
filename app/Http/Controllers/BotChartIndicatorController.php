@@ -28,6 +28,8 @@ use App\Support\PriceActionDgtSettingsForm;
 use App\Support\RsiSettingsForm;
 use App\Support\SmaSettingsForm;
 use App\Support\SmcFlowSettingsForm;
+use App\Support\VwmaSettingsForm;
+use App\Services\Indicators\VwmaIndicatorService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\View\View;
@@ -318,6 +320,21 @@ class BotChartIndicatorController extends Controller
     public function updateCci(Request $request, Bot $bot): RedirectResponse
     {
         return $this->saveClassic($request, $bot, IndicatorSetting::KEY_CCI, CciIndicatorService::class, CciSettingsForm::class, 'bots.indicators.cci.edit', 'CCI');
+    }
+
+    public function editVwma(Bot $bot): View
+    {
+        $this->ensureBotOwner($bot);
+
+        return view('bots.indicators.vwma', [
+            'bot' => $bot,
+            'p' => IndicatorSetting::mergedVwmaParams($bot),
+        ]);
+    }
+
+    public function updateVwma(Request $request, Bot $bot): RedirectResponse
+    {
+        return $this->saveClassic($request, $bot, IndicatorSetting::KEY_VWMA, VwmaIndicatorService::class, VwmaSettingsForm::class, 'bots.indicators.vwma.edit', 'VWMA');
     }
 
     /**

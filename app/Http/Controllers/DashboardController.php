@@ -20,6 +20,7 @@ use App\Services\Indicators\SmaIndicatorService;
 use App\Services\Indicators\SmcFlowIndicatorService;
 use App\Services\Indicators\CciIndicatorService;
 use App\Services\Indicators\StochasticIndicatorService;
+use App\Services\Indicators\VwmaIndicatorService;
 use App\Support\M1CandleCountdown;
 use App\Support\PriceScale;
 use Illuminate\Http\JsonResponse;
@@ -423,7 +424,7 @@ class DashboardController extends Controller
     }
 
     /**
-     * Классика OsEngine (BB/RSI/SMA/EMA/ATR/MACD/Stochastic/CCI) для главного графика.
+     * Классика OsEngine (BB/RSI/SMA/EMA/VWMA/ATR/MACD/Stochastic/CCI) для главного графика.
      * Параметры — с якорного бота (как PA/SMC); без бота — defaultParams сервисов.
      * Query layers[] — считаем только включённые слои.
      */
@@ -438,12 +439,13 @@ class DashboardController extends Controller
         MacdIndicatorService $macd,
         StochasticIndicatorService $stochastic,
         CciIndicatorService $cci,
+        VwmaIndicatorService $vwma,
     ): JsonResponse {
         $validated = $request->validate([
             'instrument' => ['required', 'string', 'max:64'],
             'timeframe' => ['nullable', 'integer', Rule::in(CandleService::DASHBOARD_TIMEFRAMES)],
             'layers' => ['nullable', 'array'],
-            'layers.*' => ['string', Rule::in(['bollinger', 'rsi', 'sma', 'ema', 'atr', 'macd', 'stochastic', 'cci'])],
+            'layers.*' => ['string', Rule::in(['bollinger', 'rsi', 'sma', 'ema', 'vwma', 'atr', 'macd', 'stochastic', 'cci'])],
         ]);
 
         $instrument = (string) $validated['instrument'];
@@ -500,6 +502,14 @@ class DashboardController extends Controller
                 $anchorBot !== null
                     ? IndicatorSetting::mergedEmaParams($anchorBot)
                     : EmaIndicatorService::defaultParams()
+            );
+        }
+        if (! empty($want['vwma'])) {
+            $json['vwma'] = $vwma->compute(
+                $rows,
+                $anchorBot !== null
+                    ? IndicatorSetting::mergedVwmaParams($anchorBot)
+                    : VwmaIndicatorService::defaultParams()
             );
         }
         if (! empty($want['atr'])) {

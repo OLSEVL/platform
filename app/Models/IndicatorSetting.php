@@ -14,6 +14,7 @@ use App\Services\Indicators\SmaIndicatorService;
 use App\Services\Indicators\SmcFlowIndicatorService;
 use App\Services\Indicators\CciIndicatorService;
 use App\Services\Indicators\StochasticIndicatorService;
+use App\Services\Indicators\VwmaIndicatorService;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
@@ -47,6 +48,9 @@ class IndicatorSetting extends Model
     public const KEY_STOCHASTIC = 'stochastic';
 
     public const KEY_CCI = 'cci';
+
+    /** VWMA (Volume Weighted MA) — линия на цене, ключи VwmaIndicatorService::defaultParams(). */
+    public const KEY_VWMA = 'vwma';
 
     protected $fillable = ['bot_id', 'indicator_key', 'settings'];
 
@@ -202,5 +206,11 @@ class IndicatorSetting extends Model
     public static function mergedCciParams(Bot $bot): array
     {
         return self::mergedByKey($bot, self::KEY_CCI, [CciIndicatorService::class, 'defaultParams']);
+    }
+
+    /** @return array<string, mixed> */
+    public static function mergedVwmaParams(Bot $bot): array
+    {
+        return self::mergedByKey($bot, self::KEY_VWMA, [VwmaIndicatorService::class, 'defaultParams']);
     }
 }

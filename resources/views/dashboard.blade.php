@@ -286,6 +286,18 @@
                                 <a href="{{ route('bots.index') }}" class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-zinc-700 bg-zinc-800/40 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300 text-xs" title="Создайте бота — страницы настроек индикаторов привязаны к боту">⚙</a>
                             @endif
                         </div>
+                        {{-- VWMA — линия на pane 0 (как SMA/EMA), не отдельный осциллятор. --}}
+                        <div class="flex items-center justify-between gap-1">
+                            <label for="layer-vwma" class="flex min-w-0 flex-1 items-center gap-2 text-sm text-zinc-300 cursor-pointer">
+                                <input type="checkbox" id="layer-vwma" class="rounded border-zinc-600 bg-zinc-800 text-blue-500 shrink-0">
+                                <span class="truncate">VWMA</span>
+                            </label>
+                            @if($chartIndicatorBot)
+                                <a href="{{ route('bots.indicators.vwma.edit', $chartIndicatorBot) }}" class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-zinc-700 bg-zinc-800/80 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-100 text-xs" title="Настройки VWMA">⚙</a>
+                            @else
+                                <a href="{{ route('bots.index') }}" class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-zinc-700 bg-zinc-800/40 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300 text-xs" title="Создайте бота — страницы настроек индикаторов привязаны к боту">⚙</a>
+                            @endif
+                        </div>
                         <div class="flex items-center justify-between gap-1">
                             <label for="layer-atr" class="flex min-w-0 flex-1 items-center gap-2 text-sm text-zinc-300 cursor-pointer">
                                 <input type="checkbox" id="layer-atr" class="rounded border-zinc-600 bg-zinc-800 text-blue-500 shrink-0">
@@ -509,6 +521,7 @@
     const layerRsi = document.getElementById('layer-rsi');
     const layerSma = document.getElementById('layer-sma');
     const layerEma = document.getElementById('layer-ema');
+    const layerVwma = document.getElementById('layer-vwma');
     const layerAtr = document.getElementById('layer-atr');
     const layerMacd = document.getElementById('layer-macd');
     const layerStochastic = document.getElementById('layer-stochastic');
@@ -552,6 +565,7 @@
             if (layerRsi && typeof o.rsi === 'boolean') layerRsi.checked = o.rsi;
             if (layerSma && typeof o.sma === 'boolean') layerSma.checked = o.sma;
             if (layerEma && typeof o.ema === 'boolean') layerEma.checked = o.ema;
+            if (layerVwma && typeof o.vwma === 'boolean') layerVwma.checked = o.vwma;
             if (layerAtr && typeof o.atr === 'boolean') layerAtr.checked = o.atr;
             if (layerMacd && typeof o.macd === 'boolean') layerMacd.checked = o.macd;
             if (layerStochastic && typeof o.stochastic === 'boolean') layerStochastic.checked = o.stochastic;
@@ -571,6 +585,7 @@
                 rsi: layerRsi ? layerRsi.checked : false,
                 sma: layerSma ? layerSma.checked : false,
                 ema: layerEma ? layerEma.checked : false,
+                vwma: layerVwma ? layerVwma.checked : false,
                 atr: layerAtr ? layerAtr.checked : false,
                 macd: layerMacd ? layerMacd.checked : false,
                 stochastic: layerStochastic ? layerStochastic.checked : false,
@@ -618,11 +633,12 @@
     let lastChartSignals = [];
     let lastOpenTrades = [];
     let chartTradesFetchSeq = 0;
-    /** Payloads классики OsEngine (BB/RSI/SMA/EMA/ATR). */
+    /** Payloads классики OsEngine (BB/RSI/SMA/EMA/VWMA/ATR). */
     let lastBollingerPayload = null;
     let lastRsiPayload = null;
     let lastSmaPayload = null;
     let lastEmaPayload = null;
+    let lastVwmaPayload = null;
     let lastAtrPayload = null;
     let lastMacdPayload = null;
     let lastStochasticPayload = null;
@@ -1128,6 +1144,7 @@
             (layerRsi && layerRsi.checked) ||
             (layerSma && layerSma.checked) ||
             (layerEma && layerEma.checked) ||
+            (layerVwma && layerVwma.checked) ||
             (layerAtr && layerAtr.checked) ||
             (layerMacd && layerMacd.checked) ||
             (layerStochastic && layerStochastic.checked) ||
@@ -1164,7 +1181,7 @@
         } catch (_) {}
     }
 
-    /** Рисует BB/SMA/EMA на pane 0; RSI и ATR — в отдельных addPane(). */
+    /** Рисует BB/SMA/EMA/VWMA на pane 0; RSI и ATR — в отдельных addPane(). */
     function applyClassicOsEngineSeries() {
         if (!chart || !candlestickSeries) return;
         clearClassicOsEngineSeries();
@@ -1180,6 +1197,7 @@
         const wantRsi = layerRsi && layerRsi.checked && lastRsiPayload;
         const wantSma = layerSma && layerSma.checked && lastSmaPayload;
         const wantEma = layerEma && layerEma.checked && lastEmaPayload;
+        const wantVwma = layerVwma && layerVwma.checked && lastVwmaPayload;
         const wantAtr = layerAtr && layerAtr.checked && lastAtrPayload;
         const wantMacd = layerMacd && layerMacd.checked && lastMacdPayload;
         const wantStochastic = layerStochastic && layerStochastic.checked && lastStochasticPayload;
@@ -1213,6 +1231,10 @@
         if (wantEma) {
             const st = lastEmaPayload.style || {};
             addMainLine('ema', (lastEmaPayload.series || {}).ema, st.color, st.line_width);
+        }
+        if (wantVwma) {
+            const st = lastVwmaPayload.style || {};
+            addMainLine('vwma', (lastVwmaPayload.series || {}).vwma, st.color, st.line_width);
         }
 
         const oscCount = (wantRsi ? 1 : 0) + (wantMacd ? 1 : 0) + (wantStochastic ? 1 : 0) + (wantCci ? 1 : 0) + (wantAtr ? 1 : 0);
@@ -1531,6 +1553,7 @@
             lastRsiPayload = null;
             lastSmaPayload = null;
             lastEmaPayload = null;
+            lastVwmaPayload = null;
             lastAtrPayload = null;
             lastMacdPayload = null;
             lastStochasticPayload = null;
@@ -1542,6 +1565,7 @@
         const wantRsi = layerRsi && layerRsi.checked;
         const wantSma = layerSma && layerSma.checked;
         const wantEma = layerEma && layerEma.checked;
+        const wantVwma = layerVwma && layerVwma.checked;
         const wantAtr = layerAtr && layerAtr.checked;
         const wantMacd = layerMacd && layerMacd.checked;
         const wantStochastic = layerStochastic && layerStochastic.checked;
@@ -1551,6 +1575,7 @@
         if (wantRsi) layers.push('rsi');
         if (wantSma) layers.push('sma');
         if (wantEma) layers.push('ema');
+        if (wantVwma) layers.push('vwma');
         if (wantAtr) layers.push('atr');
         if (wantMacd) layers.push('macd');
         if (wantStochastic) layers.push('stochastic');
@@ -1574,6 +1599,7 @@
                     lastRsiPayload = wantRsi && d && d.rsi ? d.rsi : null;
                     lastSmaPayload = wantSma && d && d.sma ? d.sma : null;
                     lastEmaPayload = wantEma && d && d.ema ? d.ema : null;
+                    lastVwmaPayload = wantVwma && d && d.vwma ? d.vwma : null;
                     lastAtrPayload = wantAtr && d && d.atr ? d.atr : null;
                     lastMacdPayload = wantMacd && d && d.macd ? d.macd : null;
                     lastStochasticPayload = wantStochastic && d && d.stochastic ? d.stochastic : null;
@@ -1585,6 +1611,7 @@
                     lastRsiPayload = null;
                     lastSmaPayload = null;
                     lastEmaPayload = null;
+                    lastVwmaPayload = null;
                     lastAtrPayload = null;
                     lastMacdPayload = null;
                     lastStochasticPayload = null;
@@ -2591,6 +2618,7 @@
                     lastRsiPayload = null;
                     lastSmaPayload = null;
                     lastEmaPayload = null;
+                    lastVwmaPayload = null;
                     lastAtrPayload = null;
                     lastMacdPayload = null;
                     lastStochasticPayload = null;
@@ -2628,6 +2656,7 @@
         lastRsiPayload = null;
         lastSmaPayload = null;
         lastEmaPayload = null;
+        lastVwmaPayload = null;
         lastAtrPayload = null;
         lastMacdPayload = null;
         lastStochasticPayload = null;
@@ -2757,6 +2786,7 @@
         [layerRsi, () => { lastRsiPayload = null; }],
         [layerSma, () => { lastSmaPayload = null; }],
         [layerEma, () => { lastEmaPayload = null; }],
+        [layerVwma, () => { lastVwmaPayload = null; }],
         [layerAtr, () => { lastAtrPayload = null; }],
         [layerMacd, () => { lastMacdPayload = null; }],
         [layerStochastic, () => { lastStochasticPayload = null; }],
