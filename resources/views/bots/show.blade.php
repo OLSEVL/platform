@@ -323,6 +323,62 @@
                                 </label>
                                 <a href="{{ route('bots.indicators.adx.edit', $bot) }}" class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-zinc-700 bg-zinc-800/80 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-100 text-xs" title="Настройки ADX">⚙</a>
                             </div>
+                            <div class="flex items-center justify-between gap-1">
+                                <label for="layer-williams" class="flex min-w-0 flex-1 items-center gap-2 text-sm text-zinc-300 cursor-pointer">
+                                    <input type="checkbox" id="layer-williams" class="rounded border-zinc-600 bg-zinc-800 text-blue-500 shrink-0">
+                                    <span class="truncate">Williams %R</span>
+                                </label>
+                                <a href="{{ route('bots.indicators.williams.edit', $bot) }}" class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-zinc-700 bg-zinc-800/80 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-100 text-xs" title="Настройки Williams %R">⚙</a>
+                            </div>
+                            <div class="flex items-center justify-between gap-1">
+                                <label for="layer-ao" class="flex min-w-0 flex-1 items-center gap-2 text-sm text-zinc-300 cursor-pointer">
+                                    <input type="checkbox" id="layer-ao" class="rounded border-zinc-600 bg-zinc-800 text-blue-500 shrink-0">
+                                    <span class="truncate">AO</span>
+                                </label>
+                                <a href="{{ route('bots.indicators.ao.edit', $bot) }}" class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-zinc-700 bg-zinc-800/80 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-100 text-xs" title="Настройки AO">⚙</a>
+                            </div>
+                            <div class="flex items-center justify-between gap-1">
+                                <label for="layer-alligator" class="flex min-w-0 flex-1 items-center gap-2 text-sm text-zinc-300 cursor-pointer">
+                                    <input type="checkbox" id="layer-alligator" class="rounded border-zinc-600 bg-zinc-800 text-blue-500 shrink-0">
+                                    <span class="truncate">Alligator</span>
+                                </label>
+                                <a href="{{ route('bots.indicators.alligator.edit', $bot) }}" class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-zinc-700 bg-zinc-800/80 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-100 text-xs" title="Настройки Alligator">⚙</a>
+                            </div>
+                            <div class="flex items-center justify-between gap-1">
+                                <label for="layer-ichimoku" class="flex min-w-0 flex-1 items-center gap-2 text-sm text-zinc-300 cursor-pointer">
+                                    <input type="checkbox" id="layer-ichimoku" class="rounded border-zinc-600 bg-zinc-800 text-blue-500 shrink-0">
+                                    <span class="truncate">Ichimoku</span>
+                                </label>
+                                <a href="{{ route('bots.indicators.ichimoku.edit', $bot) }}" class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-zinc-700 bg-zinc-800/80 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-100 text-xs" title="Настройки Ichimoku">⚙</a>
+                            </div>
+                            <div class="flex items-center justify-between gap-1">
+                                <label for="layer-price-channel" class="flex min-w-0 flex-1 items-center gap-2 text-sm text-zinc-300 cursor-pointer">
+                                    <input type="checkbox" id="layer-price-channel" class="rounded border-zinc-600 bg-zinc-800 text-blue-500 shrink-0">
+                                    <span class="truncate">Price Channel</span>
+                                </label>
+                                <a href="{{ route('bots.indicators.price-channel.edit', $bot) }}" class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-zinc-700 bg-zinc-800/80 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-100 text-xs" title="Настройки Price Channel">⚙</a>
+                            </div>
+                            <div class="flex items-center justify-between gap-1">
+                                <label for="layer-nrtr" class="flex min-w-0 flex-1 items-center gap-2 text-sm text-zinc-300 cursor-pointer">
+                                    <input type="checkbox" id="layer-nrtr" class="rounded border-zinc-600 bg-zinc-800 text-blue-500 shrink-0">
+                                    <span class="truncate">NRTR</span>
+                                </label>
+                                <a href="{{ route('bots.indicators.nrtr.edit', $bot) }}" class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-zinc-700 bg-zinc-800/80 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-100 text-xs" title="Настройки NRTR">⚙</a>
+                            </div>
+                            <div class="flex items-center justify-between gap-1">
+                                <label for="layer-hma" class="flex min-w-0 flex-1 items-center gap-2 text-sm text-zinc-300 cursor-pointer">
+                                    <input type="checkbox" id="layer-hma" class="rounded border-zinc-600 bg-zinc-800 text-blue-500 shrink-0">
+                                    <span class="truncate">HMA</span>
+                                </label>
+                                <a href="{{ route('bots.indicators.hma.edit', $bot) }}" class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-zinc-700 bg-zinc-800/80 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-100 text-xs" title="Настройки HMA">⚙</a>
+                            </div>
+                            <div class="flex items-center justify-between gap-1">
+                                <label for="layer-aroon" class="flex min-w-0 flex-1 items-center gap-2 text-sm text-zinc-300 cursor-pointer">
+                                    <input type="checkbox" id="layer-aroon" class="rounded border-zinc-600 bg-zinc-800 text-blue-500 shrink-0">
+                                    <span class="truncate">Aroon</span>
+                                </label>
+                                <a href="{{ route('bots.indicators.aroon.edit', $bot) }}" class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-zinc-700 bg-zinc-800/80 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-100 text-xs" title="Настройки Aroon">⚙</a>
+                            </div>
                         </div>
                         @if($isChartAnalystBot ?? false)
                         <div class="flex items-center justify-between gap-1 border-t border-zinc-800 pt-2 mt-1">
@@ -690,6 +746,14 @@
     const layerParabolicSar = document.getElementById('layer-parabolic-sar');
     const layerSuperTrend = document.getElementById('layer-supertrend');
     const layerAdx = document.getElementById('layer-adx');
+    const layerWilliams = document.getElementById('layer-williams');
+    const layerAo = document.getElementById('layer-ao');
+    const layerAlligator = document.getElementById('layer-alligator');
+    const layerIchimoku = document.getElementById('layer-ichimoku');
+    const layerPriceChannel = document.getElementById('layer-price-channel');
+    const layerNrtr = document.getElementById('layer-nrtr');
+    const layerHma = document.getElementById('layer-hma');
+    const layerAroon = document.getElementById('layer-aroon');
     const instrumentSearchInput = document.getElementById('instrument-search');
     const instrumentSearchClearBtn = document.getElementById('instrument-search-clear');
     const botAnalysisBtn = document.getElementById('bot-analysis-btn');
@@ -734,6 +798,14 @@
     let lastParabolicSarPayload = null;
     let lastSuperTrendPayload = null;
     let lastAdxPayload = null;
+    let lastWilliamsPayload = null;
+    let lastAoPayload = null;
+    let lastAlligatorPayload = null;
+    let lastIchimokuPayload = null;
+    let lastPriceChannelPayload = null;
+    let lastNrtrPayload = null;
+    let lastHmaPayload = null;
+    let lastAroonPayload = null;
     /** Line-series handles для классики OsEngine (пересоздаём при apply). */
     let classicLineSeries = {};
     let rsiLevelLines = [];
@@ -915,6 +987,14 @@
             if (layerParabolicSar && typeof obj.parabolicSar === 'boolean') layerParabolicSar.checked = obj.parabolicSar;
             if (layerSuperTrend && typeof obj.supertrend === 'boolean') layerSuperTrend.checked = obj.supertrend;
             if (layerAdx && typeof obj.adx === 'boolean') layerAdx.checked = obj.adx;
+            if (layerWilliams && typeof obj.williams === 'boolean') layerWilliams.checked = obj.williams;
+            if (layerAo && typeof obj.ao === 'boolean') layerAo.checked = obj.ao;
+            if (layerAlligator && typeof obj.alligator === 'boolean') layerAlligator.checked = obj.alligator;
+            if (layerIchimoku && typeof obj.ichimoku === 'boolean') layerIchimoku.checked = obj.ichimoku;
+            if (layerPriceChannel && typeof obj.price_channel === 'boolean') layerPriceChannel.checked = obj.price_channel;
+            if (layerNrtr && typeof obj.nrtr === 'boolean') layerNrtr.checked = obj.nrtr;
+            if (layerHma && typeof obj.hma === 'boolean') layerHma.checked = obj.hma;
+            if (layerAroon && typeof obj.aroon === 'boolean') layerAroon.checked = obj.aroon;
             if (BOT_IS_CHART_ANALYST && layerLlmLevels && typeof obj.llmLevels === 'boolean') layerLlmLevels.checked = obj.llmLevels;
         } catch (_) {}
     }
@@ -941,6 +1021,14 @@
                 parabolicSar: layerParabolicSar ? layerParabolicSar.checked : false,
                 supertrend: layerSuperTrend ? layerSuperTrend.checked : false,
                 adx: layerAdx ? layerAdx.checked : false,
+                williams: layerWilliams ? layerWilliams.checked : false,
+                ao: layerAo ? layerAo.checked : false,
+                alligator: layerAlligator ? layerAlligator.checked : false,
+                ichimoku: layerIchimoku ? layerIchimoku.checked : false,
+                price_channel: layerPriceChannel ? layerPriceChannel.checked : false,
+                nrtr: layerNrtr ? layerNrtr.checked : false,
+                hma: layerHma ? layerHma.checked : false,
+                aroon: layerAroon ? layerAroon.checked : false,
                 llmLevels: (BOT_IS_CHART_ANALYST && layerLlmLevels) ? layerLlmLevels.checked : false,
             }));
         } catch (_) {}
@@ -1171,7 +1259,15 @@
         const wantParabolicSar = layerParabolicSar && layerParabolicSar.checked;
         const wantSuperTrend = layerSuperTrend && layerSuperTrend.checked;
         const wantAdx = layerAdx && layerAdx.checked;
-        if (!wantPa && !wantLs && !wantSmc && !wantBb && !wantRsi && !wantSma && !wantEma && !wantVwma && !wantAtr && !wantMacd && !wantStochastic && !wantCci && !wantKeltner && !wantEnvelops && !wantParabolicSar && !wantSuperTrend && !wantAdx) {
+        const wantWilliams = layerWilliams && layerWilliams.checked;
+        const wantAo = layerAo && layerAo.checked;
+        const wantAlligator = layerAlligator && layerAlligator.checked;
+        const wantIchimoku = layerIchimoku && layerIchimoku.checked;
+        const wantPriceChannel = layerPriceChannel && layerPriceChannel.checked;
+        const wantNrtr = layerNrtr && layerNrtr.checked;
+        const wantHma = layerHma && layerHma.checked;
+        const wantAroon = layerAroon && layerAroon.checked;
+        if (!wantPa && !wantLs && !wantSmc && !wantBb && !wantRsi && !wantSma && !wantEma && !wantVwma && !wantAtr && !wantMacd && !wantStochastic && !wantCci && !wantKeltner && !wantEnvelops && !wantParabolicSar && !wantSuperTrend && !wantAdx && !wantWilliams && !wantAo && !wantAlligator && !wantIchimoku && !wantPriceChannel && !wantNrtr && !wantHma && !wantAroon) {
             lastPaPayload = null;
             lastLsPayload = null;
             lastSmcPayload = null;
@@ -1189,6 +1285,14 @@
             lastParabolicSarPayload = null;
             lastSuperTrendPayload = null;
             lastAdxPayload = null;
+            lastWilliamsPayload = null;
+            lastAoPayload = null;
+            lastAlligatorPayload = null;
+            lastIchimokuPayload = null;
+            lastPriceChannelPayload = null;
+            lastNrtrPayload = null;
+            lastHmaPayload = null;
+            lastAroonPayload = null;
             redrawPriceActionOverlay();
             applyPaBarColors({ fullResync: true });
             renderChartMarkers();
@@ -1214,6 +1318,14 @@
         if (wantParabolicSar) layers.push('parabolic_sar');
         if (wantSuperTrend) layers.push('supertrend');
         if (wantAdx) layers.push('adx');
+        if (wantWilliams) layers.push('williams');
+        if (wantAo) layers.push('ao');
+        if (wantAlligator) layers.push('alligator');
+        if (wantIchimoku) layers.push('ichimoku');
+        if (wantPriceChannel) layers.push('price_channel');
+        if (wantNrtr) layers.push('nrtr');
+        if (wantHma) layers.push('hma');
+        if (wantAroon) layers.push('aroon');
         layers.forEach((l) => params.append('layers[]', l));
         fetch(`${PA_INDICATOR_URL}?${params.toString()}`, { headers: { 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' } })
             .then((r) => r.json())
@@ -1236,6 +1348,14 @@
                     lastParabolicSarPayload = wantParabolicSar && d && d.parabolic_sar ? d.parabolic_sar : null;
                     lastSuperTrendPayload = wantSuperTrend && d && d.supertrend ? d.supertrend : null;
                     lastAdxPayload = wantAdx && d && d.adx ? d.adx : null;
+                    lastWilliamsPayload = wantWilliams && d && d.williams ? d.williams : null;
+                    lastAoPayload = wantAo && d && d.ao ? d.ao : null;
+                    lastAlligatorPayload = wantAlligator && d && d.alligator ? d.alligator : null;
+                    lastIchimokuPayload = wantIchimoku && d && d.ichimoku ? d.ichimoku : null;
+                    lastPriceChannelPayload = wantPriceChannel && d && d.price_channel ? d.price_channel : null;
+                    lastNrtrPayload = wantNrtr && d && d.nrtr ? d.nrtr : null;
+                    lastHmaPayload = wantHma && d && d.hma ? d.hma : null;
+                    lastAroonPayload = wantAroon && d && d.aroon ? d.aroon : null;
                     redrawPriceActionOverlay();
                     applyPaBarColors({ fullResync: wantPa });
                     renderChartMarkers();
@@ -1259,6 +1379,14 @@
                     lastParabolicSarPayload = null;
                     lastSuperTrendPayload = null;
                     lastAdxPayload = null;
+                    lastWilliamsPayload = null;
+                    lastAoPayload = null;
+                    lastAlligatorPayload = null;
+                    lastIchimokuPayload = null;
+                    lastPriceChannelPayload = null;
+                    lastNrtrPayload = null;
+                    lastHmaPayload = null;
+                    lastAroonPayload = null;
                     try {
                         redrawPriceActionOverlay();
                         applyPaBarColors({ fullResync: true });
@@ -1329,6 +1457,14 @@
         const wantParabolicSar = layerParabolicSar && layerParabolicSar.checked && lastParabolicSarPayload;
         const wantSuperTrend = layerSuperTrend && layerSuperTrend.checked && lastSuperTrendPayload;
         const wantAdx = layerAdx && layerAdx.checked && lastAdxPayload;
+        const wantWilliams = layerWilliams && layerWilliams.checked && lastWilliamsPayload;
+        const wantAo = layerAo && layerAo.checked && lastAoPayload;
+        const wantAlligator = layerAlligator && layerAlligator.checked && lastAlligatorPayload;
+        const wantIchimoku = layerIchimoku && layerIchimoku.checked && lastIchimokuPayload;
+        const wantPriceChannel = layerPriceChannel && layerPriceChannel.checked && lastPriceChannelPayload;
+        const wantNrtr = layerNrtr && layerNrtr.checked && lastNrtrPayload;
+        const wantHma = layerHma && layerHma.checked && lastHmaPayload;
+        const wantAroon = layerAroon && layerAroon.checked && lastAroonPayload;
 
         // Линии на основной pane (индекс 0) — рядом со свечами.
         const addMainLine = (key, data, color, width) => {
@@ -1408,9 +1544,60 @@
             addMainLine('supertrend_upper', ser.upper, st.color_upper, w);
             addMainLine('supertrend_lower', ser.lower, st.color_lower, w);
         }
+        if (wantAlligator) {
+            const st = lastAlligatorPayload.style || {};
+            const ser = lastAlligatorPayload.series || {};
+            const w = st.line_width || 1;
+            addMainLine('alligator_jaw', ser.jaw, st.color_jaw, w);
+            addMainLine('alligator_teeth', ser.teeth, st.color_teeth, w);
+            addMainLine('alligator_lips', ser.lips, st.color_lips, w);
+        }
+        if (wantIchimoku) {
+            const st = lastIchimokuPayload.style || {};
+            const ser = lastIchimokuPayload.series || {};
+            const w = st.line_width || 1;
+            addMainLine('ichimoku_tenkan', ser.tenkan, st.color_tenkan, w);
+            addMainLine('ichimoku_kijun', ser.kijun, st.color_kijun, w);
+            addMainLine('ichimoku_senkou_a', ser.senkou_a, st.color_senkou_a, w);
+            addMainLine('ichimoku_senkou_b', ser.senkou_b, st.color_senkou_b, w);
+            const chinkou = ser.chinkou;
+            if (Array.isArray(chinkou) && chinkou.length) {
+                const s = chart.addSeries(LineSeries, {
+                    color: st.color_chinkou || '#8b0000',
+                    lineWidth: 1,
+                    lineVisible: false,
+                    pointMarkersVisible: true,
+                    pointMarkersRadius: st.chinkou_point_radius || 2,
+                    priceLineVisible: false,
+                    lastValueVisible: false,
+                    crosshairMarkerVisible: false,
+                }, 0);
+                s.setData(chinkou.map((p) => ({ time: p.time, value: p.value })));
+                classicLineSeries['ichimoku_chinkou'] = s;
+            }
+        }
+        if (wantPriceChannel) {
+            const st = lastPriceChannelPayload.style || {};
+            const ser = lastPriceChannelPayload.series || {};
+            const w = st.line_width || 1;
+            addMainLine('price_channel_up', ser.up, st.color_up, w);
+            addMainLine('price_channel_down', ser.down, st.color_down, w);
+        }
+        if (wantNrtr) {
+            const st = lastNrtrPayload.style || {};
+            const ser = lastNrtrPayload.series || {};
+            const w = st.line_width || 1;
+            addMainLine('nrtr_center', ser.center, st.color_center, w);
+            addMainLine('nrtr_up', ser.up, st.color_up, w);
+            addMainLine('nrtr_down', ser.down, st.color_down, w);
+        }
+        if (wantHma) {
+            const st = lastHmaPayload.style || {};
+            addMainLine('hma', (lastHmaPayload.series || {}).hma, st.color, st.line_width);
+        }
 
 
-        const oscCount = (wantRsi ? 1 : 0) + (wantMacd ? 1 : 0) + (wantStochastic ? 1 : 0) + (wantCci ? 1 : 0) + (wantAtr ? 1 : 0) + (wantAdx ? 1 : 0);
+        const oscCount = (wantRsi ? 1 : 0) + (wantMacd ? 1 : 0) + (wantStochastic ? 1 : 0) + (wantCci ? 1 : 0) + (wantAtr ? 1 : 0) + (wantAdx ? 1 : 0) + (wantWilliams ? 1 : 0) + (wantAo ? 1 : 0) + (wantAroon ? 1 : 0);
         if (oscCount > 0) {
             // Главная pane крупнее осцилляторов (~1 : 0.28 на каждый нижний pane).
             try {
@@ -1755,6 +1942,146 @@
             } catch (_) {}
         }
 
+        // Williams %R — pane -100..0, уровни -20/-80.
+        if (wantWilliams) {
+            const st = lastWilliamsPayload.style || {};
+            const levels = lastWilliamsPayload.levels || {};
+            const ser = lastWilliamsPayload.series || {};
+            let paneIndex = 1;
+            let wrPane = null;
+            try {
+                wrPane = chart.addPane(false);
+                if (wrPane && typeof wrPane.setStretchFactor === 'function') {
+                    wrPane.setStretchFactor(0.28);
+                }
+                paneIndex = Math.max(1, chart.panes().length - 1);
+                classicOscPaneCount += 1;
+            } catch (e) {
+                console.error('[indicators] addPane Williams', e);
+            }
+            const data = ser.wr || [];
+            let wrLine = null;
+            if (Array.isArray(data) && data.length) {
+                wrLine = chart.addSeries(LineSeries, {
+                    color: st.color || '#1e90ff',
+                    lineWidth: st.line_width || 1,
+                    priceLineVisible: false,
+                    baseLineVisible: false,
+                    lastValueVisible: true,
+                    crosshairMarkerVisible: false,
+                    priceFormat: { type: 'price', precision: 2, minMove: 0.01 },
+                    autoscaleInfoProvider: () => ({ priceRange: { minValue: -100, maxValue: 0 } }),
+                }, paneIndex);
+                wrLine.setData(data.map((p) => ({ time: p.time, value: p.value })));
+                classicLineSeries['williams'] = wrLine;
+            }
+            try {
+                const paneApi = wrPane || (typeof chart.panes === 'function' ? chart.panes()[paneIndex] : null);
+                if (paneApi && typeof paneApi.attachPrimitive === 'function'
+                    && window.PlatformChartMarkers
+                    && typeof window.PlatformChartMarkers.createPaneSolidBackdrop === 'function') {
+                    paneApi.attachPrimitive(window.PlatformChartMarkers.createPaneSolidBackdrop('#0e1018'));
+                }
+            } catch (_) {}
+            try {
+                if (wrLine && levels.show && window.PlatformChartMarkers
+                    && typeof window.PlatformChartMarkers.attachRsiLevelLines === 'function') {
+                    rsiLevelLines.push(...window.PlatformChartMarkers.attachRsiLevelLines(wrLine, levels));
+                }
+            } catch (_) {}
+        }
+
+        // AO — гистограмма (зелёная/красная по знаку).
+        if (wantAo) {
+            const st = lastAoPayload.style || {};
+            const ser = lastAoPayload.series || {};
+            const histColor = st.color_histogram || '#006400';
+            const histNeg = st.color_histogram_neg || '#f43f5e';
+            let paneIndex = 1;
+            try {
+                const pane = chart.addPane(false);
+                if (pane && typeof pane.setStretchFactor === 'function') {
+                    pane.setStretchFactor(0.32);
+                }
+                paneIndex = Math.max(1, chart.panes().length - 1);
+                classicOscPaneCount += 1;
+            } catch (e) {
+                console.error('[indicators] addPane AO', e);
+            }
+            if (HistogramSeries && Array.isArray(ser.ao) && ser.ao.length) {
+                try {
+                    const hs = chart.addSeries(HistogramSeries, {
+                        priceLineVisible: false,
+                        lastValueVisible: false,
+                        baseLineVisible: true,
+                        baseLineColor: 'rgba(161,161,170,0.45)',
+                        baseLineWidth: 1,
+                        baseLineStyle: 2,
+                    }, paneIndex);
+                    hs.setData(ser.ao.map((p) => ({
+                        time: p.time,
+                        value: p.value,
+                        color: Number(p.value) >= 0 ? histColor : histNeg,
+                    })));
+                    classicLineSeries['ao_hist'] = hs;
+                } catch (e) {
+                    console.error('[indicators] AO histogram', e);
+                }
+            }
+        }
+
+        // Aroon — pane Up/Down + уровни 70/30.
+        if (wantAroon) {
+            const st = lastAroonPayload.style || {};
+            const levels = lastAroonPayload.levels || {};
+            const ser = lastAroonPayload.series || {};
+            const lineW = st.line_width || 1;
+            let paneIndex = 1;
+            let aroonPane = null;
+            try {
+                aroonPane = chart.addPane(false);
+                if (aroonPane && typeof aroonPane.setStretchFactor === 'function') {
+                    aroonPane.setStretchFactor(0.28);
+                }
+                paneIndex = Math.max(1, chart.panes().length - 1);
+                classicOscPaneCount += 1;
+            } catch (e) {
+                console.error('[indicators] addPane Aroon', e);
+            }
+            const mkAroon = (key, data, color) => {
+                if (!Array.isArray(data) || !data.length) return null;
+                const s = chart.addSeries(LineSeries, {
+                    color: color || '#008000',
+                    lineWidth: lineW,
+                    priceLineVisible: false,
+                    lastValueVisible: true,
+                    crosshairMarkerVisible: false,
+                    priceFormat: { type: 'price', precision: 0, minMove: 1 },
+                    autoscaleInfoProvider: () => ({ priceRange: { minValue: 0, maxValue: 100 } }),
+                }, paneIndex);
+                s.setData(data.map((p) => ({ time: p.time, value: p.value })));
+                classicLineSeries[key] = s;
+                return s;
+            };
+            const upLine = mkAroon('aroon_up', ser.up, st.color_up);
+            mkAroon('aroon_down', ser.down, st.color_down);
+            try {
+                const paneApi = aroonPane || (typeof chart.panes === 'function' ? chart.panes()[paneIndex] : null);
+                if (paneApi && typeof paneApi.attachPrimitive === 'function'
+                    && window.PlatformChartMarkers
+                    && typeof window.PlatformChartMarkers.createPaneSolidBackdrop === 'function') {
+                    paneApi.attachPrimitive(window.PlatformChartMarkers.createPaneSolidBackdrop('#0e1018'));
+                }
+            } catch (_) {}
+            try {
+                const anchor = upLine || classicLineSeries['aroon_down'];
+                if (anchor && levels.show && window.PlatformChartMarkers
+                    && typeof window.PlatformChartMarkers.attachRsiLevelLines === 'function') {
+                    rsiLevelLines.push(...window.PlatformChartMarkers.attachRsiLevelLines(anchor, levels));
+                }
+            } catch (_) {}
+        }
+
         // ATR — ещё один pane под RSI/MACD/Stochastic/CCI (или единственный нижний).
         if (wantAtr) {
             const st = lastAtrPayload.style || {};
@@ -1801,7 +2128,15 @@
             (layerEnvelops && layerEnvelops.checked) ||
             (layerParabolicSar && layerParabolicSar.checked) ||
             (layerSuperTrend && layerSuperTrend.checked) ||
-            (layerAdx && layerAdx.checked)
+            (layerAdx && layerAdx.checked) ||
+            (layerWilliams && layerWilliams.checked) ||
+            (layerAo && layerAo.checked) ||
+            (layerAlligator && layerAlligator.checked) ||
+            (layerIchimoku && layerIchimoku.checked) ||
+            (layerPriceChannel && layerPriceChannel.checked) ||
+            (layerNrtr && layerNrtr.checked) ||
+            (layerHma && layerHma.checked) ||
+            (layerAroon && layerAroon.checked)
         );
     }
 
@@ -4355,6 +4690,14 @@
         lastParabolicSarPayload = null;
         lastSuperTrendPayload = null;
         lastAdxPayload = null;
+        lastWilliamsPayload = null;
+        lastAoPayload = null;
+        lastAlligatorPayload = null;
+        lastIchimokuPayload = null;
+        lastPriceChannelPayload = null;
+        lastNrtrPayload = null;
+        lastHmaPayload = null;
+        lastAroonPayload = null;
         clearClassicOsEngineSeries();
         if (priceActionOverlay) priceActionOverlay.innerHTML = '';
         if (liquiditySwingsOverlay) liquiditySwingsOverlay.innerHTML = '';
@@ -4450,6 +4793,14 @@
         [layerParabolicSar, () => { lastParabolicSarPayload = null; }],
         [layerSuperTrend, () => { lastSuperTrendPayload = null; }],
         [layerAdx, () => { lastAdxPayload = null; }],
+        [layerWilliams, () => { lastWilliamsPayload = null; }],
+        [layerAo, () => { lastAoPayload = null; }],
+        [layerAlligator, () => { lastAlligatorPayload = null; }],
+        [layerIchimoku, () => { lastIchimokuPayload = null; }],
+        [layerPriceChannel, () => { lastPriceChannelPayload = null; }],
+        [layerNrtr, () => { lastNrtrPayload = null; }],
+        [layerHma, () => { lastHmaPayload = null; }],
+        [layerAroon, () => { lastAroonPayload = null; }],
     ].forEach(([el, clearFn]) => {
         if (!el) return;
         el.addEventListener('change', () => {

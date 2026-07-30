@@ -461,6 +461,44 @@
         },
         "adx": {
             "length": 5
+        },
+        "williams": {
+            "period": 5
+        },
+        "ao": {
+            "length_fast": 3,
+            "length_slow": 5,
+            "candle_point": "Typical"
+        },
+        "alligator": {
+            "length_jaw": 5,
+            "length_teeth": 3,
+            "length_lips": 2,
+            "shift_jaw": 2,
+            "shift_teeth": 1,
+            "shift_lips": 1
+        },
+        "ichimoku": {
+            "tenkan": 5,
+            "kijun": 9,
+            "senkou_b": 14,
+            "displacement": 9,
+            "chinkou_span": 9
+        },
+        "price_channel": {
+            "length_up": 5,
+            "length_down": 5
+        },
+        "nrtr": {
+            "length": 5,
+            "deviation": 1
+        },
+        "hma": {
+            "length": 5,
+            "candle_point": "Close"
+        },
+        "aroon": {
+            "period": 5
         }
     },
     "at": {
@@ -489,7 +527,22 @@
             "supertrend": 101.51054521,
             "adx": 0,
             "adx_plus": 47.9839,
-            "adx_minus": 0
+            "adx_minus": 0,
+            "williams": -17.49,
+            "ao": 0,
+            "alligator_jaw": 0,
+            "alligator_teeth": 101.57552992666666,
+            "alligator_lips": 101.78531451750001,
+            "ichimoku_tenkan": 101.497602655,
+            "ichimoku_kijun": 101.14540796,
+            "ichimoku_senkou_a": 0,
+            "ichimoku_senkou_b": 101.27920532,
+            "price_channel_up": 0,
+            "price_channel_down": 0,
+            "nrtr": 101.61440776079999,
+            "hma": 68.2471,
+            "aroon_up": 0,
+            "aroon_down": 0
         },
         "10": {
             "sma": 101.21608319,
@@ -516,7 +569,22 @@
             "supertrend": 100.9778834,
             "adx": 51.1924,
             "adx_plus": 14.2387,
-            "adx_minus": 38.4308
+            "adx_minus": 38.4308,
+            "williams": -87.27,
+            "ao": -0.284372,
+            "alligator_jaw": 101.66717397185599,
+            "alligator_teeth": 101.36656525618655,
+            "alligator_lips": 101.17750654679688,
+            "ichimoku_tenkan": 101.14372946,
+            "ichimoku_kijun": 101.204839995,
+            "ichimoku_senkou_a": 0,
+            "ichimoku_senkou_b": 100.377194695,
+            "price_channel_up": 102.51859485,
+            "price_channel_down": 99.76886407,
+            "nrtr": 100.76655271070001,
+            "hma": 100.385,
+            "aroon_up": 0,
+            "aroon_down": 100
         },
         "14": {
             "sma": 99.24935323,
@@ -543,7 +611,22 @@
             "supertrend": 99.53687222,
             "adx": 61.7601,
             "adx_plus": 6.0068,
-            "adx_minus": 38.7631
+            "adx_minus": 38.7631,
+            "williams": -83.85,
+            "ao": -0.355869,
+            "alligator_jaw": 100.51794078388022,
+            "alligator_teeth": 99.60893376097512,
+            "alligator_lips": 99.19203815354982,
+            "ichimoku_tenkan": 99.43547712,
+            "ichimoku_kijun": 100.43534251,
+            "ichimoku_senkou_a": 0,
+            "ichimoku_senkou_b": 101.14540796,
+            "price_channel_up": 100.51886407,
+            "price_channel_down": 98.35209017,
+            "nrtr": 99.3356110717,
+            "hma": 98.6228,
+            "aroon_up": 0,
+            "aroon_down": 100
         },
         "20": {
             "sma": 100.40133404,
@@ -570,7 +653,22 @@
             "supertrend": 100.82504442,
             "adx": 50.9312,
             "adx_plus": 46.2376,
-            "adx_minus": 8.6776
+            "adx_minus": 8.6776,
+            "williams": -12.03,
+            "ao": 0.430134,
+            "alligator_jaw": 99.7440912548719,
+            "alligator_teeth": 100.1306622340225,
+            "alligator_lips": 100.45105401411797,
+            "ichimoku_tenkan": 100.48582184,
+            "ichimoku_kijun": 100.250196315,
+            "ichimoku_senkou_a": 100.80796987000001,
+            "ichimoku_senkou_b": 100.91913091,
+            "price_channel_up": 102.14830246,
+            "price_channel_down": 98.82334122,
+            "nrtr": 101.1268194354,
+            "hma": 101.4794,
+            "aroon_up": 100,
+            "aroon_down": 0
         },
         "26": {
             "sma": 102.96568329,
@@ -597,7 +695,22 @@
             "supertrend": 103.52939959,
             "adx": 61.1639,
             "adx_plus": 27.8187,
-            "adx_minus": 14.0032
+            "adx_minus": 14.0032,
+            "williams": -72.08,
+            "ao": 0.136816,
+            "alligator_jaw": 101.88406128649507,
+            "alligator_teeth": 102.69992731821321,
+            "alligator_lips": 102.9817763949081,
+            "ichimoku_tenkan": 102.95190946,
+            "ichimoku_kijun": 101.784942745,
+            "ichimoku_senkou_a": 99.48250596999999,
+            "ichimoku_senkou_b": 100.496453045,
+            "price_channel_up": 103.57871649,
+            "price_channel_down": 102.32510243,
+            "nrtr": 102.5429293251,
+            "hma": 102.931,
+            "aroon_up": 60,
+            "aroon_down": 0
         },
         "30": {
             "sma": 101.56297162,
@@ -624,7 +737,22 @@
             "supertrend": 101.31995866,
             "adx": 48.9576,
             "adx_plus": 10.7015,
-            "adx_minus": 43.516
+            "adx_minus": 43.516,
+            "williams": -88.38,
+            "ao": -0.374756,
+            "alligator_jaw": 102.08824725691639,
+            "alligator_teeth": 101.7949745034742,
+            "alligator_lips": 101.50645639030675,
+            "ichimoku_tenkan": 101.56853010500001,
+            "ichimoku_kijun": 101.820337135,
+            "ichimoku_senkou_a": 100.8059100225,
+            "ichimoku_senkou_b": 100.558031685,
+            "price_channel_up": 103.07510243,
+            "price_channel_down": 100.06195778,
+            "nrtr": 101.0625773578,
+            "hma": 100.6079,
+            "aroon_up": 0,
+            "aroon_down": 100
         },
         "40": {
             "sma": 102.07869595,
@@ -651,7 +779,22 @@
             "supertrend": 102.4482377,
             "adx": 56.0595,
             "adx_plus": 49.3719,
-            "adx_minus": 6.6714
+            "adx_minus": 6.6714,
+            "williams": -11.73,
+            "ao": 0.503585,
+            "alligator_jaw": 100.9633638080525,
+            "alligator_teeth": 101.69655166944312,
+            "alligator_lips": 102.13993750411163,
+            "ichimoku_tenkan": 102.082378615,
+            "ichimoku_kijun": 101.54396133,
+            "ichimoku_senkou_a": 101.349622085,
+            "ichimoku_senkou_b": 101.600741965,
+            "price_channel_up": 103.78790307,
+            "price_channel_down": 100.37685416,
+            "nrtr": 102.7500240393,
+            "hma": 103.2062,
+            "aroon_up": 100,
+            "aroon_down": 0
         },
         "49": {
             "sma": 102.42368008,
@@ -678,7 +821,22 @@
             "supertrend": 102.18620089,
             "adx": 49.894,
             "adx_plus": 10.3026,
-            "adx_minus": 43.9599
+            "adx_minus": 43.9599,
+            "williams": -88.42,
+            "ao": -0.38385,
+            "alligator_jaw": 102.99838201542056,
+            "alligator_teeth": 102.669866501752,
+            "alligator_lips": 102.36572025659007,
+            "ichimoku_tenkan": 102.43989049999999,
+            "ichimoku_kijun": 102.72042365499999,
+            "ichimoku_senkou_a": 101.81316997249999,
+            "ichimoku_senkou_b": 101.54396133,
+            "price_channel_up": 103.95057568,
+            "price_channel_down": 100.92920532,
+            "nrtr": 101.9384973732,
+            "hma": 101.4634,
+            "aroon_up": 0,
+            "aroon_down": 100
         }
     }
 }

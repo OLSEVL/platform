@@ -4,6 +4,14 @@ namespace Tests\Unit;
 
 use App\Services\Indicators\AtrIndicatorService;
 use App\Services\Indicators\AdxIndicatorService;
+use App\Services\Indicators\AlligatorIndicatorService;
+use App\Services\Indicators\AoIndicatorService;
+use App\Services\Indicators\AroonIndicatorService;
+use App\Services\Indicators\HmaIndicatorService;
+use App\Services\Indicators\IchimokuIndicatorService;
+use App\Services\Indicators\NrtrIndicatorService;
+use App\Services\Indicators\PriceChannelIndicatorService;
+use App\Services\Indicators\WilliamsRangeIndicatorService;
 use App\Services\Indicators\BollingerIndicatorService;
 use App\Services\Indicators\EmaIndicatorService;
 use App\Services\Indicators\EnvelopsIndicatorService;
@@ -57,6 +65,14 @@ class OsEngineClassicIndicatorsTest extends TestCase
         $sar = (new ParabolicSarIndicatorService)->computeSeries($rows, $p['parabolic_sar']);
         $superTrend = (new SuperTrendIndicatorService)->computeSeries($rows, $p['supertrend']);
         $adx = (new AdxIndicatorService)->computeSeries($rows, $p['adx']);
+        $williams = (new WilliamsRangeIndicatorService)->computeSeries($rows, $p['williams']);
+        $ao = (new AoIndicatorService)->computeSeries($rows, $p['ao']);
+        $alligator = (new AlligatorIndicatorService)->computeSeries($rows, $p['alligator']);
+        $ichimoku = (new IchimokuIndicatorService)->computeSeries($rows, $p['ichimoku']);
+        $priceChannel = (new PriceChannelIndicatorService)->computeSeries($rows, $p['price_channel']);
+        $nrtr = (new NrtrIndicatorService)->computeSeries($rows, $p['nrtr']);
+        $hma = (new HmaIndicatorService)->computeSeries($rows, $p['hma']);
+        $aroon = (new AroonIndicatorService)->computeSeries($rows, $p['aroon']);
 
         foreach ($g['at'] as $idxStr => $expect) {
             $i = (int) $idxStr;
@@ -87,6 +103,21 @@ class OsEngineClassicIndicatorsTest extends TestCase
             $this->assertEqualsWithDelta($expect['adx'], $adx['adx'][$i], 1e-4, "adx@$i");
             $this->assertEqualsWithDelta($expect['adx_plus'], $adx['plus'][$i], 1e-4, "adx_plus@$i");
             $this->assertEqualsWithDelta($expect['adx_minus'], $adx['minus'][$i], 1e-4, "adx_minus@$i");
+            $this->assertEqualsWithDelta($expect['williams'], $williams[$i], 1e-2, "williams@$i");
+            $this->assertEqualsWithDelta($expect['ao'], $ao[$i], 1e-6, "ao@$i");
+            $this->assertEqualsWithDelta($expect['alligator_jaw'], $alligator['jaw'][$i], 1e-8, "alligator_jaw@$i");
+            $this->assertEqualsWithDelta($expect['alligator_teeth'], $alligator['teeth'][$i], 1e-8, "alligator_teeth@$i");
+            $this->assertEqualsWithDelta($expect['alligator_lips'], $alligator['lips'][$i], 1e-8, "alligator_lips@$i");
+            $this->assertEqualsWithDelta($expect['ichimoku_tenkan'], $ichimoku['tenkan'][$i], 1e-8, "ichimoku_tenkan@$i");
+            $this->assertEqualsWithDelta($expect['ichimoku_kijun'], $ichimoku['kijun'][$i], 1e-8, "ichimoku_kijun@$i");
+            $this->assertEqualsWithDelta($expect['ichimoku_senkou_a'], $ichimoku['senkou_a'][$i], 1e-8, "ichimoku_senkou_a@$i");
+            $this->assertEqualsWithDelta($expect['ichimoku_senkou_b'], $ichimoku['senkou_b'][$i], 1e-8, "ichimoku_senkou_b@$i");
+            $this->assertEqualsWithDelta($expect['price_channel_up'], $priceChannel['up'][$i], 1e-8, "price_channel_up@$i");
+            $this->assertEqualsWithDelta($expect['price_channel_down'], $priceChannel['down'][$i], 1e-8, "price_channel_down@$i");
+            $this->assertEqualsWithDelta($expect['nrtr'], $nrtr['center'][$i], 1e-8, "nrtr@$i");
+            $this->assertEqualsWithDelta($expect['hma'], $hma[$i], 1e-4, "hma@$i");
+            $this->assertEqualsWithDelta($expect['aroon_up'], $aroon['up'][$i], 1e-8, "aroon_up@$i");
+            $this->assertEqualsWithDelta($expect['aroon_down'], $aroon['down'][$i], 1e-8, "aroon_down@$i");
         }
     }
 

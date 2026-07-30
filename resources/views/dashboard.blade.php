@@ -397,6 +397,29 @@
                                 <a href="{{ route('bots.index') }}" class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-zinc-700 bg-zinc-800/40 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300 text-xs" title="Создайте бота — страницы настроек индикаторов привязаны к боту">⚙</a>
                             @endif
                         </div>
+                        @php($classicLayers = [
+                            ['id' => 'williams', 'label' => 'Williams %R', 'route' => 'bots.indicators.williams.edit'],
+                            ['id' => 'ao', 'label' => 'AO', 'route' => 'bots.indicators.ao.edit'],
+                            ['id' => 'alligator', 'label' => 'Alligator', 'route' => 'bots.indicators.alligator.edit'],
+                            ['id' => 'ichimoku', 'label' => 'Ichimoku', 'route' => 'bots.indicators.ichimoku.edit'],
+                            ['id' => 'price-channel', 'label' => 'Price Channel', 'route' => 'bots.indicators.price-channel.edit'],
+                            ['id' => 'nrtr', 'label' => 'NRTR', 'route' => 'bots.indicators.nrtr.edit'],
+                            ['id' => 'hma', 'label' => 'HMA', 'route' => 'bots.indicators.hma.edit'],
+                            ['id' => 'aroon', 'label' => 'Aroon', 'route' => 'bots.indicators.aroon.edit'],
+                        ])
+                        @foreach ($classicLayers as $cl)
+                        <div class="flex items-center justify-between gap-1">
+                            <label for="layer-{{ $cl['id'] }}" class="flex min-w-0 flex-1 items-center gap-2 text-sm text-zinc-300 cursor-pointer">
+                                <input type="checkbox" id="layer-{{ $cl['id'] }}" class="rounded border-zinc-600 bg-zinc-800 text-blue-500 shrink-0">
+                                <span class="truncate">{{ $cl['label'] }}</span>
+                            </label>
+                            @if($chartIndicatorBot)
+                                <a href="{{ route($cl['route'], $chartIndicatorBot) }}" class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-zinc-700 bg-zinc-800/80 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-100 text-xs" title="Настройки {{ $cl['label'] }}">⚙</a>
+                            @else
+                                <a href="{{ route('bots.index') }}" class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-zinc-700 bg-zinc-800/40 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300 text-xs" title="Создайте бота — страницы настроек индикаторов привязаны к боту">⚙</a>
+                            @endif
+                        </div>
+                        @endforeach
                     </div>
                 </div>
             </div>
@@ -586,6 +609,14 @@
     const layerParabolicSar = document.getElementById('layer-parabolic-sar');
     const layerSuperTrend = document.getElementById('layer-supertrend');
     const layerAdx = document.getElementById('layer-adx');
+    const layerWilliams = document.getElementById('layer-williams');
+    const layerAo = document.getElementById('layer-ao');
+    const layerAlligator = document.getElementById('layer-alligator');
+    const layerIchimoku = document.getElementById('layer-ichimoku');
+    const layerPriceChannel = document.getElementById('layer-price-channel');
+    const layerNrtr = document.getElementById('layer-nrtr');
+    const layerHma = document.getElementById('layer-hma');
+    const layerAroon = document.getElementById('layer-aroon');
     const priceActionOverlay = document.getElementById('price-action-overlay');
     const liquiditySwingsOverlay = document.getElementById('liquidity-swings-overlay');
     const smcFlowOverlay = document.getElementById('smc-flow-overlay');
@@ -594,11 +625,14 @@
     const instrumentListEl = document.getElementById('instrument-list');
 
     // v4: classic OsEngine (bollinger/rsi/sma/ema/atr). При отсутствии ключа тянем v3 без потери старых prefs.
-    const LAYER_PREFS_KEY = 'platform.dashboard.chartLayers.v4';
+    const LAYER_PREFS_KEY = 'platform.dashboard.chartLayers.v5';
 
     function loadLayerPrefs() {
         try {
             let raw = localStorage.getItem(LAYER_PREFS_KEY);
+            if (raw == null) {
+                raw = localStorage.getItem('platform.dashboard.chartLayers.v4');
+            }
             if (raw == null) {
                 raw = localStorage.getItem('platform.dashboard.chartLayers.v3');
             }
@@ -635,6 +669,14 @@
             if (layerParabolicSar && typeof o.parabolicSar === 'boolean') layerParabolicSar.checked = o.parabolicSar;
             if (layerSuperTrend && typeof o.supertrend === 'boolean') layerSuperTrend.checked = o.supertrend;
             if (layerAdx && typeof o.adx === 'boolean') layerAdx.checked = o.adx;
+            if (layerWilliams && typeof o.williams === 'boolean') layerWilliams.checked = o.williams;
+            if (layerAo && typeof o.ao === 'boolean') layerAo.checked = o.ao;
+            if (layerAlligator && typeof o.alligator === 'boolean') layerAlligator.checked = o.alligator;
+            if (layerIchimoku && typeof o.ichimoku === 'boolean') layerIchimoku.checked = o.ichimoku;
+            if (layerPriceChannel && typeof o.price_channel === 'boolean') layerPriceChannel.checked = o.price_channel;
+            if (layerNrtr && typeof o.nrtr === 'boolean') layerNrtr.checked = o.nrtr;
+            if (layerHma && typeof o.hma === 'boolean') layerHma.checked = o.hma;
+            if (layerAroon && typeof o.aroon === 'boolean') layerAroon.checked = o.aroon;
         } catch (_) { /* ignore */ }
     }
 
@@ -660,6 +702,14 @@
                 parabolicSar: layerParabolicSar ? layerParabolicSar.checked : false,
                 supertrend: layerSuperTrend ? layerSuperTrend.checked : false,
                 adx: layerAdx ? layerAdx.checked : false,
+                williams: layerWilliams ? layerWilliams.checked : false,
+                ao: layerAo ? layerAo.checked : false,
+                alligator: layerAlligator ? layerAlligator.checked : false,
+                ichimoku: layerIchimoku ? layerIchimoku.checked : false,
+                price_channel: layerPriceChannel ? layerPriceChannel.checked : false,
+                nrtr: layerNrtr ? layerNrtr.checked : false,
+                hma: layerHma ? layerHma.checked : false,
+                aroon: layerAroon ? layerAroon.checked : false,
             }));
         } catch (_) { /* ignore */ }
     }
@@ -718,6 +768,14 @@
     let lastParabolicSarPayload = null;
     let lastSuperTrendPayload = null;
     let lastAdxPayload = null;
+    let lastWilliamsPayload = null;
+    let lastAoPayload = null;
+    let lastAlligatorPayload = null;
+    let lastIchimokuPayload = null;
+    let lastPriceChannelPayload = null;
+    let lastNrtrPayload = null;
+    let lastHmaPayload = null;
+    let lastAroonPayload = null;
     let classicLineSeries = {};
     let rsiLevelLines = [];
     let classicOscPaneCount = 0;
@@ -1228,7 +1286,15 @@
             (layerEnvelops && layerEnvelops.checked) ||
             (layerParabolicSar && layerParabolicSar.checked) ||
             (layerSuperTrend && layerSuperTrend.checked) ||
-            (layerAdx && layerAdx.checked)
+            (layerAdx && layerAdx.checked) ||
+            (layerWilliams && layerWilliams.checked) ||
+            (layerAo && layerAo.checked) ||
+            (layerAlligator && layerAlligator.checked) ||
+            (layerIchimoku && layerIchimoku.checked) ||
+            (layerPriceChannel && layerPriceChannel.checked) ||
+            (layerNrtr && layerNrtr.checked) ||
+            (layerHma && layerHma.checked) ||
+            (layerAroon && layerAroon.checked)
         );
     }
 
@@ -1287,6 +1353,14 @@
         const wantParabolicSar = layerParabolicSar && layerParabolicSar.checked && lastParabolicSarPayload;
         const wantSuperTrend = layerSuperTrend && layerSuperTrend.checked && lastSuperTrendPayload;
         const wantAdx = layerAdx && layerAdx.checked && lastAdxPayload;
+        const wantWilliams = layerWilliams && layerWilliams.checked && lastWilliamsPayload;
+        const wantAo = layerAo && layerAo.checked && lastAoPayload;
+        const wantAlligator = layerAlligator && layerAlligator.checked && lastAlligatorPayload;
+        const wantIchimoku = layerIchimoku && layerIchimoku.checked && lastIchimokuPayload;
+        const wantPriceChannel = layerPriceChannel && layerPriceChannel.checked && lastPriceChannelPayload;
+        const wantNrtr = layerNrtr && layerNrtr.checked && lastNrtrPayload;
+        const wantHma = layerHma && layerHma.checked && lastHmaPayload;
+        const wantAroon = layerAroon && layerAroon.checked && lastAroonPayload;
 
         const addMainLine = (key, data, color, width) => {
             if (!Array.isArray(data) || !data.length) return;
@@ -1364,9 +1438,60 @@
             addMainLine('supertrend_upper', ser.upper, st.color_upper, w);
             addMainLine('supertrend_lower', ser.lower, st.color_lower, w);
         }
+        if (wantAlligator) {
+            const st = lastAlligatorPayload.style || {};
+            const ser = lastAlligatorPayload.series || {};
+            const w = st.line_width || 1;
+            addMainLine('alligator_jaw', ser.jaw, st.color_jaw, w);
+            addMainLine('alligator_teeth', ser.teeth, st.color_teeth, w);
+            addMainLine('alligator_lips', ser.lips, st.color_lips, w);
+        }
+        if (wantIchimoku) {
+            const st = lastIchimokuPayload.style || {};
+            const ser = lastIchimokuPayload.series || {};
+            const w = st.line_width || 1;
+            addMainLine('ichimoku_tenkan', ser.tenkan, st.color_tenkan, w);
+            addMainLine('ichimoku_kijun', ser.kijun, st.color_kijun, w);
+            addMainLine('ichimoku_senkou_a', ser.senkou_a, st.color_senkou_a, w);
+            addMainLine('ichimoku_senkou_b', ser.senkou_b, st.color_senkou_b, w);
+            const chinkou = ser.chinkou;
+            if (Array.isArray(chinkou) && chinkou.length) {
+                const s = chart.addSeries(LineSeries, {
+                    color: st.color_chinkou || '#8b0000',
+                    lineWidth: 1,
+                    lineVisible: false,
+                    pointMarkersVisible: true,
+                    pointMarkersRadius: st.chinkou_point_radius || 2,
+                    priceLineVisible: false,
+                    lastValueVisible: false,
+                    crosshairMarkerVisible: false,
+                }, 0);
+                s.setData(chinkou.map((p) => ({ time: p.time, value: p.value })));
+                classicLineSeries['ichimoku_chinkou'] = s;
+            }
+        }
+        if (wantPriceChannel) {
+            const st = lastPriceChannelPayload.style || {};
+            const ser = lastPriceChannelPayload.series || {};
+            const w = st.line_width || 1;
+            addMainLine('price_channel_up', ser.up, st.color_up, w);
+            addMainLine('price_channel_down', ser.down, st.color_down, w);
+        }
+        if (wantNrtr) {
+            const st = lastNrtrPayload.style || {};
+            const ser = lastNrtrPayload.series || {};
+            const w = st.line_width || 1;
+            addMainLine('nrtr_center', ser.center, st.color_center, w);
+            addMainLine('nrtr_up', ser.up, st.color_up, w);
+            addMainLine('nrtr_down', ser.down, st.color_down, w);
+        }
+        if (wantHma) {
+            const st = lastHmaPayload.style || {};
+            addMainLine('hma', (lastHmaPayload.series || {}).hma, st.color, st.line_width);
+        }
 
 
-        const oscCount = (wantRsi ? 1 : 0) + (wantMacd ? 1 : 0) + (wantStochastic ? 1 : 0) + (wantCci ? 1 : 0) + (wantAtr ? 1 : 0) + (wantAdx ? 1 : 0);
+        const oscCount = (wantRsi ? 1 : 0) + (wantMacd ? 1 : 0) + (wantStochastic ? 1 : 0) + (wantCci ? 1 : 0) + (wantAtr ? 1 : 0) + (wantAdx ? 1 : 0) + (wantWilliams ? 1 : 0) + (wantAo ? 1 : 0) + (wantAroon ? 1 : 0);
         if (oscCount > 0) {
             try {
                 const mainPane = chart.panes()[0];
@@ -1707,6 +1832,106 @@
             } catch (_) {}
         }
 
+        if (wantWilliams) {
+            const st = lastWilliamsPayload.style || {};
+            const levels = lastWilliamsPayload.levels || {};
+            const ser = lastWilliamsPayload.series || {};
+            let paneIndex = 1;
+            let wrPane = null;
+            try {
+                wrPane = chart.addPane(false);
+                if (wrPane && typeof wrPane.setStretchFactor === 'function') wrPane.setStretchFactor(0.28);
+                paneIndex = Math.max(1, chart.panes().length - 1);
+                classicOscPaneCount += 1;
+            } catch (e) { console.error('[dashboard] addPane Williams', e); }
+            const data = ser.wr || [];
+            let wrLine = null;
+            if (Array.isArray(data) && data.length) {
+                wrLine = chart.addSeries(LineSeries, {
+                    color: st.color || '#1e90ff',
+                    lineWidth: st.line_width || 1,
+                    priceLineVisible: false,
+                    baseLineVisible: false,
+                    lastValueVisible: true,
+                    crosshairMarkerVisible: false,
+                    priceFormat: { type: 'price', precision: 2, minMove: 0.01 },
+                    autoscaleInfoProvider: () => ({ priceRange: { minValue: -100, maxValue: 0 } }),
+                }, paneIndex);
+                wrLine.setData(data.map((p) => ({ time: p.time, value: p.value })));
+                classicLineSeries['williams'] = wrLine;
+            }
+            try {
+                if (wrLine && levels.show && window.PlatformChartMarkers?.attachRsiLevelLines) {
+                    rsiLevelLines.push(...window.PlatformChartMarkers.attachRsiLevelLines(wrLine, levels));
+                }
+            } catch (_) {}
+        }
+
+        if (wantAo) {
+            const st = lastAoPayload.style || {};
+            const ser = lastAoPayload.series || {};
+            let paneIndex = 1;
+            try {
+                const pane = chart.addPane(false);
+                if (pane?.setStretchFactor) pane.setStretchFactor(0.32);
+                paneIndex = Math.max(1, chart.panes().length - 1);
+                classicOscPaneCount += 1;
+            } catch (e) { console.error('[dashboard] addPane AO', e); }
+            if (HistogramSeries && Array.isArray(ser.ao) && ser.ao.length) {
+                const hs = chart.addSeries(HistogramSeries, {
+                    priceLineVisible: false,
+                    lastValueVisible: false,
+                    baseLineVisible: true,
+                    baseLineColor: 'rgba(161,161,170,0.45)',
+                    baseLineWidth: 1,
+                    baseLineStyle: 2,
+                }, paneIndex);
+                hs.setData(ser.ao.map((p) => ({
+                    time: p.time,
+                    value: p.value,
+                    color: Number(p.value) >= 0 ? (st.color_histogram || '#006400') : (st.color_histogram_neg || '#f43f5e'),
+                })));
+                classicLineSeries['ao_hist'] = hs;
+            }
+        }
+
+        if (wantAroon) {
+            const st = lastAroonPayload.style || {};
+            const levels = lastAroonPayload.levels || {};
+            const ser = lastAroonPayload.series || {};
+            const lineW = st.line_width || 1;
+            let paneIndex = 1;
+            try {
+                const pane = chart.addPane(false);
+                if (pane?.setStretchFactor) pane.setStretchFactor(0.28);
+                paneIndex = Math.max(1, chart.panes().length - 1);
+                classicOscPaneCount += 1;
+            } catch (e) { console.error('[dashboard] addPane Aroon', e); }
+            const mkAroon = (key, data, color) => {
+                if (!Array.isArray(data) || !data.length) return null;
+                const s = chart.addSeries(LineSeries, {
+                    color: color || '#008000',
+                    lineWidth: lineW,
+                    priceLineVisible: false,
+                    lastValueVisible: true,
+                    crosshairMarkerVisible: false,
+                    priceFormat: { type: 'price', precision: 0, minMove: 1 },
+                    autoscaleInfoProvider: () => ({ priceRange: { minValue: 0, maxValue: 100 } }),
+                }, paneIndex);
+                s.setData(data.map((p) => ({ time: p.time, value: p.value })));
+                classicLineSeries[key] = s;
+                return s;
+            };
+            const upLine = mkAroon('aroon_up', ser.up, st.color_up);
+            mkAroon('aroon_down', ser.down, st.color_down);
+            try {
+                const anchor = upLine || classicLineSeries['aroon_down'];
+                if (anchor && levels.show && window.PlatformChartMarkers?.attachRsiLevelLines) {
+                    rsiLevelLines.push(...window.PlatformChartMarkers.attachRsiLevelLines(anchor, levels));
+                }
+            } catch (_) {}
+        }
+
         if (wantAtr) {
             const st = lastAtrPayload.style || {};
             let paneIndex = 1;
@@ -1750,6 +1975,14 @@
             lastParabolicSarPayload = null;
             lastSuperTrendPayload = null;
             lastAdxPayload = null;
+            lastWilliamsPayload = null;
+            lastAoPayload = null;
+            lastAlligatorPayload = null;
+            lastIchimokuPayload = null;
+            lastPriceChannelPayload = null;
+            lastNrtrPayload = null;
+            lastHmaPayload = null;
+            lastAroonPayload = null;
             applyClassicOsEngineSeries();
             return;
         }
@@ -1767,6 +2000,14 @@
         const wantParabolicSar = layerParabolicSar && layerParabolicSar.checked;
         const wantSuperTrend = layerSuperTrend && layerSuperTrend.checked;
         const wantAdx = layerAdx && layerAdx.checked;
+        const wantWilliams = layerWilliams && layerWilliams.checked;
+        const wantAo = layerAo && layerAo.checked;
+        const wantAlligator = layerAlligator && layerAlligator.checked;
+        const wantIchimoku = layerIchimoku && layerIchimoku.checked;
+        const wantPriceChannel = layerPriceChannel && layerPriceChannel.checked;
+        const wantNrtr = layerNrtr && layerNrtr.checked;
+        const wantHma = layerHma && layerHma.checked;
+        const wantAroon = layerAroon && layerAroon.checked;
         const layers = [];
         if (wantBb) layers.push('bollinger');
         if (wantRsi) layers.push('rsi');
@@ -1782,6 +2023,14 @@
         if (wantParabolicSar) layers.push('parabolic_sar');
         if (wantSuperTrend) layers.push('supertrend');
         if (wantAdx) layers.push('adx');
+        if (wantWilliams) layers.push('williams');
+        if (wantAo) layers.push('ao');
+        if (wantAlligator) layers.push('alligator');
+        if (wantIchimoku) layers.push('ichimoku');
+        if (wantPriceChannel) layers.push('price_channel');
+        if (wantNrtr) layers.push('nrtr');
+        if (wantHma) layers.push('hma');
+        if (wantAroon) layers.push('aroon');
 
         const seq = ++classicIndicatorsFetchSeq;
         const params = new URLSearchParams({
@@ -1811,6 +2060,14 @@
                     lastParabolicSarPayload = wantParabolicSar && d && d.parabolic_sar ? d.parabolic_sar : null;
                     lastSuperTrendPayload = wantSuperTrend && d && d.supertrend ? d.supertrend : null;
                     lastAdxPayload = wantAdx && d && d.adx ? d.adx : null;
+                    lastWilliamsPayload = wantWilliams && d && d.williams ? d.williams : null;
+                    lastAoPayload = wantAo && d && d.ao ? d.ao : null;
+                    lastAlligatorPayload = wantAlligator && d && d.alligator ? d.alligator : null;
+                    lastIchimokuPayload = wantIchimoku && d && d.ichimoku ? d.ichimoku : null;
+                    lastPriceChannelPayload = wantPriceChannel && d && d.price_channel ? d.price_channel : null;
+                    lastNrtrPayload = wantNrtr && d && d.nrtr ? d.nrtr : null;
+                    lastHmaPayload = wantHma && d && d.hma ? d.hma : null;
+                    lastAroonPayload = wantAroon && d && d.aroon ? d.aroon : null;
                     applyClassicOsEngineSeries();
                 } catch (e) {
                     console.error('[dashboard classic indicators] apply', e);
@@ -1828,11 +2085,14 @@
                     lastParabolicSarPayload = null;
                     lastSuperTrendPayload = null;
                     lastAdxPayload = null;
-            lastKeltnerPayload = null;
-            lastEnvelopsPayload = null;
-            lastParabolicSarPayload = null;
-            lastSuperTrendPayload = null;
-            lastAdxPayload = null;
+                    lastWilliamsPayload = null;
+                    lastAoPayload = null;
+                    lastAlligatorPayload = null;
+                    lastIchimokuPayload = null;
+                    lastPriceChannelPayload = null;
+                    lastNrtrPayload = null;
+                    lastHmaPayload = null;
+                    lastAroonPayload = null;
                     try { applyClassicOsEngineSeries(); } catch (_) {}
                 }
             })
@@ -2845,11 +3105,14 @@
                     lastParabolicSarPayload = null;
                     lastSuperTrendPayload = null;
                     lastAdxPayload = null;
-            lastKeltnerPayload = null;
-            lastEnvelopsPayload = null;
-            lastParabolicSarPayload = null;
-            lastSuperTrendPayload = null;
-            lastAdxPayload = null;
+                    lastWilliamsPayload = null;
+                    lastAoPayload = null;
+                    lastAlligatorPayload = null;
+                    lastIchimokuPayload = null;
+                    lastPriceChannelPayload = null;
+                    lastNrtrPayload = null;
+                    lastHmaPayload = null;
+                    lastAroonPayload = null;
                     if (priceActionOverlay) priceActionOverlay.innerHTML = '';
                     if (liquiditySwingsOverlay) liquiditySwingsOverlay.innerHTML = '';
                     if (smcFlowOverlay) smcFlowOverlay.innerHTML = '';
@@ -2893,6 +3156,14 @@
         lastParabolicSarPayload = null;
         lastSuperTrendPayload = null;
         lastAdxPayload = null;
+        lastWilliamsPayload = null;
+        lastAoPayload = null;
+        lastAlligatorPayload = null;
+        lastIchimokuPayload = null;
+        lastPriceChannelPayload = null;
+        lastNrtrPayload = null;
+        lastHmaPayload = null;
+        lastAroonPayload = null;
         if (priceActionOverlay) priceActionOverlay.innerHTML = '';
         if (liquiditySwingsOverlay) liquiditySwingsOverlay.innerHTML = '';
         if (smcFlowOverlay) smcFlowOverlay.innerHTML = '';
@@ -3028,6 +3299,14 @@
         [layerParabolicSar, () => { lastParabolicSarPayload = null; }],
         [layerSuperTrend, () => { lastSuperTrendPayload = null; }],
         [layerAdx, () => { lastAdxPayload = null; }],
+        [layerWilliams, () => { lastWilliamsPayload = null; }],
+        [layerAo, () => { lastAoPayload = null; }],
+        [layerAlligator, () => { lastAlligatorPayload = null; }],
+        [layerIchimoku, () => { lastIchimokuPayload = null; }],
+        [layerPriceChannel, () => { lastPriceChannelPayload = null; }],
+        [layerNrtr, () => { lastNrtrPayload = null; }],
+        [layerHma, () => { lastHmaPayload = null; }],
+        [layerAroon, () => { lastAroonPayload = null; }],
     ].forEach(([el, clearFn]) => {
         if (!el) return;
         el.addEventListener('change', () => {

@@ -31,6 +31,14 @@ use App\Services\Indicators\EnvelopsIndicatorService;
 use App\Services\Indicators\ParabolicSarIndicatorService;
 use App\Services\Indicators\SuperTrendIndicatorService;
 use App\Services\Indicators\AdxIndicatorService;
+use App\Services\Indicators\AlligatorIndicatorService;
+use App\Services\Indicators\AoIndicatorService;
+use App\Services\Indicators\AroonIndicatorService;
+use App\Services\Indicators\HmaIndicatorService;
+use App\Services\Indicators\IchimokuIndicatorService;
+use App\Services\Indicators\NrtrIndicatorService;
+use App\Services\Indicators\PriceChannelIndicatorService;
+use App\Services\Indicators\WilliamsRangeIndicatorService;
 use App\Services\Telegram\StrongLevelTelegramLlmButton;
 use App\Services\Telegram\StrongLevelTelegramProcessManager;
 use App\Services\Telegram\TelegramAlertService;
@@ -2390,6 +2398,14 @@ class BotController extends Controller
         ParabolicSarIndicatorService $parabolicSar,
         SuperTrendIndicatorService $superTrend,
         AdxIndicatorService $adx,
+        WilliamsRangeIndicatorService $williams,
+        AoIndicatorService $ao,
+        AlligatorIndicatorService $alligator,
+        IchimokuIndicatorService $ichimoku,
+        PriceChannelIndicatorService $priceChannel,
+        NrtrIndicatorService $nrtr,
+        HmaIndicatorService $hma,
+        AroonIndicatorService $aroon,
     ): JsonResponse {
         $this->ensureBotOwner($bot);
 
@@ -2397,7 +2413,7 @@ class BotController extends Controller
             'instrument' => ['required', 'string', 'max:64'],
             'timeframe' => ['nullable', 'integer', Rule::in(CandleService::DASHBOARD_TIMEFRAMES)],
             'layers' => ['nullable', 'array'],
-            'layers.*' => ['string', Rule::in(['pa', 'ls', 'smc', 'bollinger', 'rsi', 'sma', 'ema', 'vwma', 'atr', 'macd', 'stochastic', 'cci', 'keltner', 'envelops', 'parabolic_sar', 'supertrend', 'adx'])],
+            'layers.*' => ['string', Rule::in(['pa', 'ls', 'smc', 'bollinger', 'rsi', 'sma', 'ema', 'vwma', 'atr', 'macd', 'stochastic', 'cci', 'keltner', 'envelops', 'parabolic_sar', 'supertrend', 'adx', 'williams', 'ao', 'alligator', 'ichimoku', 'price_channel', 'nrtr', 'hma', 'aroon'])],
         ]);
 
         $instrument = (string) $validated['instrument'];
@@ -2470,6 +2486,30 @@ class BotController extends Controller
         }
         if (! empty($want['adx'])) {
             $json['adx'] = $adx->compute($rows, IndicatorSetting::mergedAdxParams($bot));
+        }
+        if (! empty($want['williams'])) {
+            $json['williams'] = $williams->compute($rows, IndicatorSetting::mergedWilliamsParams($bot));
+        }
+        if (! empty($want['ao'])) {
+            $json['ao'] = $ao->compute($rows, IndicatorSetting::mergedAoParams($bot));
+        }
+        if (! empty($want['alligator'])) {
+            $json['alligator'] = $alligator->compute($rows, IndicatorSetting::mergedAlligatorParams($bot));
+        }
+        if (! empty($want['ichimoku'])) {
+            $json['ichimoku'] = $ichimoku->compute($rows, IndicatorSetting::mergedIchimokuParams($bot));
+        }
+        if (! empty($want['price_channel'])) {
+            $json['price_channel'] = $priceChannel->compute($rows, IndicatorSetting::mergedPriceChannelParams($bot));
+        }
+        if (! empty($want['nrtr'])) {
+            $json['nrtr'] = $nrtr->compute($rows, IndicatorSetting::mergedNrtrParams($bot));
+        }
+        if (! empty($want['hma'])) {
+            $json['hma'] = $hma->compute($rows, IndicatorSetting::mergedHmaParams($bot));
+        }
+        if (! empty($want['aroon'])) {
+            $json['aroon'] = $aroon->compute($rows, IndicatorSetting::mergedAroonParams($bot));
         }
 
         return response()->json($json);

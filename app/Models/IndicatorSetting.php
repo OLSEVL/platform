@@ -3,6 +3,14 @@
 namespace App\Models;
 
 use App\Services\Indicators\AdxIndicatorService;
+use App\Services\Indicators\AlligatorIndicatorService;
+use App\Services\Indicators\AoIndicatorService;
+use App\Services\Indicators\AroonIndicatorService;
+use App\Services\Indicators\HmaIndicatorService;
+use App\Services\Indicators\IchimokuIndicatorService;
+use App\Services\Indicators\NrtrIndicatorService;
+use App\Services\Indicators\PriceChannelIndicatorService;
+use App\Services\Indicators\WilliamsRangeIndicatorService;
 use App\Services\Indicators\AtrIndicatorService;
 use App\Services\Indicators\BollingerIndicatorService;
 use App\Services\Indicators\EmaIndicatorService;
@@ -71,6 +79,30 @@ class IndicatorSetting extends Model
 
     /** ADX / +DI / −DI — отдельная pane. */
     public const KEY_ADX = 'adx';
+
+    /** Williams %R — осциллятор -100..0. */
+    public const KEY_WILLIAMS = 'williams';
+
+    /** Awesome Oscillator — гистограмма. */
+    public const KEY_AO = 'ao';
+
+    /** Alligator — три SSMA линии на цене. */
+    public const KEY_ALLIGATOR = 'alligator';
+
+    /** Ichimoku — облако и линии на цене. */
+    public const KEY_ICHIMOKU = 'ichimoku';
+
+    /** PriceChannel — Donchian-like канал. */
+    public const KEY_PRICE_CHANNEL = 'price_channel';
+
+    /** NRTR — center line trailing. */
+    public const KEY_NRTR = 'nrtr';
+
+    /** Hull Moving Average — линия на цене. */
+    public const KEY_HMA = 'hma';
+
+    /** Aroon Up/Down — отдельная pane. */
+    public const KEY_AROON = 'aroon';
 
     protected $fillable = ['bot_id', 'indicator_key', 'settings'];
 
@@ -262,5 +294,53 @@ class IndicatorSetting extends Model
     public static function mergedAdxParams(Bot $bot): array
     {
         return self::mergedByKey($bot, self::KEY_ADX, [AdxIndicatorService::class, 'defaultParams']);
+    }
+
+    /** @return array<string, mixed> */
+    public static function mergedWilliamsParams(Bot $bot): array
+    {
+        return self::mergedByKey($bot, self::KEY_WILLIAMS, [WilliamsRangeIndicatorService::class, 'defaultParams']);
+    }
+
+    /** @return array<string, mixed> */
+    public static function mergedAoParams(Bot $bot): array
+    {
+        return self::mergedByKey($bot, self::KEY_AO, [AoIndicatorService::class, 'defaultParams']);
+    }
+
+    /** @return array<string, mixed> */
+    public static function mergedAlligatorParams(Bot $bot): array
+    {
+        return self::mergedByKey($bot, self::KEY_ALLIGATOR, [AlligatorIndicatorService::class, 'defaultParams']);
+    }
+
+    /** @return array<string, mixed> */
+    public static function mergedIchimokuParams(Bot $bot): array
+    {
+        return self::mergedByKey($bot, self::KEY_ICHIMOKU, [IchimokuIndicatorService::class, 'defaultParams']);
+    }
+
+    /** @return array<string, mixed> */
+    public static function mergedPriceChannelParams(Bot $bot): array
+    {
+        return self::mergedByKey($bot, self::KEY_PRICE_CHANNEL, [PriceChannelIndicatorService::class, 'defaultParams']);
+    }
+
+    /** @return array<string, mixed> */
+    public static function mergedNrtrParams(Bot $bot): array
+    {
+        return self::mergedByKey($bot, self::KEY_NRTR, [NrtrIndicatorService::class, 'defaultParams']);
+    }
+
+    /** @return array<string, mixed> */
+    public static function mergedHmaParams(Bot $bot): array
+    {
+        return self::mergedByKey($bot, self::KEY_HMA, [HmaIndicatorService::class, 'defaultParams']);
+    }
+
+    /** @return array<string, mixed> */
+    public static function mergedAroonParams(Bot $bot): array
+    {
+        return self::mergedByKey($bot, self::KEY_AROON, [AroonIndicatorService::class, 'defaultParams']);
     }
 }

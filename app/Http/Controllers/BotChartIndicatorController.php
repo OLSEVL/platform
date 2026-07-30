@@ -40,6 +40,22 @@ use App\Support\SuperTrendSettingsForm;
 use App\Services\Indicators\SuperTrendIndicatorService;
 use App\Support\AdxSettingsForm;
 use App\Services\Indicators\AdxIndicatorService;
+use App\Support\AlligatorSettingsForm;
+use App\Services\Indicators\AlligatorIndicatorService;
+use App\Support\AoSettingsForm;
+use App\Services\Indicators\AoIndicatorService;
+use App\Support\AroonSettingsForm;
+use App\Services\Indicators\AroonIndicatorService;
+use App\Support\HmaSettingsForm;
+use App\Services\Indicators\HmaIndicatorService;
+use App\Support\IchimokuSettingsForm;
+use App\Services\Indicators\IchimokuIndicatorService;
+use App\Support\NrtrSettingsForm;
+use App\Services\Indicators\NrtrIndicatorService;
+use App\Support\PriceChannelSettingsForm;
+use App\Services\Indicators\PriceChannelIndicatorService;
+use App\Support\WilliamsRangeSettingsForm;
+use App\Services\Indicators\WilliamsRangeIndicatorService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\View\View;
@@ -420,6 +436,126 @@ class BotChartIndicatorController extends Controller
     public function updateAdx(Request $request, Bot $bot): RedirectResponse
     {
         return $this->saveClassic($request, $bot, IndicatorSetting::KEY_ADX, AdxIndicatorService::class, AdxSettingsForm::class, 'bots.indicators.adx.edit', 'ADX');
+    }
+
+    public function editWilliams(Bot $bot): View
+    {
+        $this->ensureBotOwner($bot);
+
+        return view('bots.indicators.williams', [
+            'bot' => $bot,
+            'p' => IndicatorSetting::mergedWilliamsParams($bot),
+        ]);
+    }
+
+    public function updateWilliams(Request $request, Bot $bot): RedirectResponse
+    {
+        return $this->saveClassic($request, $bot, IndicatorSetting::KEY_WILLIAMS, WilliamsRangeIndicatorService::class, WilliamsRangeSettingsForm::class, 'bots.indicators.williams.edit', 'Williams %R');
+    }
+
+    public function editAo(Bot $bot): View
+    {
+        $this->ensureBotOwner($bot);
+
+        return view('bots.indicators.ao', [
+            'bot' => $bot,
+            'p' => IndicatorSetting::mergedAoParams($bot),
+        ]);
+    }
+
+    public function updateAo(Request $request, Bot $bot): RedirectResponse
+    {
+        return $this->saveClassic($request, $bot, IndicatorSetting::KEY_AO, AoIndicatorService::class, AoSettingsForm::class, 'bots.indicators.ao.edit', 'AO');
+    }
+
+    public function editAlligator(Bot $bot): View
+    {
+        $this->ensureBotOwner($bot);
+
+        return view('bots.indicators.alligator', [
+            'bot' => $bot,
+            'p' => IndicatorSetting::mergedAlligatorParams($bot),
+        ]);
+    }
+
+    public function updateAlligator(Request $request, Bot $bot): RedirectResponse
+    {
+        return $this->saveClassic($request, $bot, IndicatorSetting::KEY_ALLIGATOR, AlligatorIndicatorService::class, AlligatorSettingsForm::class, 'bots.indicators.alligator.edit', 'Alligator');
+    }
+
+    public function editIchimoku(Bot $bot): View
+    {
+        $this->ensureBotOwner($bot);
+
+        return view('bots.indicators.ichimoku', [
+            'bot' => $bot,
+            'p' => IndicatorSetting::mergedIchimokuParams($bot),
+        ]);
+    }
+
+    public function updateIchimoku(Request $request, Bot $bot): RedirectResponse
+    {
+        return $this->saveClassic($request, $bot, IndicatorSetting::KEY_ICHIMOKU, IchimokuIndicatorService::class, IchimokuSettingsForm::class, 'bots.indicators.ichimoku.edit', 'Ichimoku');
+    }
+
+    public function editPriceChannel(Bot $bot): View
+    {
+        $this->ensureBotOwner($bot);
+
+        return view('bots.indicators.price-channel', [
+            'bot' => $bot,
+            'p' => IndicatorSetting::mergedPriceChannelParams($bot),
+        ]);
+    }
+
+    public function updatePriceChannel(Request $request, Bot $bot): RedirectResponse
+    {
+        return $this->saveClassic($request, $bot, IndicatorSetting::KEY_PRICE_CHANNEL, PriceChannelIndicatorService::class, PriceChannelSettingsForm::class, 'bots.indicators.price-channel.edit', 'Price Channel');
+    }
+
+    public function editNrtr(Bot $bot): View
+    {
+        $this->ensureBotOwner($bot);
+
+        return view('bots.indicators.nrtr', [
+            'bot' => $bot,
+            'p' => IndicatorSetting::mergedNrtrParams($bot),
+        ]);
+    }
+
+    public function updateNrtr(Request $request, Bot $bot): RedirectResponse
+    {
+        return $this->saveClassic($request, $bot, IndicatorSetting::KEY_NRTR, NrtrIndicatorService::class, NrtrSettingsForm::class, 'bots.indicators.nrtr.edit', 'NRTR');
+    }
+
+    public function editHma(Bot $bot): View
+    {
+        $this->ensureBotOwner($bot);
+
+        return view('bots.indicators.hma', [
+            'bot' => $bot,
+            'p' => IndicatorSetting::mergedHmaParams($bot),
+        ]);
+    }
+
+    public function updateHma(Request $request, Bot $bot): RedirectResponse
+    {
+        return $this->saveClassic($request, $bot, IndicatorSetting::KEY_HMA, HmaIndicatorService::class, HmaSettingsForm::class, 'bots.indicators.hma.edit', 'HMA');
+    }
+
+    public function editAroon(Bot $bot): View
+    {
+        $this->ensureBotOwner($bot);
+
+        return view('bots.indicators.aroon', [
+            'bot' => $bot,
+            'p' => IndicatorSetting::mergedAroonParams($bot),
+        ]);
+    }
+
+    public function updateAroon(Request $request, Bot $bot): RedirectResponse
+    {
+        return $this->saveClassic($request, $bot, IndicatorSetting::KEY_AROON, AroonIndicatorService::class, AroonSettingsForm::class, 'bots.indicators.aroon.edit', 'Aroon');
     }
 
     /**
