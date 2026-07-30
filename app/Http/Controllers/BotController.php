@@ -23,6 +23,7 @@ use App\Services\Indicators\PriceActionDgtIndicatorService;
 use App\Services\Indicators\RsiIndicatorService;
 use App\Services\Indicators\SmaIndicatorService;
 use App\Services\Indicators\SmcFlowIndicatorService;
+use App\Services\Indicators\StochasticIndicatorService;
 use App\Services\Telegram\StrongLevelTelegramLlmButton;
 use App\Services\Telegram\StrongLevelTelegramProcessManager;
 use App\Services\Telegram\TelegramAlertService;
@@ -2358,7 +2359,7 @@ class BotController extends Controller
      */
     /**
      * Расчёт оверлей-индикаторов для графика бота.
-     * Query `layers[]` — какие слои считать (экономия CPU): pa, ls, smc, bollinger, rsi, sma, ema, atr, macd.
+     * Query `layers[]` — какие слои считать (экономия CPU): pa, ls, smc, bollinger, rsi, sma, ema, atr, macd, stochastic.
      * Без layers — для обратной совместимости считаем pa+ls+smc (старое поведение).
      */
     public function indicatorsData(
@@ -2374,6 +2375,7 @@ class BotController extends Controller
         EmaIndicatorService $ema,
         AtrIndicatorService $atr,
         MacdIndicatorService $macd,
+        StochasticIndicatorService $stochastic,
     ): JsonResponse {
         $this->ensureBotOwner($bot);
 
@@ -2381,7 +2383,7 @@ class BotController extends Controller
             'instrument' => ['required', 'string', 'max:64'],
             'timeframe' => ['nullable', 'integer', Rule::in(CandleService::DASHBOARD_TIMEFRAMES)],
             'layers' => ['nullable', 'array'],
-            'layers.*' => ['string', Rule::in(['pa', 'ls', 'smc', 'bollinger', 'rsi', 'sma', 'ema', 'atr', 'macd'])],
+            'layers.*' => ['string', Rule::in(['pa', 'ls', 'smc', 'bollinger', 'rsi', 'sma', 'ema', 'atr', 'macd', 'stochastic'])],
         ]);
 
         $instrument = (string) $validated['instrument'];
@@ -2430,6 +2432,9 @@ class BotController extends Controller
         }
         if (! empty($want['macd'])) {
             $json['macd'] = $macd->compute($rows, IndicatorSetting::mergedMacdParams($bot));
+        }
+        if (! empty($want['stochastic'])) {
+            $json['stochastic'] = $stochastic->compute($rows, IndicatorSetting::mergedStochasticParams($bot));
         }
 
         return response()->json($json);

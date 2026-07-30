@@ -18,6 +18,7 @@ use App\Services\Indicators\PriceActionDgtIndicatorService;
 use App\Services\Indicators\RsiIndicatorService;
 use App\Services\Indicators\SmaIndicatorService;
 use App\Services\Indicators\SmcFlowIndicatorService;
+use App\Services\Indicators\StochasticIndicatorService;
 use App\Support\M1CandleCountdown;
 use App\Support\PriceScale;
 use Illuminate\Http\JsonResponse;
@@ -421,7 +422,7 @@ class DashboardController extends Controller
     }
 
     /**
-     * Классика OsEngine (BB/RSI/SMA/EMA/ATR/MACD) для главного графика.
+     * Классика OsEngine (BB/RSI/SMA/EMA/ATR/MACD/Stochastic) для главного графика.
      * Параметры — с якорного бота (как PA/SMC); без бота — defaultParams сервисов.
      * Query layers[] — считаем только включённые слои.
      */
@@ -434,12 +435,13 @@ class DashboardController extends Controller
         EmaIndicatorService $ema,
         AtrIndicatorService $atr,
         MacdIndicatorService $macd,
+        StochasticIndicatorService $stochastic,
     ): JsonResponse {
         $validated = $request->validate([
             'instrument' => ['required', 'string', 'max:64'],
             'timeframe' => ['nullable', 'integer', Rule::in(CandleService::DASHBOARD_TIMEFRAMES)],
             'layers' => ['nullable', 'array'],
-            'layers.*' => ['string', Rule::in(['bollinger', 'rsi', 'sma', 'ema', 'atr', 'macd'])],
+            'layers.*' => ['string', Rule::in(['bollinger', 'rsi', 'sma', 'ema', 'atr', 'macd', 'stochastic'])],
         ]);
 
         $instrument = (string) $validated['instrument'];
@@ -512,6 +514,14 @@ class DashboardController extends Controller
                 $anchorBot !== null
                     ? IndicatorSetting::mergedMacdParams($anchorBot)
                     : MacdIndicatorService::defaultParams()
+            );
+        }
+        if (! empty($want['stochastic'])) {
+            $json['stochastic'] = $stochastic->compute(
+                $rows,
+                $anchorBot !== null
+                    ? IndicatorSetting::mergedStochasticParams($anchorBot)
+                    : StochasticIndicatorService::defaultParams()
             );
         }
 

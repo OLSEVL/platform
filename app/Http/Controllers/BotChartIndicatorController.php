@@ -14,6 +14,8 @@ use App\Support\BollingerSettingsForm;
 use App\Support\EmaSettingsForm;
 use App\Support\MacdSettingsForm;
 use App\Support\OrderBlocksSettingsForm;
+use App\Support\StochasticSettingsForm;
+use App\Services\Indicators\StochasticIndicatorService;
 use App\Services\Indicators\LiquiditySwingsIndicatorService;
 use App\Services\Indicators\PriceActionDgtIndicatorService;
 use App\Services\Indicators\RsiIndicatorService;
@@ -284,6 +286,21 @@ class BotChartIndicatorController extends Controller
     public function updateMacd(Request $request, Bot $bot): RedirectResponse
     {
         return $this->saveClassic($request, $bot, IndicatorSetting::KEY_MACD, MacdIndicatorService::class, MacdSettingsForm::class, 'bots.indicators.macd.edit', 'MACD');
+    }
+
+    public function editStochastic(Bot $bot): View
+    {
+        $this->ensureBotOwner($bot);
+
+        return view('bots.indicators.stochastic', [
+            'bot' => $bot,
+            'p' => IndicatorSetting::mergedStochasticParams($bot),
+        ]);
+    }
+
+    public function updateStochastic(Request $request, Bot $bot): RedirectResponse
+    {
+        return $this->saveClassic($request, $bot, IndicatorSetting::KEY_STOCHASTIC, StochasticIndicatorService::class, StochasticSettingsForm::class, 'bots.indicators.stochastic.edit', 'Stochastic');
     }
 
     /**

@@ -9,6 +9,7 @@ use App\Services\Indicators\MacdIndicatorService;
 use App\Services\Indicators\OsEngineCandleMath;
 use App\Services\Indicators\RsiIndicatorService;
 use App\Services\Indicators\SmaIndicatorService;
+use App\Services\Indicators\StochasticIndicatorService;
 use PHPUnit\Framework\TestCase;
 
 /**
@@ -41,6 +42,7 @@ class OsEngineClassicIndicatorsTest extends TestCase
         $rsi = (new RsiIndicatorService)->computeSeries($rows, $p['rsi']);
         $atr = (new AtrIndicatorService)->computeSeries($rows, $p['atr']);
         $macd = (new MacdIndicatorService)->computeSeries($rows, $p['macd']);
+        $stoch = (new StochasticIndicatorService)->computeSeries($rows, $p['stochastic']);
 
         foreach ($g['at'] as $idxStr => $expect) {
             $i = (int) $idxStr;
@@ -54,6 +56,8 @@ class OsEngineClassicIndicatorsTest extends TestCase
             $this->assertEqualsWithDelta($expect['macd'], (float) $macd['macd'][$i], 1e-8, "macd@$i");
             $this->assertEqualsWithDelta($expect['macd_signal'], (float) $macd['signal'][$i], 1e-8, "macd_signal@$i");
             $this->assertEqualsWithDelta($expect['macd_hist'], (float) $macd['histogram'][$i], 1e-8, "macd_hist@$i");
+            $this->assertEqualsWithDelta($expect['stoch_k'], $stoch['k'][$i], 1e-2, "stoch_k@$i");
+            $this->assertEqualsWithDelta($expect['stoch_d'], $stoch['d'][$i], 1e-2, "stoch_d@$i");
         }
     }
 
@@ -76,6 +80,23 @@ class OsEngineClassicIndicatorsTest extends TestCase
         ]);
         $this->assertEqualsWithDelta($expected, (float) $macd['macd'][$index], 1e-12);
         $this->assertNull($macd['macd'][$slow - 1]);
+    }
+
+    /** Stochastic: до Period1/%K-прогрева значения 0; после — %K в диапазоне 0..100. */
+    public function test_stochastic_warmup_and_range(): void
+    {
+        $g = $this->golden();
+        $stoch = (new StochasticIndicatorService)->computeSeries($g['rows'], [
+            'period1' => 5,
+            'period2' => 3,
+            'period3' => 3,
+        ]);
+        $this->assertSame(0.0, $stoch['k'][5]);
+        $this->assertSame(0.0, $stoch['d'][5]);
+        // GetK стартует с index >= period2+period3+3 (=9)
+        $this->assertGreaterThan(0.0, $stoch['k'][10]);
+        $this->assertGreaterThanOrEqual(0.0, $stoch['k'][20]);
+        $this->assertLessThanOrEqual(100.0, $stoch['k'][20]);
     }
 
     /** Независимая проверка SMA = среднее Close[index-length+1 .. index] (OsEngine Summ). */
