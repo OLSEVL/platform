@@ -34,6 +34,22 @@ use App\Services\Indicators\IchimokuIndicatorService;
 use App\Services\Indicators\NrtrIndicatorService;
 use App\Services\Indicators\PriceChannelIndicatorService;
 use App\Services\Indicators\WilliamsRangeIndicatorService;
+use App\Services\Indicators\CmoIndicatorService;
+use App\Services\Indicators\DemarkerIndicatorService;
+use App\Services\Indicators\FractalIndicatorService;
+use App\Services\Indicators\IvashovRangeIndicatorService;
+use App\Services\Indicators\KalmanIndicatorService;
+use App\Services\Indicators\LinRegChannelIndicatorService;
+use App\Services\Indicators\LinRegIndicatorService;
+use App\Services\Indicators\MomentumIndicatorService;
+use App\Services\Indicators\OsmaIndicatorService;
+use App\Services\Indicators\RocIndicatorService;
+use App\Services\Indicators\RviIndicatorService;
+use App\Services\Indicators\SmaChannelIndicatorService;
+use App\Services\Indicators\SmiIndicatorService;
+use App\Services\Indicators\StdDevIndicatorService;
+use App\Services\Indicators\TrixIndicatorService;
+use App\Services\Indicators\UltimateIndicatorService;
 use App\Support\M1CandleCountdown;
 use App\Support\PriceScale;
 use Illuminate\Http\JsonResponse;
@@ -466,12 +482,28 @@ class DashboardController extends Controller
         NrtrIndicatorService $nrtr,
         HmaIndicatorService $hma,
         AroonIndicatorService $aroon,
+        MomentumIndicatorService $momentum,
+        RocIndicatorService $roc,
+        OsmaIndicatorService $osma,
+        TrixIndicatorService $trix,
+        CmoIndicatorService $cmo,
+        DemarkerIndicatorService $demarker,
+        RviIndicatorService $rvi,
+        UltimateIndicatorService $ultimate,
+        SmiIndicatorService $smi,
+        StdDevIndicatorService $stddev,
+        SmaChannelIndicatorService $smaChannel,
+        IvashovRangeIndicatorService $ivashov,
+        LinRegIndicatorService $linreg,
+        LinRegChannelIndicatorService $linregChannel,
+        KalmanIndicatorService $kalman,
+        FractalIndicatorService $fractal,
     ): JsonResponse {
         $validated = $request->validate([
             'instrument' => ['required', 'string', 'max:64'],
             'timeframe' => ['nullable', 'integer', Rule::in(CandleService::DASHBOARD_TIMEFRAMES)],
             'layers' => ['nullable', 'array'],
-            'layers.*' => ['string', Rule::in(['bollinger', 'rsi', 'sma', 'ema', 'vwma', 'atr', 'macd', 'stochastic', 'cci', 'keltner', 'envelops', 'parabolic_sar', 'supertrend', 'adx', 'williams', 'ao', 'alligator', 'ichimoku', 'price_channel', 'nrtr', 'hma', 'aroon'])],
+            'layers.*' => ['string', Rule::in(['bollinger', 'rsi', 'sma', 'ema', 'vwma', 'atr', 'macd', 'stochastic', 'cci', 'keltner', 'envelops', 'parabolic_sar', 'supertrend', 'adx', 'williams', 'ao', 'alligator', 'ichimoku', 'price_channel', 'nrtr', 'hma', 'aroon', 'momentum', 'roc', 'osma', 'trix', 'cmo', 'demarker', 'rvi', 'ultimate', 'smi', 'stddev', 'sma_channel', 'ivashov', 'linreg', 'linreg_channel', 'kalman', 'fractal'])],
         ]);
 
         $instrument = (string) $validated['instrument'];
@@ -672,6 +704,134 @@ class DashboardController extends Controller
                 $anchorBot !== null
                     ? IndicatorSetting::mergedAroonParams($anchorBot)
                     : AroonIndicatorService::defaultParams()
+            );
+        }
+        if (! empty($want['momentum'])) {
+            $json['momentum'] = $momentum->compute(
+                $rows,
+                $anchorBot !== null
+                    ? IndicatorSetting::mergedMomentumParams($anchorBot)
+                    : MomentumIndicatorService::defaultParams()
+            );
+        }
+        if (! empty($want['roc'])) {
+            $json['roc'] = $roc->compute(
+                $rows,
+                $anchorBot !== null
+                    ? IndicatorSetting::mergedRocParams($anchorBot)
+                    : RocIndicatorService::defaultParams()
+            );
+        }
+        if (! empty($want['osma'])) {
+            $json['osma'] = $osma->compute(
+                $rows,
+                $anchorBot !== null
+                    ? IndicatorSetting::mergedOsmaParams($anchorBot)
+                    : OsmaIndicatorService::defaultParams()
+            );
+        }
+        if (! empty($want['trix'])) {
+            $json['trix'] = $trix->compute(
+                $rows,
+                $anchorBot !== null
+                    ? IndicatorSetting::mergedTrixParams($anchorBot)
+                    : TrixIndicatorService::defaultParams()
+            );
+        }
+        if (! empty($want['cmo'])) {
+            $json['cmo'] = $cmo->compute(
+                $rows,
+                $anchorBot !== null
+                    ? IndicatorSetting::mergedCmoParams($anchorBot)
+                    : CmoIndicatorService::defaultParams()
+            );
+        }
+        if (! empty($want['demarker'])) {
+            $json['demarker'] = $demarker->compute(
+                $rows,
+                $anchorBot !== null
+                    ? IndicatorSetting::mergedDemarkerParams($anchorBot)
+                    : DemarkerIndicatorService::defaultParams()
+            );
+        }
+        if (! empty($want['rvi'])) {
+            $json['rvi'] = $rvi->compute(
+                $rows,
+                $anchorBot !== null
+                    ? IndicatorSetting::mergedRviParams($anchorBot)
+                    : RviIndicatorService::defaultParams()
+            );
+        }
+        if (! empty($want['ultimate'])) {
+            $json['ultimate'] = $ultimate->compute(
+                $rows,
+                $anchorBot !== null
+                    ? IndicatorSetting::mergedUltimateParams($anchorBot)
+                    : UltimateIndicatorService::defaultParams()
+            );
+        }
+        if (! empty($want['smi'])) {
+            $json['smi'] = $smi->compute(
+                $rows,
+                $anchorBot !== null
+                    ? IndicatorSetting::mergedSmiParams($anchorBot)
+                    : SmiIndicatorService::defaultParams()
+            );
+        }
+        if (! empty($want['stddev'])) {
+            $json['stddev'] = $stddev->compute(
+                $rows,
+                $anchorBot !== null
+                    ? IndicatorSetting::mergedStdDevParams($anchorBot)
+                    : StdDevIndicatorService::defaultParams()
+            );
+        }
+        if (! empty($want['sma_channel'])) {
+            $json['sma_channel'] = $smaChannel->compute(
+                $rows,
+                $anchorBot !== null
+                    ? IndicatorSetting::mergedSmaChannelParams($anchorBot)
+                    : SmaChannelIndicatorService::defaultParams()
+            );
+        }
+        if (! empty($want['ivashov'])) {
+            $json['ivashov'] = $ivashov->compute(
+                $rows,
+                $anchorBot !== null
+                    ? IndicatorSetting::mergedIvashovParams($anchorBot)
+                    : IvashovRangeIndicatorService::defaultParams()
+            );
+        }
+        if (! empty($want['linreg'])) {
+            $json['linreg'] = $linreg->compute(
+                $rows,
+                $anchorBot !== null
+                    ? IndicatorSetting::mergedLinRegParams($anchorBot)
+                    : LinRegIndicatorService::defaultParams()
+            );
+        }
+        if (! empty($want['linreg_channel'])) {
+            $json['linreg_channel'] = $linregChannel->compute(
+                $rows,
+                $anchorBot !== null
+                    ? IndicatorSetting::mergedLinRegChannelParams($anchorBot)
+                    : LinRegChannelIndicatorService::defaultParams()
+            );
+        }
+        if (! empty($want['kalman'])) {
+            $json['kalman'] = $kalman->compute(
+                $rows,
+                $anchorBot !== null
+                    ? IndicatorSetting::mergedKalmanParams($anchorBot)
+                    : KalmanIndicatorService::defaultParams()
+            );
+        }
+        if (! empty($want['fractal'])) {
+            $json['fractal'] = $fractal->compute(
+                $rows,
+                $anchorBot !== null
+                    ? IndicatorSetting::mergedFractalParams($anchorBot)
+                    : FractalIndicatorService::defaultParams()
             );
         }
 

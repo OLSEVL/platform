@@ -39,6 +39,22 @@ use App\Services\Indicators\IchimokuIndicatorService;
 use App\Services\Indicators\NrtrIndicatorService;
 use App\Services\Indicators\PriceChannelIndicatorService;
 use App\Services\Indicators\WilliamsRangeIndicatorService;
+use App\Services\Indicators\CmoIndicatorService;
+use App\Services\Indicators\DemarkerIndicatorService;
+use App\Services\Indicators\FractalIndicatorService;
+use App\Services\Indicators\IvashovRangeIndicatorService;
+use App\Services\Indicators\KalmanIndicatorService;
+use App\Services\Indicators\LinRegChannelIndicatorService;
+use App\Services\Indicators\LinRegIndicatorService;
+use App\Services\Indicators\MomentumIndicatorService;
+use App\Services\Indicators\OsmaIndicatorService;
+use App\Services\Indicators\RocIndicatorService;
+use App\Services\Indicators\RviIndicatorService;
+use App\Services\Indicators\SmaChannelIndicatorService;
+use App\Services\Indicators\SmiIndicatorService;
+use App\Services\Indicators\StdDevIndicatorService;
+use App\Services\Indicators\TrixIndicatorService;
+use App\Services\Indicators\UltimateIndicatorService;
 use App\Services\Telegram\StrongLevelTelegramLlmButton;
 use App\Services\Telegram\StrongLevelTelegramProcessManager;
 use App\Services\Telegram\TelegramAlertService;
@@ -2406,6 +2422,22 @@ class BotController extends Controller
         NrtrIndicatorService $nrtr,
         HmaIndicatorService $hma,
         AroonIndicatorService $aroon,
+        MomentumIndicatorService $momentum,
+        RocIndicatorService $roc,
+        OsmaIndicatorService $osma,
+        TrixIndicatorService $trix,
+        CmoIndicatorService $cmo,
+        DemarkerIndicatorService $demarker,
+        RviIndicatorService $rvi,
+        UltimateIndicatorService $ultimate,
+        SmiIndicatorService $smi,
+        StdDevIndicatorService $stddev,
+        SmaChannelIndicatorService $smaChannel,
+        IvashovRangeIndicatorService $ivashov,
+        LinRegIndicatorService $linreg,
+        LinRegChannelIndicatorService $linregChannel,
+        KalmanIndicatorService $kalman,
+        FractalIndicatorService $fractal,
     ): JsonResponse {
         $this->ensureBotOwner($bot);
 
@@ -2413,7 +2445,7 @@ class BotController extends Controller
             'instrument' => ['required', 'string', 'max:64'],
             'timeframe' => ['nullable', 'integer', Rule::in(CandleService::DASHBOARD_TIMEFRAMES)],
             'layers' => ['nullable', 'array'],
-            'layers.*' => ['string', Rule::in(['pa', 'ls', 'smc', 'bollinger', 'rsi', 'sma', 'ema', 'vwma', 'atr', 'macd', 'stochastic', 'cci', 'keltner', 'envelops', 'parabolic_sar', 'supertrend', 'adx', 'williams', 'ao', 'alligator', 'ichimoku', 'price_channel', 'nrtr', 'hma', 'aroon'])],
+            'layers.*' => ['string', Rule::in(['pa', 'ls', 'smc', 'bollinger', 'rsi', 'sma', 'ema', 'vwma', 'atr', 'macd', 'stochastic', 'cci', 'keltner', 'envelops', 'parabolic_sar', 'supertrend', 'adx', 'williams', 'ao', 'alligator', 'ichimoku', 'price_channel', 'nrtr', 'hma', 'aroon', 'momentum', 'roc', 'osma', 'trix', 'cmo', 'demarker', 'rvi', 'ultimate', 'smi', 'stddev', 'sma_channel', 'ivashov', 'linreg', 'linreg_channel', 'kalman', 'fractal'])],
         ]);
 
         $instrument = (string) $validated['instrument'];
@@ -2510,6 +2542,54 @@ class BotController extends Controller
         }
         if (! empty($want['aroon'])) {
             $json['aroon'] = $aroon->compute($rows, IndicatorSetting::mergedAroonParams($bot));
+        }
+        if (! empty($want['momentum'])) {
+            $json['momentum'] = $momentum->compute($rows, IndicatorSetting::mergedMomentumParams($bot));
+        }
+        if (! empty($want['roc'])) {
+            $json['roc'] = $roc->compute($rows, IndicatorSetting::mergedRocParams($bot));
+        }
+        if (! empty($want['osma'])) {
+            $json['osma'] = $osma->compute($rows, IndicatorSetting::mergedOsmaParams($bot));
+        }
+        if (! empty($want['trix'])) {
+            $json['trix'] = $trix->compute($rows, IndicatorSetting::mergedTrixParams($bot));
+        }
+        if (! empty($want['cmo'])) {
+            $json['cmo'] = $cmo->compute($rows, IndicatorSetting::mergedCmoParams($bot));
+        }
+        if (! empty($want['demarker'])) {
+            $json['demarker'] = $demarker->compute($rows, IndicatorSetting::mergedDemarkerParams($bot));
+        }
+        if (! empty($want['rvi'])) {
+            $json['rvi'] = $rvi->compute($rows, IndicatorSetting::mergedRviParams($bot));
+        }
+        if (! empty($want['ultimate'])) {
+            $json['ultimate'] = $ultimate->compute($rows, IndicatorSetting::mergedUltimateParams($bot));
+        }
+        if (! empty($want['smi'])) {
+            $json['smi'] = $smi->compute($rows, IndicatorSetting::mergedSmiParams($bot));
+        }
+        if (! empty($want['stddev'])) {
+            $json['stddev'] = $stddev->compute($rows, IndicatorSetting::mergedStdDevParams($bot));
+        }
+        if (! empty($want['sma_channel'])) {
+            $json['sma_channel'] = $smaChannel->compute($rows, IndicatorSetting::mergedSmaChannelParams($bot));
+        }
+        if (! empty($want['ivashov'])) {
+            $json['ivashov'] = $ivashov->compute($rows, IndicatorSetting::mergedIvashovParams($bot));
+        }
+        if (! empty($want['linreg'])) {
+            $json['linreg'] = $linreg->compute($rows, IndicatorSetting::mergedLinRegParams($bot));
+        }
+        if (! empty($want['linreg_channel'])) {
+            $json['linreg_channel'] = $linregChannel->compute($rows, IndicatorSetting::mergedLinRegChannelParams($bot));
+        }
+        if (! empty($want['kalman'])) {
+            $json['kalman'] = $kalman->compute($rows, IndicatorSetting::mergedKalmanParams($bot));
+        }
+        if (! empty($want['fractal'])) {
+            $json['fractal'] = $fractal->compute($rows, IndicatorSetting::mergedFractalParams($bot));
         }
 
         return response()->json($json);

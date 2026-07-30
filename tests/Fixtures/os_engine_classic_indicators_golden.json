@@ -499,7 +499,71 @@
         },
         "aroon": {
             "period": 5
-        }
+        },
+        "momentum": {
+            "length": 5,
+            "candle_point": "Close"
+        },
+        "roc": {
+            "period": 5,
+            "candle_point": "Close"
+        },
+        "osma": {
+            "length_fast": 3,
+            "length_slow": 5,
+            "length_signal": 3
+        },
+        "trix": {
+            "length": 3,
+            "candle_point": "Close"
+        },
+        "cmo": {
+            "period": 5
+        },
+        "demarker": {
+            "period": 5
+        },
+        "rvi": {
+            "period": 5
+        },
+        "ultimate": {
+            "period1": 3,
+            "period2": 5,
+            "period3": 7
+        },
+        "smi": {
+            "period1": 5,
+            "period2": 3,
+            "period3": 2,
+            "period4": 2
+        },
+        "stddev": {
+            "period": 5,
+            "candle_point": "Close"
+        },
+        "sma_channel": {
+            "length": 5,
+            "deviation": 2
+        },
+        "ivashov": {
+            "length_ma": 5,
+            "length_avg": 5
+        },
+        "linreg": {
+            "period": 5,
+            "candle_point": "Close"
+        },
+        "linreg_channel": {
+            "period": 10,
+            "candle_point": "Close",
+            "up_deviation": 2,
+            "down_deviation": 2
+        },
+        "kalman": {
+            "sharpness": 1,
+            "k": 1
+        },
+        "fractal": []
     },
     "at": {
         "5": {
@@ -542,7 +606,32 @@
             "nrtr": 101.61440776079999,
             "hma": 68.2471,
             "aroon_up": 0,
-            "aroon_down": 0
+            "aroon_down": 0,
+            "momentum": 102.240816,
+            "roc": 2.241,
+            "osma": 0.16373181,
+            "osma_signal": 0.08186591,
+            "osma_hist": 0.0818659,
+            "trix": 0,
+            "cmo": 100,
+            "demarker": 1,
+            "rvi": 0,
+            "rvi_signal": 0,
+            "ultimate": 0,
+            "smi": 0,
+            "smi_signal": 0,
+            "stddev": 0,
+            "sma_channel_up": 0,
+            "sma_channel_mid": 0,
+            "sma_channel_down": 0,
+            "ivashov": 0.1178,
+            "linreg": 0,
+            "linreg_channel_up": 102.82209018254545,
+            "linreg_channel_mid": 102.47941675272727,
+            "linreg_channel_down": 102.1367433229091,
+            "kalman": 52.9625376239397,
+            "fractal_up": 102.64081592,
+            "fractal_down": 0
         },
         "10": {
             "sma": 101.21608319,
@@ -584,7 +673,32 @@
             "nrtr": 100.76655271070001,
             "hma": 100.385,
             "aroon_up": 0,
-            "aroon_down": 100
+            "aroon_down": 100,
+            "momentum": 97.924555,
+            "roc": -2.075,
+            "osma": -0.11891768000000003,
+            "osma_signal": -0.09870082,
+            "osma_hist": -0.02021686000000003,
+            "trix": 0,
+            "cmo": -100,
+            "demarker": 0,
+            "rvi": 0.13,
+            "rvi_signal": 0,
+            "ultimate": 41.415440571267034,
+            "smi": 0,
+            "smi_signal": 0,
+            "stddev": 0.72093,
+            "sma_channel_up": 103.24040518999999,
+            "sma_channel_mid": 101.21608318999999,
+            "sma_channel_down": 99.19176119,
+            "ivashov": 0.6056,
+            "linreg": 100.20340453000001,
+            "linreg_channel_up": 100.20516191785455,
+            "linreg_channel_mid": 99.03603437945455,
+            "linreg_channel_down": 97.86690684105454,
+            "kalman": 93.75881405785772,
+            "fractal_up": 0,
+            "fractal_down": 0
         },
         "14": {
             "sma": 99.24935323,
@@ -626,7 +740,32 @@
             "nrtr": 99.3356110717,
             "hma": 98.6228,
             "aroon_up": 0,
-            "aroon_down": 100
+            "aroon_down": 100,
+            "momentum": 97.984608,
+            "roc": -2.015,
+            "osma": 0.01067967000000003,
+            "osma_signal": -0.02508438,
+            "osma_hist": 0.03576405000000003,
+            "trix": 0,
+            "cmo": -100,
+            "demarker": 0,
+            "rvi": 0.13,
+            "rvi_signal": 0.13,
+            "ultimate": 42.41045887979038,
+            "smi": 0,
+            "smi_signal": 0,
+            "stddev": 0.52539,
+            "sma_channel_up": 101.23434023,
+            "sma_channel_mid": 99.24935323,
+            "sma_channel_down": 97.26436623,
+            "ivashov": 0.9472,
+            "linreg": 98.53154869000001,
+            "linreg_channel_up": 98.65992514694538,
+            "linreg_channel_mid": 98.31560126127266,
+            "linreg_channel_down": 97.97127737559994,
+            "kalman": 114.50164330937628,
+            "fractal_up": 0,
+            "fractal_down": 98.35209017
         },
         "20": {
             "sma": 100.40133404,
@@ -668,7 +807,32 @@
             "nrtr": 101.1268194354,
             "hma": 101.4794,
             "aroon_up": 100,
-            "aroon_down": 0
+            "aroon_down": 0,
+            "momentum": 102.95061,
+            "roc": 2.951,
+            "osma": 0.12397919000000002,
+            "osma_signal": 0.12502645,
+            "osma_hist": -0.0010472599999999943,
+            "trix": 0.4371,
+            "cmo": 100,
+            "demarker": 1,
+            "rvi": 0.13,
+            "rvi_signal": 0.13,
+            "ultimate": 59.64622058670228,
+            "smi": 0,
+            "smi_signal": 0,
+            "stddev": 0.92173,
+            "sma_channel_up": 102.409361044,
+            "sma_channel_mid": 100.401334044,
+            "sma_channel_down": 98.393307044,
+            "ivashov": 0.8966,
+            "linreg": 101.70264864,
+            "linreg_channel_up": 103.95774749727272,
+            "linreg_channel_mid": 102.83712372927273,
+            "linreg_channel_down": 101.71649996127275,
+            "kalman": 129.49698271886135,
+            "fractal_up": 0,
+            "fractal_down": 0
         },
         "26": {
             "sma": 102.96568329,
@@ -710,7 +874,32 @@
             "nrtr": 102.5429293251,
             "hma": 102.931,
             "aroon_up": 60,
-            "aroon_down": 0
+            "aroon_down": 0,
+            "momentum": 100.303944,
+            "roc": 0.304,
+            "osma": -0.11105272000000002,
+            "osma_signal": -0.07313563,
+            "osma_hist": -0.03791709000000003,
+            "trix": 0.1706,
+            "cmo": 23.6,
+            "demarker": 0.6179988225498961,
+            "rvi": 0.13,
+            "rvi_signal": 0.13,
+            "ultimate": 49.047291136756634,
+            "smi": 0,
+            "smi_signal": 0,
+            "stddev": 0.18583,
+            "sma_channel_up": 105.02499728999999,
+            "sma_channel_mid": 102.96568328999999,
+            "sma_channel_down": 100.90636928999999,
+            "ivashov": 0.6004,
+            "linreg": 102.88364129599995,
+            "linreg_channel_up": 102.97826402727267,
+            "linreg_channel_mid": 102.1553722836363,
+            "linreg_channel_down": 101.33248053999992,
+            "kalman": 131.15311189150177,
+            "fractal_up": 0,
+            "fractal_down": 0
         },
         "30": {
             "sma": 101.56297162,
@@ -752,7 +941,32 @@
             "nrtr": 101.0625773578,
             "hma": 100.6079,
             "aroon_up": 0,
-            "aroon_down": 100
+            "aroon_down": 100,
+            "momentum": 97.464071,
+            "roc": -2.536,
+            "osma": -0.10900364000000001,
+            "osma_signal": -0.11781723,
+            "osma_hist": 0.008813589999999982,
+            "trix": -0.3753,
+            "cmo": -100,
+            "demarker": 0,
+            "rvi": 0.13,
+            "rvi_signal": 0.13,
+            "ultimate": 39.46315583050482,
+            "smi": 0,
+            "smi_signal": 0,
+            "stddev": 0.81071,
+            "sma_channel_up": 103.59423061999999,
+            "sma_channel_mid": 101.56297161999998,
+            "sma_channel_down": 99.53171261999998,
+            "ivashov": 0.832,
+            "linreg": 100.41705165600001,
+            "linreg_channel_up": 100.38809930701815,
+            "linreg_channel_mid": 99.35705240781814,
+            "linreg_channel_down": 98.32600550861814,
+            "kalman": 126.46649869785278,
+            "fractal_up": 0,
+            "fractal_down": 0
         },
         "40": {
             "sma": 102.07869595,
@@ -794,7 +1008,32 @@
             "nrtr": 102.7500240393,
             "hma": 103.2062,
             "aroon_up": 100,
-            "aroon_down": 0
+            "aroon_down": 0,
+            "momentum": 103.198313,
+            "roc": 3.198,
+            "osma": 0.09025970000000005,
+            "osma_signal": 0.10675286,
+            "osma_hist": -0.01649315999999995,
+            "trix": 0.5143,
+            "cmo": 100,
+            "demarker": 1,
+            "rvi": 0.13,
+            "rvi_signal": 0.13,
+            "ultimate": 60.9508964304955,
+            "smi": 0,
+            "smi_signal": 0,
+            "stddev": 0.95134,
+            "sma_channel_up": 104.12026994799999,
+            "sma_channel_mid": 102.07869594799999,
+            "sma_channel_down": 100.03712194799999,
+            "ivashov": 1.1332,
+            "linreg": 103.42355583200003,
+            "linreg_channel_up": 105.28710294557574,
+            "linreg_channel_mid": 104.37022816945452,
+            "linreg_channel_down": 103.4533533933333,
+            "kalman": 109.86359644437105,
+            "fractal_up": 0,
+            "fractal_down": 0
         },
         "49": {
             "sma": 102.42368008,
@@ -836,7 +1075,32 @@
             "nrtr": 101.9384973732,
             "hma": 101.4634,
             "aroon_up": 0,
-            "aroon_down": 100
+            "aroon_down": 100,
+            "momentum": 97.453081,
+            "roc": -2.547,
+            "osma": -0.10446443,
+            "osma_signal": -0.11533225,
+            "osma_hist": 0.01086782,
+            "trix": -0.3828,
+            "cmo": -100,
+            "demarker": 0,
+            "rvi": 0.13,
+            "rvi_signal": 0.13,
+            "ultimate": 39.38833896360258,
+            "smi": -37.12,
+            "smi_signal": -36.93,
+            "stddev": 0.81352,
+            "sma_channel_up": 104.47215408199999,
+            "sma_channel_mid": 102.42368008199999,
+            "sma_channel_down": 100.37520608199999,
+            "ivashov": 0.8619,
+            "linreg": 101.27359935000001,
+            "linreg_channel_up": 102.83823923466669,
+            "linreg_channel_mid": 101.92136445854547,
+            "linreg_channel_down": 101.00448968242425,
+            "kalman": 101.2778243713725,
+            "fractal_up": 0,
+            "fractal_down": 0
         }
     }
 }

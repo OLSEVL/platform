@@ -56,6 +56,38 @@ use App\Support\PriceChannelSettingsForm;
 use App\Services\Indicators\PriceChannelIndicatorService;
 use App\Support\WilliamsRangeSettingsForm;
 use App\Services\Indicators\WilliamsRangeIndicatorService;
+use App\Support\MomentumSettingsForm;
+use App\Services\Indicators\MomentumIndicatorService;
+use App\Support\RocSettingsForm;
+use App\Services\Indicators\RocIndicatorService;
+use App\Support\OsmaSettingsForm;
+use App\Services\Indicators\OsmaIndicatorService;
+use App\Support\TrixSettingsForm;
+use App\Services\Indicators\TrixIndicatorService;
+use App\Support\CmoSettingsForm;
+use App\Services\Indicators\CmoIndicatorService;
+use App\Support\DemarkerSettingsForm;
+use App\Services\Indicators\DemarkerIndicatorService;
+use App\Support\RviSettingsForm;
+use App\Services\Indicators\RviIndicatorService;
+use App\Support\UltimateSettingsForm;
+use App\Services\Indicators\UltimateIndicatorService;
+use App\Support\SmiSettingsForm;
+use App\Services\Indicators\SmiIndicatorService;
+use App\Support\StdDevSettingsForm;
+use App\Services\Indicators\StdDevIndicatorService;
+use App\Support\SmaChannelSettingsForm;
+use App\Services\Indicators\SmaChannelIndicatorService;
+use App\Support\IvashovRangeSettingsForm;
+use App\Services\Indicators\IvashovRangeIndicatorService;
+use App\Support\LinRegSettingsForm;
+use App\Services\Indicators\LinRegIndicatorService;
+use App\Support\LinRegChannelSettingsForm;
+use App\Services\Indicators\LinRegChannelIndicatorService;
+use App\Support\KalmanSettingsForm;
+use App\Services\Indicators\KalmanIndicatorService;
+use App\Support\FractalSettingsForm;
+use App\Services\Indicators\FractalIndicatorService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\View\View;
@@ -556,6 +588,246 @@ class BotChartIndicatorController extends Controller
     public function updateAroon(Request $request, Bot $bot): RedirectResponse
     {
         return $this->saveClassic($request, $bot, IndicatorSetting::KEY_AROON, AroonIndicatorService::class, AroonSettingsForm::class, 'bots.indicators.aroon.edit', 'Aroon');
+    }
+
+    public function editMomentum(Bot $bot): View
+    {
+        $this->ensureBotOwner($bot);
+
+        return view('bots.indicators.momentum', [
+            'bot' => $bot,
+            'p' => IndicatorSetting::mergedMomentumParams($bot),
+        ]);
+    }
+
+    public function updateMomentum(Request $request, Bot $bot): RedirectResponse
+    {
+        return $this->saveClassic($request, $bot, IndicatorSetting::KEY_MOMENTUM, MomentumIndicatorService::class, MomentumSettingsForm::class, 'bots.indicators.momentum.edit', 'Momentum');
+    }
+
+    public function editRoc(Bot $bot): View
+    {
+        $this->ensureBotOwner($bot);
+
+        return view('bots.indicators.roc', [
+            'bot' => $bot,
+            'p' => IndicatorSetting::mergedRocParams($bot),
+        ]);
+    }
+
+    public function updateRoc(Request $request, Bot $bot): RedirectResponse
+    {
+        return $this->saveClassic($request, $bot, IndicatorSetting::KEY_ROC, RocIndicatorService::class, RocSettingsForm::class, 'bots.indicators.roc.edit', 'ROC');
+    }
+
+    public function editOsma(Bot $bot): View
+    {
+        $this->ensureBotOwner($bot);
+
+        return view('bots.indicators.osma', [
+            'bot' => $bot,
+            'p' => IndicatorSetting::mergedOsmaParams($bot),
+        ]);
+    }
+
+    public function updateOsma(Request $request, Bot $bot): RedirectResponse
+    {
+        return $this->saveClassic($request, $bot, IndicatorSetting::KEY_OSMA, OsmaIndicatorService::class, OsmaSettingsForm::class, 'bots.indicators.osma.edit', 'OsMa');
+    }
+
+    public function editTrix(Bot $bot): View
+    {
+        $this->ensureBotOwner($bot);
+
+        return view('bots.indicators.trix', [
+            'bot' => $bot,
+            'p' => IndicatorSetting::mergedTrixParams($bot),
+        ]);
+    }
+
+    public function updateTrix(Request $request, Bot $bot): RedirectResponse
+    {
+        return $this->saveClassic($request, $bot, IndicatorSetting::KEY_TRIX, TrixIndicatorService::class, TrixSettingsForm::class, 'bots.indicators.trix.edit', 'Trix');
+    }
+
+    public function editCmo(Bot $bot): View
+    {
+        $this->ensureBotOwner($bot);
+
+        return view('bots.indicators.cmo', [
+            'bot' => $bot,
+            'p' => IndicatorSetting::mergedCmoParams($bot),
+        ]);
+    }
+
+    public function updateCmo(Request $request, Bot $bot): RedirectResponse
+    {
+        return $this->saveClassic($request, $bot, IndicatorSetting::KEY_CMO, CmoIndicatorService::class, CmoSettingsForm::class, 'bots.indicators.cmo.edit', 'CMO');
+    }
+
+    public function editDemarker(Bot $bot): View
+    {
+        $this->ensureBotOwner($bot);
+
+        return view('bots.indicators.demarker', [
+            'bot' => $bot,
+            'p' => IndicatorSetting::mergedDemarkerParams($bot),
+        ]);
+    }
+
+    public function updateDemarker(Request $request, Bot $bot): RedirectResponse
+    {
+        return $this->saveClassic($request, $bot, IndicatorSetting::KEY_DEMARKER, DemarkerIndicatorService::class, DemarkerSettingsForm::class, 'bots.indicators.demarker.edit', 'DeMarker');
+    }
+
+    public function editRvi(Bot $bot): View
+    {
+        $this->ensureBotOwner($bot);
+
+        return view('bots.indicators.rvi', [
+            'bot' => $bot,
+            'p' => IndicatorSetting::mergedRviParams($bot),
+        ]);
+    }
+
+    public function updateRvi(Request $request, Bot $bot): RedirectResponse
+    {
+        return $this->saveClassic($request, $bot, IndicatorSetting::KEY_RVI, RviIndicatorService::class, RviSettingsForm::class, 'bots.indicators.rvi.edit', 'RVI');
+    }
+
+    public function editUltimate(Bot $bot): View
+    {
+        $this->ensureBotOwner($bot);
+
+        return view('bots.indicators.ultimate', [
+            'bot' => $bot,
+            'p' => IndicatorSetting::mergedUltimateParams($bot),
+        ]);
+    }
+
+    public function updateUltimate(Request $request, Bot $bot): RedirectResponse
+    {
+        return $this->saveClassic($request, $bot, IndicatorSetting::KEY_ULTIMATE, UltimateIndicatorService::class, UltimateSettingsForm::class, 'bots.indicators.ultimate.edit', 'Ultimate Oscillator');
+    }
+
+    public function editSmi(Bot $bot): View
+    {
+        $this->ensureBotOwner($bot);
+
+        return view('bots.indicators.smi', [
+            'bot' => $bot,
+            'p' => IndicatorSetting::mergedSmiParams($bot),
+        ]);
+    }
+
+    public function updateSmi(Request $request, Bot $bot): RedirectResponse
+    {
+        return $this->saveClassic($request, $bot, IndicatorSetting::KEY_SMI, SmiIndicatorService::class, SmiSettingsForm::class, 'bots.indicators.smi.edit', 'SMI');
+    }
+
+    public function editStdDev(Bot $bot): View
+    {
+        $this->ensureBotOwner($bot);
+
+        return view('bots.indicators.stddev', [
+            'bot' => $bot,
+            'p' => IndicatorSetting::mergedStdDevParams($bot),
+        ]);
+    }
+
+    public function updateStdDev(Request $request, Bot $bot): RedirectResponse
+    {
+        return $this->saveClassic($request, $bot, IndicatorSetting::KEY_STDDEV, StdDevIndicatorService::class, StdDevSettingsForm::class, 'bots.indicators.stddev.edit', 'StdDev');
+    }
+
+    public function editSmaChannel(Bot $bot): View
+    {
+        $this->ensureBotOwner($bot);
+
+        return view('bots.indicators.sma-channel', [
+            'bot' => $bot,
+            'p' => IndicatorSetting::mergedSmaChannelParams($bot),
+        ]);
+    }
+
+    public function updateSmaChannel(Request $request, Bot $bot): RedirectResponse
+    {
+        return $this->saveClassic($request, $bot, IndicatorSetting::KEY_SMA_CHANNEL, SmaChannelIndicatorService::class, SmaChannelSettingsForm::class, 'bots.indicators.sma-channel.edit', 'SMA Channel');
+    }
+
+    public function editIvashov(Bot $bot): View
+    {
+        $this->ensureBotOwner($bot);
+
+        return view('bots.indicators.ivashov', [
+            'bot' => $bot,
+            'p' => IndicatorSetting::mergedIvashovParams($bot),
+        ]);
+    }
+
+    public function updateIvashov(Request $request, Bot $bot): RedirectResponse
+    {
+        return $this->saveClassic($request, $bot, IndicatorSetting::KEY_IVASHOV, IvashovRangeIndicatorService::class, IvashovRangeSettingsForm::class, 'bots.indicators.ivashov.edit', 'Ivashov Range');
+    }
+
+    public function editLinReg(Bot $bot): View
+    {
+        $this->ensureBotOwner($bot);
+
+        return view('bots.indicators.linreg', [
+            'bot' => $bot,
+            'p' => IndicatorSetting::mergedLinRegParams($bot),
+        ]);
+    }
+
+    public function updateLinReg(Request $request, Bot $bot): RedirectResponse
+    {
+        return $this->saveClassic($request, $bot, IndicatorSetting::KEY_LINREG, LinRegIndicatorService::class, LinRegSettingsForm::class, 'bots.indicators.linreg.edit', 'Linear Regression');
+    }
+
+    public function editLinRegChannel(Bot $bot): View
+    {
+        $this->ensureBotOwner($bot);
+
+        return view('bots.indicators.linreg-channel', [
+            'bot' => $bot,
+            'p' => IndicatorSetting::mergedLinRegChannelParams($bot),
+        ]);
+    }
+
+    public function updateLinRegChannel(Request $request, Bot $bot): RedirectResponse
+    {
+        return $this->saveClassic($request, $bot, IndicatorSetting::KEY_LINREG_CHANNEL, LinRegChannelIndicatorService::class, LinRegChannelSettingsForm::class, 'bots.indicators.linreg-channel.edit', 'LR Channel');
+    }
+
+    public function editKalman(Bot $bot): View
+    {
+        $this->ensureBotOwner($bot);
+
+        return view('bots.indicators.kalman', [
+            'bot' => $bot,
+            'p' => IndicatorSetting::mergedKalmanParams($bot),
+        ]);
+    }
+
+    public function updateKalman(Request $request, Bot $bot): RedirectResponse
+    {
+        return $this->saveClassic($request, $bot, IndicatorSetting::KEY_KALMAN, KalmanIndicatorService::class, KalmanSettingsForm::class, 'bots.indicators.kalman.edit', 'Kalman');
+    }
+
+    public function editFractal(Bot $bot): View
+    {
+        $this->ensureBotOwner($bot);
+
+        return view('bots.indicators.fractal', [
+            'bot' => $bot,
+            'p' => IndicatorSetting::mergedFractalParams($bot),
+        ]);
+    }
+
+    public function updateFractal(Request $request, Bot $bot): RedirectResponse
+    {
+        return $this->saveClassic($request, $bot, IndicatorSetting::KEY_FRACTAL, FractalIndicatorService::class, FractalSettingsForm::class, 'bots.indicators.fractal.edit', 'Fractal');
     }
 
     /**

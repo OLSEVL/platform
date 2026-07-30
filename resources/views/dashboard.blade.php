@@ -104,323 +104,10 @@
                         Индикаторы ▾
                     </button>
                     {{-- Как на странице бота: у каждого слоя своя шестерёнка → те же маршруты настроек (бот-якорь из контроллера). --}}
-                    <div id="layers-dropdown-panel"
-                        class="hidden absolute left-0 top-full mt-1 z-20 bg-zinc-900 border border-zinc-700 rounded shadow-lg shadow-black/40 py-2 pl-3 pr-2 min-w-[14.5rem] space-y-1">
-                        <div class="flex items-center justify-between gap-1">
-                            <label for="layer-ob" class="flex min-w-0 flex-1 items-center gap-2 text-sm text-zinc-300 cursor-pointer">
-                                <input type="checkbox" id="layer-ob" class="rounded border-zinc-600 bg-zinc-800 text-blue-500 shrink-0">
-                                <span class="truncate">Ордерблоки</span>
-                            </label>
-                            @if($chartIndicatorBot)
-                                <a href="{{ route('bots.indicators.order-blocks.edit', $chartIndicatorBot) }}"
-                                    class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-zinc-700 bg-zinc-800/80 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500/50 pointer-events-auto"
-                                    title="Настройки: ордерблоки"
-                                    aria-label="Настройки ордерблоков на графике">
-                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="h-3.5 w-3.5" aria-hidden="true">
-                                        <path stroke-linecap="round" stroke-linejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.325.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.241-.438.613-.43.992a7.723 7.723 0 0 1 0 .255c-.008.378.137.75.43.991l1.004.827c.424.35.534.955.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.47 6.47 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.281c-.09.543-.56.94-1.11.94h-2.594c-.55 0-1.019-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.991a6.932 6.932 0 0 1 0-.255c.007-.38-.138-.751-.43-.992l-1.004-.827a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.086.22-.128.332-.183.582-.495.644-.869l.214-1.281Z" />
-                                        <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
-                                    </svg>
-                                </a>
-                            @else
-                                <a href="{{ route('bots.index') }}"
-                                    class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-zinc-700 bg-zinc-800/40 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300 focus:outline-none focus:ring-2 focus:ring-blue-500/50 pointer-events-auto"
-                                    title="Создайте бота — страницы настроек индикаторов привязаны к боту"
-                                    aria-label="Перейти к списку ботов">
-                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="h-3.5 w-3.5" aria-hidden="true">
-                                        <path stroke-linecap="round" stroke-linejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.325.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.241-.438.613-.43.992a7.723 7.723 0 0 1 0 .255c-.008.378.137.75.43.991l1.004.827c.424.35.534.955.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.47 6.47 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.281c-.09.543-.56.94-1.11.94h-2.594c-.55 0-1.019-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.991a6.932 6.932 0 0 1 0-.255c.007-.38-.138-.751-.43-.992l-1.004-.827a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.086.22-.128.332-.183.582-.495.644-.869l.214-1.281Z" />
-                                        <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
-                                    </svg>
-                                </a>
-                            @endif
-                        </div>
-                        <div class="flex items-center justify-between gap-1">
-                            <label for="layer-fvg" class="flex min-w-0 flex-1 items-center gap-2 text-sm text-zinc-300 cursor-pointer">
-                                <input type="checkbox" id="layer-fvg" class="rounded border-zinc-600 bg-zinc-800 text-blue-500 shrink-0">
-                                <span class="truncate">Имбалансы</span>
-                            </label>
-                            @if($chartIndicatorBot)
-                                <a href="{{ route('bots.indicators.fvg.edit', $chartIndicatorBot) }}"
-                                    class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-zinc-700 bg-zinc-800/80 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500/50 pointer-events-auto"
-                                    title="Настройки: имбалансы (FVG)"
-                                    aria-label="Настройки имбалансов на графике">
-                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="h-3.5 w-3.5" aria-hidden="true">
-                                        <path stroke-linecap="round" stroke-linejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.325.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.241-.438.613-.43.992a7.723 7.723 0 0 1 0 .255c-.008.378.137.75.43.991l1.004.827c.424.35.534.955.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.47 6.47 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.281c-.09.543-.56.94-1.11.94h-2.594c-.55 0-1.019-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.991a6.932 6.932 0 0 1 0-.255c.007-.38-.138-.751-.43-.992l-1.004-.827a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.086.22-.128.332-.183.582-.495.644-.869l.214-1.281Z" />
-                                        <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
-                                    </svg>
-                                </a>
-                            @else
-                                <a href="{{ route('bots.index') }}"
-                                    class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-zinc-700 bg-zinc-800/40 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300 focus:outline-none focus:ring-2 focus:ring-blue-500/50 pointer-events-auto"
-                                    title="Создайте бота — страницы настроек индикаторов привязаны к боту"
-                                    aria-label="Перейти к списку ботов">
-                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="h-3.5 w-3.5" aria-hidden="true">
-                                        <path stroke-linecap="round" stroke-linejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.325.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.241-.438.613-.43.992a7.723 7.723 0 0 1 0 .255c-.008.378.137.75.43.991l1.004.827c.424.35.534.955.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.47 6.47 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.281c-.09.543-.56.94-1.11.94h-2.594c-.55 0-1.019-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.991a6.932 6.932 0 0 1 0-.255c.007-.38-.138-.751-.43-.992l-1.004-.827a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.086.22-.128.332-.183.582-.495.644-.869l.214-1.281Z" />
-                                        <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
-                                    </svg>
-                                </a>
-                            @endif
-                        </div>
-                        <div class="flex items-center justify-between gap-1">
-                            <label for="layer-pa-dgt" class="flex min-w-0 flex-1 items-center gap-2 text-sm text-zinc-300 cursor-pointer">
-                                <input type="checkbox" id="layer-pa-dgt" class="rounded border-zinc-600 bg-zinc-800 text-blue-500 shrink-0">
-                                <span class="truncate">Price Action (DGT)</span>
-                            </label>
-                            @if($chartIndicatorBot)
-                                <a href="{{ route('bots.indicators.price-action-dgt.edit', $chartIndicatorBot) }}"
-                                    class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-zinc-700 bg-zinc-800/80 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500/50 pointer-events-auto"
-                                    title="Настройки: Price Action (DGT)"
-                                    aria-label="Настройки индикатора Price Action DGT">
-                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="h-3.5 w-3.5" aria-hidden="true">
-                                        <path stroke-linecap="round" stroke-linejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.325.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.241-.438.613-.43.992a7.723 7.723 0 0 1 0 .255c-.008.378.137.75.43.991l1.004.827c.424.35.534.955.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.47 6.47 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.281c-.09.543-.56.94-1.11.94h-2.594c-.55 0-1.019-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.991a6.932 6.932 0 0 1 0-.255c.007-.38-.138-.751-.43-.992l-1.004-.827a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.086.22-.128.332-.183.582-.495.644-.869l.214-1.281Z" />
-                                        <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
-                                    </svg>
-                                </a>
-                            @else
-                                <a href="{{ route('bots.index') }}"
-                                    class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-zinc-700 bg-zinc-800/40 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300 focus:outline-none focus:ring-2 focus:ring-blue-500/50 pointer-events-auto"
-                                    title="Создайте бота — страницы настроек индикаторов привязаны к боту"
-                                    aria-label="Перейти к списку ботов">
-                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="h-3.5 w-3.5" aria-hidden="true">
-                                        <path stroke-linecap="round" stroke-linejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.325.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.241-.438.613-.43.992a7.723 7.723 0 0 1 0 .255c-.008.378.137.75.43.991l1.004.827c.424.35.534.955.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.47 6.47 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.281c-.09.543-.56.94-1.11.94h-2.594c-.55 0-1.019-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.991a6.932 6.932 0 0 1 0-.255c.007-.38-.138-.751-.43-.992l-1.004-.827a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.086.22-.128.332-.183.582-.495.644-.869l.214-1.281Z" />
-                                        <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
-                                    </svg>
-                                </a>
-                            @endif
-                        </div>
-                        <div class="flex items-center justify-between gap-1">
-                            <label for="layer-liquidity-swings" class="flex min-w-0 flex-1 items-center gap-2 text-sm text-zinc-300 cursor-pointer">
-                                <input type="checkbox" id="layer-liquidity-swings" class="rounded border-zinc-600 bg-zinc-800 text-blue-500 shrink-0">
-                                <span class="truncate">Liquidity Swings</span>
-                            </label>
-                            @if($chartIndicatorBot)
-                                <a href="{{ route('bots.indicators.liquidity-swings.edit', $chartIndicatorBot) }}"
-                                    class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-zinc-700 bg-zinc-800/80 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500/50 pointer-events-auto"
-                                    title="Настройки: Liquidity Swings"
-                                    aria-label="Настройки индикатора Liquidity Swings">
-                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="h-3.5 w-3.5" aria-hidden="true">
-                                        <path stroke-linecap="round" stroke-linejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.325.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.241-.438.613-.43.992a7.723 7.723 0 0 1 0 .255c-.008.378.137.75.43.991l1.004.827c.424.35.534.955.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.47 6.47 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.281c-.09.543-.56.94-1.11.94h-2.594c-.55 0-1.019-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.991a6.932 6.932 0 0 1 0-.255c.007-.38-.138-.751-.43-.992l-1.004-.827a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.086.22-.128.332-.183.582-.495.644-.869l.214-1.281Z" />
-                                        <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
-                                    </svg>
-                                </a>
-                            @else
-                                <a href="{{ route('bots.index') }}"
-                                    class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-zinc-700 bg-zinc-800/40 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300 focus:outline-none focus:ring-2 focus:ring-blue-500/50 pointer-events-auto"
-                                    title="Создайте бота — страницы настроек индикаторов привязаны к боту"
-                                    aria-label="Перейти к списку ботов">
-                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="h-3.5 w-3.5" aria-hidden="true">
-                                        <path stroke-linecap="round" stroke-linejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.325.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.241-.438.613-.43.992a7.723 7.723 0 0 1 0 .255c-.008.378.137.75.43.991l1.004.827c.424.35.534.955.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.47 6.47 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.281c-.09.543-.56.94-1.11.94h-2.594c-.55 0-1.019-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.991a6.932 6.932 0 0 1 0-.255c.007-.38-.138-.751-.43-.992l-1.004-.827a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.086.22-.128.332-.183.582-.495.644-.869l.214-1.281Z" />
-                                        <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
-                                    </svg>
-                                </a>
-                            @endif
-                        </div>
-                        <div class="flex items-center justify-between gap-1">
-                            <label for="layer-smc-flow" class="flex min-w-0 flex-1 items-center gap-2 text-sm text-zinc-300 cursor-pointer">
-                                <input type="checkbox" id="layer-smc-flow" class="rounded border-zinc-600 bg-zinc-800 text-blue-500 shrink-0">
-                                <span class="truncate">SMC Flow (UT Bot)</span>
-                            </label>
-                            @if($chartIndicatorBot)
-                                <a href="{{ route('bots.indicators.smc-flow.edit', $chartIndicatorBot) }}"
-                                    class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-zinc-700 bg-zinc-800/80 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500/50 pointer-events-auto"
-                                    title="Настройки: SMC Flow"
-                                    aria-label="Настройки индикатора SMC Flow">
-                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="h-3.5 w-3.5" aria-hidden="true">
-                                        <path stroke-linecap="round" stroke-linejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.325.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.241-.438.613-.43.992a7.723 7.723 0 0 1 0 .255c-.008.378.137.75.43.991l1.004.827c.424.35.534.955.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.47 6.47 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.281c-.09.543-.56.94-1.11.94h-2.594c-.55 0-1.019-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.991a6.932 6.932 0 0 1 0-.255c.007-.38-.138-.751-.43-.992l-1.004-.827a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.086.22-.128.332-.183.582-.495.644-.869l.214-1.281Z" />
-                                        <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
-                                    </svg>
-                                </a>
-                            @else
-                                <a href="{{ route('bots.index') }}"
-                                    class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-zinc-700 bg-zinc-800/40 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300 focus:outline-none focus:ring-2 focus:ring-blue-500/50 pointer-events-auto"
-                                    title="Создайте бота — страницы настроек индикаторов привязаны к боту"
-                                    aria-label="Перейти к списку ботов">
-                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="h-3.5 w-3.5" aria-hidden="true">
-                                        <path stroke-linecap="round" stroke-linejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.325.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.241-.438.613-.43.992a7.723 7.723 0 0 1 0 .255c-.008.378.137.75.43.991l1.004.827c.424.35.534.955.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.47 6.47 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.281c-.09.543-.56.94-1.11.94h-2.594c-.55 0-1.019-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.991a6.932 6.932 0 0 1 0-.255c.007-.38-.138-.751-.43-.992l-1.004-.827a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.086.22-.128.332-.183.582-.495.644-.869l.214-1.281Z" />
-                                        <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
-                                    </svg>
-                                </a>
-                            @endif
-                        </div>
-                        {{-- OsEngine classic v1: BB/SMA/EMA на цене, RSI/ATR в отдельных panes (как bots/show). --}}
-                        <div class="flex items-center justify-between gap-1">
-                            <label for="layer-bollinger" class="flex min-w-0 flex-1 items-center gap-2 text-sm text-zinc-300 cursor-pointer">
-                                <input type="checkbox" id="layer-bollinger" class="rounded border-zinc-600 bg-zinc-800 text-blue-500 shrink-0">
-                                <span class="truncate">Bollinger</span>
-                            </label>
-                            @if($chartIndicatorBot)
-                                <a href="{{ route('bots.indicators.bollinger.edit', $chartIndicatorBot) }}" class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-zinc-700 bg-zinc-800/80 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-100 text-xs" title="Настройки Bollinger">⚙</a>
-                            @else
-                                <a href="{{ route('bots.index') }}" class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-zinc-700 bg-zinc-800/40 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300 text-xs" title="Создайте бота — страницы настроек индикаторов привязаны к боту">⚙</a>
-                            @endif
-                        </div>
-                        <div class="flex items-center justify-between gap-1">
-                            <label for="layer-rsi" class="flex min-w-0 flex-1 items-center gap-2 text-sm text-zinc-300 cursor-pointer">
-                                <input type="checkbox" id="layer-rsi" class="rounded border-zinc-600 bg-zinc-800 text-blue-500 shrink-0">
-                                <span class="truncate">RSI</span>
-                            </label>
-                            @if($chartIndicatorBot)
-                                <a href="{{ route('bots.indicators.rsi.edit', $chartIndicatorBot) }}" class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-zinc-700 bg-zinc-800/80 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-100 text-xs" title="Настройки RSI">⚙</a>
-                            @else
-                                <a href="{{ route('bots.index') }}" class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-zinc-700 bg-zinc-800/40 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300 text-xs" title="Создайте бота — страницы настроек индикаторов привязаны к боту">⚙</a>
-                            @endif
-                        </div>
-                        <div class="flex items-center justify-between gap-1">
-                            <label for="layer-sma" class="flex min-w-0 flex-1 items-center gap-2 text-sm text-zinc-300 cursor-pointer">
-                                <input type="checkbox" id="layer-sma" class="rounded border-zinc-600 bg-zinc-800 text-blue-500 shrink-0">
-                                <span class="truncate">SMA</span>
-                            </label>
-                            @if($chartIndicatorBot)
-                                <a href="{{ route('bots.indicators.sma.edit', $chartIndicatorBot) }}" class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-zinc-700 bg-zinc-800/80 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-100 text-xs" title="Настройки SMA">⚙</a>
-                            @else
-                                <a href="{{ route('bots.index') }}" class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-zinc-700 bg-zinc-800/40 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300 text-xs" title="Создайте бота — страницы настроек индикаторов привязаны к боту">⚙</a>
-                            @endif
-                        </div>
-                        <div class="flex items-center justify-between gap-1">
-                            <label for="layer-ema" class="flex min-w-0 flex-1 items-center gap-2 text-sm text-zinc-300 cursor-pointer">
-                                <input type="checkbox" id="layer-ema" class="rounded border-zinc-600 bg-zinc-800 text-blue-500 shrink-0">
-                                <span class="truncate">EMA</span>
-                            </label>
-                            @if($chartIndicatorBot)
-                                <a href="{{ route('bots.indicators.ema.edit', $chartIndicatorBot) }}" class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-zinc-700 bg-zinc-800/80 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-100 text-xs" title="Настройки EMA">⚙</a>
-                            @else
-                                <a href="{{ route('bots.index') }}" class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-zinc-700 bg-zinc-800/40 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300 text-xs" title="Создайте бота — страницы настроек индикаторов привязаны к боту">⚙</a>
-                            @endif
-                        </div>
-                        {{-- VWMA — линия на pane 0 (как SMA/EMA), не отдельный осциллятор. --}}
-                        <div class="flex items-center justify-between gap-1">
-                            <label for="layer-vwma" class="flex min-w-0 flex-1 items-center gap-2 text-sm text-zinc-300 cursor-pointer">
-                                <input type="checkbox" id="layer-vwma" class="rounded border-zinc-600 bg-zinc-800 text-blue-500 shrink-0">
-                                <span class="truncate">VWMA</span>
-                            </label>
-                            @if($chartIndicatorBot)
-                                <a href="{{ route('bots.indicators.vwma.edit', $chartIndicatorBot) }}" class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-zinc-700 bg-zinc-800/80 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-100 text-xs" title="Настройки VWMA">⚙</a>
-                            @else
-                                <a href="{{ route('bots.index') }}" class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-zinc-700 bg-zinc-800/40 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300 text-xs" title="Создайте бота — страницы настроек индикаторов привязаны к боту">⚙</a>
-                            @endif
-                        </div>
-                        <div class="flex items-center justify-between gap-1">
-                            <label for="layer-atr" class="flex min-w-0 flex-1 items-center gap-2 text-sm text-zinc-300 cursor-pointer">
-                                <input type="checkbox" id="layer-atr" class="rounded border-zinc-600 bg-zinc-800 text-blue-500 shrink-0">
-                                <span class="truncate">ATR</span>
-                            </label>
-                            @if($chartIndicatorBot)
-                                <a href="{{ route('bots.indicators.atr.edit', $chartIndicatorBot) }}" class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-zinc-700 bg-zinc-800/80 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-100 text-xs" title="Настройки ATR">⚙</a>
-                            @else
-                                <a href="{{ route('bots.index') }}" class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-zinc-700 bg-zinc-800/40 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300 text-xs" title="Создайте бота — страницы настроек индикаторов привязаны к боту">⚙</a>
-                            @endif
-                        </div>
-                        <div class="flex items-center justify-between gap-1">
-                            <label for="layer-macd" class="flex min-w-0 flex-1 items-center gap-2 text-sm text-zinc-300 cursor-pointer">
-                                <input type="checkbox" id="layer-macd" class="rounded border-zinc-600 bg-zinc-800 text-blue-500 shrink-0">
-                                <span class="truncate">MACD</span>
-                            </label>
-                            @if($chartIndicatorBot)
-                                <a href="{{ route('bots.indicators.macd.edit', $chartIndicatorBot) }}" class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-zinc-700 bg-zinc-800/80 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-100 text-xs" title="Настройки MACD">⚙</a>
-                            @else
-                                <a href="{{ route('bots.index') }}" class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-zinc-700 bg-zinc-800/40 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300 text-xs" title="Создайте бота — страницы настроек индикаторов привязаны к боту">⚙</a>
-                            @endif
-                        </div>
-                        <div class="flex items-center justify-between gap-1">
-                            <label for="layer-stochastic" class="flex min-w-0 flex-1 items-center gap-2 text-sm text-zinc-300 cursor-pointer">
-                                <input type="checkbox" id="layer-stochastic" class="rounded border-zinc-600 bg-zinc-800 text-blue-500 shrink-0">
-                                <span class="truncate">Stochastic</span>
-                            </label>
-                            @if($chartIndicatorBot)
-                                <a href="{{ route('bots.indicators.stochastic.edit', $chartIndicatorBot) }}" class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-zinc-700 bg-zinc-800/80 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-100 text-xs" title="Настройки Stochastic">⚙</a>
-                            @else
-                                <a href="{{ route('bots.index') }}" class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-zinc-700 bg-zinc-800/40 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300 text-xs" title="Создайте бота — страницы настроек индикаторов привязаны к боту">⚙</a>
-                            @endif
-                        </div>
-                        <div class="flex items-center justify-between gap-1">
-                            <label for="layer-cci" class="flex min-w-0 flex-1 items-center gap-2 text-sm text-zinc-300 cursor-pointer">
-                                <input type="checkbox" id="layer-cci" class="rounded border-zinc-600 bg-zinc-800 text-blue-500 shrink-0">
-                                <span class="truncate">CCI</span>
-                            </label>
-                            @if($chartIndicatorBot)
-                                <a href="{{ route('bots.indicators.cci.edit', $chartIndicatorBot) }}" class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-zinc-700 bg-zinc-800/80 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-100 text-xs" title="Настройки CCI">⚙</a>
-                            @else
-                                <a href="{{ route('bots.index') }}" class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-zinc-700 bg-zinc-800/40 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300 text-xs" title="Создайте бота — страницы настроек индикаторов привязаны к боту">⚙</a>
-                            @endif
-                        </div>
-                        <div class="flex items-center justify-between gap-1">
-                            <label for="layer-keltner" class="flex min-w-0 flex-1 items-center gap-2 text-sm text-zinc-300 cursor-pointer">
-                                <input type="checkbox" id="layer-keltner" class="rounded border-zinc-600 bg-zinc-800 text-blue-500 shrink-0">
-                                <span class="truncate">Keltner</span>
-                            </label>
-                            @if($chartIndicatorBot)
-                                <a href="{{ route('bots.indicators.keltner.edit', $chartIndicatorBot) }}" class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-zinc-700 bg-zinc-800/80 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-100 text-xs" title="Настройки Keltner">⚙</a>
-                            @else
-                                <a href="{{ route('bots.index') }}" class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-zinc-700 bg-zinc-800/40 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300 text-xs" title="Создайте бота — страницы настроек индикаторов привязаны к боту">⚙</a>
-                            @endif
-                        </div>
-                        <div class="flex items-center justify-between gap-1">
-                            <label for="layer-envelops" class="flex min-w-0 flex-1 items-center gap-2 text-sm text-zinc-300 cursor-pointer">
-                                <input type="checkbox" id="layer-envelops" class="rounded border-zinc-600 bg-zinc-800 text-blue-500 shrink-0">
-                                <span class="truncate">Envelops</span>
-                            </label>
-                            @if($chartIndicatorBot)
-                                <a href="{{ route('bots.indicators.envelops.edit', $chartIndicatorBot) }}" class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-zinc-700 bg-zinc-800/80 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-100 text-xs" title="Настройки Envelops">⚙</a>
-                            @else
-                                <a href="{{ route('bots.index') }}" class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-zinc-700 bg-zinc-800/40 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300 text-xs" title="Создайте бота — страницы настроек индикаторов привязаны к боту">⚙</a>
-                            @endif
-                        </div>
-                        <div class="flex items-center justify-between gap-1">
-                            <label for="layer-parabolic-sar" class="flex min-w-0 flex-1 items-center gap-2 text-sm text-zinc-300 cursor-pointer">
-                                <input type="checkbox" id="layer-parabolic-sar" class="rounded border-zinc-600 bg-zinc-800 text-blue-500 shrink-0">
-                                <span class="truncate">Parabolic SAR</span>
-                            </label>
-                            @if($chartIndicatorBot)
-                                <a href="{{ route('bots.indicators.parabolic-sar.edit', $chartIndicatorBot) }}" class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-zinc-700 bg-zinc-800/80 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-100 text-xs" title="Настройки Parabolic SAR">⚙</a>
-                            @else
-                                <a href="{{ route('bots.index') }}" class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-zinc-700 bg-zinc-800/40 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300 text-xs" title="Создайте бота — страницы настроек индикаторов привязаны к боту">⚙</a>
-                            @endif
-                        </div>
-                        <div class="flex items-center justify-between gap-1">
-                            <label for="layer-supertrend" class="flex min-w-0 flex-1 items-center gap-2 text-sm text-zinc-300 cursor-pointer">
-                                <input type="checkbox" id="layer-supertrend" class="rounded border-zinc-600 bg-zinc-800 text-blue-500 shrink-0">
-                                <span class="truncate">SuperTrend</span>
-                            </label>
-                            @if($chartIndicatorBot)
-                                <a href="{{ route('bots.indicators.supertrend.edit', $chartIndicatorBot) }}" class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-zinc-700 bg-zinc-800/80 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-100 text-xs" title="Настройки SuperTrend">⚙</a>
-                            @else
-                                <a href="{{ route('bots.index') }}" class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-zinc-700 bg-zinc-800/40 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300 text-xs" title="Создайте бота — страницы настроек индикаторов привязаны к боту">⚙</a>
-                            @endif
-                        </div>
-                        <div class="flex items-center justify-between gap-1">
-                            <label for="layer-adx" class="flex min-w-0 flex-1 items-center gap-2 text-sm text-zinc-300 cursor-pointer">
-                                <input type="checkbox" id="layer-adx" class="rounded border-zinc-600 bg-zinc-800 text-blue-500 shrink-0">
-                                <span class="truncate">ADX</span>
-                            </label>
-                            @if($chartIndicatorBot)
-                                <a href="{{ route('bots.indicators.adx.edit', $chartIndicatorBot) }}" class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-zinc-700 bg-zinc-800/80 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-100 text-xs" title="Настройки ADX">⚙</a>
-                            @else
-                                <a href="{{ route('bots.index') }}" class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-zinc-700 bg-zinc-800/40 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300 text-xs" title="Создайте бота — страницы настроек индикаторов привязаны к боту">⚙</a>
-                            @endif
-                        </div>
-                        @php($classicLayers = [
-                            ['id' => 'williams', 'label' => 'Williams %R', 'route' => 'bots.indicators.williams.edit'],
-                            ['id' => 'ao', 'label' => 'AO', 'route' => 'bots.indicators.ao.edit'],
-                            ['id' => 'alligator', 'label' => 'Alligator', 'route' => 'bots.indicators.alligator.edit'],
-                            ['id' => 'ichimoku', 'label' => 'Ichimoku', 'route' => 'bots.indicators.ichimoku.edit'],
-                            ['id' => 'price-channel', 'label' => 'Price Channel', 'route' => 'bots.indicators.price-channel.edit'],
-                            ['id' => 'nrtr', 'label' => 'NRTR', 'route' => 'bots.indicators.nrtr.edit'],
-                            ['id' => 'hma', 'label' => 'HMA', 'route' => 'bots.indicators.hma.edit'],
-                            ['id' => 'aroon', 'label' => 'Aroon', 'route' => 'bots.indicators.aroon.edit'],
-                        ])
-                        @foreach ($classicLayers as $cl)
-                        <div class="flex items-center justify-between gap-1">
-                            <label for="layer-{{ $cl['id'] }}" class="flex min-w-0 flex-1 items-center gap-2 text-sm text-zinc-300 cursor-pointer">
-                                <input type="checkbox" id="layer-{{ $cl['id'] }}" class="rounded border-zinc-600 bg-zinc-800 text-blue-500 shrink-0">
-                                <span class="truncate">{{ $cl['label'] }}</span>
-                            </label>
-                            @if($chartIndicatorBot)
-                                <a href="{{ route($cl['route'], $chartIndicatorBot) }}" class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-zinc-700 bg-zinc-800/80 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-100 text-xs" title="Настройки {{ $cl['label'] }}">⚙</a>
-                            @else
-                                <a href="{{ route('bots.index') }}" class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-zinc-700 bg-zinc-800/40 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300 text-xs" title="Создайте бота — страницы настроек индикаторов привязаны к боту">⚙</a>
-                            @endif
-                        </div>
-                        @endforeach
-                    </div>
+                    @include('partials.chart-indicators-popup', [
+                        'indicatorBot' => $chartIndicatorBot ?? null,
+                        'showLlmLevels' => false,
+                    ])
                 </div>
             </div>
             <span id="chart-loading" class="text-sm text-zinc-500 hidden shrink-0">Загрузка…</span>
@@ -617,6 +304,23 @@
     const layerNrtr = document.getElementById('layer-nrtr');
     const layerHma = document.getElementById('layer-hma');
     const layerAroon = document.getElementById('layer-aroon');
+    // 16 новых классических индикаторов OsEngine.
+    const layerMomentum = document.getElementById('layer-momentum');
+    const layerRoc = document.getElementById('layer-roc');
+    const layerOsma = document.getElementById('layer-osma');
+    const layerTrix = document.getElementById('layer-trix');
+    const layerCmo = document.getElementById('layer-cmo');
+    const layerDemarker = document.getElementById('layer-demarker');
+    const layerRvi = document.getElementById('layer-rvi');
+    const layerUltimate = document.getElementById('layer-ultimate');
+    const layerSmi = document.getElementById('layer-smi');
+    const layerStdDev = document.getElementById('layer-stddev');
+    const layerSmaChannel = document.getElementById('layer-sma-channel');
+    const layerIvashov = document.getElementById('layer-ivashov');
+    const layerLinReg = document.getElementById('layer-linreg');
+    const layerLinRegChannel = document.getElementById('layer-linreg-channel');
+    const layerKalman = document.getElementById('layer-kalman');
+    const layerFractal = document.getElementById('layer-fractal');
     const priceActionOverlay = document.getElementById('price-action-overlay');
     const liquiditySwingsOverlay = document.getElementById('liquidity-swings-overlay');
     const smcFlowOverlay = document.getElementById('smc-flow-overlay');
@@ -677,6 +381,22 @@
             if (layerNrtr && typeof o.nrtr === 'boolean') layerNrtr.checked = o.nrtr;
             if (layerHma && typeof o.hma === 'boolean') layerHma.checked = o.hma;
             if (layerAroon && typeof o.aroon === 'boolean') layerAroon.checked = o.aroon;
+            if (layerMomentum && typeof o.momentum === 'boolean') layerMomentum.checked = o.momentum;
+            if (layerRoc && typeof o.roc === 'boolean') layerRoc.checked = o.roc;
+            if (layerOsma && typeof o.osma === 'boolean') layerOsma.checked = o.osma;
+            if (layerTrix && typeof o.trix === 'boolean') layerTrix.checked = o.trix;
+            if (layerCmo && typeof o.cmo === 'boolean') layerCmo.checked = o.cmo;
+            if (layerDemarker && typeof o.demarker === 'boolean') layerDemarker.checked = o.demarker;
+            if (layerRvi && typeof o.rvi === 'boolean') layerRvi.checked = o.rvi;
+            if (layerUltimate && typeof o.ultimate === 'boolean') layerUltimate.checked = o.ultimate;
+            if (layerSmi && typeof o.smi === 'boolean') layerSmi.checked = o.smi;
+            if (layerStdDev && typeof o.stddev === 'boolean') layerStdDev.checked = o.stddev;
+            if (layerSmaChannel && typeof o.smaChannel === 'boolean') layerSmaChannel.checked = o.smaChannel;
+            if (layerIvashov && typeof o.ivashov === 'boolean') layerIvashov.checked = o.ivashov;
+            if (layerLinReg && typeof o.linreg === 'boolean') layerLinReg.checked = o.linreg;
+            if (layerLinRegChannel && typeof o.linregChannel === 'boolean') layerLinRegChannel.checked = o.linregChannel;
+            if (layerKalman && typeof o.kalman === 'boolean') layerKalman.checked = o.kalman;
+            if (layerFractal && typeof o.fractal === 'boolean') layerFractal.checked = o.fractal;
         } catch (_) { /* ignore */ }
     }
 
@@ -710,6 +430,22 @@
                 nrtr: layerNrtr ? layerNrtr.checked : false,
                 hma: layerHma ? layerHma.checked : false,
                 aroon: layerAroon ? layerAroon.checked : false,
+                momentum: layerMomentum ? layerMomentum.checked : false,
+                roc: layerRoc ? layerRoc.checked : false,
+                osma: layerOsma ? layerOsma.checked : false,
+                trix: layerTrix ? layerTrix.checked : false,
+                cmo: layerCmo ? layerCmo.checked : false,
+                demarker: layerDemarker ? layerDemarker.checked : false,
+                rvi: layerRvi ? layerRvi.checked : false,
+                ultimate: layerUltimate ? layerUltimate.checked : false,
+                smi: layerSmi ? layerSmi.checked : false,
+                stddev: layerStdDev ? layerStdDev.checked : false,
+                smaChannel: layerSmaChannel ? layerSmaChannel.checked : false,
+                ivashov: layerIvashov ? layerIvashov.checked : false,
+                linreg: layerLinReg ? layerLinReg.checked : false,
+                linregChannel: layerLinRegChannel ? layerLinRegChannel.checked : false,
+                kalman: layerKalman ? layerKalman.checked : false,
+                fractal: layerFractal ? layerFractal.checked : false,
             }));
         } catch (_) { /* ignore */ }
     }
@@ -776,6 +512,23 @@
     let lastNrtrPayload = null;
     let lastHmaPayload = null;
     let lastAroonPayload = null;
+    // 16 новых классических индикаторов OsEngine.
+    let lastMomentumPayload = null;
+    let lastRocPayload = null;
+    let lastOsmaPayload = null;
+    let lastTrixPayload = null;
+    let lastCmoPayload = null;
+    let lastDemarkerPayload = null;
+    let lastRviPayload = null;
+    let lastUltimatePayload = null;
+    let lastSmiPayload = null;
+    let lastStdDevPayload = null;
+    let lastSmaChannelPayload = null;
+    let lastIvashovPayload = null;
+    let lastLinRegPayload = null;
+    let lastLinRegChannelPayload = null;
+    let lastKalmanPayload = null;
+    let lastFractalPayload = null;
     let classicLineSeries = {};
     let rsiLevelLines = [];
     let classicOscPaneCount = 0;
@@ -1294,7 +1047,23 @@
             (layerPriceChannel && layerPriceChannel.checked) ||
             (layerNrtr && layerNrtr.checked) ||
             (layerHma && layerHma.checked) ||
-            (layerAroon && layerAroon.checked)
+            (layerAroon && layerAroon.checked) ||
+            (layerMomentum && layerMomentum.checked) ||
+            (layerRoc && layerRoc.checked) ||
+            (layerOsma && layerOsma.checked) ||
+            (layerTrix && layerTrix.checked) ||
+            (layerCmo && layerCmo.checked) ||
+            (layerDemarker && layerDemarker.checked) ||
+            (layerRvi && layerRvi.checked) ||
+            (layerUltimate && layerUltimate.checked) ||
+            (layerSmi && layerSmi.checked) ||
+            (layerStdDev && layerStdDev.checked) ||
+            (layerSmaChannel && layerSmaChannel.checked) ||
+            (layerIvashov && layerIvashov.checked) ||
+            (layerLinReg && layerLinReg.checked) ||
+            (layerLinRegChannel && layerLinRegChannel.checked) ||
+            (layerKalman && layerKalman.checked) ||
+            (layerFractal && layerFractal.checked)
         );
     }
 
@@ -1361,6 +1130,22 @@
         const wantNrtr = layerNrtr && layerNrtr.checked && lastNrtrPayload;
         const wantHma = layerHma && layerHma.checked && lastHmaPayload;
         const wantAroon = layerAroon && layerAroon.checked && lastAroonPayload;
+        const wantMomentum = layerMomentum && layerMomentum.checked && lastMomentumPayload;
+        const wantRoc = layerRoc && layerRoc.checked && lastRocPayload;
+        const wantOsma = layerOsma && layerOsma.checked && lastOsmaPayload;
+        const wantTrix = layerTrix && layerTrix.checked && lastTrixPayload;
+        const wantCmo = layerCmo && layerCmo.checked && lastCmoPayload;
+        const wantDemarker = layerDemarker && layerDemarker.checked && lastDemarkerPayload;
+        const wantRvi = layerRvi && layerRvi.checked && lastRviPayload;
+        const wantUltimate = layerUltimate && layerUltimate.checked && lastUltimatePayload;
+        const wantSmi = layerSmi && layerSmi.checked && lastSmiPayload;
+        const wantStdDev = layerStdDev && layerStdDev.checked && lastStdDevPayload;
+        const wantSmaChannel = layerSmaChannel && layerSmaChannel.checked && lastSmaChannelPayload;
+        const wantIvashov = layerIvashov && layerIvashov.checked && lastIvashovPayload;
+        const wantLinReg = layerLinReg && layerLinReg.checked && lastLinRegPayload;
+        const wantLinRegChannel = layerLinRegChannel && layerLinRegChannel.checked && lastLinRegChannelPayload;
+        const wantKalman = layerKalman && layerKalman.checked && lastKalmanPayload;
+        const wantFractal = layerFractal && layerFractal.checked && lastFractalPayload;
 
         const addMainLine = (key, data, color, width) => {
             if (!Array.isArray(data) || !data.length) return;
@@ -1489,9 +1274,55 @@
             const st = lastHmaPayload.style || {};
             addMainLine('hma', (lastHmaPayload.series || {}).hma, st.color, st.line_width);
         }
+        if (wantSmaChannel) {
+            const st = lastSmaChannelPayload.style || {};
+            const ser = lastSmaChannelPayload.series || {};
+            const w = st.line_width || 1;
+            addMainLine('sma_channel_up', ser.up, st.color_up, w);
+            addMainLine('sma_channel_mid', ser.mid, st.color_mid, w);
+            addMainLine('sma_channel_down', ser.down, st.color_down, w);
+        }
+        if (wantLinReg) {
+            const st = lastLinRegPayload.style || {};
+            addMainLine('linreg', (lastLinRegPayload.series || {}).linreg, st.color, st.line_width);
+        }
+        if (wantLinRegChannel) {
+            const st = lastLinRegChannelPayload.style || {};
+            const ser = lastLinRegChannelPayload.series || {};
+            const w = st.line_width || 1;
+            addMainLine('linreg_channel_up', ser.up, st.color_up, w);
+            addMainLine('linreg_channel_mid', ser.mid, st.color_mid, w);
+            addMainLine('linreg_channel_down', ser.down, st.color_down, w);
+        }
+        if (wantKalman) {
+            const st = lastKalmanPayload.style || {};
+            addMainLine('kalman', (lastKalmanPayload.series || {}).kalman, st.color, st.line_width);
+        }
+        if (wantFractal) {
+            const st = lastFractalPayload.style || {};
+            const ser = lastFractalPayload.series || {};
+            // OsEngine Point: фрактал — отдельные точки без соединяющей линии (как Parabolic SAR).
+            const addFractalPoints = (key, data, color) => {
+                if (!Array.isArray(data) || !data.length) return;
+                const s = chart.addSeries(LineSeries, {
+                    color: color || '#00bfff',
+                    lineWidth: 1,
+                    lineVisible: false,
+                    pointMarkersVisible: true,
+                    pointMarkersRadius: st.point_radius || 3,
+                    priceLineVisible: false,
+                    lastValueVisible: false,
+                    crosshairMarkerVisible: false,
+                }, 0);
+                s.setData(data.map((p) => ({ time: p.time, value: p.value })));
+                classicLineSeries[key] = s;
+            };
+            addFractalPoints('fractal_up', ser.up, st.color_up || '#00bfff');
+            addFractalPoints('fractal_down', ser.down, st.color_down || '#ff4500');
+        }
 
-
-        const oscCount = (wantRsi ? 1 : 0) + (wantMacd ? 1 : 0) + (wantStochastic ? 1 : 0) + (wantCci ? 1 : 0) + (wantAtr ? 1 : 0) + (wantAdx ? 1 : 0) + (wantWilliams ? 1 : 0) + (wantAo ? 1 : 0) + (wantAroon ? 1 : 0);
+        const oscCount = (wantRsi ? 1 : 0) + (wantMacd ? 1 : 0) + (wantStochastic ? 1 : 0) + (wantCci ? 1 : 0) + (wantAtr ? 1 : 0) + (wantAdx ? 1 : 0) + (wantWilliams ? 1 : 0) + (wantAo ? 1 : 0) + (wantAroon ? 1 : 0)
+            + (wantMomentum ? 1 : 0) + (wantRoc ? 1 : 0) + (wantOsma ? 1 : 0) + (wantTrix ? 1 : 0) + (wantCmo ? 1 : 0) + (wantDemarker ? 1 : 0) + (wantRvi ? 1 : 0) + (wantUltimate ? 1 : 0) + (wantSmi ? 1 : 0) + (wantStdDev ? 1 : 0) + (wantIvashov ? 1 : 0);
         if (oscCount > 0) {
             try {
                 const mainPane = chart.panes()[0];
@@ -1932,6 +1763,498 @@
             } catch (_) {}
         }
 
+        // Momentum — pane вокруг «нейтрали» 100.
+        if (wantMomentum) {
+            const st = lastMomentumPayload.style || {};
+            const levels = lastMomentumPayload.levels || {};
+            let paneIndex = 1;
+            let momentumPane = null;
+            try {
+                momentumPane = chart.addPane(false);
+                if (momentumPane && typeof momentumPane.setStretchFactor === 'function') {
+                    momentumPane.setStretchFactor(0.28);
+                }
+                paneIndex = Math.max(1, chart.panes().length - 1);
+                classicOscPaneCount += 1;
+            } catch (e) {
+                console.error('[dashboard indicators] addPane Momentum', e);
+            }
+            const data = (lastMomentumPayload.series || {}).momentum || [];
+            let momentumLine = null;
+            if (Array.isArray(data) && data.length) {
+                momentumLine = chart.addSeries(LineSeries, {
+                    color: st.color || '#00ffff',
+                    lineWidth: st.line_width || 1,
+                    priceLineVisible: false,
+                    baseLineVisible: false,
+                    lastValueVisible: true,
+                    crosshairMarkerVisible: false,
+                    priceFormat: { type: 'price', precision: 2, minMove: 0.01 },
+                }, paneIndex);
+                momentumLine.setData(data.map((p) => ({ time: p.time, value: p.value })));
+                classicLineSeries['momentum'] = momentumLine;
+            }
+            try {
+                const paneApi = momentumPane || (typeof chart.panes === 'function' ? chart.panes()[paneIndex] : null);
+                if (paneApi?.attachPrimitive && window.PlatformChartMarkers?.createPaneSolidBackdrop) {
+                    paneApi.attachPrimitive(window.PlatformChartMarkers.createPaneSolidBackdrop('#0e1018'));
+                }
+            } catch (e) {
+                console.error('[dashboard indicators] Momentum pane backdrop', e);
+            }
+            try {
+                if (momentumLine && levels.show && window.PlatformChartMarkers?.attachRsiLevelLines) {
+                    rsiLevelLines.push(...window.PlatformChartMarkers.attachRsiLevelLines(momentumLine, levels));
+                }
+            } catch (_) {}
+        }
+
+        // ROC — pane вокруг нулевой линии.
+        if (wantRoc) {
+            const st = lastRocPayload.style || {};
+            const levels = lastRocPayload.levels || {};
+            let paneIndex = 1;
+            let rocPane = null;
+            try {
+                rocPane = chart.addPane(false);
+                if (rocPane && typeof rocPane.setStretchFactor === 'function') {
+                    rocPane.setStretchFactor(0.28);
+                }
+                paneIndex = Math.max(1, chart.panes().length - 1);
+                classicOscPaneCount += 1;
+            } catch (e) {
+                console.error('[dashboard indicators] addPane ROC', e);
+            }
+            const data = (lastRocPayload.series || {}).roc || [];
+            let rocLine = null;
+            if (Array.isArray(data) && data.length) {
+                rocLine = chart.addSeries(LineSeries, {
+                    color: st.color || '#00ffff',
+                    lineWidth: st.line_width || 1,
+                    priceLineVisible: false,
+                    baseLineVisible: false,
+                    lastValueVisible: true,
+                    crosshairMarkerVisible: false,
+                    priceFormat: { type: 'price', precision: 2, minMove: 0.01 },
+                }, paneIndex);
+                rocLine.setData(data.map((p) => ({ time: p.time, value: p.value })));
+                classicLineSeries['roc'] = rocLine;
+            }
+            try {
+                const paneApi = rocPane || (typeof chart.panes === 'function' ? chart.panes()[paneIndex] : null);
+                if (paneApi?.attachPrimitive && window.PlatformChartMarkers?.createPaneSolidBackdrop) {
+                    paneApi.attachPrimitive(window.PlatformChartMarkers.createPaneSolidBackdrop('#0e1018'));
+                }
+            } catch (e) {
+                console.error('[dashboard indicators] ROC pane backdrop', e);
+            }
+            try {
+                if (rocLine && levels.show && window.PlatformChartMarkers?.attachRsiLevelLines) {
+                    rsiLevelLines.push(...window.PlatformChartMarkers.attachRsiLevelLines(rocLine, levels));
+                }
+            } catch (_) {}
+        }
+
+        // OsMA — как MACD: histogram + osma line + signal (+ нулевая линия).
+        if (wantOsma) {
+            const st = lastOsmaPayload.style || {};
+            const ser = lastOsmaPayload.series || {};
+            const histColor = st.color_histogram || '#1e90ff';
+            const histNeg = st.color_histogram_neg || '#f43f5e';
+            const lineW = st.line_width || 1;
+            let paneIndex = 1;
+            try {
+                const pane = chart.addPane(false);
+                if (pane && typeof pane.setStretchFactor === 'function') {
+                    pane.setStretchFactor(0.32);
+                }
+                paneIndex = Math.max(1, chart.panes().length - 1);
+                classicOscPaneCount += 1;
+            } catch (e) {
+                console.error('[dashboard indicators] addPane OsMA', e);
+            }
+            if (HistogramSeries && Array.isArray(ser.histogram) && ser.histogram.length) {
+                try {
+                    const hs = chart.addSeries(HistogramSeries, {
+                        priceLineVisible: false,
+                        lastValueVisible: false,
+                        baseLineVisible: true,
+                        baseLineColor: 'rgba(161,161,170,0.45)',
+                        baseLineWidth: 1,
+                        baseLineStyle: 2,
+                    }, paneIndex);
+                    hs.setData(ser.histogram.map((p) => ({
+                        time: p.time,
+                        value: p.value,
+                        color: Number(p.value) >= 0 ? histColor : histNeg,
+                    })));
+                    classicLineSeries['osma_hist'] = hs;
+                } catch (e) {
+                    console.error('[dashboard indicators] OsMA histogram', e);
+                }
+            }
+            const addOsmaLine = (key, data, color, showLast) => {
+                if (!Array.isArray(data) || !data.length) return null;
+                const s = chart.addSeries(LineSeries, {
+                    color: color || '#ffff00',
+                    lineWidth: lineW,
+                    priceLineVisible: false,
+                    lastValueVisible: !!showLast,
+                    crosshairMarkerVisible: false,
+                }, paneIndex);
+                s.setData(data.map((p) => ({ time: p.time, value: p.value })));
+                classicLineSeries[key] = s;
+                return s;
+            };
+            const osmaLine = addOsmaLine('osma_line', ser.osma, st.color_osma || '#ffff00', true);
+            addOsmaLine('osma_signal', ser.signal, st.color_signal || '#ff0000', false);
+            try {
+                const anchor = osmaLine || classicLineSeries['osma_signal'] || classicLineSeries['osma_hist'];
+                if (anchor && typeof anchor.createPriceLine === 'function') {
+                    rsiLevelLines.push(anchor.createPriceLine({
+                        price: 0,
+                        color: 'rgba(161,161,170,0.55)',
+                        lineWidth: 1,
+                        lineStyle: 2,
+                        axisLabelVisible: true,
+                        title: '0',
+                    }));
+                }
+            } catch (_) {}
+        }
+
+        // TRIX — pane вокруг нулевой линии.
+        if (wantTrix) {
+            const st = lastTrixPayload.style || {};
+            const levels = lastTrixPayload.levels || {};
+            let paneIndex = 1;
+            let trixPane = null;
+            try {
+                trixPane = chart.addPane(false);
+                if (trixPane && typeof trixPane.setStretchFactor === 'function') {
+                    trixPane.setStretchFactor(0.28);
+                }
+                paneIndex = Math.max(1, chart.panes().length - 1);
+                classicOscPaneCount += 1;
+            } catch (e) {
+                console.error('[dashboard indicators] addPane TRIX', e);
+            }
+            const data = (lastTrixPayload.series || {}).trix || [];
+            let trixLine = null;
+            if (Array.isArray(data) && data.length) {
+                trixLine = chart.addSeries(LineSeries, {
+                    color: st.color || '#00ffff',
+                    lineWidth: st.line_width || 1,
+                    priceLineVisible: false,
+                    baseLineVisible: false,
+                    lastValueVisible: true,
+                    crosshairMarkerVisible: false,
+                    priceFormat: { type: 'price', precision: 2, minMove: 0.01 },
+                }, paneIndex);
+                trixLine.setData(data.map((p) => ({ time: p.time, value: p.value })));
+                classicLineSeries['trix'] = trixLine;
+            }
+            try {
+                const paneApi = trixPane || (typeof chart.panes === 'function' ? chart.panes()[paneIndex] : null);
+                if (paneApi?.attachPrimitive && window.PlatformChartMarkers?.createPaneSolidBackdrop) {
+                    paneApi.attachPrimitive(window.PlatformChartMarkers.createPaneSolidBackdrop('#0e1018'));
+                }
+            } catch (e) {
+                console.error('[dashboard indicators] TRIX pane backdrop', e);
+            }
+            try {
+                if (trixLine && levels.show && window.PlatformChartMarkers?.attachRsiLevelLines) {
+                    rsiLevelLines.push(...window.PlatformChartMarkers.attachRsiLevelLines(trixLine, levels));
+                }
+            } catch (_) {}
+        }
+
+        // CMO — pane с уровнями ±50.
+        if (wantCmo) {
+            const st = lastCmoPayload.style || {};
+            const levels = lastCmoPayload.levels || {};
+            let paneIndex = 1;
+            let cmoPane = null;
+            try {
+                cmoPane = chart.addPane(false);
+                if (cmoPane && typeof cmoPane.setStretchFactor === 'function') {
+                    cmoPane.setStretchFactor(0.28);
+                }
+                paneIndex = Math.max(1, chart.panes().length - 1);
+                classicOscPaneCount += 1;
+            } catch (e) {
+                console.error('[dashboard indicators] addPane CMO', e);
+            }
+            const data = (lastCmoPayload.series || {}).cmo || [];
+            let cmoLine = null;
+            if (Array.isArray(data) && data.length) {
+                cmoLine = chart.addSeries(LineSeries, {
+                    color: st.color || '#ffa500',
+                    lineWidth: st.line_width || 1,
+                    priceLineVisible: false,
+                    baseLineVisible: false,
+                    lastValueVisible: true,
+                    crosshairMarkerVisible: false,
+                    priceFormat: { type: 'price', precision: 2, minMove: 0.01 },
+                }, paneIndex);
+                cmoLine.setData(data.map((p) => ({ time: p.time, value: p.value })));
+                classicLineSeries['cmo'] = cmoLine;
+            }
+            try {
+                const paneApi = cmoPane || (typeof chart.panes === 'function' ? chart.panes()[paneIndex] : null);
+                if (paneApi?.attachPrimitive && window.PlatformChartMarkers?.createPaneSolidBackdrop) {
+                    paneApi.attachPrimitive(window.PlatformChartMarkers.createPaneSolidBackdrop('#0e1018'));
+                }
+            } catch (e) {
+                console.error('[dashboard indicators] CMO pane backdrop', e);
+            }
+            try {
+                if (cmoLine && levels.show && window.PlatformChartMarkers?.attachRsiLevelLines) {
+                    rsiLevelLines.push(...window.PlatformChartMarkers.attachRsiLevelLines(cmoLine, levels));
+                }
+            } catch (_) {}
+        }
+
+        // DeMarker — pane в шкале 0..1 с уровнями 0.7/0.3.
+        if (wantDemarker) {
+            const st = lastDemarkerPayload.style || {};
+            const levels = lastDemarkerPayload.levels || {};
+            let paneIndex = 1;
+            let demPane = null;
+            try {
+                demPane = chart.addPane(false);
+                if (demPane && typeof demPane.setStretchFactor === 'function') {
+                    demPane.setStretchFactor(0.28);
+                }
+                paneIndex = Math.max(1, chart.panes().length - 1);
+                classicOscPaneCount += 1;
+            } catch (e) {
+                console.error('[dashboard indicators] addPane DeMarker', e);
+            }
+            const data = (lastDemarkerPayload.series || {}).dem || [];
+            let demLine = null;
+            if (Array.isArray(data) && data.length) {
+                demLine = chart.addSeries(LineSeries, {
+                    color: st.color || '#00ffff',
+                    lineWidth: st.line_width || 1,
+                    priceLineVisible: false,
+                    baseLineVisible: false,
+                    lastValueVisible: true,
+                    crosshairMarkerVisible: false,
+                    // DeMarker всегда в диапазоне 0..1 — фиксируем шкалу под уровни 0.7/0.3.
+                    priceFormat: { type: 'price', precision: 2, minMove: 0.01 },
+                    autoscaleInfoProvider: () => ({ priceRange: { minValue: 0, maxValue: 1 } }),
+                }, paneIndex);
+                demLine.setData(data.map((p) => ({ time: p.time, value: p.value })));
+                classicLineSeries['demarker'] = demLine;
+            }
+            try {
+                const paneApi = demPane || (typeof chart.panes === 'function' ? chart.panes()[paneIndex] : null);
+                if (paneApi?.attachPrimitive && window.PlatformChartMarkers?.createPaneSolidBackdrop) {
+                    paneApi.attachPrimitive(window.PlatformChartMarkers.createPaneSolidBackdrop('#0e1018'));
+                }
+            } catch (e) {
+                console.error('[dashboard indicators] DeMarker pane backdrop', e);
+            }
+            try {
+                if (demLine && levels.show && window.PlatformChartMarkers?.attachRsiLevelLines) {
+                    rsiLevelLines.push(...window.PlatformChartMarkers.attachRsiLevelLines(demLine, levels));
+                }
+            } catch (_) {}
+        }
+
+        // RVI — pane: линия + сигнал (без фиксированных уровней).
+        if (wantRvi) {
+            const st = lastRviPayload.style || {};
+            const ser = lastRviPayload.series || {};
+            const lineW = st.line_width || 1;
+            let paneIndex = 1;
+            let rviPane = null;
+            try {
+                rviPane = chart.addPane(false);
+                if (rviPane && typeof rviPane.setStretchFactor === 'function') {
+                    rviPane.setStretchFactor(0.28);
+                }
+                paneIndex = Math.max(1, chart.panes().length - 1);
+                classicOscPaneCount += 1;
+            } catch (e) {
+                console.error('[dashboard indicators] addPane RVI', e);
+            }
+            const addRviLine = (key, data, color, showLast) => {
+                if (!Array.isArray(data) || !data.length) return null;
+                const s = chart.addSeries(LineSeries, {
+                    color: color || '#8b0000',
+                    lineWidth: lineW,
+                    priceLineVisible: false,
+                    baseLineVisible: false,
+                    lastValueVisible: !!showLast,
+                    crosshairMarkerVisible: false,
+                    priceFormat: { type: 'price', precision: 2, minMove: 0.01 },
+                }, paneIndex);
+                s.setData(data.map((p) => ({ time: p.time, value: p.value })));
+                classicLineSeries[key] = s;
+                return s;
+            };
+            addRviLine('rvi', ser.rvi, st.color_rvi || '#8b0000', true);
+            addRviLine('rvi_signal', ser.signal, st.color_signal || '#1e90ff', false);
+            try {
+                const paneApi = rviPane || (typeof chart.panes === 'function' ? chart.panes()[paneIndex] : null);
+                if (paneApi?.attachPrimitive && window.PlatformChartMarkers?.createPaneSolidBackdrop) {
+                    paneApi.attachPrimitive(window.PlatformChartMarkers.createPaneSolidBackdrop('#0e1018'));
+                }
+            } catch (e) {
+                console.error('[dashboard indicators] RVI pane backdrop', e);
+            }
+        }
+
+        // Ultimate Oscillator — pane 0..100 с уровнями 70/30.
+        if (wantUltimate) {
+            const st = lastUltimatePayload.style || {};
+            const levels = lastUltimatePayload.levels || {};
+            let paneIndex = 1;
+            let uoPane = null;
+            try {
+                uoPane = chart.addPane(false);
+                if (uoPane && typeof uoPane.setStretchFactor === 'function') {
+                    uoPane.setStretchFactor(0.28);
+                }
+                paneIndex = Math.max(1, chart.panes().length - 1);
+                classicOscPaneCount += 1;
+            } catch (e) {
+                console.error('[dashboard indicators] addPane Ultimate', e);
+            }
+            const data = (lastUltimatePayload.series || {}).uo || [];
+            let uoLine = null;
+            if (Array.isArray(data) && data.length) {
+                uoLine = chart.addSeries(LineSeries, {
+                    color: st.color || '#1e90ff',
+                    lineWidth: st.line_width || 1,
+                    priceLineVisible: false,
+                    baseLineVisible: false,
+                    lastValueVisible: true,
+                    crosshairMarkerVisible: false,
+                    priceFormat: { type: 'price', precision: 2, minMove: 0.01 },
+                }, paneIndex);
+                uoLine.setData(data.map((p) => ({ time: p.time, value: p.value })));
+                classicLineSeries['uo'] = uoLine;
+            }
+            try {
+                const paneApi = uoPane || (typeof chart.panes === 'function' ? chart.panes()[paneIndex] : null);
+                if (paneApi?.attachPrimitive && window.PlatformChartMarkers?.createPaneSolidBackdrop) {
+                    paneApi.attachPrimitive(window.PlatformChartMarkers.createPaneSolidBackdrop('#0e1018'));
+                }
+            } catch (e) {
+                console.error('[dashboard indicators] Ultimate pane backdrop', e);
+            }
+            try {
+                if (uoLine && levels.show && window.PlatformChartMarkers?.attachRsiLevelLines) {
+                    rsiLevelLines.push(...window.PlatformChartMarkers.attachRsiLevelLines(uoLine, levels));
+                }
+            } catch (_) {}
+        }
+
+        // SMI — pane: линия + сигнал + уровни ±40.
+        if (wantSmi) {
+            const st = lastSmiPayload.style || {};
+            const levels = lastSmiPayload.levels || {};
+            const ser = lastSmiPayload.series || {};
+            const lineW = st.line_width || 1;
+            let paneIndex = 1;
+            let smiPane = null;
+            try {
+                smiPane = chart.addPane(false);
+                if (smiPane && typeof smiPane.setStretchFactor === 'function') {
+                    smiPane.setStretchFactor(0.28);
+                }
+                paneIndex = Math.max(1, chart.panes().length - 1);
+                classicOscPaneCount += 1;
+            } catch (e) {
+                console.error('[dashboard indicators] addPane SMI', e);
+            }
+            const addSmiLine = (key, data, color, showLast) => {
+                if (!Array.isArray(data) || !data.length) return null;
+                const s = chart.addSeries(LineSeries, {
+                    color: color || '#8a2be2',
+                    lineWidth: lineW,
+                    priceLineVisible: false,
+                    baseLineVisible: false,
+                    lastValueVisible: !!showLast,
+                    crosshairMarkerVisible: false,
+                    priceFormat: { type: 'price', precision: 2, minMove: 0.01 },
+                }, paneIndex);
+                s.setData(data.map((p) => ({ time: p.time, value: p.value })));
+                classicLineSeries[key] = s;
+                return s;
+            };
+            const smiLine = addSmiLine('smi', ser.smi, st.color_smi || '#8a2be2', true);
+            addSmiLine('smi_signal', ser.signal, st.color_signal || '#008000', false);
+            try {
+                const paneApi = smiPane || (typeof chart.panes === 'function' ? chart.panes()[paneIndex] : null);
+                if (paneApi?.attachPrimitive && window.PlatformChartMarkers?.createPaneSolidBackdrop) {
+                    paneApi.attachPrimitive(window.PlatformChartMarkers.createPaneSolidBackdrop('#0e1018'));
+                }
+            } catch (e) {
+                console.error('[dashboard indicators] SMI pane backdrop', e);
+            }
+            try {
+                if (smiLine && levels.show && window.PlatformChartMarkers?.attachRsiLevelLines) {
+                    rsiLevelLines.push(...window.PlatformChartMarkers.attachRsiLevelLines(smiLine, levels));
+                }
+            } catch (_) {}
+        }
+
+        // StdDev — ещё один pane волатильности (без уровней).
+        if (wantStdDev) {
+            const st = lastStdDevPayload.style || {};
+            let paneIndex = 1;
+            try {
+                const pane = chart.addPane(false);
+                if (pane && typeof pane.setStretchFactor === 'function') {
+                    pane.setStretchFactor(0.28);
+                }
+                paneIndex = Math.max(1, chart.panes().length - 1);
+                classicOscPaneCount += 1;
+            } catch (e) {
+                console.error('[dashboard indicators] addPane StdDev', e);
+            }
+            const s = chart.addSeries(LineSeries, {
+                color: st.color || '#008000',
+                lineWidth: st.line_width || 1,
+                priceLineVisible: false,
+                lastValueVisible: true,
+                crosshairMarkerVisible: false,
+            }, paneIndex);
+            const data = ((lastStdDevPayload.series || {}).stddev) || [];
+            s.setData(data.map((p) => ({ time: p.time, value: p.value })));
+            classicLineSeries['stddev'] = s;
+        }
+
+        // Ivashov Range — ещё один pane волатильности (без уровней).
+        if (wantIvashov) {
+            const st = lastIvashovPayload.style || {};
+            let paneIndex = 1;
+            try {
+                const pane = chart.addPane(false);
+                if (pane && typeof pane.setStretchFactor === 'function') {
+                    pane.setStretchFactor(0.28);
+                }
+                paneIndex = Math.max(1, chart.panes().length - 1);
+                classicOscPaneCount += 1;
+            } catch (e) {
+                console.error('[dashboard indicators] addPane Ivashov', e);
+            }
+            const s = chart.addSeries(LineSeries, {
+                color: st.color || '#0000ff',
+                lineWidth: st.line_width || 1,
+                priceLineVisible: false,
+                lastValueVisible: true,
+                crosshairMarkerVisible: false,
+            }, paneIndex);
+            const data = ((lastIvashovPayload.series || {}).ivashov) || [];
+            s.setData(data.map((p) => ({ time: p.time, value: p.value })));
+            classicLineSeries['ivashov'] = s;
+        }
+
         if (wantAtr) {
             const st = lastAtrPayload.style || {};
             let paneIndex = 1;
@@ -1983,6 +2306,22 @@
             lastNrtrPayload = null;
             lastHmaPayload = null;
             lastAroonPayload = null;
+            lastMomentumPayload = null;
+            lastRocPayload = null;
+            lastOsmaPayload = null;
+            lastTrixPayload = null;
+            lastCmoPayload = null;
+            lastDemarkerPayload = null;
+            lastRviPayload = null;
+            lastUltimatePayload = null;
+            lastSmiPayload = null;
+            lastStdDevPayload = null;
+            lastSmaChannelPayload = null;
+            lastIvashovPayload = null;
+            lastLinRegPayload = null;
+            lastLinRegChannelPayload = null;
+            lastKalmanPayload = null;
+            lastFractalPayload = null;
             applyClassicOsEngineSeries();
             return;
         }
@@ -2008,6 +2347,22 @@
         const wantNrtr = layerNrtr && layerNrtr.checked;
         const wantHma = layerHma && layerHma.checked;
         const wantAroon = layerAroon && layerAroon.checked;
+        const wantMomentum = layerMomentum && layerMomentum.checked;
+        const wantRoc = layerRoc && layerRoc.checked;
+        const wantOsma = layerOsma && layerOsma.checked;
+        const wantTrix = layerTrix && layerTrix.checked;
+        const wantCmo = layerCmo && layerCmo.checked;
+        const wantDemarker = layerDemarker && layerDemarker.checked;
+        const wantRvi = layerRvi && layerRvi.checked;
+        const wantUltimate = layerUltimate && layerUltimate.checked;
+        const wantSmi = layerSmi && layerSmi.checked;
+        const wantStdDev = layerStdDev && layerStdDev.checked;
+        const wantSmaChannel = layerSmaChannel && layerSmaChannel.checked;
+        const wantIvashov = layerIvashov && layerIvashov.checked;
+        const wantLinReg = layerLinReg && layerLinReg.checked;
+        const wantLinRegChannel = layerLinRegChannel && layerLinRegChannel.checked;
+        const wantKalman = layerKalman && layerKalman.checked;
+        const wantFractal = layerFractal && layerFractal.checked;
         const layers = [];
         if (wantBb) layers.push('bollinger');
         if (wantRsi) layers.push('rsi');
@@ -2031,6 +2386,22 @@
         if (wantNrtr) layers.push('nrtr');
         if (wantHma) layers.push('hma');
         if (wantAroon) layers.push('aroon');
+        if (wantMomentum) layers.push('momentum');
+        if (wantRoc) layers.push('roc');
+        if (wantOsma) layers.push('osma');
+        if (wantTrix) layers.push('trix');
+        if (wantCmo) layers.push('cmo');
+        if (wantDemarker) layers.push('demarker');
+        if (wantRvi) layers.push('rvi');
+        if (wantUltimate) layers.push('ultimate');
+        if (wantSmi) layers.push('smi');
+        if (wantStdDev) layers.push('stddev');
+        if (wantSmaChannel) layers.push('sma_channel');
+        if (wantIvashov) layers.push('ivashov');
+        if (wantLinReg) layers.push('linreg');
+        if (wantLinRegChannel) layers.push('linreg_channel');
+        if (wantKalman) layers.push('kalman');
+        if (wantFractal) layers.push('fractal');
 
         const seq = ++classicIndicatorsFetchSeq;
         const params = new URLSearchParams({
@@ -2068,6 +2439,22 @@
                     lastNrtrPayload = wantNrtr && d && d.nrtr ? d.nrtr : null;
                     lastHmaPayload = wantHma && d && d.hma ? d.hma : null;
                     lastAroonPayload = wantAroon && d && d.aroon ? d.aroon : null;
+                    lastMomentumPayload = wantMomentum && d && d.momentum ? d.momentum : null;
+                    lastRocPayload = wantRoc && d && d.roc ? d.roc : null;
+                    lastOsmaPayload = wantOsma && d && d.osma ? d.osma : null;
+                    lastTrixPayload = wantTrix && d && d.trix ? d.trix : null;
+                    lastCmoPayload = wantCmo && d && d.cmo ? d.cmo : null;
+                    lastDemarkerPayload = wantDemarker && d && d.demarker ? d.demarker : null;
+                    lastRviPayload = wantRvi && d && d.rvi ? d.rvi : null;
+                    lastUltimatePayload = wantUltimate && d && d.ultimate ? d.ultimate : null;
+                    lastSmiPayload = wantSmi && d && d.smi ? d.smi : null;
+                    lastStdDevPayload = wantStdDev && d && d.stddev ? d.stddev : null;
+                    lastSmaChannelPayload = wantSmaChannel && d && d.sma_channel ? d.sma_channel : null;
+                    lastIvashovPayload = wantIvashov && d && d.ivashov ? d.ivashov : null;
+                    lastLinRegPayload = wantLinReg && d && d.linreg ? d.linreg : null;
+                    lastLinRegChannelPayload = wantLinRegChannel && d && d.linreg_channel ? d.linreg_channel : null;
+                    lastKalmanPayload = wantKalman && d && d.kalman ? d.kalman : null;
+                    lastFractalPayload = wantFractal && d && d.fractal ? d.fractal : null;
                     applyClassicOsEngineSeries();
                 } catch (e) {
                     console.error('[dashboard classic indicators] apply', e);
@@ -2093,6 +2480,22 @@
                     lastNrtrPayload = null;
                     lastHmaPayload = null;
                     lastAroonPayload = null;
+                    lastMomentumPayload = null;
+                    lastRocPayload = null;
+                    lastOsmaPayload = null;
+                    lastTrixPayload = null;
+                    lastCmoPayload = null;
+                    lastDemarkerPayload = null;
+                    lastRviPayload = null;
+                    lastUltimatePayload = null;
+                    lastSmiPayload = null;
+                    lastStdDevPayload = null;
+                    lastSmaChannelPayload = null;
+                    lastIvashovPayload = null;
+                    lastLinRegPayload = null;
+                    lastLinRegChannelPayload = null;
+                    lastKalmanPayload = null;
+                    lastFractalPayload = null;
                     try { applyClassicOsEngineSeries(); } catch (_) {}
                 }
             })
@@ -3217,7 +3620,8 @@
 
     tfBtn.addEventListener('click', (e) => {
         e.stopPropagation();
-        layersPanel.classList.add('hidden');
+        if (window.PlatformIndicatorsPopup) window.PlatformIndicatorsPopup.close();
+        else layersPanel.classList.add('hidden');
         tfPanel.classList.toggle('hidden');
     });
     tfPanel.addEventListener('click', (e) => e.stopPropagation());
@@ -3238,14 +3642,8 @@
         });
     });
 
-    layersBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        tfPanel.classList.add('hidden');
-        layersPanel.classList.toggle('hidden');
-    });
-    layersPanel.addEventListener('click', (e) => e.stopPropagation());
+    // Попап «Индикаторы» открывается в chart-indicators-popup-script (не дублируем click).
     document.addEventListener('click', () => {
-        layersPanel.classList.add('hidden');
         tfPanel.classList.add('hidden');
     });
 
@@ -3307,6 +3705,22 @@
         [layerNrtr, () => { lastNrtrPayload = null; }],
         [layerHma, () => { lastHmaPayload = null; }],
         [layerAroon, () => { lastAroonPayload = null; }],
+        [layerMomentum, () => { lastMomentumPayload = null; }],
+        [layerRoc, () => { lastRocPayload = null; }],
+        [layerOsma, () => { lastOsmaPayload = null; }],
+        [layerTrix, () => { lastTrixPayload = null; }],
+        [layerCmo, () => { lastCmoPayload = null; }],
+        [layerDemarker, () => { lastDemarkerPayload = null; }],
+        [layerRvi, () => { lastRviPayload = null; }],
+        [layerUltimate, () => { lastUltimatePayload = null; }],
+        [layerSmi, () => { lastSmiPayload = null; }],
+        [layerStdDev, () => { lastStdDevPayload = null; }],
+        [layerSmaChannel, () => { lastSmaChannelPayload = null; }],
+        [layerIvashov, () => { lastIvashovPayload = null; }],
+        [layerLinReg, () => { lastLinRegPayload = null; }],
+        [layerLinRegChannel, () => { lastLinRegChannelPayload = null; }],
+        [layerKalman, () => { lastKalmanPayload = null; }],
+        [layerFractal, () => { lastFractalPayload = null; }],
     ].forEach(([el, clearFn]) => {
         if (!el) return;
         el.addEventListener('change', () => {
@@ -3392,4 +3806,5 @@
     });
 })();
 </script>
+@include('partials.chart-indicators-popup-script')
 @endsection

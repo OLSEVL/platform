@@ -1,0 +1,80 @@
+@extends('layouts.app')
+@section('title', $bot->name.' — SMI')
+@section('content')
+<div class="mx-auto w-full max-w-2xl space-y-4 pb-8">
+    <div class="flex flex-wrap items-baseline justify-between gap-3">
+        <div>
+            <h1 class="text-xl font-semibold text-zinc-100 sm:text-2xl">Индикатор графика</h1>
+            <p class="mt-0.5 text-sm text-zinc-500">{{ $bot->name }} · Stochastic Momentum Index (OsEngine) — отдельная pane</p>
+        </div>
+        @include('bots.indicators._nav', ['bot' => $bot])
+    </div>
+    @if (session('status'))
+        <div class="rounded border border-emerald-800/60 bg-emerald-950/40 px-4 py-3 text-sm text-emerald-200">{{ session('status') }}</div>
+    @endif
+    @if ($errors->any())
+        <div class="rounded border border-rose-800/60 bg-rose-950/40 px-4 py-3 text-sm text-rose-200">
+            <ul class="list-inside list-disc">@foreach ($errors->all() as $err)<li>{{ $err }}</li>@endforeach</ul>
+        </div>
+    @endif
+    <div class="overflow-hidden rounded-xl border border-zinc-600 bg-[#13151a]">
+        <div class="border-b border-zinc-700 bg-[#1e2028] px-4 py-3">
+            <h2 class="text-base font-semibold text-white">SMI (Stochastic Momentum Index)</h2>
+        </div>
+        <form method="post" action="{{ route('bots.indicators.smi.update', $bot) }}" class="space-y-4 px-4 py-4 text-sm text-zinc-200">
+            @csrf
+            @method('PUT')
+            <div class="grid gap-3 sm:grid-cols-4">
+                <div>
+                    <label class="block text-xs text-zinc-400">Period 1</label>
+                    <input type="number" name="period1" min="1" max="500" required value="{{ old('period1', $p['period1']) }}" class="mt-1 w-full rounded border border-zinc-600 bg-zinc-900 px-3 py-2">
+                </div>
+                <div>
+                    <label class="block text-xs text-zinc-400">Period 2</label>
+                    <input type="number" name="period2" min="1" max="500" required value="{{ old('period2', $p['period2']) }}" class="mt-1 w-full rounded border border-zinc-600 bg-zinc-900 px-3 py-2">
+                </div>
+                <div>
+                    <label class="block text-xs text-zinc-400">Period 3</label>
+                    <input type="number" name="period3" min="1" max="500" required value="{{ old('period3', $p['period3']) }}" class="mt-1 w-full rounded border border-zinc-600 bg-zinc-900 px-3 py-2">
+                </div>
+                <div>
+                    <label class="block text-xs text-zinc-400">Period 4</label>
+                    <input type="number" name="period4" min="1" max="500" required value="{{ old('period4', $p['period4']) }}" class="mt-1 w-full rounded border border-zinc-600 bg-zinc-900 px-3 py-2">
+                </div>
+            </div>
+            <div class="space-y-2">
+                <label class="flex items-center gap-2"><input type="checkbox" name="show_smi" value="1" class="rounded border-zinc-600" @checked(old('show_smi', $p['show_smi'] ? '1' : '') === '1' || (old('show_smi') === null && $p['show_smi']))> Show SMI line</label>
+                <label class="flex items-center gap-2"><input type="checkbox" name="show_signal" value="1" class="rounded border-zinc-600" @checked(old('show_signal', $p['show_signal'] ? '1' : '') === '1' || (old('show_signal') === null && $p['show_signal']))> Show signal line</label>
+            </div>
+            <div class="grid gap-3 sm:grid-cols-3">
+                <div>
+                    <label class="block text-xs text-zinc-400">SMI color</label>
+                    <input type="text" name="color_smi" value="{{ old('color_smi', $p['color_smi']) }}" class="mt-1 w-full rounded border border-zinc-600 bg-zinc-900 px-3 py-2">
+                </div>
+                <div>
+                    <label class="block text-xs text-zinc-400">Signal color</label>
+                    <input type="text" name="color_signal" value="{{ old('color_signal', $p['color_signal']) }}" class="mt-1 w-full rounded border border-zinc-600 bg-zinc-900 px-3 py-2">
+                </div>
+                <div>
+                    <label class="block text-xs text-zinc-400">Line width</label>
+                    <input type="number" name="line_width" min="1" max="8" value="{{ old('line_width', $p['line_width']) }}" class="mt-1 w-full rounded border border-zinc-600 bg-zinc-900 px-3 py-2">
+                </div>
+            </div>
+            <div class="rounded border border-zinc-700/60 p-3 space-y-2">
+                <label class="flex items-center gap-2"><input type="checkbox" name="show_levels" value="1" class="rounded border-zinc-600" @checked(old('show_levels', $p['show_levels'] ? '1' : '') === '1' || (old('show_levels') === null && $p['show_levels']))> Levels ±40</label>
+                <div class="grid gap-3 sm:grid-cols-2">
+                    <div>
+                        <label class="block text-xs text-zinc-400">Overbought</label>
+                        <input type="number" name="level_overbought" step="any" value="{{ old('level_overbought', $p['level_overbought']) }}" class="mt-1 w-full rounded border border-zinc-600 bg-zinc-900 px-3 py-2">
+                    </div>
+                    <div>
+                        <label class="block text-xs text-zinc-400">Oversold</label>
+                        <input type="number" name="level_oversold" step="any" value="{{ old('level_oversold', $p['level_oversold']) }}" class="mt-1 w-full rounded border border-zinc-600 bg-zinc-900 px-3 py-2">
+                    </div>
+                </div>
+            </div>
+            <button type="submit" class="rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-500">Сохранить</button>
+        </form>
+    </div>
+</div>
+@endsection

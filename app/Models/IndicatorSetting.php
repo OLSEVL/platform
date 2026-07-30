@@ -28,6 +28,22 @@ use App\Services\Indicators\CciIndicatorService;
 use App\Services\Indicators\StochasticIndicatorService;
 use App\Services\Indicators\SuperTrendIndicatorService;
 use App\Services\Indicators\VwmaIndicatorService;
+use App\Services\Indicators\CmoIndicatorService;
+use App\Services\Indicators\DemarkerIndicatorService;
+use App\Services\Indicators\FractalIndicatorService;
+use App\Services\Indicators\IvashovRangeIndicatorService;
+use App\Services\Indicators\KalmanIndicatorService;
+use App\Services\Indicators\LinRegChannelIndicatorService;
+use App\Services\Indicators\LinRegIndicatorService;
+use App\Services\Indicators\MomentumIndicatorService;
+use App\Services\Indicators\OsmaIndicatorService;
+use App\Services\Indicators\RocIndicatorService;
+use App\Services\Indicators\RviIndicatorService;
+use App\Services\Indicators\SmaChannelIndicatorService;
+use App\Services\Indicators\SmiIndicatorService;
+use App\Services\Indicators\StdDevIndicatorService;
+use App\Services\Indicators\TrixIndicatorService;
+use App\Services\Indicators\UltimateIndicatorService;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
@@ -103,6 +119,54 @@ class IndicatorSetting extends Model
 
     /** Aroon Up/Down — отдельная pane. */
     public const KEY_AROON = 'aroon';
+
+    /** Momentum (OsEngine) — отдельная pane. */
+    public const KEY_MOMENTUM = 'momentum';
+
+    /** ROC (Rate of Change) — отдельная pane. */
+    public const KEY_ROC = 'roc';
+
+    /** OsMa (MACD − Signal) — отдельная pane. */
+    public const KEY_OSMA = 'osma';
+
+    /** Trix — отдельная pane. */
+    public const KEY_TRIX = 'trix';
+
+    /** CMO (Chande Momentum Oscillator) — отдельная pane. */
+    public const KEY_CMO = 'cmo';
+
+    /** DeMarker — отдельная pane. */
+    public const KEY_DEMARKER = 'demarker';
+
+    /** RVI — отдельная pane. */
+    public const KEY_RVI = 'rvi';
+
+    /** Ultimate Oscillator — отдельная pane. */
+    public const KEY_ULTIMATE = 'ultimate';
+
+    /** Stochastic Momentum Index — отдельная pane. */
+    public const KEY_SMI = 'smi';
+
+    /** StdDev — отдельная pane. */
+    public const KEY_STDDEV = 'stddev';
+
+    /** SmaChannel — оверлей на цене. */
+    public const KEY_SMA_CHANNEL = 'sma_channel';
+
+    /** IvashovRange — отдельная pane. */
+    public const KEY_IVASHOV = 'ivashov';
+
+    /** Linear Regression Line — оверлей на цене. */
+    public const KEY_LINREG = 'linreg';
+
+    /** Linear Regression Channel — оверлей на цене. */
+    public const KEY_LINREG_CHANNEL = 'linreg_channel';
+
+    /** Kalman Filter — оверлей на цене. */
+    public const KEY_KALMAN = 'kalman';
+
+    /** Fractal — оверлей на цене (маркеры экстремумов). */
+    public const KEY_FRACTAL = 'fractal';
 
     protected $fillable = ['bot_id', 'indicator_key', 'settings'];
 
@@ -342,5 +406,101 @@ class IndicatorSetting extends Model
     public static function mergedAroonParams(Bot $bot): array
     {
         return self::mergedByKey($bot, self::KEY_AROON, [AroonIndicatorService::class, 'defaultParams']);
+    }
+
+    /** @return array<string, mixed> */
+    public static function mergedMomentumParams(Bot $bot): array
+    {
+        return self::mergedByKey($bot, self::KEY_MOMENTUM, [MomentumIndicatorService::class, 'defaultParams']);
+    }
+
+    /** @return array<string, mixed> */
+    public static function mergedRocParams(Bot $bot): array
+    {
+        return self::mergedByKey($bot, self::KEY_ROC, [RocIndicatorService::class, 'defaultParams']);
+    }
+
+    /** @return array<string, mixed> */
+    public static function mergedOsmaParams(Bot $bot): array
+    {
+        return self::mergedByKey($bot, self::KEY_OSMA, [OsmaIndicatorService::class, 'defaultParams']);
+    }
+
+    /** @return array<string, mixed> */
+    public static function mergedTrixParams(Bot $bot): array
+    {
+        return self::mergedByKey($bot, self::KEY_TRIX, [TrixIndicatorService::class, 'defaultParams']);
+    }
+
+    /** @return array<string, mixed> */
+    public static function mergedCmoParams(Bot $bot): array
+    {
+        return self::mergedByKey($bot, self::KEY_CMO, [CmoIndicatorService::class, 'defaultParams']);
+    }
+
+    /** @return array<string, mixed> */
+    public static function mergedDemarkerParams(Bot $bot): array
+    {
+        return self::mergedByKey($bot, self::KEY_DEMARKER, [DemarkerIndicatorService::class, 'defaultParams']);
+    }
+
+    /** @return array<string, mixed> */
+    public static function mergedRviParams(Bot $bot): array
+    {
+        return self::mergedByKey($bot, self::KEY_RVI, [RviIndicatorService::class, 'defaultParams']);
+    }
+
+    /** @return array<string, mixed> */
+    public static function mergedUltimateParams(Bot $bot): array
+    {
+        return self::mergedByKey($bot, self::KEY_ULTIMATE, [UltimateIndicatorService::class, 'defaultParams']);
+    }
+
+    /** @return array<string, mixed> */
+    public static function mergedSmiParams(Bot $bot): array
+    {
+        return self::mergedByKey($bot, self::KEY_SMI, [SmiIndicatorService::class, 'defaultParams']);
+    }
+
+    /** @return array<string, mixed> */
+    public static function mergedStdDevParams(Bot $bot): array
+    {
+        return self::mergedByKey($bot, self::KEY_STDDEV, [StdDevIndicatorService::class, 'defaultParams']);
+    }
+
+    /** @return array<string, mixed> */
+    public static function mergedSmaChannelParams(Bot $bot): array
+    {
+        return self::mergedByKey($bot, self::KEY_SMA_CHANNEL, [SmaChannelIndicatorService::class, 'defaultParams']);
+    }
+
+    /** @return array<string, mixed> */
+    public static function mergedIvashovParams(Bot $bot): array
+    {
+        return self::mergedByKey($bot, self::KEY_IVASHOV, [IvashovRangeIndicatorService::class, 'defaultParams']);
+    }
+
+    /** @return array<string, mixed> */
+    public static function mergedLinRegParams(Bot $bot): array
+    {
+        return self::mergedByKey($bot, self::KEY_LINREG, [LinRegIndicatorService::class, 'defaultParams']);
+    }
+
+    /** @return array<string, mixed> */
+    public static function mergedLinRegChannelParams(Bot $bot): array
+    {
+        return self::mergedByKey($bot, self::KEY_LINREG_CHANNEL, [LinRegChannelIndicatorService::class, 'defaultParams']);
+    }
+
+    /** @return array<string, mixed> */
+    public static function mergedKalmanParams(Bot $bot): array
+    {
+        return self::mergedByKey($bot, self::KEY_KALMAN, [KalmanIndicatorService::class, 'defaultParams']);
+    }
+
+    /** @return array<string, mixed> */
+    public static function mergedFractalParams(Bot $bot): array
+    {
+        return self::mergedByKey($bot, self::KEY_FRACTAL, [FractalIndicatorService::class, 'defaultParams']);
     }
 }

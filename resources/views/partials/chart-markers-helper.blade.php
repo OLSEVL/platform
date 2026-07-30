@@ -278,17 +278,25 @@
             out.push(series.createPriceLine({
                 ...lineOpts,
                 price: overbought,
-                title: String(Math.round(overbought)),
+                title: formatLevelTitle(overbought),
             }));
             out.push(series.createPriceLine({
                 ...lineOpts,
                 price: oversold,
-                title: String(Math.round(oversold)),
+                title: formatLevelTitle(oversold),
             }));
         } catch (e) {
             console.error('[markers-helper] RSI level lines', e);
         }
         return out;
+    }
+
+    /**
+     * Подпись уровня: целые (70/30/±50) — без дробной части; дробные (DeMarker 0.7/0.3) — с 1-2 знаками.
+     */
+    function formatLevelTitle(value) {
+        if (Number.isInteger(value)) return String(value);
+        return String(Math.round(value * 100) / 100);
     }
 
     global.PlatformChartMarkers = {
