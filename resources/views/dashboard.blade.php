@@ -319,6 +319,17 @@
                                 <a href="{{ route('bots.index') }}" class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-zinc-700 bg-zinc-800/40 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300 text-xs" title="Создайте бота — страницы настроек индикаторов привязаны к боту">⚙</a>
                             @endif
                         </div>
+                        <div class="flex items-center justify-between gap-1">
+                            <label for="layer-cci" class="flex min-w-0 flex-1 items-center gap-2 text-sm text-zinc-300 cursor-pointer">
+                                <input type="checkbox" id="layer-cci" class="rounded border-zinc-600 bg-zinc-800 text-blue-500 shrink-0">
+                                <span class="truncate">CCI</span>
+                            </label>
+                            @if($chartIndicatorBot)
+                                <a href="{{ route('bots.indicators.cci.edit', $chartIndicatorBot) }}" class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-zinc-700 bg-zinc-800/80 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-100 text-xs" title="Настройки CCI">⚙</a>
+                            @else
+                                <a href="{{ route('bots.index') }}" class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-zinc-700 bg-zinc-800/40 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300 text-xs" title="Создайте бота — страницы настроек индикаторов привязаны к боту">⚙</a>
+                            @endif
+                        </div>
                     </div>
                 </div>
             </div>
@@ -501,6 +512,7 @@
     const layerAtr = document.getElementById('layer-atr');
     const layerMacd = document.getElementById('layer-macd');
     const layerStochastic = document.getElementById('layer-stochastic');
+    const layerCci = document.getElementById('layer-cci');
     const priceActionOverlay = document.getElementById('price-action-overlay');
     const liquiditySwingsOverlay = document.getElementById('liquidity-swings-overlay');
     const smcFlowOverlay = document.getElementById('smc-flow-overlay');
@@ -543,6 +555,7 @@
             if (layerAtr && typeof o.atr === 'boolean') layerAtr.checked = o.atr;
             if (layerMacd && typeof o.macd === 'boolean') layerMacd.checked = o.macd;
             if (layerStochastic && typeof o.stochastic === 'boolean') layerStochastic.checked = o.stochastic;
+            if (layerCci && typeof o.cci === 'boolean') layerCci.checked = o.cci;
         } catch (_) { /* ignore */ }
     }
 
@@ -561,6 +574,7 @@
                 atr: layerAtr ? layerAtr.checked : false,
                 macd: layerMacd ? layerMacd.checked : false,
                 stochastic: layerStochastic ? layerStochastic.checked : false,
+                cci: layerCci ? layerCci.checked : false,
             }));
         } catch (_) { /* ignore */ }
     }
@@ -612,6 +626,7 @@
     let lastAtrPayload = null;
     let lastMacdPayload = null;
     let lastStochasticPayload = null;
+    let lastCciPayload = null;
     let classicLineSeries = {};
     let rsiLevelLines = [];
     let classicOscPaneCount = 0;
@@ -1115,7 +1130,8 @@
             (layerEma && layerEma.checked) ||
             (layerAtr && layerAtr.checked) ||
             (layerMacd && layerMacd.checked) ||
-            (layerStochastic && layerStochastic.checked)
+            (layerStochastic && layerStochastic.checked) ||
+            (layerCci && layerCci.checked)
         );
     }
 
@@ -1167,6 +1183,7 @@
         const wantAtr = layerAtr && layerAtr.checked && lastAtrPayload;
         const wantMacd = layerMacd && layerMacd.checked && lastMacdPayload;
         const wantStochastic = layerStochastic && layerStochastic.checked && lastStochasticPayload;
+        const wantCci = layerCci && layerCci.checked && lastCciPayload;
 
         const addMainLine = (key, data, color, width) => {
             if (!Array.isArray(data) || !data.length) return;
@@ -1198,7 +1215,7 @@
             addMainLine('ema', (lastEmaPayload.series || {}).ema, st.color, st.line_width);
         }
 
-        const oscCount = (wantRsi ? 1 : 0) + (wantMacd ? 1 : 0) + (wantStochastic ? 1 : 0) + (wantAtr ? 1 : 0);
+        const oscCount = (wantRsi ? 1 : 0) + (wantMacd ? 1 : 0) + (wantStochastic ? 1 : 0) + (wantCci ? 1 : 0) + (wantAtr ? 1 : 0);
         if (oscCount > 0) {
             try {
                 const mainPane = chart.panes()[0];
@@ -1411,6 +1428,76 @@
             } catch (_) {}
         }
 
+        // CCI — отдельный pane без фиксированной шкалы 0..100 (значения не ограничены).
+        if (wantCci) {
+            const st = lastCciPayload.style || {};
+            const levels = lastCciPayload.levels || {};
+            const ser = lastCciPayload.series || {};
+            const lineW = st.line_width || 1;
+            let paneIndex = 1;
+            let cciPane = null;
+            try {
+                cciPane = chart.addPane(false);
+                if (cciPane && typeof cciPane.setStretchFactor === 'function') {
+                    cciPane.setStretchFactor(0.28);
+                }
+                paneIndex = Math.max(1, chart.panes().length - 1);
+                classicOscPaneCount += 1;
+            } catch (e) {
+                console.error('[dashboard indicators] addPane CCI', e);
+            }
+
+            const cciData = ser.cci;
+            let cciLine = null;
+            if (Array.isArray(cciData) && cciData.length) {
+                // Обычный autoscale — CCI может уходить далеко за ±100.
+                cciLine = chart.addSeries(LineSeries, {
+                    color: st.color || '#5f9ea0',
+                    lineWidth: lineW,
+                    priceLineVisible: false,
+                    baseLineVisible: false,
+                    lastValueVisible: true,
+                    crosshairMarkerVisible: false,
+                    priceFormat: { type: 'price', precision: 2, minMove: 0.01 },
+                }, paneIndex);
+                cciLine.setData(cciData.map((p) => ({ time: p.time, value: p.value })));
+                classicLineSeries['cci'] = cciLine;
+            }
+
+            try {
+                const paneApi = cciPane || (typeof chart.panes === 'function' ? chart.panes()[paneIndex] : null);
+                if (paneApi && typeof paneApi.attachPrimitive === 'function'
+                    && window.PlatformChartMarkers
+                    && typeof window.PlatformChartMarkers.createPaneSolidBackdrop === 'function') {
+                    paneApi.attachPrimitive(window.PlatformChartMarkers.createPaneSolidBackdrop('#0e1018'));
+                }
+            } catch (e) {
+                console.error('[dashboard indicators] CCI pane backdrop', e);
+            }
+
+            try {
+                if (cciLine && window.PlatformChartMarkers
+                    && typeof window.PlatformChartMarkers.attachRsiLevelLines === 'function') {
+                    const lines = window.PlatformChartMarkers.attachRsiLevelLines(cciLine, levels);
+                    rsiLevelLines.push(...lines);
+                }
+            } catch (_) {}
+
+            // Нулевая линия CCI (как у MACD — priceLine на основной серии).
+            try {
+                if (cciLine && typeof cciLine.createPriceLine === 'function') {
+                    rsiLevelLines.push(cciLine.createPriceLine({
+                        price: 0,
+                        color: 'rgba(161,161,170,0.55)',
+                        lineWidth: 1,
+                        lineStyle: 2,
+                        axisLabelVisible: true,
+                        title: '0',
+                    }));
+                }
+            } catch (_) {}
+        }
+
         if (wantAtr) {
             const st = lastAtrPayload.style || {};
             let paneIndex = 1;
@@ -1447,6 +1534,7 @@
             lastAtrPayload = null;
             lastMacdPayload = null;
             lastStochasticPayload = null;
+            lastCciPayload = null;
             applyClassicOsEngineSeries();
             return;
         }
@@ -1457,6 +1545,7 @@
         const wantAtr = layerAtr && layerAtr.checked;
         const wantMacd = layerMacd && layerMacd.checked;
         const wantStochastic = layerStochastic && layerStochastic.checked;
+        const wantCci = layerCci && layerCci.checked;
         const layers = [];
         if (wantBb) layers.push('bollinger');
         if (wantRsi) layers.push('rsi');
@@ -1465,6 +1554,7 @@
         if (wantAtr) layers.push('atr');
         if (wantMacd) layers.push('macd');
         if (wantStochastic) layers.push('stochastic');
+        if (wantCci) layers.push('cci');
 
         const seq = ++classicIndicatorsFetchSeq;
         const params = new URLSearchParams({
@@ -1487,6 +1577,7 @@
                     lastAtrPayload = wantAtr && d && d.atr ? d.atr : null;
                     lastMacdPayload = wantMacd && d && d.macd ? d.macd : null;
                     lastStochasticPayload = wantStochastic && d && d.stochastic ? d.stochastic : null;
+                    lastCciPayload = wantCci && d && d.cci ? d.cci : null;
                     applyClassicOsEngineSeries();
                 } catch (e) {
                     console.error('[dashboard classic indicators] apply', e);
@@ -1497,6 +1588,7 @@
                     lastAtrPayload = null;
                     lastMacdPayload = null;
                     lastStochasticPayload = null;
+                    lastCciPayload = null;
                     try { applyClassicOsEngineSeries(); } catch (_) {}
                 }
             })
@@ -2502,6 +2594,7 @@
                     lastAtrPayload = null;
                     lastMacdPayload = null;
                     lastStochasticPayload = null;
+                    lastCciPayload = null;
                     if (priceActionOverlay) priceActionOverlay.innerHTML = '';
                     if (liquiditySwingsOverlay) liquiditySwingsOverlay.innerHTML = '';
                     if (smcFlowOverlay) smcFlowOverlay.innerHTML = '';
@@ -2538,6 +2631,7 @@
         lastAtrPayload = null;
         lastMacdPayload = null;
         lastStochasticPayload = null;
+        lastCciPayload = null;
         if (priceActionOverlay) priceActionOverlay.innerHTML = '';
         if (liquiditySwingsOverlay) liquiditySwingsOverlay.innerHTML = '';
         if (smcFlowOverlay) smcFlowOverlay.innerHTML = '';
@@ -2666,6 +2760,7 @@
         [layerAtr, () => { lastAtrPayload = null; }],
         [layerMacd, () => { lastMacdPayload = null; }],
         [layerStochastic, () => { lastStochasticPayload = null; }],
+        [layerCci, () => { lastCciPayload = null; }],
     ].forEach(([el, clearFn]) => {
         if (!el) return;
         el.addEventListener('change', () => {

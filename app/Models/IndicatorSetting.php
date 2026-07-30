@@ -12,6 +12,7 @@ use App\Services\Indicators\PriceActionDgtIndicatorService;
 use App\Services\Indicators\RsiIndicatorService;
 use App\Services\Indicators\SmaIndicatorService;
 use App\Services\Indicators\SmcFlowIndicatorService;
+use App\Services\Indicators\CciIndicatorService;
 use App\Services\Indicators\StochasticIndicatorService;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -44,6 +45,8 @@ class IndicatorSetting extends Model
     public const KEY_MACD = 'macd';
 
     public const KEY_STOCHASTIC = 'stochastic';
+
+    public const KEY_CCI = 'cci';
 
     protected $fillable = ['bot_id', 'indicator_key', 'settings'];
 
@@ -193,5 +196,11 @@ class IndicatorSetting extends Model
     public static function mergedStochasticParams(Bot $bot): array
     {
         return self::mergedByKey($bot, self::KEY_STOCHASTIC, [StochasticIndicatorService::class, 'defaultParams']);
+    }
+
+    /** @return array<string, mixed> */
+    public static function mergedCciParams(Bot $bot): array
+    {
+        return self::mergedByKey($bot, self::KEY_CCI, [CciIndicatorService::class, 'defaultParams']);
     }
 }

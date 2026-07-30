@@ -18,6 +18,7 @@ use App\Services\Indicators\PriceActionDgtIndicatorService;
 use App\Services\Indicators\RsiIndicatorService;
 use App\Services\Indicators\SmaIndicatorService;
 use App\Services\Indicators\SmcFlowIndicatorService;
+use App\Services\Indicators\CciIndicatorService;
 use App\Services\Indicators\StochasticIndicatorService;
 use App\Support\M1CandleCountdown;
 use App\Support\PriceScale;
@@ -422,7 +423,7 @@ class DashboardController extends Controller
     }
 
     /**
-     * Классика OsEngine (BB/RSI/SMA/EMA/ATR/MACD/Stochastic) для главного графика.
+     * Классика OsEngine (BB/RSI/SMA/EMA/ATR/MACD/Stochastic/CCI) для главного графика.
      * Параметры — с якорного бота (как PA/SMC); без бота — defaultParams сервисов.
      * Query layers[] — считаем только включённые слои.
      */
@@ -436,12 +437,13 @@ class DashboardController extends Controller
         AtrIndicatorService $atr,
         MacdIndicatorService $macd,
         StochasticIndicatorService $stochastic,
+        CciIndicatorService $cci,
     ): JsonResponse {
         $validated = $request->validate([
             'instrument' => ['required', 'string', 'max:64'],
             'timeframe' => ['nullable', 'integer', Rule::in(CandleService::DASHBOARD_TIMEFRAMES)],
             'layers' => ['nullable', 'array'],
-            'layers.*' => ['string', Rule::in(['bollinger', 'rsi', 'sma', 'ema', 'atr', 'macd', 'stochastic'])],
+            'layers.*' => ['string', Rule::in(['bollinger', 'rsi', 'sma', 'ema', 'atr', 'macd', 'stochastic', 'cci'])],
         ]);
 
         $instrument = (string) $validated['instrument'];
@@ -522,6 +524,14 @@ class DashboardController extends Controller
                 $anchorBot !== null
                     ? IndicatorSetting::mergedStochasticParams($anchorBot)
                     : StochasticIndicatorService::defaultParams()
+            );
+        }
+        if (! empty($want['cci'])) {
+            $json['cci'] = $cci->compute(
+                $rows,
+                $anchorBot !== null
+                    ? IndicatorSetting::mergedCciParams($anchorBot)
+                    : CciIndicatorService::defaultParams()
             );
         }
 

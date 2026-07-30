@@ -14,7 +14,9 @@ use App\Support\BollingerSettingsForm;
 use App\Support\EmaSettingsForm;
 use App\Support\MacdSettingsForm;
 use App\Support\OrderBlocksSettingsForm;
+use App\Support\CciSettingsForm;
 use App\Support\StochasticSettingsForm;
+use App\Services\Indicators\CciIndicatorService;
 use App\Services\Indicators\StochasticIndicatorService;
 use App\Services\Indicators\LiquiditySwingsIndicatorService;
 use App\Services\Indicators\PriceActionDgtIndicatorService;
@@ -301,6 +303,21 @@ class BotChartIndicatorController extends Controller
     public function updateStochastic(Request $request, Bot $bot): RedirectResponse
     {
         return $this->saveClassic($request, $bot, IndicatorSetting::KEY_STOCHASTIC, StochasticIndicatorService::class, StochasticSettingsForm::class, 'bots.indicators.stochastic.edit', 'Stochastic');
+    }
+
+    public function editCci(Bot $bot): View
+    {
+        $this->ensureBotOwner($bot);
+
+        return view('bots.indicators.cci', [
+            'bot' => $bot,
+            'p' => IndicatorSetting::mergedCciParams($bot),
+        ]);
+    }
+
+    public function updateCci(Request $request, Bot $bot): RedirectResponse
+    {
+        return $this->saveClassic($request, $bot, IndicatorSetting::KEY_CCI, CciIndicatorService::class, CciSettingsForm::class, 'bots.indicators.cci.edit', 'CCI');
     }
 
     /**

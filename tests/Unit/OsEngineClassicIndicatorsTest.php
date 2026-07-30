@@ -5,6 +5,7 @@ namespace Tests\Unit;
 use App\Services\Indicators\AtrIndicatorService;
 use App\Services\Indicators\BollingerIndicatorService;
 use App\Services\Indicators\EmaIndicatorService;
+use App\Services\Indicators\CciIndicatorService;
 use App\Services\Indicators\MacdIndicatorService;
 use App\Services\Indicators\OsEngineCandleMath;
 use App\Services\Indicators\RsiIndicatorService;
@@ -43,6 +44,7 @@ class OsEngineClassicIndicatorsTest extends TestCase
         $atr = (new AtrIndicatorService)->computeSeries($rows, $p['atr']);
         $macd = (new MacdIndicatorService)->computeSeries($rows, $p['macd']);
         $stoch = (new StochasticIndicatorService)->computeSeries($rows, $p['stochastic']);
+        $cci = (new CciIndicatorService)->computeSeries($rows, $p['cci']);
 
         foreach ($g['at'] as $idxStr => $expect) {
             $i = (int) $idxStr;
@@ -58,6 +60,9 @@ class OsEngineClassicIndicatorsTest extends TestCase
             $this->assertEqualsWithDelta($expect['macd_hist'], (float) $macd['histogram'][$i], 1e-8, "macd_hist@$i");
             $this->assertEqualsWithDelta($expect['stoch_k'], $stoch['k'][$i], 1e-2, "stoch_k@$i");
             $this->assertEqualsWithDelta($expect['stoch_d'], $stoch['d'][$i], 1e-2, "stoch_d@$i");
+            // CCI: null на прогреве в golden записан как 0.
+            $cciGot = $cci[$i] === null ? 0.0 : (float) $cci[$i];
+            $this->assertEqualsWithDelta($expect['cci'], $cciGot, 1e-5, "cci@$i");
         }
     }
 
@@ -97,6 +102,36 @@ class OsEngineClassicIndicatorsTest extends TestCase
         $this->assertGreaterThan(0.0, $stoch['k'][10]);
         $this->assertGreaterThanOrEqual(0.0, $stoch['k'][20]);
         $this->assertLessThanOrEqual(100.0, $stoch['k'][20]);
+    }
+
+    /** CCI: прогрев до index<=length; формула (price−MA)/(0.015×meanDev). */
+    public function test_cci_warmup_and_independent_formula(): void
+    {
+        $g = $this->golden();
+        $rows = $g['rows'];
+        $length = 5;
+        $cci = (new CciIndicatorService)->computeSeries($rows, [
+            'length' => $length,
+            'candle_point' => 'Typical',
+        ]);
+        $this->assertNull($cci[$length]); // index - length <= 0
+        $this->assertNotNull($cci[$length + 1]);
+
+        $index = 10;
+        $sum = 0.0;
+        for ($i = $index; $i > $index - $length; $i--) {
+            $sum += OsEngineCandleMath::candlePoint($rows[$i], 'Typical');
+        }
+        $ma = $sum / $length;
+        $md = 0.0;
+        for ($i = $index; $i > $index - $length; $i--) {
+            $md += abs($ma - OsEngineCandleMath::candlePoint($rows[$i], 'Typical'));
+        }
+        $expected = round(
+            (OsEngineCandleMath::candlePoint($rows[$index], 'Typical') - $ma) / ($md * 0.015 / $length),
+            5
+        );
+        $this->assertEqualsWithDelta($expected, (float) $cci[$index], 1e-12);
     }
 
     /** Независимая проверка SMA = среднее Close[index-length+1 .. index] (OsEngine Summ). */
