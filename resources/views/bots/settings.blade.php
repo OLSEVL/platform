@@ -112,7 +112,7 @@
                 class="inline-flex items-center rounded border border-zinc-600 bg-zinc-800 px-2.5 py-1 text-xs font-medium text-zinc-200 shadow-sm transition-colors hover:bg-zinc-700 hover:border-zinc-500 hover:text-zinc-50 focus:outline-none focus:ring-2 focus:ring-blue-500/50">Kalman</a>
             <a href="{{ route('bots.indicators.fractal.edit', $bot) }}"
                 class="inline-flex items-center rounded border border-zinc-600 bg-zinc-800 px-2.5 py-1 text-xs font-medium text-zinc-200 shadow-sm transition-colors hover:bg-zinc-700 hover:border-zinc-500 hover:text-zinc-50 focus:outline-none focus:ring-2 focus:ring-blue-500/50">Fractal</a>
-            @if(in_array($bot->type, ['strong_level', 'candle_reversal_confirm'], true))
+            @if(in_array($bot->type, ['strong_level', 'candle_reversal_confirm', 'rsi_contrtrend', 'bollinger_contrtrend'], true))
             <a href="{{ route('bots.cards', $bot) }}"
                 class="inline-flex items-center rounded border border-zinc-600 bg-zinc-800 px-2.5 py-1 text-xs font-medium text-zinc-200 shadow-sm transition-colors hover:bg-zinc-700 hover:border-zinc-500 hover:text-zinc-50 focus:outline-none focus:ring-2 focus:ring-blue-500/50">Карточки</a>
             @endif
@@ -299,6 +299,167 @@
                     </div>
                 </div>
 
+            </div>
+        @elseif ($bot->type === 'rsi_contrtrend')
+            <div class="space-y-5 border-t border-zinc-800 pt-4">
+                <div class="space-y-2 text-sm text-zinc-400">
+                    <p>
+                        <strong class="text-zinc-300">RSI Contrtrend</strong> — порт OsEngine:
+                        покупка перепроданности RSI <strong>только в аптренде</strong> (цена выше SMA),
+                        продажа перекупленности <strong>только в даунтренде</strong> (цена ниже SMA).
+                    </p>
+                    <p class="text-[11px] text-zinc-500">
+                        CALL: Close &gt; SMA и RSI &lt; Down. PUT: Close &lt; SMA и RSI &gt; Up.
+                        ТФ сигнала M1, экспирация по умолчанию 180 с (3 мин). Выход OsEngine не переносится — фиксируем expiry.
+                    </p>
+                </div>
+
+                <div class="grid gap-4 sm:grid-cols-2">
+                    <div class="space-y-1">
+                        <label for="count" class="block text-xs font-medium text-zinc-400">Свечей в выборке (count)</label>
+                        <input type="number" name="count" id="count" min="60" max="5000" required
+                            value="{{ old('count', $cfg['count'] ?? 150) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        <p class="text-[11px] text-zinc-500">Нужен запас ≥ SMA+1 и RSI+5. При SMA 10 / RSI 14 достаточно ~60–150 M1.</p>
+                        @error('count')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                    <div class="space-y-1">
+                        <label for="expiry_sec" class="block text-xs font-medium text-zinc-400">Экспирация сделки (сек)</label>
+                        <input type="number" name="expiry_sec" id="expiry_sec" min="60" max="900" required
+                            value="{{ old('expiry_sec', $cfg['expiry_sec'] ?? 180) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        <p class="text-[11px] text-zinc-500">Дефолт 180 = 3 минуты на M1-сигнале. Также окно dedupe.</p>
+                        @error('expiry_sec')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                    <div class="space-y-1">
+                        {{-- M1 OTC: короткая SMA — иначе при RSI-экстремуме цена уже по другую сторону SMA50. --}}
+                        <label for="sma_length" class="block text-xs font-medium text-zinc-400">SMA length</label>
+                        <input type="number" name="sma_length" id="sma_length" min="2" max="500" required
+                            value="{{ old('sma_length', $cfg['sma_length'] ?? 10) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        <p class="text-[11px] text-zinc-500">Дефолт M1 OTC: 10 (OsEngine 50 почти не стреляет на PO).</p>
+                        @error('sma_length')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                    <div class="space-y-1">
+                        <label for="rsi_length" class="block text-xs font-medium text-zinc-400">RSI length</label>
+                        <input type="number" name="rsi_length" id="rsi_length" min="2" max="500" required
+                            value="{{ old('rsi_length', $cfg['rsi_length'] ?? 14) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        <p class="text-[11px] text-zinc-500">Дефолт M1 OTC: 14 (OsEngine использовал 20).</p>
+                        @error('rsi_length')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                    <div class="space-y-1">
+                        <label for="rsi_up" class="block text-xs font-medium text-zinc-400">RSI Up (перекупленность)</label>
+                        <input type="number" name="rsi_up" id="rsi_up" min="50" max="95" step="0.1" required
+                            value="{{ old('rsi_up', $cfg['rsi_up'] ?? 60) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        <p class="text-[11px] text-zinc-500">PUT, если RSI выше и цена ниже SMA. Дефолт 60 (OsEngine 65).</p>
+                        @error('rsi_up')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                    <div class="space-y-1">
+                        <label for="rsi_down" class="block text-xs font-medium text-zinc-400">RSI Down (перепроданность)</label>
+                        <input type="number" name="rsi_down" id="rsi_down" min="5" max="50" step="0.1" required
+                            value="{{ old('rsi_down', $cfg['rsi_down'] ?? 40) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        <p class="text-[11px] text-zinc-500">CALL, если RSI ниже и цена выше SMA. Дефолт 40 (OsEngine 35).</p>
+                        @error('rsi_down')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                    <div class="space-y-1">
+                        <label for="min_confidence" class="block text-xs font-medium text-zinc-400">Мин. confidence (0–1)</label>
+                        <input type="number" name="min_confidence" id="min_confidence" min="0" max="1" step="0.01" required
+                            value="{{ old('min_confidence', $cfg['min_confidence'] ?? 0.56) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @error('min_confidence')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                    <div class="space-y-1">
+                        <label for="min_payout" class="block text-xs font-medium text-zinc-400">Мин. payout (%)</label>
+                        <input type="number" name="min_payout" id="min_payout" min="0" max="100" step="0.1" required
+                            value="{{ old('min_payout', $cfg['min_payout'] ?? 75) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @error('min_payout')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                    <div class="space-y-1">
+                        <label for="stale_after_sec" class="block text-xs font-medium text-zinc-400">Свежесть текущей свечи (сек)</label>
+                        <input type="number" name="stale_after_sec" id="stale_after_sec" min="5" max="600" required
+                            value="{{ old('stale_after_sec', $cfg['stale_after_sec'] ?? 60) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @error('stale_after_sec')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                </div>
+
+                @include('bots._rsi-contrtrend-telegram-settings', ['bot' => $bot, 'cfg' => $cfg, 'chartAnalystBots' => $chartAnalystBots ?? []])
+            </div>
+        @elseif ($bot->type === 'bollinger_contrtrend')
+            <div class="space-y-5 border-t border-zinc-800 pt-4">
+                <div class="space-y-2 text-sm text-zinc-400">
+                    <p>
+                        <strong class="text-zinc-300">Bollinger Contrtrend</strong> — порт OsEngine StrategyBollinger:
+                        покупка при закрытии <strong>ниже нижней полосы</strong>, продажа при закрытии
+                        <strong>выше верхней</strong>.
+                    </p>
+                    <p class="text-[11px] text-zinc-500">
+                        CALL: Close &lt; BB Down. PUT: Close &gt; BB Up.
+                        ТФ M1, экспирация по умолчанию 180 с. Выход OsEngine (SMA15) не переносится — фиксируем expiry.
+                    </p>
+                </div>
+
+                <div class="grid gap-4 sm:grid-cols-2">
+                    <div class="space-y-1">
+                        <label for="count" class="block text-xs font-medium text-zinc-400">Свечей в выборке (count)</label>
+                        <input type="number" name="count" id="count" min="40" max="5000" required
+                            value="{{ old('count', $cfg['count'] ?? 150) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        <p class="text-[11px] text-zinc-500">Нужен запас ≥ BB length+2. При Length 12 достаточно ~60–150 M1.</p>
+                        @error('count')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                    <div class="space-y-1">
+                        <label for="expiry_sec" class="block text-xs font-medium text-zinc-400">Экспирация сделки (сек)</label>
+                        <input type="number" name="expiry_sec" id="expiry_sec" min="60" max="900" required
+                            value="{{ old('expiry_sec', $cfg['expiry_sec'] ?? 180) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        <p class="text-[11px] text-zinc-500">Дефолт 180 = 3 минуты на M1. Также окно dedupe.</p>
+                        @error('expiry_sec')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                    <div class="space-y-1">
+                        <label for="bb_length" class="block text-xs font-medium text-zinc-400">BB length</label>
+                        <input type="number" name="bb_length" id="bb_length" min="2" max="500" required
+                            value="{{ old('bb_length', $cfg['bb_length'] ?? 12) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        <p class="text-[11px] text-zinc-500">OsEngine chart default 12 (период SMA середины канала).</p>
+                        @error('bb_length')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                    <div class="space-y-1">
+                        <label for="bb_deviation" class="block text-xs font-medium text-zinc-400">BB deviation (σ)</label>
+                        <input type="number" name="bb_deviation" id="bb_deviation" min="0.1" max="10" step="0.1" required
+                            value="{{ old('bb_deviation', $cfg['bb_deviation'] ?? 2) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        <p class="text-[11px] text-zinc-500">OsEngine default 2.0. Меньше → чаще касания полос.</p>
+                        @error('bb_deviation')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                    <div class="space-y-1">
+                        <label for="min_confidence" class="block text-xs font-medium text-zinc-400">Мин. confidence (0–1)</label>
+                        <input type="number" name="min_confidence" id="min_confidence" min="0" max="1" step="0.01" required
+                            value="{{ old('min_confidence', $cfg['min_confidence'] ?? 0.56) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @error('min_confidence')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                    <div class="space-y-1">
+                        <label for="min_payout" class="block text-xs font-medium text-zinc-400">Мин. payout (%)</label>
+                        <input type="number" name="min_payout" id="min_payout" min="0" max="100" step="0.1" required
+                            value="{{ old('min_payout', $cfg['min_payout'] ?? 75) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @error('min_payout')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                    <div class="space-y-1">
+                        <label for="stale_after_sec" class="block text-xs font-medium text-zinc-400">Свежесть текущей свечи (сек)</label>
+                        <input type="number" name="stale_after_sec" id="stale_after_sec" min="5" max="600" required
+                            value="{{ old('stale_after_sec', $cfg['stale_after_sec'] ?? 60) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @error('stale_after_sec')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                </div>
+
+                @include('bots._bollinger-contrtrend-telegram-settings', ['bot' => $bot, 'cfg' => $cfg, 'chartAnalystBots' => $chartAnalystBots ?? []])
             </div>
         @elseif ($bot->type === 'akim_trade_1m')
             <div class="space-y-5 border-t border-zinc-800 pt-4">

@@ -39,10 +39,50 @@ class LevelBounceAlertPresenter
     }
 
     /**
+     * RSI Contrtrend (OsEngine → CALL/PUT).
+     *
+     * @param  array<string, mixed>  $decision
+     */
+    public function isRsiContrtrendDecision(array $decision, ?string $botType = null): bool
+    {
+        if ($botType === 'rsi_contrtrend') {
+            return true;
+        }
+
+        $version = (string) ($decision['decision_version'] ?? '');
+
+        return str_starts_with($version, 'rsi_contrtrend');
+    }
+
+    /**
+     * Bollinger Contrtrend (OsEngine StrategyBollinger → CALL/PUT).
+     *
+     * @param  array<string, mixed>  $decision
+     */
+    public function isBollingerContrtrendDecision(array $decision, ?string $botType = null): bool
+    {
+        if ($botType === 'bollinger_contrtrend') {
+            return true;
+        }
+
+        $version = (string) ($decision['decision_version'] ?? '');
+
+        return str_starts_with($version, 'bollinger_contrtrend');
+    }
+
+    /**
      * @param  array<string, mixed>  $decision
      */
     public function alertBrandTitle(array $decision, string $sideLabel, ?string $botType = null): string
     {
+        if ($botType === 'bollinger_contrtrend' || str_starts_with((string) ($decision['decision_version'] ?? ''), 'bollinger_contrtrend')) {
+            return '📊 <b>Bollinger Contrtrend — '.htmlspecialchars($sideLabel, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8').'</b>';
+        }
+
+        if ($botType === 'rsi_contrtrend' || str_starts_with((string) ($decision['decision_version'] ?? ''), 'rsi_contrtrend')) {
+            return '📉 <b>RSI Contrtrend — '.htmlspecialchars($sideLabel, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8').'</b>';
+        }
+
         if ($this->isCrcDecision($decision, $botType)) {
             return '🔄 <b>Candle Reversal + Confirm — '.htmlspecialchars($sideLabel, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8').'</b>';
         }
@@ -72,6 +112,9 @@ class LevelBounceAlertPresenter
         return match ($kind) {
             'support' => 'поддержка',
             'resistance' => 'сопротивление',
+            'sma' => 'SMA',
+            'bb_lower' => 'нижняя BB',
+            'bb_upper' => 'верхняя BB',
             default => 'уровень',
         };
     }
@@ -81,6 +124,9 @@ class LevelBounceAlertPresenter
         return match ($kind) {
             'support' => 'поддержки',
             'resistance' => 'сопротивления',
+            'sma' => 'SMA',
+            'bb_lower' => 'нижней BB',
+            'bb_upper' => 'верхней BB',
             default => 'уровня',
         };
     }
@@ -188,6 +234,26 @@ class LevelBounceAlertPresenter
      */
     public function strategyTitle(array $features, ?string $botType = null, array $decision = []): string
     {
+        if ($this->isBollingerContrtrendDecision($decision, $botType)) {
+            $setup = (string) ($features['setup'] ?? '');
+
+            return match ($setup) {
+                'bb_touch_lower' => 'Отскок от нижней полосы Bollinger',
+                'bb_touch_upper' => 'Отскок от верхней полосы Bollinger',
+                default => 'Bollinger Contrtrend',
+            };
+        }
+
+        if ($this->isRsiContrtrendDecision($decision, $botType)) {
+            $setup = (string) ($features['setup'] ?? '');
+
+            return match ($setup) {
+                'rsi_oversold_in_uptrend' => 'RSI перепроданность в аптренде',
+                'rsi_overbought_in_downtrend' => 'RSI перекупленность в даунтренде',
+                default => 'RSI Contrtrend',
+            };
+        }
+
         if ($this->isCrcDecision($decision, $botType)) {
             return 'Отскок от уровня + разворот';
         }
@@ -203,11 +269,101 @@ class LevelBounceAlertPresenter
      */
     public function strategyNarrative(array $features, string $side, ?string $botType = null, array $decision = [], array $reasons = []): string
     {
+        if ($this->isBollingerContrtrendDecision($decision, $botType)) {
+            return $this->bollingerContrtrendNarrative($features, $side, $reasons);
+        }
+
+        if ($this->isRsiContrtrendDecision($decision, $botType)) {
+            return $this->rsiContrtrendNarrative($features, $side, $reasons);
+        }
+
         if ($this->isCrcDecision($decision, $botType)) {
             return $this->crcNarrative($features, $side, $reasons);
         }
 
         return $this->strongLevelNarrative($features, $side);
+    }
+
+    /**
+     * Абзац для карточки: касание полосы Bollinger.
+     *
+     * @param  array<string, mixed>  $features
+     * @param  list<string>  $reasons
+     */
+    private function bollingerContrtrendNarrative(array $features, string $side, array $reasons): string
+    {
+        $bbLen = max(1, (int) ($features['bb_length'] ?? 12));
+        $bbDev = (float) ($features['bb_deviation'] ?? 2.0);
+        $up = isset($features['bb_up']) ? (float) $features['bb_up'] : 0.0;
+        $down = isset($features['bb_down']) ? (float) $features['bb_down'] : 0.0;
+        $mid = isset($features['bb_mid']) ? (float) $features['bb_mid'] : 0.0;
+        $close = isset($features['close']) ? (float) $features['close'] : 0.0;
+        $direction = strtoupper($side) === 'CALL' ? 'вверх' : 'вниз';
+
+        if (strtoupper($side) === 'CALL') {
+            $core = sprintf(
+                'Цена %.5f закрылась ниже нижней полосы BB(%d, %.1fσ)=%.5f (mid %.5f) — перерастяжение вниз.',
+                $close,
+                $bbLen,
+                $bbDev,
+                $down,
+                $mid
+            );
+        } else {
+            $core = sprintf(
+                'Цена %.5f закрылась выше верхней полосы BB(%d, %.1fσ)=%.5f (mid %.5f) — перерастяжение вверх.',
+                $close,
+                $bbLen,
+                $bbDev,
+                $up,
+                $mid
+            );
+        }
+
+        $extra = $reasons !== [] ? ' '.($reasons[0] ?? '') : '';
+
+        return $core.' Ждём отскок '.$direction.'.'.$extra;
+    }
+
+    /**
+     * Абзац для карточки / Telegram card: SMA-фильтр + зона RSI.
+     *
+     * @param  array<string, mixed>  $features
+     * @param  list<string>  $reasons
+     */
+    private function rsiContrtrendNarrative(array $features, string $side, array $reasons): string
+    {
+        $sma = isset($features['sma']) ? (float) $features['sma'] : (isset($features['level_price']) ? (float) $features['level_price'] : 0.0);
+        $rsi = isset($features['rsi']) ? (float) $features['rsi'] : 0.0;
+        $smaLen = max(1, (int) ($features['sma_length'] ?? 50));
+        $rsiLen = max(1, (int) ($features['rsi_length'] ?? 20));
+        $rsiUp = (float) ($features['rsi_up'] ?? 65);
+        $rsiDown = (float) ($features['rsi_down'] ?? 35);
+        $direction = strtoupper($side) === 'CALL' ? 'вверх' : 'вниз';
+
+        if (strtoupper($side) === 'CALL') {
+            $core = sprintf(
+                'Цена выше SMA(%d)%s, RSI(%d)=%.1f ниже порога %.0f — перепроданность в аптренде.',
+                $smaLen,
+                $sma > 0 ? sprintf(' (%.5f)', $sma) : '',
+                $rsiLen,
+                $rsi,
+                $rsiDown
+            );
+        } else {
+            $core = sprintf(
+                'Цена ниже SMA(%d)%s, RSI(%d)=%.1f выше порога %.0f — перекупленность в даунтренде.',
+                $smaLen,
+                $sma > 0 ? sprintf(' (%.5f)', $sma) : '',
+                $rsiLen,
+                $rsi,
+                $rsiUp
+            );
+        }
+
+        $extra = $reasons !== [] ? ' '.($reasons[0] ?? '') : '';
+
+        return $core.' Ждём отскок '.$direction.'.'.$extra;
     }
 
     /**
@@ -328,6 +484,62 @@ class LevelBounceAlertPresenter
      */
     public function technicalDetails(array $features, array $reasons, ?string $botType = null, array $decision = []): string
     {
+        if ($this->isBollingerContrtrendDecision($decision, $botType)) {
+            $parts = [];
+            $bbLen = (int) ($features['bb_length'] ?? 0);
+            $bbDev = (float) ($features['bb_deviation'] ?? 0);
+            $up = isset($features['bb_up']) ? (float) $features['bb_up'] : 0.0;
+            $mid = isset($features['bb_mid']) ? (float) $features['bb_mid'] : 0.0;
+            $down = isset($features['bb_down']) ? (float) $features['bb_down'] : 0.0;
+            $setup = (string) ($features['setup'] ?? '');
+
+            if ($bbLen > 0) {
+                $parts[] = sprintf('BB(%d, %.1fσ)', $bbLen, $bbDev);
+            }
+            if ($up > 0 && $mid > 0 && $down > 0) {
+                $parts[] = sprintf(
+                    'up=%s mid=%s down=%s',
+                    number_format($up, 5, '.', ''),
+                    number_format($mid, 5, '.', ''),
+                    number_format($down, 5, '.', '')
+                );
+            }
+            if ($setup !== '') {
+                $parts[] = $setup;
+            }
+            $parts[] = 'режим: Bollinger Contrtrend';
+            if ($reasons !== []) {
+                $parts[] = implode(' · ', array_slice($reasons, 0, 2));
+            }
+
+            return implode(' · ', $parts);
+        }
+
+        if ($this->isRsiContrtrendDecision($decision, $botType)) {
+            $parts = [];
+            $sma = isset($features['sma']) ? (float) $features['sma'] : (isset($features['level_price']) ? (float) $features['level_price'] : 0.0);
+            $rsi = isset($features['rsi']) ? (float) $features['rsi'] : 0.0;
+            $smaLen = (int) ($features['sma_length'] ?? 0);
+            $rsiLen = (int) ($features['rsi_length'] ?? 0);
+            $setup = (string) ($features['setup'] ?? '');
+
+            if ($smaLen > 0 && $sma > 0) {
+                $parts[] = sprintf('SMA(%d)=%s', $smaLen, number_format($sma, 5, '.', ''));
+            }
+            if ($rsiLen > 0) {
+                $parts[] = sprintf('RSI(%d)=%s', $rsiLen, number_format($rsi, 2, '.', ''));
+            }
+            if ($setup !== '') {
+                $parts[] = $setup;
+            }
+            $parts[] = 'режим: RSI Contrtrend';
+            if ($reasons !== []) {
+                $parts[] = implode(' · ', array_slice($reasons, 0, 2));
+            }
+
+            return implode(' · ', $parts);
+        }
+
         $parts = [];
         $levelPrice = isset($features['level_price']) ? (float) $features['level_price'] : 0.0;
         $kindLabel = $this->levelKindRu((string) ($features['level_kind'] ?? 'neutral'));

@@ -91,6 +91,8 @@ class StrongLevelTelegramProcessManager
         $botLabel = match ($bot->type) {
             'strong_trend_telegram' => 'Strong Trend Telegram',
             'candle_reversal_confirm' => 'Candle Reversal + Confirm',
+            'rsi_contrtrend' => 'RSI Contrtrend',
+            'bollinger_contrtrend' => 'Bollinger Contrtrend',
             default => 'Strong Level',
         };
 

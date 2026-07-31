@@ -12,6 +12,8 @@ use App\Models\PocketInstrument;
 use App\Services\Bots\Strategies\AkimTrade1MStrategy;
 use App\Services\Bots\Strategies\BotStrategyInterface;
 use App\Services\Bots\Strategies\CandleReversalLevelStrategy;
+use App\Services\Bots\Strategies\BollingerContrtrendStrategy;
+use App\Services\Bots\Strategies\RsiContrtrendStrategy;
 use App\Services\Bots\Strategies\OpenRouterLlmAnalystStrategy;
 use App\Services\Bots\Strategies\OpenRouterLlmStrategy;
 use App\Services\Bots\Strategies\SmcFlowStrategy;
@@ -467,9 +469,9 @@ class BotEngineService
                         );
                     }
 
-                    // Strong Level / Candle Reversal: push в Telegram после paper-сделки.
+                    // Strong Level / Candle Reversal / RSI Contrtrend: push в Telegram после paper-сделки.
                     $telegramResult = null;
-                    if ($bot->type === 'strong_level' || $bot->type === 'candle_reversal_confirm') {
+                    if (in_array($bot->type, ['strong_level', 'candle_reversal_confirm', 'rsi_contrtrend', 'bollinger_contrtrend'], true)) {
                         $telegramResult = app(TelegramAlertService::class)->sendStrongLevelAlert(
                             $bot,
                             $instrument,
@@ -911,6 +913,8 @@ class BotEngineService
                 'analysis_text' => match ($bot->type) {
                     'smc_flow' => 'SMC Flow: нет совпадения UT + 3BR + OB на последней закрытой свече.',
                     'strong_level', 'candle_reversal_confirm' => 'Нет сильного уровня у цены или нет подтверждения отскока (M5/M1).',
+                    'rsi_contrtrend' => 'Нет сетапа RSI Contrtrend: нужен аптренд+RSI перепроданность (CALL) или даунтренд+RSI перекупленность (PUT).',
+                    'bollinger_contrtrend' => 'Нет сетапа Bollinger Contrtrend: цена должна закрыться за нижней (CALL) или верхней (PUT) полосой BB.',
                     default => '',
                 },
                 'reasons_short' => [],
@@ -1001,6 +1005,8 @@ class BotEngineService
             'smc_flow' => 500,
             'strong_level' => 500,
             'candle_reversal_confirm' => 500,
+            'rsi_contrtrend' => 150,
+            'bollinger_contrtrend' => 150,
             'openrouter_llm_analyst' => 120,
             'strong_trend_telegram' => 30,
             default => 120,
@@ -1017,6 +1023,9 @@ class BotEngineService
             'smc_flow' => (int) ($config['expiry_sec'] ?? 180),
             'strong_trend_telegram' => (int) ($config['expiry_sec'] ?? 60),
             'strong_level' => (int) ($config['expiry_sec_bounce'] ?? 180),
+            // По ТЗ: M1 сигнал, экспирация 3 минуты по умолчанию.
+            'rsi_contrtrend' => (int) ($config['expiry_sec'] ?? 180),
+            'bollinger_contrtrend' => (int) ($config['expiry_sec'] ?? 180),
             // По ТЗ для MTF-разворота вход идёт на 5 минут независимо от рыночной фазы.
             'candle_reversal_confirm' => (int) ($config['expiry_sec'] ?? 300),
             default => (int) ($config['expiry_sec'] ?? 300),
@@ -1030,6 +1039,8 @@ class BotEngineService
             'openrouter_llm' => 0.65,
             'akim_trade_1m' => 0.58,
             'candle_reversal_confirm' => 0.58,
+            'rsi_contrtrend' => 0.56,
+            'bollinger_contrtrend' => 0.56,
             'strong_trend_telegram' => 0.55,
             default => 0.55,
         });
@@ -1038,6 +1049,8 @@ class BotEngineService
         $minPayout = (float) ($config['min_payout'] ?? match ($bot->type) {
             'openrouter_llm' => 70.0,
             'candle_reversal_confirm' => 82.0,
+            'rsi_contrtrend' => 75.0,
+            'bollinger_contrtrend' => 75.0,
             'three_candles_in_row' => 80.0,
             'akim_trade_1m' => 80.0,
             'strong_trend_telegram' => 80.0,
@@ -1045,6 +1058,11 @@ class BotEngineService
         });
         $staleAfterSec = (int) ($config['stale_after_sec'] ?? 30);
         $streakLen = max(2, min(30, (int) ($config['streak_len'] ?? 6)));
+        // RSI Contrtrend: короткая SMA по умолчанию (см. DEFAULT_* в стратегии).
+        $smaLen = max(2, (int) ($config['sma_length'] ?? ($bot->type === 'rsi_contrtrend' ? 10 : 50)));
+        $rsiLen = max(2, (int) ($config['rsi_length'] ?? ($bot->type === 'rsi_contrtrend' ? 14 : 20)));
+        // Bollinger Contrtrend: OsEngine Length=12 → первое значение на length+1.
+        $bbLen = max(2, (int) ($config['bb_length'] ?? 12));
         $minClosedBars = match ($bot->type) {
             'smc_flow' => 80,
             'strong_level' => max(80, (int) ($config['min_closed_bars'] ?? 200)),
@@ -1052,6 +1070,16 @@ class BotEngineService
             'strong_trend_telegram' => $streakLen,
             // Для MTF-разворота нужен запас истории M1 и стабильная M5-агрегация.
             'candle_reversal_confirm' => max(80, (int) ($config['min_closed_bars'] ?? 200)),
+            // OsEngine: SMA length+1 и RSI length+5.
+            'rsi_contrtrend' => max(
+                $smaLen + 1,
+                $rsiLen + 5,
+                (int) ($config['min_closed_bars'] ?? 0)
+            ),
+            'bollinger_contrtrend' => max(
+                $bbLen + 2,
+                (int) ($config['min_closed_bars'] ?? 0)
+            ),
             // LLM-боту нужен достаточно широкий контекст последних свечей,
             // иначе модель чаще даёт шумные и нестабильные решения.
             'openrouter_llm' => 20,
@@ -1066,7 +1094,7 @@ class BotEngineService
         };
         $dedupeBucketSec = match ($bot->type) {
             'strong_trend_telegram' => max(60, min(3600, (int) ($config['dedupe_bucket_sec'] ?? 300))),
-            'smc_flow', 'strong_level', 'openrouter_llm', 'candle_reversal_confirm' => max(60, min(900, $expirySec)),
+            'smc_flow', 'strong_level', 'openrouter_llm', 'candle_reversal_confirm', 'rsi_contrtrend', 'bollinger_contrtrend' => max(60, min(900, $expirySec)),
             default => max(60, min(3600, (int) ($config['dedupe_bucket_sec'] ?? 60))),
         };
 
@@ -1111,6 +1139,8 @@ class BotEngineService
             'three_candles_in_row' => new ThreeCandlesInRowStrategy,
             'akim_trade_1m' => new AkimTrade1MStrategy,
             'candle_reversal_confirm' => new CandleReversalLevelStrategy,
+            'rsi_contrtrend' => new RsiContrtrendStrategy,
+            'bollinger_contrtrend' => new BollingerContrtrendStrategy,
             // Новый бот полностью изолирован от старых эвристик:
             // торговое решение принимает только LLM через OpenRouter.
             'openrouter_llm' => new OpenRouterLlmStrategy($this->openRouterClient),

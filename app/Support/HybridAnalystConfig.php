@@ -78,6 +78,8 @@ final class HybridAnalystConfig
         'strong_level',
         'strong_trend_telegram',
         'candle_reversal_confirm',
+        'rsi_contrtrend',
+        'bollinger_contrtrend',
         'smc_flow',
         'three_candles_in_row',
         'openrouter_llm',

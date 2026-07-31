@@ -307,6 +307,77 @@ Artisan::command('bots:akim-bootstrap', function () {
     $this->info("Готово: #{$bot1->id} {$bot1->name} ({$bot1->type})");
 })->purpose('Создать бота AKIM TRADE 1M');
 
+Artisan::command('bots:rsi-contrtrend-bootstrap', function () {
+    $user = User::query()->orderBy('id')->first();
+    if (! $user) {
+        $this->error('Нет пользователей. Сначала зарегистрируйте пользователя.');
+
+        return;
+    }
+
+    // M1 OTC defaults (после sweep): SMA 10, RSI 14, уровни 60/40; expiry 3 мин.
+    // OsEngine 50/20/65-35 на PO почти не стреляет — см. RsiContrtrendStrategy.
+    $bot = Bot::query()->firstOrCreate(
+        ['user_id' => $user->id, 'name' => 'RSI Contrtrend', 'type' => 'rsi_contrtrend'],
+        [
+            'is_active' => false,
+            'config' => [
+                'count' => 150,
+                'expiry_sec' => 180,
+                'min_confidence' => 0.56,
+                'min_payout' => 75.0,
+                'stale_after_sec' => 60,
+                'sma_length' => 10,
+                'rsi_length' => 14,
+                'rsi_up' => 60.0,
+                'rsi_down' => 40.0,
+                'telegram_enabled' => false,
+                'telegram_notify_on' => 'signal_trade',
+                'telegram_alert_format' => 'brief',
+                'telegram_send_chart' => true,
+                'telegram_send_chart_m5' => true,
+                'version' => 'rsi_contrtrend_v1',
+            ],
+        ]
+    );
+
+    $this->info("Готово: #{$bot->id} {$bot->name} ({$bot->type})");
+})->purpose('Создать бота RSI Contrtrend (OsEngine → CALL/PUT)');
+
+Artisan::command('bots:bollinger-contrtrend-bootstrap', function () {
+    $user = User::query()->orderBy('id')->first();
+    if (! $user) {
+        $this->error('Нет пользователей. Сначала зарегистрируйте пользователя.');
+
+        return;
+    }
+
+    // OsEngine StrategyBollinger: BB Length 12, Deviation 2; BO expiry 3 мин на M1.
+    $bot = Bot::query()->firstOrCreate(
+        ['user_id' => $user->id, 'name' => 'Bollinger Contrtrend', 'type' => 'bollinger_contrtrend'],
+        [
+            'is_active' => false,
+            'config' => [
+                'count' => 150,
+                'expiry_sec' => 180,
+                'min_confidence' => 0.56,
+                'min_payout' => 75.0,
+                'stale_after_sec' => 60,
+                'bb_length' => 12,
+                'bb_deviation' => 2.0,
+                'telegram_enabled' => false,
+                'telegram_notify_on' => 'signal_trade',
+                'telegram_alert_format' => 'brief',
+                'telegram_send_chart' => true,
+                'telegram_send_chart_m5' => true,
+                'version' => 'bollinger_contrtrend_v1',
+            ],
+        ]
+    );
+
+    $this->info("Готово: #{$bot->id} {$bot->name} ({$bot->type})");
+})->purpose('Создать бота Bollinger Contrtrend (OsEngine StrategyBollinger → CALL/PUT)');
+
 Artisan::command('bots:reversal-confirm-bootstrap', function () {
     $user = User::query()->orderBy('id')->first();
     if (! $user) {

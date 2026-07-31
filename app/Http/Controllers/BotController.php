@@ -864,7 +864,7 @@ class BotController extends Controller
     public function cards(Bot $bot): View
     {
         $this->ensureBotOwner($bot);
-        abort_unless(in_array($bot->type, ['strong_level', 'candle_reversal_confirm'], true), 404);
+        abort_unless(in_array($bot->type, ['strong_level', 'candle_reversal_confirm', 'rsi_contrtrend', 'bollinger_contrtrend'], true), 404);
 
         return view('bots.cards', ['bot' => $bot]);
     }
@@ -875,7 +875,7 @@ class BotController extends Controller
     public function cardsData(Bot $bot, StrongLevelCardPresenter $presenter): JsonResponse
     {
         $this->ensureBotOwner($bot);
-        abort_unless(in_array($bot->type, ['strong_level', 'candle_reversal_confirm'], true), 404);
+        abort_unless(in_array($bot->type, ['strong_level', 'candle_reversal_confirm', 'rsi_contrtrend', 'bollinger_contrtrend'], true), 404);
 
         $now = now();
 
@@ -933,7 +933,7 @@ class BotController extends Controller
     public function cardsChart(Bot $bot, BotTrade $trade, Request $request, StrongLevelCardPresenter $presenter): Response
     {
         $this->ensureBotOwner($bot);
-        abort_unless(in_array($bot->type, ['strong_level', 'candle_reversal_confirm'], true), 404);
+        abort_unless(in_array($bot->type, ['strong_level', 'candle_reversal_confirm', 'rsi_contrtrend', 'bollinger_contrtrend'], true), 404);
         abort_unless((int) $trade->bot_id === (int) $bot->id, 404);
 
         $timeframe = (int) $request->query('tf', 1);
@@ -980,7 +980,7 @@ class BotController extends Controller
         return view('bots.settings', [
             'bot' => $bot,
             'openrouterModels' => $openrouterModels,
-            'chartAnalystBots' => in_array($bot->type, ['strong_level', 'strong_trend_telegram', 'candle_reversal_confirm'], true)
+            'chartAnalystBots' => in_array($bot->type, ['strong_level', 'strong_trend_telegram', 'candle_reversal_confirm', 'rsi_contrtrend', 'bollinger_contrtrend'], true)
                 ? Bot::query()
                     ->where('user_id', $bot->user_id)
                     ->where('type', 'openrouter_llm_analyst')
@@ -1052,6 +1052,96 @@ class BotController extends Controller
                 'blocked_instruments' => $blockedList,
             ]);
             unset($config['streak_len'], $config['confirm_streak_len']);
+        } elseif ($bot->type === 'rsi_contrtrend') {
+            // OsEngine RsiContrtrend → CALL/PUT: SMA-фильтр тренда + RSI перекуп/перепрод.
+            $extra = $request->validate([
+                'count' => ['required', 'integer', 'min:60', 'max:5000'],
+                'expiry_sec' => ['required', 'integer', 'min:60', 'max:900'],
+                'min_confidence' => ['required', 'numeric', 'min:0', 'max:1'],
+                'min_payout' => ['required', 'numeric', 'min:0', 'max:100'],
+                'stale_after_sec' => ['required', 'integer', 'min:5', 'max:600'],
+                'sma_length' => ['required', 'integer', 'min:2', 'max:500'],
+                'rsi_length' => ['required', 'integer', 'min:2', 'max:500'],
+                'rsi_up' => ['required', 'numeric', 'min:50', 'max:95'],
+                'rsi_down' => ['required', 'numeric', 'min:5', 'max:50'],
+                'telegram_enabled' => ['sometimes', 'boolean'],
+                'telegram_bot_token' => ['nullable', 'string', 'max:128'],
+                'telegram_chat_id' => ['nullable', 'string', 'max:64'],
+                'telegram_notify_on' => ['required', 'string', Rule::in(['signal_trade', 'off'])],
+                'telegram_alert_format' => ['required', 'string', Rule::in(['brief', 'detailed', 'card'])],
+                'telegram_send_chart' => ['required', 'string', Rule::in(['1', '0'])],
+                'telegram_send_chart_m5' => ['required', 'string', Rule::in(['1', '0'])],
+                'telegram_analyst_llm_enabled' => ['sometimes', 'boolean'],
+                'telegram_analyst_bot_id' => ['nullable', 'integer', 'min:1'],
+                'telegram_analyst_llm_question' => ['nullable', 'string', 'max:500'],
+            ]);
+            $existingToken = trim((string) (($bot->config ?? [])['telegram_bot_token'] ?? ''));
+            $tokenInput = trim((string) ($extra['telegram_bot_token'] ?? ''));
+            $config = array_merge($bot->config ?? [], [
+                'count' => (int) $extra['count'],
+                'expiry_sec' => (int) $extra['expiry_sec'],
+                'min_confidence' => (float) $extra['min_confidence'],
+                'min_payout' => (float) $extra['min_payout'],
+                'stale_after_sec' => (int) $extra['stale_after_sec'],
+                'sma_length' => (int) $extra['sma_length'],
+                'rsi_length' => (int) $extra['rsi_length'],
+                'rsi_up' => (float) $extra['rsi_up'],
+                'rsi_down' => (float) $extra['rsi_down'],
+                'telegram_enabled' => $request->boolean('telegram_enabled'),
+                'telegram_bot_token' => $tokenInput !== '' ? $tokenInput : $existingToken,
+                'telegram_chat_id' => trim((string) ($extra['telegram_chat_id'] ?? '')),
+                'telegram_notify_on' => (string) $extra['telegram_notify_on'],
+                'telegram_alert_format' => (string) $extra['telegram_alert_format'],
+                'telegram_send_chart' => $extra['telegram_send_chart'] === '1',
+                'telegram_send_chart_m5' => $extra['telegram_send_chart_m5'] === '1',
+                'telegram_analyst_llm_enabled' => $request->boolean('telegram_analyst_llm_enabled'),
+                'telegram_analyst_bot_id' => isset($extra['telegram_analyst_bot_id']) ? (int) $extra['telegram_analyst_bot_id'] : null,
+                'telegram_analyst_llm_question' => trim((string) ($extra['telegram_analyst_llm_question'] ?? '')),
+                'version' => 'rsi_contrtrend_v1',
+            ]);
+        } elseif ($bot->type === 'bollinger_contrtrend') {
+            // OsEngine StrategyBollinger → CALL/PUT: close за нижней/верхней полосой BB.
+            $extra = $request->validate([
+                'count' => ['required', 'integer', 'min:40', 'max:5000'],
+                'expiry_sec' => ['required', 'integer', 'min:60', 'max:900'],
+                'min_confidence' => ['required', 'numeric', 'min:0', 'max:1'],
+                'min_payout' => ['required', 'numeric', 'min:0', 'max:100'],
+                'stale_after_sec' => ['required', 'integer', 'min:5', 'max:600'],
+                'bb_length' => ['required', 'integer', 'min:2', 'max:500'],
+                'bb_deviation' => ['required', 'numeric', 'min:0.1', 'max:10'],
+                'telegram_enabled' => ['sometimes', 'boolean'],
+                'telegram_bot_token' => ['nullable', 'string', 'max:128'],
+                'telegram_chat_id' => ['nullable', 'string', 'max:64'],
+                'telegram_notify_on' => ['required', 'string', Rule::in(['signal_trade', 'off'])],
+                'telegram_alert_format' => ['required', 'string', Rule::in(['brief', 'detailed', 'card'])],
+                'telegram_send_chart' => ['required', 'string', Rule::in(['1', '0'])],
+                'telegram_send_chart_m5' => ['required', 'string', Rule::in(['1', '0'])],
+                'telegram_analyst_llm_enabled' => ['sometimes', 'boolean'],
+                'telegram_analyst_bot_id' => ['nullable', 'integer', 'min:1'],
+                'telegram_analyst_llm_question' => ['nullable', 'string', 'max:500'],
+            ]);
+            $existingToken = trim((string) (($bot->config ?? [])['telegram_bot_token'] ?? ''));
+            $tokenInput = trim((string) ($extra['telegram_bot_token'] ?? ''));
+            $config = array_merge($bot->config ?? [], [
+                'count' => (int) $extra['count'],
+                'expiry_sec' => (int) $extra['expiry_sec'],
+                'min_confidence' => (float) $extra['min_confidence'],
+                'min_payout' => (float) $extra['min_payout'],
+                'stale_after_sec' => (int) $extra['stale_after_sec'],
+                'bb_length' => (int) $extra['bb_length'],
+                'bb_deviation' => (float) $extra['bb_deviation'],
+                'telegram_enabled' => $request->boolean('telegram_enabled'),
+                'telegram_bot_token' => $tokenInput !== '' ? $tokenInput : $existingToken,
+                'telegram_chat_id' => trim((string) ($extra['telegram_chat_id'] ?? '')),
+                'telegram_notify_on' => (string) $extra['telegram_notify_on'],
+                'telegram_alert_format' => (string) $extra['telegram_alert_format'],
+                'telegram_send_chart' => $extra['telegram_send_chart'] === '1',
+                'telegram_send_chart_m5' => $extra['telegram_send_chart_m5'] === '1',
+                'telegram_analyst_llm_enabled' => $request->boolean('telegram_analyst_llm_enabled'),
+                'telegram_analyst_bot_id' => isset($extra['telegram_analyst_bot_id']) ? (int) $extra['telegram_analyst_bot_id'] : null,
+                'telegram_analyst_llm_question' => trim((string) ($extra['telegram_analyst_llm_question'] ?? '')),
+                'version' => 'bollinger_contrtrend_v1',
+            ]);
         } elseif ($bot->type === 'akim_trade_1m') {
             // Самостоятельный профиль AKIM 1M: отдельная ветка, чтобы не смешивать с legacy three_candles.
             $extra = $request->validate([
@@ -1596,7 +1686,7 @@ class BotController extends Controller
     public function telegramTest(Bot $bot, TelegramAlertService $telegram): JsonResponse
     {
         $this->ensureBotOwner($bot);
-        if (! in_array($bot->type, ['strong_trend_telegram', 'strong_level', 'openrouter_llm_analyst', 'candle_reversal_confirm'], true)) {
+        if (! in_array($bot->type, ['strong_trend_telegram', 'strong_level', 'openrouter_llm_analyst', 'candle_reversal_confirm', 'rsi_contrtrend', 'bollinger_contrtrend'], true)) {
             return response()->json(['ok' => false, 'error' => 'unsupported_bot_type'], 422);
         }
 
@@ -1611,7 +1701,7 @@ class BotController extends Controller
     public function telegramDiscoverChat(Bot $bot, TelegramAlertService $telegram): JsonResponse
     {
         $this->ensureBotOwner($bot);
-        if (! in_array($bot->type, ['strong_trend_telegram', 'strong_level', 'openrouter_llm_analyst', 'candle_reversal_confirm'], true)) {
+        if (! in_array($bot->type, ['strong_trend_telegram', 'strong_level', 'openrouter_llm_analyst', 'candle_reversal_confirm', 'rsi_contrtrend', 'bollinger_contrtrend'], true)) {
             return response()->json(['ok' => false, 'error' => 'unsupported_bot_type'], 422);
         }
 
@@ -1642,7 +1732,7 @@ class BotController extends Controller
         $chats = $result['chats'] ?? [];
         $botUsernameHint = match ($bot->type) {
             'strong_level' => '@strong_level_bot',
-            'candle_reversal_confirm' => '@candle_reversal_confirm_bot',
+            'candle_reversal_confirm', 'rsi_contrtrend', 'bollinger_contrtrend' => '@candle_reversal_confirm_bot',
             'openrouter_llm_analyst' => '@chart_analyct_smc_flow_bot',
             default => '@trend1123_bot',
         };

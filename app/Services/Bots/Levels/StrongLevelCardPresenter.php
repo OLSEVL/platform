@@ -356,6 +356,8 @@ class StrongLevelCardPresenter
         $reasons = $this->normalizeReasonsList($decision['reasons_short'] ?? []);
         $confidence = isset($decision['confidence']) ? (float) $decision['confidence'] : null;
         $isCrc = $this->alertPresenter->isCrcDecision($decision, $botType);
+        $isRsi = $this->alertPresenter->isRsiContrtrendDecision($decision, $botType);
+        $isBb = $this->alertPresenter->isBollingerContrtrendDecision($decision, $botType);
 
         $instrumentEsc = htmlspecialchars($instrument, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
         $sideEsc = htmlspecialchars($sideRu, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
@@ -363,7 +365,7 @@ class StrongLevelCardPresenter
         $strategyTitle = htmlspecialchars($this->strategyTitle($features, $botType, $decision), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
         $narrative = htmlspecialchars($this->strategyNarrative($features, $side, $botType, $decision, $reasons), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
         $technical = htmlspecialchars($this->technicalDetails($features, $reasons, $botType, $decision), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
-        $headerEmoji = $isCrc ? '🔄' : '🎯';
+        $headerEmoji = $isBb ? '📊' : ($isRsi ? '📉' : ($isCrc ? '🔄' : '🎯'));
 
         $lines = [
             $headerEmoji.' <b>'.$instrumentEsc.' · '.$sideEsc.' · '.$expiryLabel.' · 1м</b>',
