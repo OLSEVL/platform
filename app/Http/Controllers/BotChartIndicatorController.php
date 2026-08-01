@@ -88,6 +88,70 @@ use App\Support\KalmanSettingsForm;
 use App\Services\Indicators\KalmanIndicatorService;
 use App\Support\FractalSettingsForm;
 use App\Services\Indicators\FractalIndicatorService;
+use App\Support\DonchianSettingsForm;
+use App\Services\Indicators\DonchianIndicatorService;
+use App\Support\StochRsiSettingsForm;
+use App\Services\Indicators\StochRsiIndicatorService;
+use App\Support\AcSettingsForm;
+use App\Services\Indicators\AcIndicatorService;
+use App\Support\BullsPowerSettingsForm;
+use App\Services\Indicators\BullsPowerIndicatorService;
+use App\Support\BearsPowerSettingsForm;
+use App\Services\Indicators\BearsPowerIndicatorService;
+use App\Support\DpoSettingsForm;
+use App\Services\Indicators\DpoIndicatorService;
+use App\Support\QstickSettingsForm;
+use App\Services\Indicators\QstickIndicatorService;
+use App\Support\VhFilterSettingsForm;
+use App\Services\Indicators\VhFilterIndicatorService;
+use App\Support\EfficiencyRatioSettingsForm;
+use App\Services\Indicators\EfficiencyRatioIndicatorService;
+use App\Support\RaviSettingsForm;
+use App\Services\Indicators\RaviIndicatorService;
+use App\Support\CogSettingsForm;
+use App\Services\Indicators\CogIndicatorService;
+use App\Support\PivotFloorSettingsForm;
+use App\Services\Indicators\PivotFloorIndicatorService;
+use App\Support\MassIndexSettingsForm;
+use App\Services\Indicators\MassIndexIndicatorService;
+use App\Services\Indicators\NrtrWatrIndicatorService;
+use App\Support\NrtrWatrSettingsForm;
+use App\Services\Indicators\PriceChannelAdaptiveIndicatorService;
+use App\Support\PriceChannelAdaptiveSettingsForm;
+use App\Services\Indicators\PriceChannelOffsetIndicatorService;
+use App\Support\PriceChannelOffsetSettingsForm;
+use App\Services\Indicators\ParabolicBollingerIndicatorService;
+use App\Support\ParabolicBollingerSettingsForm;
+use App\Services\Indicators\ParabolicPriceChannelIndicatorService;
+use App\Support\ParabolicPriceChannelSettingsForm;
+use App\Services\Indicators\AtrChannelIndicatorService;
+use App\Support\AtrChannelSettingsForm;
+use App\Services\Indicators\OffsetSmaIndicatorService;
+use App\Support\OffsetSmaSettingsForm;
+use App\Services\Indicators\OffsetEmaIndicatorService;
+use App\Support\OffsetEmaSettingsForm;
+use App\Services\Indicators\OffsetSsmaIndicatorService;
+use App\Support\OffsetSsmaSettingsForm;
+use App\Services\Indicators\VolatilityAverageIndicatorService;
+use App\Support\VolatilityAverageSettingsForm;
+use App\Services\Indicators\VolatilityAverageChannelIndicatorService;
+use App\Support\VolatilityAverageChannelSettingsForm;
+use App\Services\Indicators\PriceOscillatorIndicatorService;
+use App\Support\PriceOscillatorSettingsForm;
+use App\Services\Indicators\DynamicTrendDetectorIndicatorService;
+use App\Support\DynamicTrendDetectorSettingsForm;
+use App\Services\Indicators\AdaptiveLookBackIndicatorService;
+use App\Support\AdaptiveLookBackSettingsForm;
+use App\Services\Indicators\LinRegChannelFastIndicatorService;
+use App\Support\LinRegChannelFastSettingsForm;
+use App\Services\Indicators\VolatilityCandlesIndicatorService;
+use App\Support\VolatilityCandlesSettingsForm;
+use App\Services\Indicators\ZigZagIndicatorService;
+use App\Support\ZigZagSettingsForm;
+use App\Services\Indicators\VolatilityAverageTwiceIndicatorService;
+use App\Support\VolatilityAverageTwiceSettingsForm;
+use App\Services\Indicators\VolatilityStagesAWIndicatorService;
+use App\Support\VolatilityStagesAWSettingsForm;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\View\View;
@@ -828,6 +892,486 @@ class BotChartIndicatorController extends Controller
     public function updateFractal(Request $request, Bot $bot): RedirectResponse
     {
         return $this->saveClassic($request, $bot, IndicatorSetting::KEY_FRACTAL, FractalIndicatorService::class, FractalSettingsForm::class, 'bots.indicators.fractal.edit', 'Fractal');
+    }
+
+    public function editDonchian(Bot $bot): View
+    {
+        $this->ensureBotOwner($bot);
+
+        return view('bots.indicators.donchian', [
+            'bot' => $bot,
+            'p' => IndicatorSetting::mergedDonchianParams($bot),
+        ]);
+    }
+
+    public function updateDonchian(Request $request, Bot $bot): RedirectResponse
+    {
+        return $this->saveClassic($request, $bot, IndicatorSetting::KEY_DONCHIAN, DonchianIndicatorService::class, DonchianSettingsForm::class, 'bots.indicators.donchian.edit', 'Donchian');
+    }
+
+    public function editStochRsi(Bot $bot): View
+    {
+        $this->ensureBotOwner($bot);
+
+        return view('bots.indicators.stoch-rsi', [
+            'bot' => $bot,
+            'p' => IndicatorSetting::mergedStochRsiParams($bot),
+        ]);
+    }
+
+    public function updateStochRsi(Request $request, Bot $bot): RedirectResponse
+    {
+        return $this->saveClassic($request, $bot, IndicatorSetting::KEY_STOCH_RSI, StochRsiIndicatorService::class, StochRsiSettingsForm::class, 'bots.indicators.stoch-rsi.edit', 'Stoch RSI');
+    }
+
+    public function editAc(Bot $bot): View
+    {
+        $this->ensureBotOwner($bot);
+
+        return view('bots.indicators.ac', [
+            'bot' => $bot,
+            'p' => IndicatorSetting::mergedAcParams($bot),
+        ]);
+    }
+
+    public function updateAc(Request $request, Bot $bot): RedirectResponse
+    {
+        return $this->saveClassic($request, $bot, IndicatorSetting::KEY_AC, AcIndicatorService::class, AcSettingsForm::class, 'bots.indicators.ac.edit', 'AC');
+    }
+
+    public function editBullsPower(Bot $bot): View
+    {
+        $this->ensureBotOwner($bot);
+
+        return view('bots.indicators.bulls-power', [
+            'bot' => $bot,
+            'p' => IndicatorSetting::mergedBullsPowerParams($bot),
+        ]);
+    }
+
+    public function updateBullsPower(Request $request, Bot $bot): RedirectResponse
+    {
+        return $this->saveClassic($request, $bot, IndicatorSetting::KEY_BULLS_POWER, BullsPowerIndicatorService::class, BullsPowerSettingsForm::class, 'bots.indicators.bulls-power.edit', 'Bulls Power');
+    }
+
+    public function editBearsPower(Bot $bot): View
+    {
+        $this->ensureBotOwner($bot);
+
+        return view('bots.indicators.bears-power', [
+            'bot' => $bot,
+            'p' => IndicatorSetting::mergedBearsPowerParams($bot),
+        ]);
+    }
+
+    public function updateBearsPower(Request $request, Bot $bot): RedirectResponse
+    {
+        return $this->saveClassic($request, $bot, IndicatorSetting::KEY_BEARS_POWER, BearsPowerIndicatorService::class, BearsPowerSettingsForm::class, 'bots.indicators.bears-power.edit', 'Bears Power');
+    }
+
+    public function editDpo(Bot $bot): View
+    {
+        $this->ensureBotOwner($bot);
+
+        return view('bots.indicators.dpo', [
+            'bot' => $bot,
+            'p' => IndicatorSetting::mergedDpoParams($bot),
+        ]);
+    }
+
+    public function updateDpo(Request $request, Bot $bot): RedirectResponse
+    {
+        return $this->saveClassic($request, $bot, IndicatorSetting::KEY_DPO, DpoIndicatorService::class, DpoSettingsForm::class, 'bots.indicators.dpo.edit', 'DPO');
+    }
+
+    public function editQstick(Bot $bot): View
+    {
+        $this->ensureBotOwner($bot);
+
+        return view('bots.indicators.qstick', [
+            'bot' => $bot,
+            'p' => IndicatorSetting::mergedQstickParams($bot),
+        ]);
+    }
+
+    public function updateQstick(Request $request, Bot $bot): RedirectResponse
+    {
+        return $this->saveClassic($request, $bot, IndicatorSetting::KEY_QSTICK, QstickIndicatorService::class, QstickSettingsForm::class, 'bots.indicators.qstick.edit', 'QStick');
+    }
+
+    public function editVhFilter(Bot $bot): View
+    {
+        $this->ensureBotOwner($bot);
+
+        return view('bots.indicators.vh-filter', [
+            'bot' => $bot,
+            'p' => IndicatorSetting::mergedVhFilterParams($bot),
+        ]);
+    }
+
+    public function updateVhFilter(Request $request, Bot $bot): RedirectResponse
+    {
+        return $this->saveClassic($request, $bot, IndicatorSetting::KEY_VH_FILTER, VhFilterIndicatorService::class, VhFilterSettingsForm::class, 'bots.indicators.vh-filter.edit', 'VHFilter');
+    }
+
+    public function editEfficiencyRatio(Bot $bot): View
+    {
+        $this->ensureBotOwner($bot);
+
+        return view('bots.indicators.efficiency-ratio', [
+            'bot' => $bot,
+            'p' => IndicatorSetting::mergedEfficiencyRatioParams($bot),
+        ]);
+    }
+
+    public function updateEfficiencyRatio(Request $request, Bot $bot): RedirectResponse
+    {
+        return $this->saveClassic($request, $bot, IndicatorSetting::KEY_EFFICIENCY_RATIO, EfficiencyRatioIndicatorService::class, EfficiencyRatioSettingsForm::class, 'bots.indicators.efficiency-ratio.edit', 'Efficiency Ratio');
+    }
+
+    public function editRavi(Bot $bot): View
+    {
+        $this->ensureBotOwner($bot);
+
+        return view('bots.indicators.ravi', [
+            'bot' => $bot,
+            'p' => IndicatorSetting::mergedRaviParams($bot),
+        ]);
+    }
+
+    public function updateRavi(Request $request, Bot $bot): RedirectResponse
+    {
+        return $this->saveClassic($request, $bot, IndicatorSetting::KEY_RAVI, RaviIndicatorService::class, RaviSettingsForm::class, 'bots.indicators.ravi.edit', 'RAVI');
+    }
+
+    public function editCog(Bot $bot): View
+    {
+        $this->ensureBotOwner($bot);
+
+        return view('bots.indicators.cog', [
+            'bot' => $bot,
+            'p' => IndicatorSetting::mergedCogParams($bot),
+        ]);
+    }
+
+    public function updateCog(Request $request, Bot $bot): RedirectResponse
+    {
+        return $this->saveClassic($request, $bot, IndicatorSetting::KEY_COG, CogIndicatorService::class, CogSettingsForm::class, 'bots.indicators.cog.edit', 'COG');
+    }
+
+    public function editPivotFloor(Bot $bot): View
+    {
+        $this->ensureBotOwner($bot);
+
+        return view('bots.indicators.pivot-floor', [
+            'bot' => $bot,
+            'p' => IndicatorSetting::mergedPivotFloorParams($bot),
+        ]);
+    }
+
+    public function updatePivotFloor(Request $request, Bot $bot): RedirectResponse
+    {
+        return $this->saveClassic($request, $bot, IndicatorSetting::KEY_PIVOT_FLOOR, PivotFloorIndicatorService::class, PivotFloorSettingsForm::class, 'bots.indicators.pivot-floor.edit', 'Pivot Floor');
+    }
+
+    public function editMassIndex(Bot $bot): View
+    {
+        $this->ensureBotOwner($bot);
+
+        return view('bots.indicators.mass-index', [
+            'bot' => $bot,
+            'p' => IndicatorSetting::mergedMassIndexParams($bot),
+        ]);
+    }
+
+    public function updateMassIndex(Request $request, Bot $bot): RedirectResponse
+    {
+        return $this->saveClassic($request, $bot, IndicatorSetting::KEY_MASS_INDEX, MassIndexIndicatorService::class, MassIndexSettingsForm::class, 'bots.indicators.mass-index.edit', 'Mass Index');
+    }
+
+    public function editNrtrWatr(Bot $bot): View
+    {
+        $this->ensureBotOwner($bot);
+
+        return view('bots.indicators.nrtr-watr', [
+            'bot' => $bot,
+            'p' => IndicatorSetting::mergedNrtrWatrParams($bot),
+        ]);
+    }
+
+    public function updateNrtrWatr(Request $request, Bot $bot): RedirectResponse
+    {
+        return $this->saveClassic($request, $bot, IndicatorSetting::KEY_NRTR_WATR, NrtrWatrIndicatorService::class, NrtrWatrSettingsForm::class, 'bots.indicators.nrtr-watr.edit', 'NRTR WATR');
+    }
+
+    public function editPriceChannelAdaptive(Bot $bot): View
+    {
+        $this->ensureBotOwner($bot);
+
+        return view('bots.indicators.price-channel-adaptive', [
+            'bot' => $bot,
+            'p' => IndicatorSetting::mergedPriceChannelAdaptiveParams($bot),
+        ]);
+    }
+
+    public function updatePriceChannelAdaptive(Request $request, Bot $bot): RedirectResponse
+    {
+        return $this->saveClassic($request, $bot, IndicatorSetting::KEY_PRICE_CHANNEL_ADAPTIVE, PriceChannelAdaptiveIndicatorService::class, PriceChannelAdaptiveSettingsForm::class, 'bots.indicators.price-channel-adaptive.edit', 'PC Adaptive');
+    }
+
+    public function editPriceChannelOffset(Bot $bot): View
+    {
+        $this->ensureBotOwner($bot);
+
+        return view('bots.indicators.price-channel-offset', [
+            'bot' => $bot,
+            'p' => IndicatorSetting::mergedPriceChannelOffsetParams($bot),
+        ]);
+    }
+
+    public function updatePriceChannelOffset(Request $request, Bot $bot): RedirectResponse
+    {
+        return $this->saveClassic($request, $bot, IndicatorSetting::KEY_PRICE_CHANNEL_OFFSET, PriceChannelOffsetIndicatorService::class, PriceChannelOffsetSettingsForm::class, 'bots.indicators.price-channel-offset.edit', 'PC Offset');
+    }
+
+    public function editParabolicBollinger(Bot $bot): View
+    {
+        $this->ensureBotOwner($bot);
+
+        return view('bots.indicators.parabolic-bollinger', [
+            'bot' => $bot,
+            'p' => IndicatorSetting::mergedParabolicBollingerParams($bot),
+        ]);
+    }
+
+    public function updateParabolicBollinger(Request $request, Bot $bot): RedirectResponse
+    {
+        return $this->saveClassic($request, $bot, IndicatorSetting::KEY_PARABOLIC_BOLLINGER, ParabolicBollingerIndicatorService::class, ParabolicBollingerSettingsForm::class, 'bots.indicators.parabolic-bollinger.edit', 'Parabolic BB');
+    }
+
+    public function editParabolicPriceChannel(Bot $bot): View
+    {
+        $this->ensureBotOwner($bot);
+
+        return view('bots.indicators.parabolic-price-channel', [
+            'bot' => $bot,
+            'p' => IndicatorSetting::mergedParabolicPriceChannelParams($bot),
+        ]);
+    }
+
+    public function updateParabolicPriceChannel(Request $request, Bot $bot): RedirectResponse
+    {
+        return $this->saveClassic($request, $bot, IndicatorSetting::KEY_PARABOLIC_PRICE_CHANNEL, ParabolicPriceChannelIndicatorService::class, ParabolicPriceChannelSettingsForm::class, 'bots.indicators.parabolic-price-channel.edit', 'Parabolic PC');
+    }
+
+    public function editAtrChannel(Bot $bot): View
+    {
+        $this->ensureBotOwner($bot);
+
+        return view('bots.indicators.atr-channel', [
+            'bot' => $bot,
+            'p' => IndicatorSetting::mergedAtrChannelParams($bot),
+        ]);
+    }
+
+    public function updateAtrChannel(Request $request, Bot $bot): RedirectResponse
+    {
+        return $this->saveClassic($request, $bot, IndicatorSetting::KEY_ATR_CHANNEL, AtrChannelIndicatorService::class, AtrChannelSettingsForm::class, 'bots.indicators.atr-channel.edit', 'ATR Channel');
+    }
+
+    public function editOffsetSma(Bot $bot): View
+    {
+        $this->ensureBotOwner($bot);
+
+        return view('bots.indicators.offset-sma', [
+            'bot' => $bot,
+            'p' => IndicatorSetting::mergedOffsetSmaParams($bot),
+        ]);
+    }
+
+    public function updateOffsetSma(Request $request, Bot $bot): RedirectResponse
+    {
+        return $this->saveClassic($request, $bot, IndicatorSetting::KEY_OFFSET_SMA, OffsetSmaIndicatorService::class, OffsetSmaSettingsForm::class, 'bots.indicators.offset-sma.edit', 'Offset SMA');
+    }
+
+    public function editOffsetEma(Bot $bot): View
+    {
+        $this->ensureBotOwner($bot);
+
+        return view('bots.indicators.offset-ema', [
+            'bot' => $bot,
+            'p' => IndicatorSetting::mergedOffsetEmaParams($bot),
+        ]);
+    }
+
+    public function updateOffsetEma(Request $request, Bot $bot): RedirectResponse
+    {
+        return $this->saveClassic($request, $bot, IndicatorSetting::KEY_OFFSET_EMA, OffsetEmaIndicatorService::class, OffsetEmaSettingsForm::class, 'bots.indicators.offset-ema.edit', 'Offset EMA');
+    }
+
+    public function editOffsetSsma(Bot $bot): View
+    {
+        $this->ensureBotOwner($bot);
+
+        return view('bots.indicators.offset-ssma', [
+            'bot' => $bot,
+            'p' => IndicatorSetting::mergedOffsetSsmaParams($bot),
+        ]);
+    }
+
+    public function updateOffsetSsma(Request $request, Bot $bot): RedirectResponse
+    {
+        return $this->saveClassic($request, $bot, IndicatorSetting::KEY_OFFSET_SSMA, OffsetSsmaIndicatorService::class, OffsetSsmaSettingsForm::class, 'bots.indicators.offset-ssma.edit', 'Offset SSMA');
+    }
+
+    public function editVolatilityAverage(Bot $bot): View
+    {
+        $this->ensureBotOwner($bot);
+
+        return view('bots.indicators.volatility-average', [
+            'bot' => $bot,
+            'p' => IndicatorSetting::mergedVolatilityAverageParams($bot),
+        ]);
+    }
+
+    public function updateVolatilityAverage(Request $request, Bot $bot): RedirectResponse
+    {
+        return $this->saveClassic($request, $bot, IndicatorSetting::KEY_VOLATILITY_AVERAGE, VolatilityAverageIndicatorService::class, VolatilityAverageSettingsForm::class, 'bots.indicators.volatility-average.edit', 'Vol Average');
+    }
+
+    public function editVolatilityAverageChannel(Bot $bot): View
+    {
+        $this->ensureBotOwner($bot);
+
+        return view('bots.indicators.volatility-average-channel', [
+            'bot' => $bot,
+            'p' => IndicatorSetting::mergedVolatilityAverageChannelParams($bot),
+        ]);
+    }
+
+    public function updateVolatilityAverageChannel(Request $request, Bot $bot): RedirectResponse
+    {
+        return $this->saveClassic($request, $bot, IndicatorSetting::KEY_VOLATILITY_AVERAGE_CHANNEL, VolatilityAverageChannelIndicatorService::class, VolatilityAverageChannelSettingsForm::class, 'bots.indicators.volatility-average-channel.edit', 'Vol Avg Channel');
+    }
+
+    public function editPriceOscillator(Bot $bot): View
+    {
+        $this->ensureBotOwner($bot);
+
+        return view('bots.indicators.price-oscillator', [
+            'bot' => $bot,
+            'p' => IndicatorSetting::mergedPriceOscillatorParams($bot),
+        ]);
+    }
+
+    public function updatePriceOscillator(Request $request, Bot $bot): RedirectResponse
+    {
+        return $this->saveClassic($request, $bot, IndicatorSetting::KEY_PRICE_OSCILLATOR, PriceOscillatorIndicatorService::class, PriceOscillatorSettingsForm::class, 'bots.indicators.price-oscillator.edit', 'Price Oscillator');
+    }
+
+    public function editDynamicTrendDetector(Bot $bot): View
+    {
+        $this->ensureBotOwner($bot);
+
+        return view('bots.indicators.dynamic-trend-detector', [
+            'bot' => $bot,
+            'p' => IndicatorSetting::mergedDynamicTrendDetectorParams($bot),
+        ]);
+    }
+
+    public function updateDynamicTrendDetector(Request $request, Bot $bot): RedirectResponse
+    {
+        return $this->saveClassic($request, $bot, IndicatorSetting::KEY_DYNAMIC_TREND_DETECTOR, DynamicTrendDetectorIndicatorService::class, DynamicTrendDetectorSettingsForm::class, 'bots.indicators.dynamic-trend-detector.edit', 'DTD');
+    }
+
+    public function editAdaptiveLookBack(Bot $bot): View
+    {
+        $this->ensureBotOwner($bot);
+
+        return view('bots.indicators.adaptive-look-back', [
+            'bot' => $bot,
+            'p' => IndicatorSetting::mergedAdaptiveLookBackParams($bot),
+        ]);
+    }
+
+    public function updateAdaptiveLookBack(Request $request, Bot $bot): RedirectResponse
+    {
+        return $this->saveClassic($request, $bot, IndicatorSetting::KEY_ADAPTIVE_LOOK_BACK, AdaptiveLookBackIndicatorService::class, AdaptiveLookBackSettingsForm::class, 'bots.indicators.adaptive-look-back.edit', 'Adaptive Look Back');
+    }
+
+    public function editLinRegChannelFast(Bot $bot): View
+    {
+        $this->ensureBotOwner($bot);
+
+        return view('bots.indicators.linreg-channel-fast', [
+            'bot' => $bot,
+            'p' => IndicatorSetting::mergedLinRegChannelFastParams($bot),
+        ]);
+    }
+
+    public function updateLinRegChannelFast(Request $request, Bot $bot): RedirectResponse
+    {
+        return $this->saveClassic($request, $bot, IndicatorSetting::KEY_LINREG_CHANNEL_FAST, LinRegChannelFastIndicatorService::class, LinRegChannelFastSettingsForm::class, 'bots.indicators.linreg-channel-fast.edit', 'LR Channel Fast');
+    }
+
+    public function editVolatilityCandles(Bot $bot): View
+    {
+        $this->ensureBotOwner($bot);
+
+        return view('bots.indicators.volatility-candles', [
+            'bot' => $bot,
+            'p' => IndicatorSetting::mergedVolatilityCandlesParams($bot),
+        ]);
+    }
+
+    public function updateVolatilityCandles(Request $request, Bot $bot): RedirectResponse
+    {
+        return $this->saveClassic($request, $bot, IndicatorSetting::KEY_VOLATILITY_CANDLES, VolatilityCandlesIndicatorService::class, VolatilityCandlesSettingsForm::class, 'bots.indicators.volatility-candles.edit', 'Volatility Candles');
+    }
+
+    public function editZigZag(Bot $bot): View
+    {
+        $this->ensureBotOwner($bot);
+
+        return view('bots.indicators.zigzag', [
+            'bot' => $bot,
+            'p' => IndicatorSetting::mergedZigZagParams($bot),
+        ]);
+    }
+
+    public function updateZigZag(Request $request, Bot $bot): RedirectResponse
+    {
+        return $this->saveClassic($request, $bot, IndicatorSetting::KEY_ZIGZAG, ZigZagIndicatorService::class, ZigZagSettingsForm::class, 'bots.indicators.zigzag.edit', 'ZigZag');
+    }
+
+    public function editVolatilityAverageTwice(Bot $bot): View
+    {
+        $this->ensureBotOwner($bot);
+
+        return view('bots.indicators.volatility-average-twice', [
+            'bot' => $bot,
+            'p' => IndicatorSetting::mergedVolatilityAverageTwiceParams($bot),
+        ]);
+    }
+
+    public function updateVolatilityAverageTwice(Request $request, Bot $bot): RedirectResponse
+    {
+        return $this->saveClassic($request, $bot, IndicatorSetting::KEY_VOLATILITY_AVERAGE_TWICE, VolatilityAverageTwiceIndicatorService::class, VolatilityAverageTwiceSettingsForm::class, 'bots.indicators.volatility-average-twice.edit', 'Vol Average Twice');
+    }
+
+    public function editVolatilityStagesAW(Bot $bot): View
+    {
+        $this->ensureBotOwner($bot);
+
+        return view('bots.indicators.volatility-stages-aw', [
+            'bot' => $bot,
+            'p' => IndicatorSetting::mergedVolatilityStagesAWParams($bot),
+        ]);
+    }
+
+    public function updateVolatilityStagesAW(Request $request, Bot $bot): RedirectResponse
+    {
+        return $this->saveClassic($request, $bot, IndicatorSetting::KEY_VOLATILITY_STAGES_AW, VolatilityStagesAWIndicatorService::class, VolatilityStagesAWSettingsForm::class, 'bots.indicators.volatility-stages-aw.edit', 'Volatility Stages AW');
     }
 
     /**

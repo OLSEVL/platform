@@ -321,6 +321,40 @@
     const layerLinRegChannel = document.getElementById('layer-linreg-channel');
     const layerKalman = document.getElementById('layer-kalman');
     const layerFractal = document.getElementById('layer-fractal');
+    // 13 новых OsEngine OHLC-индикаторов (Donchian … Mass Index).
+    const layerDonchian = document.getElementById('layer-donchian');
+    const layerStochRsi = document.getElementById('layer-stoch-rsi');
+    const layerAc = document.getElementById('layer-ac');
+    const layerBullsPower = document.getElementById('layer-bulls-power');
+    const layerBearsPower = document.getElementById('layer-bears-power');
+    const layerDpo = document.getElementById('layer-dpo');
+    const layerQstick = document.getElementById('layer-qstick');
+    const layerVhFilter = document.getElementById('layer-vh-filter');
+    const layerEfficiencyRatio = document.getElementById('layer-efficiency-ratio');
+    const layerRavi = document.getElementById('layer-ravi');
+    const layerCog = document.getElementById('layer-cog');
+    const layerPivotFloor = document.getElementById('layer-pivot-floor');
+    const layerMassIndex = document.getElementById('layer-mass-index');
+    // Priority-1 OsEngine индикаторы.
+    const layerNrtrWatr = document.getElementById('layer-nrtr-watr');
+    const layerPriceChannelAdaptive = document.getElementById('layer-price-channel-adaptive');
+    const layerPriceChannelOffset = document.getElementById('layer-price-channel-offset');
+    const layerParabolicBollinger = document.getElementById('layer-parabolic-bollinger');
+    const layerParabolicPriceChannel = document.getElementById('layer-parabolic-price-channel');
+    const layerAtrChannel = document.getElementById('layer-atr-channel');
+    const layerOffsetSma = document.getElementById('layer-offset-sma');
+    const layerOffsetEma = document.getElementById('layer-offset-ema');
+    const layerOffsetSsma = document.getElementById('layer-offset-ssma');
+    const layerVolatilityAverage = document.getElementById('layer-volatility-average');
+    const layerVolatilityAverageChannel = document.getElementById('layer-volatility-average-channel');
+    const layerPriceOscillator = document.getElementById('layer-price-oscillator');
+    const layerDynamicTrendDetector = document.getElementById('layer-dynamic-trend-detector');
+    const layerAdaptiveLookBack = document.getElementById('layer-adaptive-look-back');
+    const layerLinRegChannelFast = document.getElementById('layer-linreg-channel-fast');
+    const layerVolatilityCandles = document.getElementById('layer-volatility-candles');
+    const layerZigZag = document.getElementById('layer-zigzag');
+    const layerVolatilityAverageTwice = document.getElementById('layer-volatility-average-twice');
+    const layerVolatilityStagesAw = document.getElementById('layer-volatility-stages-aw');
     const priceActionOverlay = document.getElementById('price-action-overlay');
     const liquiditySwingsOverlay = document.getElementById('liquidity-swings-overlay');
     const smcFlowOverlay = document.getElementById('smc-flow-overlay');
@@ -397,6 +431,38 @@
             if (layerLinRegChannel && typeof o.linregChannel === 'boolean') layerLinRegChannel.checked = o.linregChannel;
             if (layerKalman && typeof o.kalman === 'boolean') layerKalman.checked = o.kalman;
             if (layerFractal && typeof o.fractal === 'boolean') layerFractal.checked = o.fractal;
+            if (layerDonchian && typeof o.donchian === 'boolean') layerDonchian.checked = o.donchian;
+            if (layerStochRsi && typeof o.stoch_rsi === 'boolean') layerStochRsi.checked = o.stoch_rsi;
+            if (layerAc && typeof o.ac === 'boolean') layerAc.checked = o.ac;
+            if (layerBullsPower && typeof o.bulls_power === 'boolean') layerBullsPower.checked = o.bulls_power;
+            if (layerBearsPower && typeof o.bears_power === 'boolean') layerBearsPower.checked = o.bears_power;
+            if (layerDpo && typeof o.dpo === 'boolean') layerDpo.checked = o.dpo;
+            if (layerQstick && typeof o.qstick === 'boolean') layerQstick.checked = o.qstick;
+            if (layerVhFilter && typeof o.vh_filter === 'boolean') layerVhFilter.checked = o.vh_filter;
+            if (layerEfficiencyRatio && typeof o.efficiency_ratio === 'boolean') layerEfficiencyRatio.checked = o.efficiency_ratio;
+            if (layerRavi && typeof o.ravi === 'boolean') layerRavi.checked = o.ravi;
+            if (layerCog && typeof o.cog === 'boolean') layerCog.checked = o.cog;
+            if (layerPivotFloor && typeof o.pivot_floor === 'boolean') layerPivotFloor.checked = o.pivot_floor;
+            if (layerMassIndex && typeof o.mass_index === 'boolean') layerMassIndex.checked = o.mass_index;
+            if (layerNrtrWatr && typeof o.nrtr_watr === 'boolean') layerNrtrWatr.checked = o.nrtr_watr;
+            if (layerPriceChannelAdaptive && typeof o.price_channel_adaptive === 'boolean') layerPriceChannelAdaptive.checked = o.price_channel_adaptive;
+            if (layerPriceChannelOffset && typeof o.price_channel_offset === 'boolean') layerPriceChannelOffset.checked = o.price_channel_offset;
+            if (layerParabolicBollinger && typeof o.parabolic_bollinger === 'boolean') layerParabolicBollinger.checked = o.parabolic_bollinger;
+            if (layerParabolicPriceChannel && typeof o.parabolic_price_channel === 'boolean') layerParabolicPriceChannel.checked = o.parabolic_price_channel;
+            if (layerAtrChannel && typeof o.atr_channel === 'boolean') layerAtrChannel.checked = o.atr_channel;
+            if (layerOffsetSma && typeof o.offset_sma === 'boolean') layerOffsetSma.checked = o.offset_sma;
+            if (layerOffsetEma && typeof o.offset_ema === 'boolean') layerOffsetEma.checked = o.offset_ema;
+            if (layerOffsetSsma && typeof o.offset_ssma === 'boolean') layerOffsetSsma.checked = o.offset_ssma;
+            if (layerVolatilityAverage && typeof o.volatility_average === 'boolean') layerVolatilityAverage.checked = o.volatility_average;
+            if (layerVolatilityAverageChannel && typeof o.volatility_average_channel === 'boolean') layerVolatilityAverageChannel.checked = o.volatility_average_channel;
+            if (layerPriceOscillator && typeof o.price_oscillator === 'boolean') layerPriceOscillator.checked = o.price_oscillator;
+            if (layerDynamicTrendDetector && typeof o.dynamic_trend_detector === 'boolean') layerDynamicTrendDetector.checked = o.dynamic_trend_detector;
+            if (layerAdaptiveLookBack && typeof o.adaptive_look_back === 'boolean') layerAdaptiveLookBack.checked = o.adaptive_look_back;
+            if (layerLinRegChannelFast && typeof o.linreg_channel_fast === 'boolean') layerLinRegChannelFast.checked = o.linreg_channel_fast;
+            if (layerVolatilityCandles && typeof o.volatility_candles === 'boolean') layerVolatilityCandles.checked = o.volatility_candles;
+            if (layerZigZag && typeof o.zigzag === 'boolean') layerZigZag.checked = o.zigzag;
+            if (layerVolatilityAverageTwice && typeof o.volatility_average_twice === 'boolean') layerVolatilityAverageTwice.checked = o.volatility_average_twice;
+            if (layerVolatilityStagesAw && typeof o.volatility_stages_aw === 'boolean') layerVolatilityStagesAw.checked = o.volatility_stages_aw;
         } catch (_) { /* ignore */ }
     }
 
@@ -446,6 +512,38 @@
                 linregChannel: layerLinRegChannel ? layerLinRegChannel.checked : false,
                 kalman: layerKalman ? layerKalman.checked : false,
                 fractal: layerFractal ? layerFractal.checked : false,
+                donchian: layerDonchian ? layerDonchian.checked : false,
+                stoch_rsi: layerStochRsi ? layerStochRsi.checked : false,
+                ac: layerAc ? layerAc.checked : false,
+                bulls_power: layerBullsPower ? layerBullsPower.checked : false,
+                bears_power: layerBearsPower ? layerBearsPower.checked : false,
+                dpo: layerDpo ? layerDpo.checked : false,
+                qstick: layerQstick ? layerQstick.checked : false,
+                vh_filter: layerVhFilter ? layerVhFilter.checked : false,
+                efficiency_ratio: layerEfficiencyRatio ? layerEfficiencyRatio.checked : false,
+                ravi: layerRavi ? layerRavi.checked : false,
+                cog: layerCog ? layerCog.checked : false,
+                pivot_floor: layerPivotFloor ? layerPivotFloor.checked : false,
+                mass_index: layerMassIndex ? layerMassIndex.checked : false,
+                nrtr_watr: layerNrtrWatr ? layerNrtrWatr.checked : false,
+                price_channel_adaptive: layerPriceChannelAdaptive ? layerPriceChannelAdaptive.checked : false,
+                price_channel_offset: layerPriceChannelOffset ? layerPriceChannelOffset.checked : false,
+                parabolic_bollinger: layerParabolicBollinger ? layerParabolicBollinger.checked : false,
+                parabolic_price_channel: layerParabolicPriceChannel ? layerParabolicPriceChannel.checked : false,
+                atr_channel: layerAtrChannel ? layerAtrChannel.checked : false,
+                offset_sma: layerOffsetSma ? layerOffsetSma.checked : false,
+                offset_ema: layerOffsetEma ? layerOffsetEma.checked : false,
+                offset_ssma: layerOffsetSsma ? layerOffsetSsma.checked : false,
+                volatility_average: layerVolatilityAverage ? layerVolatilityAverage.checked : false,
+                volatility_average_channel: layerVolatilityAverageChannel ? layerVolatilityAverageChannel.checked : false,
+                price_oscillator: layerPriceOscillator ? layerPriceOscillator.checked : false,
+                dynamic_trend_detector: layerDynamicTrendDetector ? layerDynamicTrendDetector.checked : false,
+                adaptive_look_back: layerAdaptiveLookBack ? layerAdaptiveLookBack.checked : false,
+                linreg_channel_fast: layerLinRegChannelFast ? layerLinRegChannelFast.checked : false,
+                volatility_candles: layerVolatilityCandles ? layerVolatilityCandles.checked : false,
+                zigzag: layerZigZag ? layerZigZag.checked : false,
+                volatility_average_twice: layerVolatilityAverageTwice ? layerVolatilityAverageTwice.checked : false,
+                volatility_stages_aw: layerVolatilityStagesAw ? layerVolatilityStagesAw.checked : false,
             }));
         } catch (_) { /* ignore */ }
     }
@@ -529,6 +627,39 @@
     let lastLinRegChannelPayload = null;
     let lastKalmanPayload = null;
     let lastFractalPayload = null;
+    let lastDonchianPayload = null;
+    let lastStochRsiPayload = null;
+    let lastAcPayload = null;
+    let lastBullsPowerPayload = null;
+    let lastBearsPowerPayload = null;
+    let lastDpoPayload = null;
+    let lastQstickPayload = null;
+    let lastVhFilterPayload = null;
+    let lastEfficiencyRatioPayload = null;
+    let lastRaviPayload = null;
+    let lastCogPayload = null;
+    let lastPivotFloorPayload = null;
+    let lastMassIndexPayload = null;
+    // Priority-1 payloads.
+    let lastNrtrWatrPayload = null;
+    let lastPriceChannelAdaptivePayload = null;
+    let lastPriceChannelOffsetPayload = null;
+    let lastParabolicBollingerPayload = null;
+    let lastParabolicPriceChannelPayload = null;
+    let lastAtrChannelPayload = null;
+    let lastOffsetSmaPayload = null;
+    let lastOffsetEmaPayload = null;
+    let lastOffsetSsmaPayload = null;
+    let lastVolatilityAveragePayload = null;
+    let lastVolatilityAverageChannelPayload = null;
+    let lastPriceOscillatorPayload = null;
+    let lastDynamicTrendDetectorPayload = null;
+    let lastAdaptiveLookBackPayload = null;
+    let lastLinRegChannelFastPayload = null;
+    let lastVolatilityCandlesPayload = null;
+    let lastZigZagPayload = null;
+    let lastVolatilityAverageTwicePayload = null;
+    let lastVolatilityStagesAwPayload = null;
     let classicLineSeries = {};
     let rsiLevelLines = [];
     let classicOscPaneCount = 0;
@@ -1063,7 +1194,39 @@
             (layerLinReg && layerLinReg.checked) ||
             (layerLinRegChannel && layerLinRegChannel.checked) ||
             (layerKalman && layerKalman.checked) ||
-            (layerFractal && layerFractal.checked)
+            (layerFractal && layerFractal.checked) ||
+            (layerDonchian && layerDonchian.checked) ||
+            (layerStochRsi && layerStochRsi.checked) ||
+            (layerAc && layerAc.checked) ||
+            (layerBullsPower && layerBullsPower.checked) ||
+            (layerBearsPower && layerBearsPower.checked) ||
+            (layerDpo && layerDpo.checked) ||
+            (layerQstick && layerQstick.checked) ||
+            (layerVhFilter && layerVhFilter.checked) ||
+            (layerEfficiencyRatio && layerEfficiencyRatio.checked) ||
+            (layerRavi && layerRavi.checked) ||
+            (layerCog && layerCog.checked) ||
+            (layerPivotFloor && layerPivotFloor.checked) ||
+            (layerMassIndex && layerMassIndex.checked) ||
+            (layerNrtrWatr && layerNrtrWatr.checked) ||
+            (layerPriceChannelAdaptive && layerPriceChannelAdaptive.checked) ||
+            (layerPriceChannelOffset && layerPriceChannelOffset.checked) ||
+            (layerParabolicBollinger && layerParabolicBollinger.checked) ||
+            (layerParabolicPriceChannel && layerParabolicPriceChannel.checked) ||
+            (layerAtrChannel && layerAtrChannel.checked) ||
+            (layerOffsetSma && layerOffsetSma.checked) ||
+            (layerOffsetEma && layerOffsetEma.checked) ||
+            (layerOffsetSsma && layerOffsetSsma.checked) ||
+            (layerVolatilityAverage && layerVolatilityAverage.checked) ||
+            (layerVolatilityAverageChannel && layerVolatilityAverageChannel.checked) ||
+            (layerPriceOscillator && layerPriceOscillator.checked) ||
+            (layerDynamicTrendDetector && layerDynamicTrendDetector.checked) ||
+            (layerAdaptiveLookBack && layerAdaptiveLookBack.checked) ||
+            (layerLinRegChannelFast && layerLinRegChannelFast.checked) ||
+            (layerVolatilityCandles && layerVolatilityCandles.checked) ||
+            (layerZigZag && layerZigZag.checked) ||
+            (layerVolatilityAverageTwice && layerVolatilityAverageTwice.checked) ||
+            (layerVolatilityStagesAw && layerVolatilityStagesAw.checked)
         );
     }
 
@@ -1146,6 +1309,38 @@
         const wantLinRegChannel = layerLinRegChannel && layerLinRegChannel.checked && lastLinRegChannelPayload;
         const wantKalman = layerKalman && layerKalman.checked && lastKalmanPayload;
         const wantFractal = layerFractal && layerFractal.checked && lastFractalPayload;
+        const wantDonchian = layerDonchian && layerDonchian.checked && lastDonchianPayload;
+        const wantStochRsi = layerStochRsi && layerStochRsi.checked && lastStochRsiPayload;
+        const wantAc = layerAc && layerAc.checked && lastAcPayload;
+        const wantBullsPower = layerBullsPower && layerBullsPower.checked && lastBullsPowerPayload;
+        const wantBearsPower = layerBearsPower && layerBearsPower.checked && lastBearsPowerPayload;
+        const wantDpo = layerDpo && layerDpo.checked && lastDpoPayload;
+        const wantQstick = layerQstick && layerQstick.checked && lastQstickPayload;
+        const wantVhFilter = layerVhFilter && layerVhFilter.checked && lastVhFilterPayload;
+        const wantEfficiencyRatio = layerEfficiencyRatio && layerEfficiencyRatio.checked && lastEfficiencyRatioPayload;
+        const wantRavi = layerRavi && layerRavi.checked && lastRaviPayload;
+        const wantCog = layerCog && layerCog.checked && lastCogPayload;
+        const wantPivotFloor = layerPivotFloor && layerPivotFloor.checked && lastPivotFloorPayload;
+        const wantMassIndex = layerMassIndex && layerMassIndex.checked && lastMassIndexPayload;
+        const wantNrtrWatr = layerNrtrWatr && layerNrtrWatr.checked && lastNrtrWatrPayload;
+        const wantPriceChannelAdaptive = layerPriceChannelAdaptive && layerPriceChannelAdaptive.checked && lastPriceChannelAdaptivePayload;
+        const wantPriceChannelOffset = layerPriceChannelOffset && layerPriceChannelOffset.checked && lastPriceChannelOffsetPayload;
+        const wantParabolicBollinger = layerParabolicBollinger && layerParabolicBollinger.checked && lastParabolicBollingerPayload;
+        const wantParabolicPriceChannel = layerParabolicPriceChannel && layerParabolicPriceChannel.checked && lastParabolicPriceChannelPayload;
+        const wantAtrChannel = layerAtrChannel && layerAtrChannel.checked && lastAtrChannelPayload;
+        const wantOffsetSma = layerOffsetSma && layerOffsetSma.checked && lastOffsetSmaPayload;
+        const wantOffsetEma = layerOffsetEma && layerOffsetEma.checked && lastOffsetEmaPayload;
+        const wantOffsetSsma = layerOffsetSsma && layerOffsetSsma.checked && lastOffsetSsmaPayload;
+        const wantVolatilityAverage = layerVolatilityAverage && layerVolatilityAverage.checked && lastVolatilityAveragePayload;
+        const wantVolatilityAverageChannel = layerVolatilityAverageChannel && layerVolatilityAverageChannel.checked && lastVolatilityAverageChannelPayload;
+        const wantPriceOscillator = layerPriceOscillator && layerPriceOscillator.checked && lastPriceOscillatorPayload;
+        const wantDynamicTrendDetector = layerDynamicTrendDetector && layerDynamicTrendDetector.checked && lastDynamicTrendDetectorPayload;
+        const wantAdaptiveLookBack = layerAdaptiveLookBack && layerAdaptiveLookBack.checked && lastAdaptiveLookBackPayload;
+        const wantLinRegChannelFast = layerLinRegChannelFast && layerLinRegChannelFast.checked && lastLinRegChannelFastPayload;
+        const wantVolatilityCandles = layerVolatilityCandles && layerVolatilityCandles.checked && lastVolatilityCandlesPayload;
+        const wantZigZag = layerZigZag && layerZigZag.checked && lastZigZagPayload;
+        const wantVolatilityAverageTwice = layerVolatilityAverageTwice && layerVolatilityAverageTwice.checked && lastVolatilityAverageTwicePayload;
+        const wantVolatilityStagesAw = layerVolatilityStagesAw && layerVolatilityStagesAw.checked && lastVolatilityStagesAwPayload;
 
         const addMainLine = (key, data, color, width) => {
             if (!Array.isArray(data) || !data.length) return;
@@ -1320,9 +1515,168 @@
             addFractalPoints('fractal_up', ser.up, st.color_up || '#00bfff');
             addFractalPoints('fractal_down', ser.down, st.color_down || '#ff4500');
         }
+        if (wantDonchian) {
+            const st = lastDonchianPayload.style || {};
+            const ser = lastDonchianPayload.series || {};
+            const w = st.line_width || 1;
+            addMainLine('donchian_up', ser.up, st.color_up, w);
+            addMainLine('donchian_mid', ser.mid, st.color_mid, w);
+            addMainLine('donchian_down', ser.down, st.color_down, w);
+        }
+        if (wantPivotFloor) {
+            const st = lastPivotFloorPayload.style || {};
+            const ser = lastPivotFloorPayload.series || {};
+            const w = st.line_width || 1;
+            addMainLine('pivot_p', ser.p, st.color_p, w);
+            addMainLine('pivot_r1', ser.r1, st.color_r, w);
+            addMainLine('pivot_r2', ser.r2, st.color_r, w);
+            addMainLine('pivot_r3', ser.r3, st.color_r, w);
+            addMainLine('pivot_s1', ser.s1, st.color_s, w);
+            addMainLine('pivot_s2', ser.s2, st.color_s, w);
+            addMainLine('pivot_s3', ser.s3, st.color_s, w);
+        }
+
+
+        // Priority-1 overlays on pane 0.
+        if (wantNrtrWatr) {
+            const st = lastNrtrWatrPayload.style || {};
+            const ser = lastNrtrWatrPayload.series || {};
+            const w = st.line_width || 1;
+            addMainLine('nrtr_watr', ser.nrtr, st.color, w);
+        }
+        if (wantPriceChannelAdaptive) {
+            const st = lastPriceChannelAdaptivePayload.style || {};
+            const ser = lastPriceChannelAdaptivePayload.series || {};
+            const w = st.line_width || 1;
+            addMainLine('pca_up', ser.up, st.color_up, w);
+            addMainLine('pca_down', ser.down, st.color_down, w);
+        }
+        if (wantPriceChannelOffset) {
+            const st = lastPriceChannelOffsetPayload.style || {};
+            const ser = lastPriceChannelOffsetPayload.series || {};
+            const w = st.line_width || 1;
+            addMainLine('pco_up', ser.up, st.color_up, w);
+            addMainLine('pco_down', ser.down, st.color_down, w);
+            addMainLine('pco_up_border', ser.up_border, st.color_up_border, w);
+            addMainLine('pco_down_border', ser.down_border, st.color_down_border, w);
+        }
+        if (wantParabolicBollinger) {
+            const st = lastParabolicBollingerPayload.style || {};
+            const ser = lastParabolicBollingerPayload.series || {};
+            const w = st.line_width || 1;
+            addMainLine('pb_up', ser.up, st.color_up, w);
+            addMainLine('pb_down', ser.down, st.color_down, w);
+            const addParabPoints = (pkey, data, color) => {
+                if (!Array.isArray(data) || !data.length) return;
+                const s = chart.addSeries(LineSeries, {
+                    color: color || '#ffff00',
+                    lineWidth: 1,
+                    lineVisible: false,
+                    pointMarkersVisible: true,
+                    pointMarkersRadius: st.point_radius || 2,
+                    priceLineVisible: false,
+                    lastValueVisible: false,
+                    crosshairMarkerVisible: false,
+                }, 0);
+                s.setData(data.map((p) => ({ time: p.time, value: p.value })));
+                classicLineSeries[pkey] = s;
+            };
+            addParabPoints('parabolic_bollinger_parab', ser.parabolic, st.color_parabolic);
+        }
+        if (wantParabolicPriceChannel) {
+            const st = lastParabolicPriceChannelPayload.style || {};
+            const ser = lastParabolicPriceChannelPayload.series || {};
+            const w = st.line_width || 1;
+            addMainLine('ppc_up', ser.up, st.color_up, w);
+            addMainLine('ppc_down', ser.down, st.color_down, w);
+            const addParabPoints = (pkey, data, color) => {
+                if (!Array.isArray(data) || !data.length) return;
+                const s = chart.addSeries(LineSeries, {
+                    color: color || '#ffff00',
+                    lineWidth: 1,
+                    lineVisible: false,
+                    pointMarkersVisible: true,
+                    pointMarkersRadius: st.point_radius || 2,
+                    priceLineVisible: false,
+                    lastValueVisible: false,
+                    crosshairMarkerVisible: false,
+                }, 0);
+                s.setData(data.map((p) => ({ time: p.time, value: p.value })));
+                classicLineSeries[pkey] = s;
+            };
+            addParabPoints('parabolic_price_channel_parab', ser.parabolic, st.color_parabolic);
+        }
+        if (wantAtrChannel) {
+            const st = lastAtrChannelPayload.style || {};
+            const ser = lastAtrChannelPayload.series || {};
+            const w = st.line_width || 1;
+            addMainLine('atr_channel', ser.channel, st.color, w);
+        }
+        if (wantOffsetSma) {
+            const st = lastOffsetSmaPayload.style || {};
+            const ser = lastOffsetSmaPayload.series || {};
+            const w = st.line_width || 1;
+            addMainLine('offset_sma', ser.sma, st.color, w);
+        }
+        if (wantOffsetEma) {
+            const st = lastOffsetEmaPayload.style || {};
+            const ser = lastOffsetEmaPayload.series || {};
+            const w = st.line_width || 1;
+            addMainLine('offset_ema', ser.ema, st.color, w);
+        }
+        if (wantOffsetSsma) {
+            const st = lastOffsetSsmaPayload.style || {};
+            const ser = lastOffsetSsmaPayload.series || {};
+            const w = st.line_width || 1;
+            addMainLine('offset_ssma', ser.ssma, st.color, w);
+        }
+        if (wantDynamicTrendDetector) {
+            const st = lastDynamicTrendDetectorPayload.style || {};
+            const ser = lastDynamicTrendDetectorPayload.series || {};
+            const w = st.line_width || 1;
+            addMainLine('dtd', ser.dtd, st.color, w);
+        }
+        if (wantLinRegChannelFast) {
+            const st = lastLinRegChannelFastPayload.style || {};
+            const ser = lastLinRegChannelFastPayload.series || {};
+            const w = st.line_width || 1;
+            addMainLine('lrcf_up', ser.up, st.color_up, w);
+            addMainLine('lrcf_mid', ser.mid, st.color_mid, w);
+            addMainLine('lrcf_down', ser.down, st.color_down, w);
+        }
+
+
+        // ZigZag — ломаная + точки хай/лоу на основной pane.
+        if (wantZigZag) {
+            const st = lastZigZagPayload.style || {};
+            const ser = lastZigZagPayload.series || {};
+            const w = st.line_width || 1;
+            if (ser.line && ser.line.length) {
+                addMainLine('zz_line', ser.line, st.color_line || '#6495ed', w);
+            }
+            const addZzPoints = (key, data, color) => {
+                if (!Array.isArray(data) || !data.length) return;
+                const s = chart.addSeries(LineSeries, {
+                    color: color || '#adff2f',
+                    lineWidth: 1,
+                    lineVisible: false,
+                    pointMarkersVisible: true,
+                    pointMarkersRadius: st.point_radius || 3,
+                    priceLineVisible: false,
+                    lastValueVisible: false,
+                    crosshairMarkerVisible: false,
+                }, 0);
+                s.setData(data.map((p) => ({ time: p.time, value: p.value })));
+                classicLineSeries[key] = s;
+            };
+            addZzPoints('zz_highs', ser.highs, st.color_high || '#adff2f');
+            addZzPoints('zz_lows', ser.lows, st.color_low || '#ff0000');
+            addZzPoints('zz_pts', ser.zigzag, st.color_line || '#6495ed');
+        }
 
         const oscCount = (wantRsi ? 1 : 0) + (wantMacd ? 1 : 0) + (wantStochastic ? 1 : 0) + (wantCci ? 1 : 0) + (wantAtr ? 1 : 0) + (wantAdx ? 1 : 0) + (wantWilliams ? 1 : 0) + (wantAo ? 1 : 0) + (wantAroon ? 1 : 0)
-            + (wantMomentum ? 1 : 0) + (wantRoc ? 1 : 0) + (wantOsma ? 1 : 0) + (wantTrix ? 1 : 0) + (wantCmo ? 1 : 0) + (wantDemarker ? 1 : 0) + (wantRvi ? 1 : 0) + (wantUltimate ? 1 : 0) + (wantSmi ? 1 : 0) + (wantStdDev ? 1 : 0) + (wantIvashov ? 1 : 0);
+            + (wantMomentum ? 1 : 0) + (wantRoc ? 1 : 0) + (wantOsma ? 1 : 0) + (wantTrix ? 1 : 0) + (wantCmo ? 1 : 0) + (wantDemarker ? 1 : 0) + (wantRvi ? 1 : 0) + (wantUltimate ? 1 : 0) + (wantSmi ? 1 : 0) + (wantStdDev ? 1 : 0) + (wantIvashov ? 1 : 0)
+            + (wantStochRsi ? 1 : 0) + (wantAc ? 1 : 0) + (wantBullsPower ? 1 : 0) + (wantBearsPower ? 1 : 0) + (wantDpo ? 1 : 0) + (wantQstick ? 1 : 0) + (wantVhFilter ? 1 : 0) + (wantEfficiencyRatio ? 1 : 0) + (wantRavi ? 1 : 0) + (wantCog ? 1 : 0) + (wantMassIndex ? 1 : 0) + (wantVolatilityAverage ? 1 : 0) + (wantVolatilityAverageChannel ? 1 : 0) + (wantPriceOscillator ? 1 : 0) + (wantAdaptiveLookBack ? 1 : 0) + (wantVolatilityCandles ? 1 : 0) + (wantVolatilityAverageTwice ? 1 : 0) + (wantVolatilityStagesAw ? 1 : 0);
         if (oscCount > 0) {
             try {
                 const mainPane = chart.panes()[0];
@@ -2255,6 +2609,423 @@
             classicLineSeries['ivashov'] = s;
         }
 
+        if (wantStochRsi) {
+            const st = lastStochRsiPayload.style || {};
+            const levels = lastStochRsiPayload.levels || {};
+            const ser = lastStochRsiPayload.series || {};
+            const lineW = st.line_width || 1;
+            let paneIndex = 1;
+            try {
+                const pane = chart.addPane(false);
+                if (pane && typeof pane.setStretchFactor === 'function') pane.setStretchFactor(0.28);
+                paneIndex = Math.max(1, chart.panes().length - 1);
+                classicOscPaneCount += 1;
+            } catch (e) {
+                console.error('[dashboard indicators] addPane Stoch RSI', e);
+            }
+            const addStochRsiLine = (key, data, color, showLast) => {
+                if (!Array.isArray(data) || !data.length) return null;
+                const s = chart.addSeries(LineSeries, {
+                    color: color || '#1e90ff',
+                    lineWidth: lineW,
+                    priceLineVisible: false,
+                    baseLineVisible: false,
+                    lastValueVisible: !!showLast,
+                    crosshairMarkerVisible: false,
+                    priceFormat: { type: 'price', precision: 0, minMove: 1 },
+                    autoscaleInfoProvider: () => ({ priceRange: { minValue: 0, maxValue: 100 } }),
+                }, paneIndex);
+                s.setData(data.map((p) => ({ time: p.time, value: p.value })));
+                classicLineSeries[key] = s;
+                return s;
+            };
+            const kLine = addStochRsiLine('stoch_rsi_k', ser.k, st.color_k, true);
+            addStochRsiLine('stoch_rsi_d', ser.d, st.color_d, false);
+            try {
+                const anchor = kLine || classicLineSeries['stoch_rsi_d'];
+                if (anchor && levels.show && window.PlatformChartMarkers
+                    && typeof window.PlatformChartMarkers.attachRsiLevelLines === 'function') {
+                    rsiLevelLines.push(...window.PlatformChartMarkers.attachRsiLevelLines(anchor, levels));
+                }
+            } catch (_) {}
+        }
+
+        const addHistPane = (key, payload, seriesKey) => {
+            if (!payload) return;
+            const st = payload.style || {};
+            const ser = payload.series || {};
+            const histColor = st.color_histogram || '#006400';
+            const histNeg = st.color_histogram_neg || '#f43f5e';
+            let paneIndex = 1;
+            try {
+                const pane = chart.addPane(false);
+                if (pane && typeof pane.setStretchFactor === 'function') pane.setStretchFactor(0.32);
+                paneIndex = Math.max(1, chart.panes().length - 1);
+                classicOscPaneCount += 1;
+            } catch (e) {
+                console.error('[dashboard indicators] addPane', key, e);
+                return;
+            }
+            const data = ser[seriesKey];
+            if (HistogramSeries && Array.isArray(data) && data.length) {
+                const hs = chart.addSeries(HistogramSeries, {
+                    priceLineVisible: false,
+                    lastValueVisible: false,
+                    baseLineVisible: true,
+                    baseLineColor: 'rgba(161,161,170,0.45)',
+                    baseLineWidth: 1,
+                    baseLineStyle: 2,
+                }, paneIndex);
+                hs.setData(data.map((p) => ({
+                    time: p.time,
+                    value: p.value,
+                    color: Number(p.value) >= 0 ? histColor : histNeg,
+                })));
+                classicLineSeries[key] = hs;
+            }
+        };
+        if (wantAc) addHistPane('ac_hist', lastAcPayload, 'ac');
+        if (wantBullsPower) addHistPane('bulls_power_hist', lastBullsPowerPayload, 'bulls_power');
+        if (wantBearsPower) addHistPane('bears_power_hist', lastBearsPowerPayload, 'bears_power');
+
+        const addSimpleOscPaneLine = (key, payload, seriesKey, colorKey) => {
+            if (!payload) return;
+            const st = payload.style || {};
+            const data = (payload.series || {})[seriesKey] || [];
+            let paneIndex = 1;
+            try {
+                const pane = chart.addPane(false);
+                if (pane && typeof pane.setStretchFactor === 'function') pane.setStretchFactor(0.28);
+                paneIndex = Math.max(1, chart.panes().length - 1);
+                classicOscPaneCount += 1;
+            } catch (e) {
+                console.error('[dashboard indicators] addPane', key, e);
+                return;
+            }
+            if (!Array.isArray(data) || !data.length) return;
+            const s = chart.addSeries(LineSeries, {
+                color: st[colorKey] || st.color || '#00ffff',
+                lineWidth: st.line_width || 1,
+                priceLineVisible: false,
+                baseLineVisible: false,
+                lastValueVisible: true,
+                crosshairMarkerVisible: false,
+                priceFormat: { type: 'price', precision: 2, minMove: 0.01 },
+            }, paneIndex);
+            s.setData(data.map((p) => ({ time: p.time, value: p.value })));
+            classicLineSeries[key] = s;
+        };
+        if (wantDpo) addSimpleOscPaneLine('dpo', lastDpoPayload, 'dpo', 'color');
+        if (wantQstick) addSimpleOscPaneLine('qstick', lastQstickPayload, 'qstick', 'color');
+        if (wantVhFilter) addSimpleOscPaneLine('vh_filter', lastVhFilterPayload, 'vh_filter', 'color');
+        if (wantEfficiencyRatio) addSimpleOscPaneLine('efficiency_ratio', lastEfficiencyRatioPayload, 'er', 'color');
+
+        if (wantRavi) {
+            const st = lastRaviPayload.style || {};
+            const ser = lastRaviPayload.series || {};
+            const lineW = st.line_width || 1;
+            let paneIndex = 1;
+            try {
+                const pane = chart.addPane(false);
+                if (pane && typeof pane.setStretchFactor === 'function') pane.setStretchFactor(0.28);
+                paneIndex = Math.max(1, chart.panes().length - 1);
+                classicOscPaneCount += 1;
+            } catch (e) {
+                console.error('[dashboard indicators] addPane RAVI', e);
+            }
+            const addRaviLine = (key, data, color, showLast) => {
+                if (!Array.isArray(data) || !data.length) return;
+                const s = chart.addSeries(LineSeries, {
+                    color: color || '#8b0000',
+                    lineWidth: lineW,
+                    priceLineVisible: false,
+                    lastValueVisible: !!showLast,
+                    crosshairMarkerVisible: false,
+                    priceFormat: { type: 'price', precision: 2, minMove: 0.01 },
+                }, paneIndex);
+                s.setData(data.map((p) => ({ time: p.time, value: p.value })));
+                classicLineSeries[key] = s;
+            };
+            addRaviLine('ravi', ser.ravi, st.color_ravi, true);
+            addRaviLine('ravi_up_line', ser.up_line, st.color_up_line, false);
+            addRaviLine('ravi_down_line', ser.down_line, st.color_down_line, false);
+        }
+
+        if (wantCog) {
+            const st = lastCogPayload.style || {};
+            const ser = lastCogPayload.series || {};
+            const lineW = st.line_width || 1;
+            let paneIndex = 1;
+            try {
+                const pane = chart.addPane(false);
+                if (pane && typeof pane.setStretchFactor === 'function') pane.setStretchFactor(0.28);
+                paneIndex = Math.max(1, chart.panes().length - 1);
+                classicOscPaneCount += 1;
+            } catch (e) {
+                console.error('[dashboard indicators] addPane COG', e);
+            }
+            const addCogLine = (key, data, color, showLast) => {
+                if (!Array.isArray(data) || !data.length) return;
+                const s = chart.addSeries(LineSeries, {
+                    color: color || '#1e90ff',
+                    lineWidth: lineW,
+                    priceLineVisible: false,
+                    lastValueVisible: !!showLast,
+                    crosshairMarkerVisible: false,
+                    priceFormat: { type: 'price', precision: 2, minMove: 0.01 },
+                }, paneIndex);
+                s.setData(data.map((p) => ({ time: p.time, value: p.value })));
+                classicLineSeries[key] = s;
+            };
+            addCogLine('cog', ser.cog, st.color_cog, true);
+            addCogLine('prev_cog', ser.prev_cog, st.color_prev_cog, false);
+        }
+
+        if (wantMassIndex) {
+            const st = lastMassIndexPayload.style || {};
+            const ser = lastMassIndexPayload.series || {};
+            const lineW = st.line_width || 1;
+            let paneIndex = 1;
+            try {
+                const pane = chart.addPane(false);
+                if (pane && typeof pane.setStretchFactor === 'function') pane.setStretchFactor(0.28);
+                paneIndex = Math.max(1, chart.panes().length - 1);
+                classicOscPaneCount += 1;
+            } catch (e) {
+                console.error('[dashboard indicators] addPane Mass Index', e);
+            }
+            const addMiLine = (key, data, color, showLast) => {
+                if (!Array.isArray(data) || !data.length) return;
+                const s = chart.addSeries(LineSeries, {
+                    color: color || '#1e90ff',
+                    lineWidth: lineW,
+                    priceLineVisible: false,
+                    lastValueVisible: !!showLast,
+                    crosshairMarkerVisible: false,
+                    priceFormat: { type: 'price', precision: 2, minMove: 0.01 },
+                }, paneIndex);
+                s.setData(data.map((p) => ({ time: p.time, value: p.value })));
+                classicLineSeries[key] = s;
+            };
+            addMiLine('mass_index_mi', ser.mi, st.color_mi, true);
+            addMiLine('mass_index_level_up', ser.level_up, st.color_level, false);
+            addMiLine('mass_index_level_down', ser.level_down, st.color_level, false);
+        }
+
+        // Priority-1 oscillator panes.
+        if (wantVolatilityAverage) {
+            const st = lastVolatilityAveragePayload.style || {};
+            const ser = lastVolatilityAveragePayload.series || {};
+            const lineW = st.line_width || 1;
+            let paneIndex = 1;
+            try {
+                const pane = chart.addPane(false);
+                if (pane && typeof pane.setStretchFactor === 'function') pane.setStretchFactor(0.28);
+                paneIndex = Math.max(1, chart.panes().length - 1);
+                classicOscPaneCount += 1;
+            } catch (e) {
+                console.error('[indicators] addPane Vol Average', e);
+            }
+            const addOscLine = (okey, data, color, showLast) => {
+                if (!Array.isArray(data) || !data.length) return;
+                const s = chart.addSeries(LineSeries, {
+                    color: color || '#1e90ff',
+                    lineWidth: lineW,
+                    priceLineVisible: false,
+                    lastValueVisible: !!showLast,
+                    crosshairMarkerVisible: false,
+                    priceFormat: { type: 'price', precision: 2, minMove: 0.01 },
+                }, paneIndex);
+                s.setData(data.map((p) => ({ time: p.time, value: p.value })));
+                classicLineSeries[okey] = s;
+            };
+            addOscLine('va_vol', ser.volatility, st.color_volatility, true);
+            addOscLine('va_sma', ser.sma, st.color_sma, false);
+        }
+        if (wantVolatilityAverageChannel) {
+            const st = lastVolatilityAverageChannelPayload.style || {};
+            const ser = lastVolatilityAverageChannelPayload.series || {};
+            const lineW = st.line_width || 1;
+            let paneIndex = 1;
+            try {
+                const pane = chart.addPane(false);
+                if (pane && typeof pane.setStretchFactor === 'function') pane.setStretchFactor(0.28);
+                paneIndex = Math.max(1, chart.panes().length - 1);
+                classicOscPaneCount += 1;
+            } catch (e) {
+                console.error('[indicators] addPane Vol Avg Channel', e);
+            }
+            const addOscLine = (okey, data, color, showLast) => {
+                if (!Array.isArray(data) || !data.length) return;
+                const s = chart.addSeries(LineSeries, {
+                    color: color || '#1e90ff',
+                    lineWidth: lineW,
+                    priceLineVisible: false,
+                    lastValueVisible: !!showLast,
+                    crosshairMarkerVisible: false,
+                    priceFormat: { type: 'price', precision: 2, minMove: 0.01 },
+                }, paneIndex);
+                s.setData(data.map((p) => ({ time: p.time, value: p.value })));
+                classicLineSeries[okey] = s;
+            };
+            addOscLine('vac_vol', ser.volatility, st.color_volatility, true);
+            addOscLine('vac_sma_fast', ser.sma_fast, st.color_sma_fast, false);
+            addOscLine('vac_sma_slow', ser.sma_slow, st.color_sma_slow, false);
+            addOscLine('vac_up', ser.up, st.color_up, false);
+            addOscLine('vac_down', ser.down, st.color_down, false);
+        }
+        if (wantPriceOscillator) {
+            const st = lastPriceOscillatorPayload.style || {};
+            const ser = lastPriceOscillatorPayload.series || {};
+            const lineW = st.line_width || 1;
+            let paneIndex = 1;
+            try {
+                const pane = chart.addPane(false);
+                if (pane && typeof pane.setStretchFactor === 'function') pane.setStretchFactor(0.28);
+                paneIndex = Math.max(1, chart.panes().length - 1);
+                classicOscPaneCount += 1;
+            } catch (e) {
+                console.error('[indicators] addPane Price Oscillator', e);
+            }
+            const addOscLine = (okey, data, color, showLast) => {
+                if (!Array.isArray(data) || !data.length) return;
+                const s = chart.addSeries(LineSeries, {
+                    color: color || '#1e90ff',
+                    lineWidth: lineW,
+                    priceLineVisible: false,
+                    lastValueVisible: !!showLast,
+                    crosshairMarkerVisible: false,
+                    priceFormat: { type: 'price', precision: 2, minMove: 0.01 },
+                }, paneIndex);
+                s.setData(data.map((p) => ({ time: p.time, value: p.value })));
+                classicLineSeries[okey] = s;
+            };
+            addOscLine('po', ser.po, st.color, true);
+        }
+        if (wantAdaptiveLookBack) {
+            const st = lastAdaptiveLookBackPayload.style || {};
+            const ser = lastAdaptiveLookBackPayload.series || {};
+            const lineW = st.line_width || 1;
+            let paneIndex = 1;
+            try {
+                const pane = chart.addPane(false);
+                if (pane && typeof pane.setStretchFactor === 'function') pane.setStretchFactor(0.28);
+                paneIndex = Math.max(1, chart.panes().length - 1);
+                classicOscPaneCount += 1;
+            } catch (e) {
+                console.error('[indicators] addPane Adaptive Look Back', e);
+            }
+            const addOscLine = (okey, data, color, showLast) => {
+                if (!Array.isArray(data) || !data.length) return;
+                const s = chart.addSeries(LineSeries, {
+                    color: color || '#1e90ff',
+                    lineWidth: lineW,
+                    priceLineVisible: false,
+                    lastValueVisible: !!showLast,
+                    crosshairMarkerVisible: false,
+                    priceFormat: { type: 'price', precision: 2, minMove: 0.01 },
+                }, paneIndex);
+                s.setData(data.map((p) => ({ time: p.time, value: p.value })));
+                classicLineSeries[okey] = s;
+            };
+            addOscLine('alb', ser.alb, st.color, true);
+        }
+        // VolatilityCandles — относительная амплитуда бара (%) в отдельной pane.
+        if (wantVolatilityCandles) {
+            const st = lastVolatilityCandlesPayload.style || {};
+            const ser = lastVolatilityCandlesPayload.series || {};
+            const lineW = st.line_width || 1;
+            let paneIndex = 1;
+            try {
+                const pane = chart.addPane(false);
+                if (pane && typeof pane.setStretchFactor === 'function') pane.setStretchFactor(0.28);
+                paneIndex = Math.max(1, chart.panes().length - 1);
+                classicOscPaneCount += 1;
+            } catch (e) {
+                console.error('[indicators] addPane Volatility Candles', e);
+            }
+            const addOscLine = (okey, data, color, showLast) => {
+                if (!Array.isArray(data) || !data.length) return;
+                const s = chart.addSeries(LineSeries, {
+                    color: color || '#00ffff',
+                    lineWidth: lineW,
+                    priceLineVisible: false,
+                    lastValueVisible: !!showLast,
+                    crosshairMarkerVisible: false,
+                    priceFormat: { type: 'price', precision: 3, minMove: 0.001 },
+                }, paneIndex);
+                s.setData(data.map((p) => ({ time: p.time, value: p.value })));
+                classicLineSeries[okey] = s;
+            };
+            addOscLine('vc', ser.vc, st.color, true);
+        }
+
+        // VolatilityAverageTwice — вола + fast/slow SMA в отдельной pane.
+        if (wantVolatilityAverageTwice) {
+            const st = lastVolatilityAverageTwicePayload.style || {};
+            const ser = lastVolatilityAverageTwicePayload.series || {};
+            const lineW = st.line_width || 1;
+            let paneIndex = 1;
+            try {
+                const pane = chart.addPane(false);
+                if (pane && typeof pane.setStretchFactor === 'function') pane.setStretchFactor(0.28);
+                paneIndex = Math.max(1, chart.panes().length - 1);
+                classicOscPaneCount += 1;
+            } catch (e) {
+                console.error('[indicators] addPane Vol Avg Twice', e);
+            }
+            const addOscLine = (okey, data, color, showLast) => {
+                if (!Array.isArray(data) || !data.length) return;
+                const s = chart.addSeries(LineSeries, {
+                    color: color || '#1e90ff',
+                    lineWidth: lineW,
+                    priceLineVisible: false,
+                    lastValueVisible: !!showLast,
+                    crosshairMarkerVisible: false,
+                    priceFormat: { type: 'price', precision: 2, minMove: 0.01 },
+                }, paneIndex);
+                s.setData(data.map((p) => ({ time: p.time, value: p.value })));
+                classicLineSeries[okey] = s;
+            };
+            addOscLine('vat_vol', ser.volatility, st.color_volatility, true);
+            addOscLine('vat_fast', ser.sma_fast, st.color_sma_fast, false);
+            addOscLine('vat_slow', ser.sma_slow, st.color_sma_slow, false);
+        }
+        // VolatilityStagesAW — стадии волы + канал/SMA в отдельной pane.
+        if (wantVolatilityStagesAw) {
+            const st = lastVolatilityStagesAwPayload.style || {};
+            const ser = lastVolatilityStagesAwPayload.series || {};
+            const lineW = st.line_width || 1;
+            let paneIndex = 1;
+            try {
+                const pane = chart.addPane(false);
+                if (pane && typeof pane.setStretchFactor === 'function') pane.setStretchFactor(0.28);
+                paneIndex = Math.max(1, chart.panes().length - 1);
+                classicOscPaneCount += 1;
+            } catch (e) {
+                console.error('[indicators] addPane Vol Stages AW', e);
+            }
+            const addOscLine = (okey, data, color, showLast) => {
+                if (!Array.isArray(data) || !data.length) return;
+                const s = chart.addSeries(LineSeries, {
+                    color: color || '#008000',
+                    lineWidth: lineW,
+                    priceLineVisible: false,
+                    lastValueVisible: !!showLast,
+                    crosshairMarkerVisible: false,
+                    priceFormat: { type: 'price', precision: 2, minMove: 0.01 },
+                }, paneIndex);
+                s.setData(data.map((p) => ({ time: p.time, value: p.value })));
+                classicLineSeries[okey] = s;
+            };
+            addOscLine('vsa_stages', ser.stages, st.color_stages, true);
+            addOscLine('vsa_vol', ser.volatility, st.color_volatility, false);
+            addOscLine('vsa_fast', ser.sma_fast, st.color_sma_fast, false);
+            addOscLine('vsa_slow', ser.sma_slow, st.color_sma_slow, false);
+            addOscLine('vsa_up', ser.up, st.color_up, false);
+            addOscLine('vsa_down', ser.down, st.color_down, false);
+        }
+
         if (wantAtr) {
             const st = lastAtrPayload.style || {};
             let paneIndex = 1;
@@ -2322,6 +3093,38 @@
             lastLinRegChannelPayload = null;
             lastKalmanPayload = null;
             lastFractalPayload = null;
+            lastDonchianPayload = null;
+            lastStochRsiPayload = null;
+            lastAcPayload = null;
+            lastBullsPowerPayload = null;
+            lastBearsPowerPayload = null;
+            lastDpoPayload = null;
+            lastQstickPayload = null;
+            lastVhFilterPayload = null;
+            lastEfficiencyRatioPayload = null;
+            lastRaviPayload = null;
+            lastCogPayload = null;
+            lastPivotFloorPayload = null;
+            lastMassIndexPayload = null;
+            lastNrtrWatrPayload = null;
+            lastPriceChannelAdaptivePayload = null;
+            lastPriceChannelOffsetPayload = null;
+            lastParabolicBollingerPayload = null;
+            lastParabolicPriceChannelPayload = null;
+            lastAtrChannelPayload = null;
+            lastOffsetSmaPayload = null;
+            lastOffsetEmaPayload = null;
+            lastOffsetSsmaPayload = null;
+            lastVolatilityAveragePayload = null;
+            lastVolatilityAverageChannelPayload = null;
+            lastPriceOscillatorPayload = null;
+            lastDynamicTrendDetectorPayload = null;
+            lastAdaptiveLookBackPayload = null;
+            lastLinRegChannelFastPayload = null;
+            lastVolatilityCandlesPayload = null;
+            lastZigZagPayload = null;
+            lastVolatilityAverageTwicePayload = null;
+            lastVolatilityStagesAwPayload = null;
             applyClassicOsEngineSeries();
             return;
         }
@@ -2363,6 +3166,38 @@
         const wantLinRegChannel = layerLinRegChannel && layerLinRegChannel.checked;
         const wantKalman = layerKalman && layerKalman.checked;
         const wantFractal = layerFractal && layerFractal.checked;
+        const wantDonchian = layerDonchian && layerDonchian.checked;
+        const wantStochRsi = layerStochRsi && layerStochRsi.checked;
+        const wantAc = layerAc && layerAc.checked;
+        const wantBullsPower = layerBullsPower && layerBullsPower.checked;
+        const wantBearsPower = layerBearsPower && layerBearsPower.checked;
+        const wantDpo = layerDpo && layerDpo.checked;
+        const wantQstick = layerQstick && layerQstick.checked;
+        const wantVhFilter = layerVhFilter && layerVhFilter.checked;
+        const wantEfficiencyRatio = layerEfficiencyRatio && layerEfficiencyRatio.checked;
+        const wantRavi = layerRavi && layerRavi.checked;
+        const wantCog = layerCog && layerCog.checked;
+        const wantPivotFloor = layerPivotFloor && layerPivotFloor.checked;
+        const wantMassIndex = layerMassIndex && layerMassIndex.checked;
+        const wantNrtrWatr = layerNrtrWatr && layerNrtrWatr.checked;
+        const wantPriceChannelAdaptive = layerPriceChannelAdaptive && layerPriceChannelAdaptive.checked;
+        const wantPriceChannelOffset = layerPriceChannelOffset && layerPriceChannelOffset.checked;
+        const wantParabolicBollinger = layerParabolicBollinger && layerParabolicBollinger.checked;
+        const wantParabolicPriceChannel = layerParabolicPriceChannel && layerParabolicPriceChannel.checked;
+        const wantAtrChannel = layerAtrChannel && layerAtrChannel.checked;
+        const wantOffsetSma = layerOffsetSma && layerOffsetSma.checked;
+        const wantOffsetEma = layerOffsetEma && layerOffsetEma.checked;
+        const wantOffsetSsma = layerOffsetSsma && layerOffsetSsma.checked;
+        const wantVolatilityAverage = layerVolatilityAverage && layerVolatilityAverage.checked;
+        const wantVolatilityAverageChannel = layerVolatilityAverageChannel && layerVolatilityAverageChannel.checked;
+        const wantPriceOscillator = layerPriceOscillator && layerPriceOscillator.checked;
+        const wantDynamicTrendDetector = layerDynamicTrendDetector && layerDynamicTrendDetector.checked;
+        const wantAdaptiveLookBack = layerAdaptiveLookBack && layerAdaptiveLookBack.checked;
+        const wantLinRegChannelFast = layerLinRegChannelFast && layerLinRegChannelFast.checked;
+        const wantVolatilityCandles = layerVolatilityCandles && layerVolatilityCandles.checked;
+        const wantZigZag = layerZigZag && layerZigZag.checked;
+        const wantVolatilityAverageTwice = layerVolatilityAverageTwice && layerVolatilityAverageTwice.checked;
+        const wantVolatilityStagesAw = layerVolatilityStagesAw && layerVolatilityStagesAw.checked;
         const layers = [];
         if (wantBb) layers.push('bollinger');
         if (wantRsi) layers.push('rsi');
@@ -2402,6 +3237,38 @@
         if (wantLinRegChannel) layers.push('linreg_channel');
         if (wantKalman) layers.push('kalman');
         if (wantFractal) layers.push('fractal');
+        if (wantDonchian) layers.push('donchian');
+        if (wantStochRsi) layers.push('stoch_rsi');
+        if (wantAc) layers.push('ac');
+        if (wantBullsPower) layers.push('bulls_power');
+        if (wantBearsPower) layers.push('bears_power');
+        if (wantDpo) layers.push('dpo');
+        if (wantQstick) layers.push('qstick');
+        if (wantVhFilter) layers.push('vh_filter');
+        if (wantEfficiencyRatio) layers.push('efficiency_ratio');
+        if (wantRavi) layers.push('ravi');
+        if (wantCog) layers.push('cog');
+        if (wantPivotFloor) layers.push('pivot_floor');
+        if (wantMassIndex) layers.push('mass_index');
+        if (wantNrtrWatr) layers.push('nrtr_watr');
+        if (wantPriceChannelAdaptive) layers.push('price_channel_adaptive');
+        if (wantPriceChannelOffset) layers.push('price_channel_offset');
+        if (wantParabolicBollinger) layers.push('parabolic_bollinger');
+        if (wantParabolicPriceChannel) layers.push('parabolic_price_channel');
+        if (wantAtrChannel) layers.push('atr_channel');
+        if (wantOffsetSma) layers.push('offset_sma');
+        if (wantOffsetEma) layers.push('offset_ema');
+        if (wantOffsetSsma) layers.push('offset_ssma');
+        if (wantVolatilityAverage) layers.push('volatility_average');
+        if (wantVolatilityAverageChannel) layers.push('volatility_average_channel');
+        if (wantPriceOscillator) layers.push('price_oscillator');
+        if (wantDynamicTrendDetector) layers.push('dynamic_trend_detector');
+        if (wantAdaptiveLookBack) layers.push('adaptive_look_back');
+        if (wantLinRegChannelFast) layers.push('linreg_channel_fast');
+        if (wantVolatilityCandles) layers.push('volatility_candles');
+        if (wantZigZag) layers.push('zigzag');
+        if (wantVolatilityAverageTwice) layers.push('volatility_average_twice');
+        if (wantVolatilityStagesAw) layers.push('volatility_stages_aw');
 
         const seq = ++classicIndicatorsFetchSeq;
         const params = new URLSearchParams({
@@ -2455,6 +3322,38 @@
                     lastLinRegChannelPayload = wantLinRegChannel && d && d.linreg_channel ? d.linreg_channel : null;
                     lastKalmanPayload = wantKalman && d && d.kalman ? d.kalman : null;
                     lastFractalPayload = wantFractal && d && d.fractal ? d.fractal : null;
+                    lastDonchianPayload = wantDonchian && d && d.donchian ? d.donchian : null;
+                    lastStochRsiPayload = wantStochRsi && d && d.stoch_rsi ? d.stoch_rsi : null;
+                    lastAcPayload = wantAc && d && d.ac ? d.ac : null;
+                    lastBullsPowerPayload = wantBullsPower && d && d.bulls_power ? d.bulls_power : null;
+                    lastBearsPowerPayload = wantBearsPower && d && d.bears_power ? d.bears_power : null;
+                    lastDpoPayload = wantDpo && d && d.dpo ? d.dpo : null;
+                    lastQstickPayload = wantQstick && d && d.qstick ? d.qstick : null;
+                    lastVhFilterPayload = wantVhFilter && d && d.vh_filter ? d.vh_filter : null;
+                    lastEfficiencyRatioPayload = wantEfficiencyRatio && d && d.efficiency_ratio ? d.efficiency_ratio : null;
+                    lastRaviPayload = wantRavi && d && d.ravi ? d.ravi : null;
+                    lastCogPayload = wantCog && d && d.cog ? d.cog : null;
+                    lastPivotFloorPayload = wantPivotFloor && d && d.pivot_floor ? d.pivot_floor : null;
+                    lastMassIndexPayload = wantMassIndex && d && d.mass_index ? d.mass_index : null;
+                    lastNrtrWatrPayload = wantNrtrWatr && d && d.nrtr_watr ? d.nrtr_watr : null;
+                    lastPriceChannelAdaptivePayload = wantPriceChannelAdaptive && d && d.price_channel_adaptive ? d.price_channel_adaptive : null;
+                    lastPriceChannelOffsetPayload = wantPriceChannelOffset && d && d.price_channel_offset ? d.price_channel_offset : null;
+                    lastParabolicBollingerPayload = wantParabolicBollinger && d && d.parabolic_bollinger ? d.parabolic_bollinger : null;
+                    lastParabolicPriceChannelPayload = wantParabolicPriceChannel && d && d.parabolic_price_channel ? d.parabolic_price_channel : null;
+                    lastAtrChannelPayload = wantAtrChannel && d && d.atr_channel ? d.atr_channel : null;
+                    lastOffsetSmaPayload = wantOffsetSma && d && d.offset_sma ? d.offset_sma : null;
+                    lastOffsetEmaPayload = wantOffsetEma && d && d.offset_ema ? d.offset_ema : null;
+                    lastOffsetSsmaPayload = wantOffsetSsma && d && d.offset_ssma ? d.offset_ssma : null;
+                    lastVolatilityAveragePayload = wantVolatilityAverage && d && d.volatility_average ? d.volatility_average : null;
+                    lastVolatilityAverageChannelPayload = wantVolatilityAverageChannel && d && d.volatility_average_channel ? d.volatility_average_channel : null;
+                    lastPriceOscillatorPayload = wantPriceOscillator && d && d.price_oscillator ? d.price_oscillator : null;
+                    lastDynamicTrendDetectorPayload = wantDynamicTrendDetector && d && d.dynamic_trend_detector ? d.dynamic_trend_detector : null;
+                    lastAdaptiveLookBackPayload = wantAdaptiveLookBack && d && d.adaptive_look_back ? d.adaptive_look_back : null;
+                    lastLinRegChannelFastPayload = wantLinRegChannelFast && d && d.linreg_channel_fast ? d.linreg_channel_fast : null;
+                    lastVolatilityCandlesPayload = wantVolatilityCandles && d && d.volatility_candles ? d.volatility_candles : null;
+                    lastZigZagPayload = wantZigZag && d && d.zigzag ? d.zigzag : null;
+                    lastVolatilityAverageTwicePayload = wantVolatilityAverageTwice && d && d.volatility_average_twice ? d.volatility_average_twice : null;
+                    lastVolatilityStagesAwPayload = wantVolatilityStagesAw && d && d.volatility_stages_aw ? d.volatility_stages_aw : null;
                     applyClassicOsEngineSeries();
                 } catch (e) {
                     console.error('[dashboard classic indicators] apply', e);
@@ -2496,6 +3395,22 @@
                     lastLinRegChannelPayload = null;
                     lastKalmanPayload = null;
                     lastFractalPayload = null;
+                    lastDonchianPayload = null;
+                    lastStochRsiPayload = null;
+                    lastAcPayload = null;
+                    lastBullsPowerPayload = null;
+                    lastBearsPowerPayload = null;
+                    lastDpoPayload = null;
+                    lastQstickPayload = null;
+                    lastVhFilterPayload = null;
+                    lastEfficiencyRatioPayload = null;
+                    lastRaviPayload = null;
+                    lastCogPayload = null;
+                    lastPivotFloorPayload = null;
+                    lastMassIndexPayload = null;
+                    lastZigZagPayload = null;
+                    lastVolatilityAverageTwicePayload = null;
+                    lastVolatilityStagesAwPayload = null;
                     try { applyClassicOsEngineSeries(); } catch (_) {}
                 }
             })
@@ -3721,11 +4636,44 @@
         [layerLinRegChannel, () => { lastLinRegChannelPayload = null; }],
         [layerKalman, () => { lastKalmanPayload = null; }],
         [layerFractal, () => { lastFractalPayload = null; }],
+        [layerDonchian, () => { lastDonchianPayload = null; }],
+        [layerStochRsi, () => { lastStochRsiPayload = null; }],
+        [layerAc, () => { lastAcPayload = null; }],
+        [layerBullsPower, () => { lastBullsPowerPayload = null; }],
+        [layerBearsPower, () => { lastBearsPowerPayload = null; }],
+        [layerDpo, () => { lastDpoPayload = null; }],
+        [layerQstick, () => { lastQstickPayload = null; }],
+        [layerVhFilter, () => { lastVhFilterPayload = null; }],
+        [layerEfficiencyRatio, () => { lastEfficiencyRatioPayload = null; }],
+        [layerRavi, () => { lastRaviPayload = null; }],
+        [layerCog, () => { lastCogPayload = null; }],
+        [layerPivotFloor, () => { lastPivotFloorPayload = null; }],
+        [layerMassIndex, () => { lastMassIndexPayload = null; }],
+        [layerNrtrWatr, () => { lastNrtrWatrPayload = null; }],
+        [layerPriceChannelAdaptive, () => { lastPriceChannelAdaptivePayload = null; }],
+        [layerPriceChannelOffset, () => { lastPriceChannelOffsetPayload = null; }],
+        [layerParabolicBollinger, () => { lastParabolicBollingerPayload = null; }],
+        [layerParabolicPriceChannel, () => { lastParabolicPriceChannelPayload = null; }],
+        [layerAtrChannel, () => { lastAtrChannelPayload = null; }],
+        [layerOffsetSma, () => { lastOffsetSmaPayload = null; }],
+        [layerOffsetEma, () => { lastOffsetEmaPayload = null; }],
+        [layerOffsetSsma, () => { lastOffsetSsmaPayload = null; }],
+        [layerVolatilityAverage, () => { lastVolatilityAveragePayload = null; }],
+        [layerVolatilityAverageChannel, () => { lastVolatilityAverageChannelPayload = null; }],
+        [layerPriceOscillator, () => { lastPriceOscillatorPayload = null; }],
+        [layerDynamicTrendDetector, () => { lastDynamicTrendDetectorPayload = null; }],
+        [layerAdaptiveLookBack, () => { lastAdaptiveLookBackPayload = null; }],
+        [layerLinRegChannelFast, () => { lastLinRegChannelFastPayload = null; }],
+        [layerVolatilityCandles, () => { lastVolatilityCandlesPayload = null; }],
+        [layerZigZag, () => { lastZigZagPayload = null; }],
+        [layerVolatilityAverageTwice, () => { lastVolatilityAverageTwicePayload = null; }],
+        [layerVolatilityStagesAw, () => { lastVolatilityStagesAwPayload = null; }],
     ].forEach(([el, clearFn]) => {
         if (!el) return;
         el.addEventListener('change', () => {
             saveLayerPrefs();
-            clearFn();
+            // Чистим payload только при выключении; при включении ждём ответ API.
+            if (!el.checked) clearFn();
             fetchClassicIndicators();
         });
     });

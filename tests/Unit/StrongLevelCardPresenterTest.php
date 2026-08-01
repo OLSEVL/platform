@@ -145,4 +145,33 @@ class StrongLevelCardPresenterTest extends TestCase
         $this->assertStringContainsString('Bollinger Contrtrend', $tech);
         $this->assertStringContainsString('BB(12, 2.0σ)', $tech);
     }
+
+    public function test_pinbar_trade_title_and_narrative(): void
+    {
+        $features = [
+            'setup' => 'pinbar_bull',
+            'close' => 1.10550,
+            'sma' => 1.10000,
+            'sma_length' => 50,
+            'level_price' => 1.10550,
+            'level_kind' => 'pinbar',
+        ];
+        $decision = ['decision_version' => 'pinbar_trade_v1'];
+
+        $this->assertSame(
+            'Бычий пинбар',
+            $this->presenter->strategyTitle($features, 'pinbar_trade', $decision)
+        );
+
+        $text = $this->presenter->strategyNarrative($features, 'CALL', 'pinbar_trade', $decision, [
+            'Бычий пин: O/C в верхней 1/3 HL, SMA(50)=1.10000 < close=1.10550.',
+        ]);
+        $this->assertStringContainsString('Бычий пин', $text);
+        $this->assertStringContainsString('вверх', $text);
+
+        $tech = $this->presenter->technicalDetails($features, ['reason'], 'pinbar_trade', $decision);
+        $this->assertStringContainsString('pinbar_bull', $tech);
+        $this->assertStringContainsString('режим: PinBar', $tech);
+        $this->assertStringContainsString('SMA(50)', $tech);
+    }
 }

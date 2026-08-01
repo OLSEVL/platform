@@ -31,6 +31,38 @@ use App\Services\Indicators\VwmaIndicatorService;
 use App\Services\Indicators\CmoIndicatorService;
 use App\Services\Indicators\DemarkerIndicatorService;
 use App\Services\Indicators\FractalIndicatorService;
+use App\Services\Indicators\DonchianIndicatorService;
+use App\Services\Indicators\StochRsiIndicatorService;
+use App\Services\Indicators\AcIndicatorService;
+use App\Services\Indicators\BullsPowerIndicatorService;
+use App\Services\Indicators\BearsPowerIndicatorService;
+use App\Services\Indicators\DpoIndicatorService;
+use App\Services\Indicators\QstickIndicatorService;
+use App\Services\Indicators\VhFilterIndicatorService;
+use App\Services\Indicators\EfficiencyRatioIndicatorService;
+use App\Services\Indicators\RaviIndicatorService;
+use App\Services\Indicators\CogIndicatorService;
+use App\Services\Indicators\PivotFloorIndicatorService;
+use App\Services\Indicators\MassIndexIndicatorService;
+use App\Services\Indicators\NrtrWatrIndicatorService;
+use App\Services\Indicators\PriceChannelAdaptiveIndicatorService;
+use App\Services\Indicators\PriceChannelOffsetIndicatorService;
+use App\Services\Indicators\ParabolicBollingerIndicatorService;
+use App\Services\Indicators\ParabolicPriceChannelIndicatorService;
+use App\Services\Indicators\AtrChannelIndicatorService;
+use App\Services\Indicators\OffsetSmaIndicatorService;
+use App\Services\Indicators\OffsetEmaIndicatorService;
+use App\Services\Indicators\OffsetSsmaIndicatorService;
+use App\Services\Indicators\VolatilityAverageIndicatorService;
+use App\Services\Indicators\VolatilityAverageChannelIndicatorService;
+use App\Services\Indicators\PriceOscillatorIndicatorService;
+use App\Services\Indicators\DynamicTrendDetectorIndicatorService;
+use App\Services\Indicators\AdaptiveLookBackIndicatorService;
+use App\Services\Indicators\LinRegChannelFastIndicatorService;
+use App\Services\Indicators\VolatilityCandlesIndicatorService;
+use App\Services\Indicators\ZigZagIndicatorService;
+use App\Services\Indicators\VolatilityAverageTwiceIndicatorService;
+use App\Services\Indicators\VolatilityStagesAWIndicatorService;
 use App\Services\Indicators\IvashovRangeIndicatorService;
 use App\Services\Indicators\KalmanIndicatorService;
 use App\Services\Indicators\LinRegChannelIndicatorService;
@@ -167,6 +199,102 @@ class IndicatorSetting extends Model
 
     /** Fractal — оверлей на цене (маркеры экстремумов). */
     public const KEY_FRACTAL = 'fractal';
+
+    /** Donchian Channel — оверлей up/mid/down. */
+    public const KEY_DONCHIAN = 'donchian';
+
+    /** Stochastic RSI — отдельная pane %K/%D. */
+    public const KEY_STOCH_RSI = 'stoch_rsi';
+
+    /** AC (Accelerator Oscillator) — гистограмма. */
+    public const KEY_AC = 'ac';
+
+    /** Bulls Power — гистограмма. */
+    public const KEY_BULLS_POWER = 'bulls_power';
+
+    /** Bears Power — гистограмма. */
+    public const KEY_BEARS_POWER = 'bears_power';
+
+    /** DPO — отдельная pane. */
+    public const KEY_DPO = 'dpo';
+
+    /** QStick — отдельная pane. */
+    public const KEY_QSTICK = 'qstick';
+
+    /** VHFilter — отдельная pane. */
+    public const KEY_VH_FILTER = 'vh_filter';
+
+    /** Efficiency Ratio — отдельная pane. */
+    public const KEY_EFFICIENCY_RATIO = 'efficiency_ratio';
+
+    /** RAVI — отдельная pane с уровнями up/down. */
+    public const KEY_RAVI = 'ravi';
+
+    /** COG (Center of Gravity) — отдельная pane cog/prev_cog. */
+    public const KEY_COG = 'cog';
+
+    /** Pivot Floor — оверлей P/R/S уровней. */
+    public const KEY_PIVOT_FLOOR = 'pivot_floor';
+
+    /** Mass Index — отдельная pane mi + уровни. */
+    public const KEY_MASS_INDEX = 'mass_index';
+
+    /** NRTR WATR — порт OsEngine Priority-1. */
+    public const KEY_NRTR_WATR = 'nrtr_watr';
+
+    /** PC Adaptive — порт OsEngine Priority-1. */
+    public const KEY_PRICE_CHANNEL_ADAPTIVE = 'price_channel_adaptive';
+
+    /** PC Offset — порт OsEngine Priority-1. */
+    public const KEY_PRICE_CHANNEL_OFFSET = 'price_channel_offset';
+
+    /** Parabolic BB — порт OsEngine Priority-1. */
+    public const KEY_PARABOLIC_BOLLINGER = 'parabolic_bollinger';
+
+    /** Parabolic PC — порт OsEngine Priority-1. */
+    public const KEY_PARABOLIC_PRICE_CHANNEL = 'parabolic_price_channel';
+
+    /** ATR Channel — порт OsEngine Priority-1. */
+    public const KEY_ATR_CHANNEL = 'atr_channel';
+
+    /** Offset SMA — порт OsEngine Priority-1. */
+    public const KEY_OFFSET_SMA = 'offset_sma';
+
+    /** Offset EMA — порт OsEngine Priority-1. */
+    public const KEY_OFFSET_EMA = 'offset_ema';
+
+    /** Offset SSMA — порт OsEngine Priority-1. */
+    public const KEY_OFFSET_SSMA = 'offset_ssma';
+
+    /** Vol Average — порт OsEngine Priority-1. */
+    public const KEY_VOLATILITY_AVERAGE = 'volatility_average';
+
+    /** Vol Avg Channel — порт OsEngine Priority-1. */
+    public const KEY_VOLATILITY_AVERAGE_CHANNEL = 'volatility_average_channel';
+
+    /** Price Oscillator — порт OsEngine Priority-1. */
+    public const KEY_PRICE_OSCILLATOR = 'price_oscillator';
+
+    /** DTD — порт OsEngine Priority-1. */
+    public const KEY_DYNAMIC_TREND_DETECTOR = 'dynamic_trend_detector';
+
+    /** Adaptive Look Back — порт OsEngine Priority-1. */
+    public const KEY_ADAPTIVE_LOOK_BACK = 'adaptive_look_back';
+
+    /** LR Channel Fast — порт OsEngine Priority-1. */
+    public const KEY_LINREG_CHANNEL_FAST = 'linreg_channel_fast';
+
+    /** VolatilityCandles — относительная амплитуда бара (High−Median)/Median %, отдельная pane. */
+    public const KEY_VOLATILITY_CANDLES = 'volatility_candles';
+
+    /** ZigZag — ломаная по значимым хай/лоу (OsEngine). */
+    public const KEY_ZIGZAG = 'zigzag';
+
+    /** VolatilityAverageTwice — вола + fast/slow SMA. */
+    public const KEY_VOLATILITY_AVERAGE_TWICE = 'volatility_average_twice';
+
+    /** VolatilityStagesAW — стадии волы относительно канала SMA. */
+    public const KEY_VOLATILITY_STAGES_AW = 'volatility_stages_aw';
 
     protected $fillable = ['bot_id', 'indicator_key', 'settings'];
 
@@ -502,5 +630,197 @@ class IndicatorSetting extends Model
     public static function mergedFractalParams(Bot $bot): array
     {
         return self::mergedByKey($bot, self::KEY_FRACTAL, [FractalIndicatorService::class, 'defaultParams']);
+    }
+
+    /** @return array<string, mixed> */
+    public static function mergedDonchianParams(Bot $bot): array
+    {
+        return self::mergedByKey($bot, self::KEY_DONCHIAN, [DonchianIndicatorService::class, 'defaultParams']);
+    }
+
+    /** @return array<string, mixed> */
+    public static function mergedStochRsiParams(Bot $bot): array
+    {
+        return self::mergedByKey($bot, self::KEY_STOCH_RSI, [StochRsiIndicatorService::class, 'defaultParams']);
+    }
+
+    /** @return array<string, mixed> */
+    public static function mergedAcParams(Bot $bot): array
+    {
+        return self::mergedByKey($bot, self::KEY_AC, [AcIndicatorService::class, 'defaultParams']);
+    }
+
+    /** @return array<string, mixed> */
+    public static function mergedBullsPowerParams(Bot $bot): array
+    {
+        return self::mergedByKey($bot, self::KEY_BULLS_POWER, [BullsPowerIndicatorService::class, 'defaultParams']);
+    }
+
+    /** @return array<string, mixed> */
+    public static function mergedBearsPowerParams(Bot $bot): array
+    {
+        return self::mergedByKey($bot, self::KEY_BEARS_POWER, [BearsPowerIndicatorService::class, 'defaultParams']);
+    }
+
+    /** @return array<string, mixed> */
+    public static function mergedDpoParams(Bot $bot): array
+    {
+        return self::mergedByKey($bot, self::KEY_DPO, [DpoIndicatorService::class, 'defaultParams']);
+    }
+
+    /** @return array<string, mixed> */
+    public static function mergedQstickParams(Bot $bot): array
+    {
+        return self::mergedByKey($bot, self::KEY_QSTICK, [QstickIndicatorService::class, 'defaultParams']);
+    }
+
+    /** @return array<string, mixed> */
+    public static function mergedVhFilterParams(Bot $bot): array
+    {
+        return self::mergedByKey($bot, self::KEY_VH_FILTER, [VhFilterIndicatorService::class, 'defaultParams']);
+    }
+
+    /** @return array<string, mixed> */
+    public static function mergedEfficiencyRatioParams(Bot $bot): array
+    {
+        return self::mergedByKey($bot, self::KEY_EFFICIENCY_RATIO, [EfficiencyRatioIndicatorService::class, 'defaultParams']);
+    }
+
+    /** @return array<string, mixed> */
+    public static function mergedRaviParams(Bot $bot): array
+    {
+        return self::mergedByKey($bot, self::KEY_RAVI, [RaviIndicatorService::class, 'defaultParams']);
+    }
+
+    /** @return array<string, mixed> */
+    public static function mergedCogParams(Bot $bot): array
+    {
+        return self::mergedByKey($bot, self::KEY_COG, [CogIndicatorService::class, 'defaultParams']);
+    }
+
+    /** @return array<string, mixed> */
+    public static function mergedPivotFloorParams(Bot $bot): array
+    {
+        return self::mergedByKey($bot, self::KEY_PIVOT_FLOOR, [PivotFloorIndicatorService::class, 'defaultParams']);
+    }
+
+    /** @return array<string, mixed> */
+    public static function mergedMassIndexParams(Bot $bot): array
+    {
+        return self::mergedByKey($bot, self::KEY_MASS_INDEX, [MassIndexIndicatorService::class, 'defaultParams']);
+    }
+
+    /** @return array<string, mixed> */
+    public static function mergedNrtrWatrParams(Bot $bot): array
+    {
+        return self::mergedByKey($bot, self::KEY_NRTR_WATR, [NrtrWatrIndicatorService::class, 'defaultParams']);
+    }
+
+    /** @return array<string, mixed> */
+    public static function mergedPriceChannelAdaptiveParams(Bot $bot): array
+    {
+        return self::mergedByKey($bot, self::KEY_PRICE_CHANNEL_ADAPTIVE, [PriceChannelAdaptiveIndicatorService::class, 'defaultParams']);
+    }
+
+    /** @return array<string, mixed> */
+    public static function mergedPriceChannelOffsetParams(Bot $bot): array
+    {
+        return self::mergedByKey($bot, self::KEY_PRICE_CHANNEL_OFFSET, [PriceChannelOffsetIndicatorService::class, 'defaultParams']);
+    }
+
+    /** @return array<string, mixed> */
+    public static function mergedParabolicBollingerParams(Bot $bot): array
+    {
+        return self::mergedByKey($bot, self::KEY_PARABOLIC_BOLLINGER, [ParabolicBollingerIndicatorService::class, 'defaultParams']);
+    }
+
+    /** @return array<string, mixed> */
+    public static function mergedParabolicPriceChannelParams(Bot $bot): array
+    {
+        return self::mergedByKey($bot, self::KEY_PARABOLIC_PRICE_CHANNEL, [ParabolicPriceChannelIndicatorService::class, 'defaultParams']);
+    }
+
+    /** @return array<string, mixed> */
+    public static function mergedAtrChannelParams(Bot $bot): array
+    {
+        return self::mergedByKey($bot, self::KEY_ATR_CHANNEL, [AtrChannelIndicatorService::class, 'defaultParams']);
+    }
+
+    /** @return array<string, mixed> */
+    public static function mergedOffsetSmaParams(Bot $bot): array
+    {
+        return self::mergedByKey($bot, self::KEY_OFFSET_SMA, [OffsetSmaIndicatorService::class, 'defaultParams']);
+    }
+
+    /** @return array<string, mixed> */
+    public static function mergedOffsetEmaParams(Bot $bot): array
+    {
+        return self::mergedByKey($bot, self::KEY_OFFSET_EMA, [OffsetEmaIndicatorService::class, 'defaultParams']);
+    }
+
+    /** @return array<string, mixed> */
+    public static function mergedOffsetSsmaParams(Bot $bot): array
+    {
+        return self::mergedByKey($bot, self::KEY_OFFSET_SSMA, [OffsetSsmaIndicatorService::class, 'defaultParams']);
+    }
+
+    /** @return array<string, mixed> */
+    public static function mergedVolatilityAverageParams(Bot $bot): array
+    {
+        return self::mergedByKey($bot, self::KEY_VOLATILITY_AVERAGE, [VolatilityAverageIndicatorService::class, 'defaultParams']);
+    }
+
+    /** @return array<string, mixed> */
+    public static function mergedVolatilityAverageChannelParams(Bot $bot): array
+    {
+        return self::mergedByKey($bot, self::KEY_VOLATILITY_AVERAGE_CHANNEL, [VolatilityAverageChannelIndicatorService::class, 'defaultParams']);
+    }
+
+    /** @return array<string, mixed> */
+    public static function mergedPriceOscillatorParams(Bot $bot): array
+    {
+        return self::mergedByKey($bot, self::KEY_PRICE_OSCILLATOR, [PriceOscillatorIndicatorService::class, 'defaultParams']);
+    }
+
+    /** @return array<string, mixed> */
+    public static function mergedDynamicTrendDetectorParams(Bot $bot): array
+    {
+        return self::mergedByKey($bot, self::KEY_DYNAMIC_TREND_DETECTOR, [DynamicTrendDetectorIndicatorService::class, 'defaultParams']);
+    }
+
+    /** @return array<string, mixed> */
+    public static function mergedAdaptiveLookBackParams(Bot $bot): array
+    {
+        return self::mergedByKey($bot, self::KEY_ADAPTIVE_LOOK_BACK, [AdaptiveLookBackIndicatorService::class, 'defaultParams']);
+    }
+
+    /** @return array<string, mixed> */
+    public static function mergedLinRegChannelFastParams(Bot $bot): array
+    {
+        return self::mergedByKey($bot, self::KEY_LINREG_CHANNEL_FAST, [LinRegChannelFastIndicatorService::class, 'defaultParams']);
+    }
+
+    /** @return array<string, mixed> */
+    public static function mergedVolatilityCandlesParams(Bot $bot): array
+    {
+        return self::mergedByKey($bot, self::KEY_VOLATILITY_CANDLES, [VolatilityCandlesIndicatorService::class, 'defaultParams']);
+    }
+
+    /** @return array<string, mixed> */
+    public static function mergedZigZagParams(Bot $bot): array
+    {
+        return self::mergedByKey($bot, self::KEY_ZIGZAG, [ZigZagIndicatorService::class, 'defaultParams']);
+    }
+
+    /** @return array<string, mixed> */
+    public static function mergedVolatilityAverageTwiceParams(Bot $bot): array
+    {
+        return self::mergedByKey($bot, self::KEY_VOLATILITY_AVERAGE_TWICE, [VolatilityAverageTwiceIndicatorService::class, 'defaultParams']);
+    }
+
+    /** @return array<string, mixed> */
+    public static function mergedVolatilityStagesAWParams(Bot $bot): array
+    {
+        return self::mergedByKey($bot, self::KEY_VOLATILITY_STAGES_AW, [VolatilityStagesAWIndicatorService::class, 'defaultParams']);
     }
 }

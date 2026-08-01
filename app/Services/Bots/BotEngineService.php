@@ -9,23 +9,41 @@ use App\Models\BotSignal;
 use App\Models\BotTrade;
 use App\Models\IndicatorSetting;
 use App\Models\PocketInstrument;
-use App\Services\Bots\Strategies\AkimTrade1MStrategy;
 use App\Services\Bots\Strategies\BotStrategyInterface;
 use App\Services\Bots\Strategies\CandleReversalLevelStrategy;
 use App\Services\Bots\Strategies\BollingerContrtrendStrategy;
+use App\Services\Bots\Strategies\CciTradeStrategy;
+use App\Services\Bots\Strategies\PinBarTradeStrategy;
 use App\Services\Bots\Strategies\RsiContrtrendStrategy;
+use App\Services\Bots\Strategies\RsiTradeStrategy;
+use App\Services\Bots\Strategies\RviTradeStrategy;
+use App\Services\Bots\Strategies\ThreeSoldierStrategy;
+use App\Services\Bots\Strategies\WilliamsRangeTradeStrategy;
 use App\Services\Bots\Strategies\OpenRouterLlmAnalystStrategy;
 use App\Services\Bots\Strategies\OpenRouterLlmStrategy;
 use App\Services\Bots\Strategies\SmcFlowStrategy;
 use App\Services\Bots\Strategies\StrongLevelStrategy;
 use App\Services\Bots\Strategies\StrongTrendTelegramStrategy;
 use App\Services\Bots\Strategies\ThreeCandlesInRowStrategy;
+use App\Services\Bots\Strategies\EnvelopTrendStrategy;
+use App\Services\Bots\Strategies\PriceChannelTradeStrategy;
+use App\Services\Bots\Strategies\ParabolicSarTradeStrategy;
+use App\Services\Bots\Strategies\BreakLinRegChannelStrategy;
+use App\Services\Bots\Strategies\PivotPointsStrategy;
+use App\Services\Bots\Strategies\SmaStochasticStrategy;
+use App\Services\Bots\Strategies\MomentumMacdStrategy;
+use App\Services\Bots\Strategies\ParabolicBollingerStrategy;
+use App\Services\Bots\Strategies\ParabolicPriceChannelStrategy;
+use App\Services\Bots\Strategies\VolAdaptiveCandlesStrategy;
+use App\Services\Bots\Strategies\ThreeSoldierVolAdaptiveStrategy;
+use App\Services\Bots\Strategies\CustomCandlesImpulseStrategy;
 use App\Services\CandleService;
 use App\Services\Indicators\SmcFlowBotSignalAnalyzer;
 use App\Services\Indicators\SmcFlowIndicatorService;
 use App\Services\Mirror\MirrorTradeDispatcher;
 use App\Services\Telegram\TelegramAlertService;
 use App\Support\BotScanProgress;
+use App\Support\LevelBounceBotTypes;
 use App\Support\SmcFlowLlmSnapshot;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -471,7 +489,7 @@ class BotEngineService
 
                     // Strong Level / Candle Reversal / RSI Contrtrend: push в Telegram после paper-сделки.
                     $telegramResult = null;
-                    if (in_array($bot->type, ['strong_level', 'candle_reversal_confirm', 'rsi_contrtrend', 'bollinger_contrtrend'], true)) {
+                    if (LevelBounceBotTypes::supportsCards($bot->type)) {
                         $telegramResult = app(TelegramAlertService::class)->sendStrongLevelAlert(
                             $bot,
                             $instrument,
@@ -915,6 +933,24 @@ class BotEngineService
                     'strong_level', 'candle_reversal_confirm' => 'Нет сильного уровня у цены или нет подтверждения отскока (M5/M1).',
                     'rsi_contrtrend' => 'Нет сетапа RSI Contrtrend: нужен аптренд+RSI перепроданность (CALL) или даунтренд+RSI перекупленность (PUT).',
                     'bollinger_contrtrend' => 'Нет сетапа Bollinger Contrtrend: цена должна закрыться за нижней (CALL) или верхней (PUT) полосой BB.',
+                    'pinbar_trade' => 'Нет PinBar: нужна свеча с телом в верхней/нижней трети диапазона и SMA по тренду.',
+                    'williams_range_trade' => 'Нет сетапа Williams %R: значение вне зон перепроданности/перекупленности.',
+                    'three_soldier' => 'Нет паттерна Three Soldiers: нужны 3 свечи одного цвета достаточной высоты.',
+                    'cci_trade' => 'Нет сетапа CCI: индикатор не в зоне ниже Down / выше Up.',
+                    'rsi_trade' => 'Нет кросса RSI через уровни перепроданности/перекупленности.',
+                    'rvi_trade' => 'Нет сетапа RVI: нет бычьего/медвежьего пересечения линий.',
+                    'envelop_trend' => 'Нет пробоя Envelops: high≥up (CALL) или low≤down (PUT).',
+                    'price_channel_trade' => 'Нет пробоя PriceChannel (канал предыдущего бара).',
+                    'parabolic_sar_trade' => 'Нет сигнала SAR (кросс/положение цены относительно SAR).',
+                    'break_linreg_channel' => 'Нет пробоя LinReg Channel Fast.',
+                    'pivot_points' => 'Нет кросса Pivot R1/S1 на текущем баре.',
+                    'sma_stochastic' => 'Нет совпадения SMA±step и кросса Stochastic %K.',
+                    'momentum_macd' => 'Нет совпадения MACD/Signal и Momentum ±100.',
+                    'parabolic_bollinger' => 'Нет пробоя BB при SAR внутри канала.',
+                    'parabolic_price_channel' => 'Нет пробоя PC при SAR внутри канала.',
+                    'vol_adaptive_candles' => 'Нет сигнальной свечи: тело меньше порога (vola-adaptive).',
+                    'three_soldier_vol_adaptive' => 'Нет Three Soldiers (vola-adaptive): 3 свечи одного цвета и высоты.',
+                    'custom_candles_impulse' => 'Нет импульса: N свечей подряд в одну сторону за TimeSpan.',
                     default => '',
                 },
                 'reasons_short' => [],
@@ -1005,11 +1041,11 @@ class BotEngineService
             'smc_flow' => 500,
             'strong_level' => 500,
             'candle_reversal_confirm' => 500,
-            'rsi_contrtrend' => 150,
-            'bollinger_contrtrend' => 150,
             'openrouter_llm_analyst' => 120,
             'strong_trend_telegram' => 30,
-            default => 120,
+            // Wave B vola-adaptive: нужна ~1 день M1 для AdaptSoldiersHeight / AdaptSignalCandleHeight.
+            'vol_adaptive_candles', 'three_soldier_vol_adaptive', 'pivot_points' => 2000,
+            default => LevelBounceBotTypes::isOsEngineBinary($bot->type) ? 150 : 120,
         };
         $count = match ($bot->type) {
             // LLM-боты: count = сколько M1 загрузить и отправить в модель (см. OpenRouterLlmConfig).
@@ -1019,16 +1055,12 @@ class BotEngineService
         };
         $expirySec = match ($bot->type) {
             'three_candles_in_row' => (int) ($config['expiry_sec'] ?? 60),
-            'akim_trade_1m' => (int) ($config['expiry_sec'] ?? 60),
             'smc_flow' => (int) ($config['expiry_sec'] ?? 180),
             'strong_trend_telegram' => (int) ($config['expiry_sec'] ?? 60),
             'strong_level' => (int) ($config['expiry_sec_bounce'] ?? 180),
-            // По ТЗ: M1 сигнал, экспирация 3 минуты по умолчанию.
-            'rsi_contrtrend' => (int) ($config['expiry_sec'] ?? 180),
-            'bollinger_contrtrend' => (int) ($config['expiry_sec'] ?? 180),
             // По ТЗ для MTF-разворота вход идёт на 5 минут независимо от рыночной фазы.
             'candle_reversal_confirm' => (int) ($config['expiry_sec'] ?? 300),
-            default => (int) ($config['expiry_sec'] ?? 300),
+            default => (int) ($config['expiry_sec'] ?? (LevelBounceBotTypes::isOsEngineBinary($bot->type) ? 180 : 300)),
         };
         // Разные типы ботов имеют разные дефолтные пороги confidence:
         // - openrouter_llm: чуть выше порог по умолчанию, чтобы отсеять "неуверенные" ответы модели;
@@ -1037,36 +1069,36 @@ class BotEngineService
             'smc_flow' => 0.58,
             'strong_level' => 0.58,
             'openrouter_llm' => 0.65,
-            'akim_trade_1m' => 0.58,
             'candle_reversal_confirm' => 0.58,
-            'rsi_contrtrend' => 0.56,
-            'bollinger_contrtrend' => 0.56,
             'strong_trend_telegram' => 0.55,
-            default => 0.55,
+            default => LevelBounceBotTypes::isOsEngineBinary($bot->type) ? 0.56 : 0.55,
         });
         // Минимальный payout как экономический фильтр качества входа.
         // Для LLM-бота ставим умеренный дефолтный порог, чтобы не брать пары с совсем слабой выплатой.
         $minPayout = (float) ($config['min_payout'] ?? match ($bot->type) {
             'openrouter_llm' => 70.0,
             'candle_reversal_confirm' => 82.0,
-            'rsi_contrtrend' => 75.0,
-            'bollinger_contrtrend' => 75.0,
             'three_candles_in_row' => 80.0,
-            'akim_trade_1m' => 80.0,
             'strong_trend_telegram' => 80.0,
-            default => 80.0,
+            default => LevelBounceBotTypes::isOsEngineBinary($bot->type) ? 75.0 : 80.0,
         });
-        $staleAfterSec = (int) ($config['stale_after_sec'] ?? 30);
+        $staleAfterSec = (int) ($config['stale_after_sec'] ?? (LevelBounceBotTypes::isOsEngineBinary($bot->type) ? 60 : 30));
         $streakLen = max(2, min(30, (int) ($config['streak_len'] ?? 6)));
-        // RSI Contrtrend: короткая SMA по умолчанию (см. DEFAULT_* в стратегии).
-        $smaLen = max(2, (int) ($config['sma_length'] ?? ($bot->type === 'rsi_contrtrend' ? 10 : 50)));
-        $rsiLen = max(2, (int) ($config['rsi_length'] ?? ($bot->type === 'rsi_contrtrend' ? 14 : 20)));
+        // RSI Contrtrend / PinBar: SMA length.
+        $smaLen = max(2, (int) ($config['sma_length'] ?? match ($bot->type) {
+            'rsi_contrtrend' => 10,
+            'pinbar_trade' => 50,
+            default => 50,
+        }));
+        $rsiLen = max(2, (int) ($config['rsi_length'] ?? ($bot->type === 'rsi_contrtrend' || $bot->type === 'rsi_trade' ? 14 : 20)));
         // Bollinger Contrtrend: OsEngine Length=12 → первое значение на length+1.
         $bbLen = max(2, (int) ($config['bb_length'] ?? 12));
+        $wrLen = max(2, (int) ($config['wr_length'] ?? 14));
+        $cciLen = max(2, (int) ($config['cci_length'] ?? 20));
+        $rviLen = max(2, (int) ($config['rvi_length'] ?? 10));
         $minClosedBars = match ($bot->type) {
             'smc_flow' => 80,
             'strong_level' => max(80, (int) ($config['min_closed_bars'] ?? 200)),
-            'akim_trade_1m' => 90,
             'strong_trend_telegram' => $streakLen,
             // Для MTF-разворота нужен запас истории M1 и стабильная M5-агрегация.
             'candle_reversal_confirm' => max(80, (int) ($config['min_closed_bars'] ?? 200)),
@@ -1078,6 +1110,28 @@ class BotEngineService
             ),
             'bollinger_contrtrend' => max(
                 $bbLen + 2,
+                (int) ($config['min_closed_bars'] ?? 0)
+            ),
+            'pinbar_trade' => max($smaLen + 2, (int) ($config['min_closed_bars'] ?? 0)),
+            'williams_range_trade' => max($wrLen + 2, (int) ($config['min_closed_bars'] ?? 0)),
+            'three_soldier' => max(5, (int) ($config['min_closed_bars'] ?? 0)),
+            'cci_trade' => max($cciLen + 5, (int) ($config['min_closed_bars'] ?? 0)),
+            'rsi_trade' => max($rsiLen + 5, (int) ($config['min_closed_bars'] ?? 0)),
+            'rvi_trade' => max($rviLen + 7, (int) ($config['min_closed_bars'] ?? 0)),
+            'envelop_trend' => max((int) ($config['length'] ?? 14) + 2, (int) ($config['min_closed_bars'] ?? 0)),
+            'price_channel_trade' => max(max((int) ($config['length_up'] ?? 14), (int) ($config['length_down'] ?? 14)) + 3, (int) ($config['min_closed_bars'] ?? 0)),
+            'parabolic_sar_trade' => max(10, (int) ($config['min_closed_bars'] ?? 0)),
+            'break_linreg_channel' => max((int) ($config['period'] ?? 40) + 2, (int) ($config['min_closed_bars'] ?? 0)),
+            'pivot_points' => max(200, (int) ($config['min_closed_bars'] ?? 0)),
+            'sma_stochastic' => max((int) ($config['sma_length'] ?? 14) + 10, (int) ($config['min_closed_bars'] ?? 0)),
+            'momentum_macd' => max((int) ($config['macd_slow'] ?? 26) + (int) ($config['macd_signal'] ?? 9) + 5, (int) ($config['min_closed_bars'] ?? 0)),
+            'parabolic_bollinger' => max((int) ($config['length'] ?? 21) + (int) ($config['averaging_period'] ?? 15) + 5, (int) ($config['min_closed_bars'] ?? 0)),
+            'parabolic_price_channel' => max(max((int) ($config['length_up'] ?? 21), (int) ($config['length_down'] ?? 21)) + (int) ($config['averaging_period'] ?? 15) + 5, (int) ($config['min_closed_bars'] ?? 0)),
+            // Vola-adaptive: минимум 5 баров логики + запас под дневную историю (fallback без адаптации тоже ок).
+            'vol_adaptive_candles' => max(5, (int) ($config['min_closed_bars'] ?? 0)),
+            'three_soldier_vol_adaptive' => max(5, (int) ($config['min_closed_bars'] ?? 0)),
+            'custom_candles_impulse' => max(
+                (int) ($config['candles_count_to_entry'] ?? 2) + 2,
                 (int) ($config['min_closed_bars'] ?? 0)
             ),
             // LLM-боту нужен достаточно широкий контекст последних свечей,
@@ -1094,8 +1148,10 @@ class BotEngineService
         };
         $dedupeBucketSec = match ($bot->type) {
             'strong_trend_telegram' => max(60, min(3600, (int) ($config['dedupe_bucket_sec'] ?? 300))),
-            'smc_flow', 'strong_level', 'openrouter_llm', 'candle_reversal_confirm', 'rsi_contrtrend', 'bollinger_contrtrend' => max(60, min(900, $expirySec)),
-            default => max(60, min(3600, (int) ($config['dedupe_bucket_sec'] ?? 60))),
+            'smc_flow', 'strong_level', 'openrouter_llm', 'candle_reversal_confirm' => max(60, min(900, $expirySec)),
+            default => LevelBounceBotTypes::isOsEngineBinary($bot->type)
+                ? max(60, min(900, $expirySec))
+                : max(60, min(3600, (int) ($config['dedupe_bucket_sec'] ?? 60))),
         };
 
         return [
@@ -1137,10 +1193,27 @@ class BotEngineService
     {
         return match ($type) {
             'three_candles_in_row' => new ThreeCandlesInRowStrategy,
-            'akim_trade_1m' => new AkimTrade1MStrategy,
             'candle_reversal_confirm' => new CandleReversalLevelStrategy,
             'rsi_contrtrend' => new RsiContrtrendStrategy,
             'bollinger_contrtrend' => new BollingerContrtrendStrategy,
+            'pinbar_trade' => new PinBarTradeStrategy,
+            'williams_range_trade' => new WilliamsRangeTradeStrategy,
+            'three_soldier' => new ThreeSoldierStrategy,
+            'cci_trade' => new CciTradeStrategy,
+            'rsi_trade' => new RsiTradeStrategy,
+            'rvi_trade' => new RviTradeStrategy,
+            'envelop_trend' => new EnvelopTrendStrategy,
+            'price_channel_trade' => new PriceChannelTradeStrategy,
+            'parabolic_sar_trade' => new ParabolicSarTradeStrategy,
+            'break_linreg_channel' => new BreakLinRegChannelStrategy,
+            'pivot_points' => new PivotPointsStrategy,
+            'sma_stochastic' => new SmaStochasticStrategy,
+            'momentum_macd' => new MomentumMacdStrategy,
+            'parabolic_bollinger' => new ParabolicBollingerStrategy,
+            'parabolic_price_channel' => new ParabolicPriceChannelStrategy,
+            'vol_adaptive_candles' => new VolAdaptiveCandlesStrategy,
+            'three_soldier_vol_adaptive' => new ThreeSoldierVolAdaptiveStrategy,
+            'custom_candles_impulse' => new CustomCandlesImpulseStrategy,
             // Новый бот полностью изолирован от старых эвристик:
             // торговое решение принимает только LLM через OpenRouter.
             'openrouter_llm' => new OpenRouterLlmStrategy($this->openRouterClient),

@@ -358,6 +358,7 @@ class StrongLevelCardPresenter
         $isCrc = $this->alertPresenter->isCrcDecision($decision, $botType);
         $isRsi = $this->alertPresenter->isRsiContrtrendDecision($decision, $botType);
         $isBb = $this->alertPresenter->isBollingerContrtrendDecision($decision, $botType);
+        $isOsEngineBinary = $this->alertPresenter->isOsEngineBinaryDecision($decision, $botType);
 
         $instrumentEsc = htmlspecialchars($instrument, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
         $sideEsc = htmlspecialchars($sideRu, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
@@ -365,7 +366,16 @@ class StrongLevelCardPresenter
         $strategyTitle = htmlspecialchars($this->strategyTitle($features, $botType, $decision), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
         $narrative = htmlspecialchars($this->strategyNarrative($features, $side, $botType, $decision, $reasons), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
         $technical = htmlspecialchars($this->technicalDetails($features, $reasons, $botType, $decision), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
-        $headerEmoji = $isBb ? '📊' : ($isRsi ? '📉' : ($isCrc ? '🔄' : '🎯'));
+        // Эмодзи шапки: BB/RSI/CRC как раньше; новые OsEngine binary — из alertBrandEmoji (📌 fallback).
+        $headerEmoji = $isBb
+            ? '📊'
+            : ($isRsi
+                ? '📉'
+                : ($isCrc
+                    ? '🔄'
+                    : ($isOsEngineBinary
+                        ? $this->alertPresenter->alertBrandEmoji($decision, $botType)
+                        : '🎯')));
 
         $lines = [
             $headerEmoji.' <b>'.$instrumentEsc.' · '.$sideEsc.' · '.$expiryLabel.' · 1м</b>',

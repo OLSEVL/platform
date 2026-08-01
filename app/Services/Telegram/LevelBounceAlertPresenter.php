@@ -2,9 +2,11 @@
 
 namespace App\Services\Telegram;
 
+use App\Support\LevelBounceBotTypes;
+
 /**
  * Тексты Telegram-алертов и карточек для ботов отбития от уровня
- * (Strong Level и Candle Reversal + Confirm).
+ * (Strong Level и Candle Reversal + Confirm) и OsEngine binary CALL/PUT.
  */
 class LevelBounceAlertPresenter
 {
@@ -20,6 +22,32 @@ class LevelBounceAlertPresenter
         'vp_val' => 'VAL',
         'rs_sr' => 'RS',
         'three_br_sr' => '3BR',
+    ];
+
+    /**
+     * Человекочитаемые заголовки setup из OsEngine binary стратегий.
+     *
+     * @var array<string, string>
+     */
+    public const SETUP_TITLES = [
+        'pinbar_bull' => 'Бычий пинбар',
+        'pinbar_bear' => 'Медвежий пинбар',
+        'wr_oversold' => 'Williams %R перепроданность',
+        'wr_overbought' => 'Williams %R перекупленность',
+        'three_soldiers_bull' => 'Три белых солдата',
+        'three_soldiers_bear' => 'Три чёрных ворона',
+        'three_soldiers_vol_bull' => 'Три солдата (vola-adaptive) ↑',
+        'three_soldiers_vol_bear' => 'Три солдата (vola-adaptive) ↓',
+        'vol_adaptive_candle_bull' => 'Сильная бычья свеча (vola)',
+        'vol_adaptive_candle_bear' => 'Сильная медвежья свеча (vola)',
+        'impulse_candles_bull' => 'Импульс свечей ↑',
+        'impulse_candles_bear' => 'Импульс свечей ↓',
+        'cci_oversold' => 'CCI перепроданность',
+        'cci_overbought' => 'CCI перекупленность',
+        'rsi_cross_up_from_oversold' => 'RSI выход из перепроданности вверх',
+        'rsi_cross_down_from_overbought' => 'RSI выход из перекупленности вниз',
+        'rvi_bull_cross' => 'RVI бычий кросс',
+        'rvi_bear_cross' => 'RVI медвежий кросс',
     ];
 
     /**
@@ -71,23 +99,121 @@ class LevelBounceAlertPresenter
     }
 
     /**
+     * Любой OsEngine binary CALL/PUT (включая RSI/BB Contrtrend и 6 новых портов).
+     *
+     * @param  array<string, mixed>  $decision
+     */
+    public function isOsEngineBinaryDecision(array $decision, ?string $botType = null): bool
+    {
+        if ($botType !== null && LevelBounceBotTypes::isOsEngineBinary($botType)) {
+            return true;
+        }
+
+        $version = (string) ($decision['decision_version'] ?? '');
+        if ($version === '') {
+            return false;
+        }
+
+        foreach (LevelBounceBotTypes::OS_ENGINE_BINARY as $type) {
+            if (str_starts_with($version, $type)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Эмодзи бренда для Telegram card header (OsEngine binary / level-bounce).
+     *
+     * @param  array<string, mixed>  $decision
+     */
+    public function alertBrandEmoji(array $decision, ?string $botType = null): string
+    {
+        $type = $this->resolveOsEngineBinaryType($decision, $botType);
+
+        return match ($type) {
+            'bollinger_contrtrend' => '📊',
+            'rsi_contrtrend' => '📉',
+            'pinbar_trade' => '📌',
+            'williams_range_trade' => '📉',
+            'three_soldier' => '🕯',
+            'three_soldier_vol_adaptive' => '🕯',
+            'vol_adaptive_candles' => '⚡',
+            'custom_candles_impulse' => '🚀',
+            'cci_trade' => '📐',
+            'rsi_trade' => '📊',
+            'rvi_trade' => '📈',
+            default => $this->isCrcDecision($decision, $botType) ? '🔄' : '🎯',
+        };
+    }
+
+    /**
      * @param  array<string, mixed>  $decision
      */
     public function alertBrandTitle(array $decision, string $sideLabel, ?string $botType = null): string
     {
-        if ($botType === 'bollinger_contrtrend' || str_starts_with((string) ($decision['decision_version'] ?? ''), 'bollinger_contrtrend')) {
-            return '📊 <b>Bollinger Contrtrend — '.htmlspecialchars($sideLabel, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8').'</b>';
+        $sideEsc = htmlspecialchars($sideLabel, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+        $type = $this->resolveOsEngineBinaryType($decision, $botType);
+
+        return match ($type) {
+            'bollinger_contrtrend' => '📊 <b>Bollinger Contrtrend — '.$sideEsc.'</b>',
+            'rsi_contrtrend' => '📉 <b>RSI Contrtrend — '.$sideEsc.'</b>',
+            'pinbar_trade' => '📌 <b>PinBar — '.$sideEsc.'</b>',
+            'williams_range_trade' => '📉 <b>Williams — '.$sideEsc.'</b>',
+            'three_soldier' => '🕯 <b>Three Soldier — '.$sideEsc.'</b>',
+            'three_soldier_vol_adaptive' => '🕯 <b>Three Soldier Vol — '.$sideEsc.'</b>',
+            'vol_adaptive_candles' => '⚡ <b>Vol Adaptive Candle — '.$sideEsc.'</b>',
+            'custom_candles_impulse' => '🚀 <b>Candles Impulse — '.$sideEsc.'</b>',
+            'cci_trade' => '📐 <b>CCI — '.$sideEsc.'</b>',
+            'rsi_trade' => '📊 <b>RSI Trade — '.$sideEsc.'</b>',
+            'rvi_trade' => '📈 <b>RVI — '.$sideEsc.'</b>',
+            default => $this->isCrcDecision($decision, $botType)
+                ? '🔄 <b>Candle Reversal + Confirm — '.$sideEsc.'</b>'
+                : '🎯 <b>Strong Level — '.$sideEsc.'</b>',
+        };
+    }
+
+    /**
+     * Человекочитаемая метка типа OsEngine binary бота.
+     *
+     * @param  array<string, mixed>  $decision
+     */
+    public function osEngineBinaryBotLabel(array $decision = [], ?string $botType = null): string
+    {
+        return match ($this->resolveOsEngineBinaryType($decision, $botType)) {
+            'bollinger_contrtrend' => 'Bollinger Contrtrend',
+            'rsi_contrtrend' => 'RSI Contrtrend',
+            'pinbar_trade' => 'PinBar',
+            'williams_range_trade' => 'Williams',
+            'three_soldier' => 'Three Soldier',
+            'three_soldier_vol_adaptive' => 'Three Soldier Vol Adaptive',
+            'vol_adaptive_candles' => 'Vol Adaptive Candles',
+            'custom_candles_impulse' => 'Custom Candles Impulse',
+            'cci_trade' => 'CCI',
+            'rsi_trade' => 'RSI Trade',
+            'rvi_trade' => 'RVI',
+            default => 'OsEngine Binary',
+        };
+    }
+
+    /**
+     * @param  array<string, mixed>  $decision
+     */
+    private function resolveOsEngineBinaryType(array $decision, ?string $botType = null): ?string
+    {
+        if ($botType !== null && LevelBounceBotTypes::isOsEngineBinary($botType)) {
+            return $botType;
         }
 
-        if ($botType === 'rsi_contrtrend' || str_starts_with((string) ($decision['decision_version'] ?? ''), 'rsi_contrtrend')) {
-            return '📉 <b>RSI Contrtrend — '.htmlspecialchars($sideLabel, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8').'</b>';
+        $version = (string) ($decision['decision_version'] ?? '');
+        foreach (LevelBounceBotTypes::OS_ENGINE_BINARY as $type) {
+            if (str_starts_with($version, $type)) {
+                return $type;
+            }
         }
 
-        if ($this->isCrcDecision($decision, $botType)) {
-            return '🔄 <b>Candle Reversal + Confirm — '.htmlspecialchars($sideLabel, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8').'</b>';
-        }
-
-        return '🎯 <b>Strong Level — '.htmlspecialchars($sideLabel, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8').'</b>';
+        return null;
     }
 
     public function formatExpiryRu(int $sec): string
@@ -115,6 +241,12 @@ class LevelBounceAlertPresenter
             'sma' => 'SMA',
             'bb_lower' => 'нижняя BB',
             'bb_upper' => 'верхняя BB',
+            'pinbar' => 'пинбар',
+            'williams' => 'Williams %R',
+            'pattern' => 'паттерн',
+            'cci' => 'CCI',
+            'rsi' => 'RSI',
+            'rvi' => 'RVI',
             default => 'уровень',
         };
     }
@@ -127,6 +259,12 @@ class LevelBounceAlertPresenter
             'sma' => 'SMA',
             'bb_lower' => 'нижней BB',
             'bb_upper' => 'верхней BB',
+            'pinbar' => 'пинбара',
+            'williams' => 'Williams %R',
+            'pattern' => 'паттерна',
+            'cci' => 'CCI',
+            'rsi' => 'RSI',
+            'rvi' => 'RVI',
             default => 'уровня',
         };
     }
@@ -254,6 +392,13 @@ class LevelBounceAlertPresenter
             };
         }
 
+        // Остальные OsEngine binary (pinbar / WR / soldiers / CCI / RSI Trade / RVI).
+        if ($this->isOsEngineBinaryDecision($decision, $botType)) {
+            $setup = (string) ($features['setup'] ?? '');
+
+            return self::SETUP_TITLES[$setup] ?? $this->osEngineBinaryBotLabel($decision, $botType);
+        }
+
         if ($this->isCrcDecision($decision, $botType)) {
             return 'Отскок от уровня + разворот';
         }
@@ -277,11 +422,43 @@ class LevelBounceAlertPresenter
             return $this->rsiContrtrendNarrative($features, $side, $reasons);
         }
 
+        if ($this->isOsEngineBinaryDecision($decision, $botType)) {
+            return $this->osEngineBinaryNarrative($features, $side, $reasons);
+        }
+
         if ($this->isCrcDecision($decision, $botType)) {
             return $this->crcNarrative($features, $side, $reasons);
         }
 
         return $this->strongLevelNarrative($features, $side);
+    }
+
+    /**
+     * Универсальный абзац для новых OsEngine binary портов:
+     * берём reasons[0] или собираем из setup/close.
+     *
+     * @param  array<string, mixed>  $features
+     * @param  list<string>  $reasons
+     */
+    private function osEngineBinaryNarrative(array $features, string $side, array $reasons): string
+    {
+        $direction = strtoupper($side) === 'CALL' ? 'вверх' : 'вниз';
+
+        if ($reasons !== []) {
+            $core = rtrim((string) $reasons[0], '.');
+
+            return $core.'. Ждём движение '.$direction.'.';
+        }
+
+        $setup = (string) ($features['setup'] ?? '');
+        $setupTitle = self::SETUP_TITLES[$setup] ?? ($setup !== '' ? $setup : 'OsEngine binary');
+        $close = isset($features['close']) ? (float) $features['close'] : 0.0;
+
+        if ($close > 0) {
+            return sprintf('%s (close=%.5f). Ждём движение %s.', $setupTitle, $close, $direction);
+        }
+
+        return $setupTitle.'. Ждём движение '.$direction.'.';
     }
 
     /**
@@ -540,6 +717,11 @@ class LevelBounceAlertPresenter
             return implode(' · ', $parts);
         }
 
+        // Остальные OsEngine binary (не RSI/BB Contrtrend — те уже обработаны выше).
+        if ($this->isOsEngineBinaryDecision($decision, $botType)) {
+            return $this->osEngineBinaryTechnicalDetails($features, $reasons, $decision, $botType);
+        }
+
         $parts = [];
         $levelPrice = isset($features['level_price']) ? (float) $features['level_price'] : 0.0;
         $kindLabel = $this->levelKindRu((string) ($features['level_kind'] ?? 'neutral'));
@@ -576,6 +758,76 @@ class LevelBounceAlertPresenter
 
         if ($reasons !== []) {
             $parts[] = implode(' · ', array_slice($reasons, 0, 3));
+        }
+
+        return implode(' · ', $parts);
+    }
+
+    /**
+     * Техническая строка для OsEngine binary (pinbar / WR / soldiers / CCI / RSI Trade / RVI).
+     *
+     * @param  array<string, mixed>  $features
+     * @param  list<string>  $reasons
+     * @param  array<string, mixed>  $decision
+     */
+    private function osEngineBinaryTechnicalDetails(
+        array $features,
+        array $reasons,
+        array $decision,
+        ?string $botType,
+    ): string {
+        $parts = [];
+        $setup = (string) ($features['setup'] ?? '');
+        if ($setup !== '') {
+            $parts[] = $setup;
+        }
+
+        // Ключевые фичи по типу индикатора / паттерна — только то, что есть в features.
+        if (isset($features['close']) && is_numeric($features['close'])) {
+            $parts[] = 'close='.number_format((float) $features['close'], 5, '.', '');
+        }
+        if (isset($features['sma']) && is_numeric($features['sma'])) {
+            $smaLen = (int) ($features['sma_length'] ?? 0);
+            $parts[] = $smaLen > 0
+                ? sprintf('SMA(%d)=%s', $smaLen, number_format((float) $features['sma'], 5, '.', ''))
+                : 'SMA='.number_format((float) $features['sma'], 5, '.', '');
+        }
+        if (isset($features['williams']) && is_numeric($features['williams'])) {
+            $wrLen = (int) ($features['wr_length'] ?? 0);
+            $parts[] = $wrLen > 0
+                ? sprintf('WR(%d)=%s', $wrLen, number_format((float) $features['williams'], 2, '.', ''))
+                : 'WR='.number_format((float) $features['williams'], 2, '.', '');
+        }
+        if (isset($features['pattern_height_pct']) && is_numeric($features['pattern_height_pct'])) {
+            $parts[] = sprintf('height=%.3f%%', (float) $features['pattern_height_pct']);
+        }
+        if (isset($features['cci']) && is_numeric($features['cci'])) {
+            $cciLen = (int) ($features['cci_length'] ?? 0);
+            $parts[] = $cciLen > 0
+                ? sprintf('CCI(%d)=%s', $cciLen, number_format((float) $features['cci'], 2, '.', ''))
+                : 'CCI='.number_format((float) $features['cci'], 2, '.', '');
+        }
+        if (isset($features['rsi']) && is_numeric($features['rsi'])) {
+            $rsiLen = (int) ($features['rsi_length'] ?? 0);
+            $parts[] = $rsiLen > 0
+                ? sprintf('RSI(%d)=%s', $rsiLen, number_format((float) $features['rsi'], 2, '.', ''))
+                : 'RSI='.number_format((float) $features['rsi'], 2, '.', '');
+        }
+        if (isset($features['rvi']) && is_numeric($features['rvi'])) {
+            $rviLen = (int) ($features['rvi_length'] ?? 0);
+            $rviLine = $rviLen > 0
+                ? sprintf('RVI(%d)=%s', $rviLen, number_format((float) $features['rvi'], 3, '.', ''))
+                : 'RVI='.number_format((float) $features['rvi'], 3, '.', '');
+            if (isset($features['rvi_signal']) && is_numeric($features['rvi_signal'])) {
+                $rviLine .= ' sig='.number_format((float) $features['rvi_signal'], 3, '.', '');
+            }
+            $parts[] = $rviLine;
+        }
+
+        $parts[] = 'режим: '.$this->osEngineBinaryBotLabel($decision, $botType);
+
+        if ($reasons !== []) {
+            $parts[] = implode(' · ', array_slice($reasons, 0, 2));
         }
 
         return implode(' · ', $parts);

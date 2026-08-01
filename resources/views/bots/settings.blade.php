@@ -112,14 +112,36 @@
                 class="inline-flex items-center rounded border border-zinc-600 bg-zinc-800 px-2.5 py-1 text-xs font-medium text-zinc-200 shadow-sm transition-colors hover:bg-zinc-700 hover:border-zinc-500 hover:text-zinc-50 focus:outline-none focus:ring-2 focus:ring-blue-500/50">Kalman</a>
             <a href="{{ route('bots.indicators.fractal.edit', $bot) }}"
                 class="inline-flex items-center rounded border border-zinc-600 bg-zinc-800 px-2.5 py-1 text-xs font-medium text-zinc-200 shadow-sm transition-colors hover:bg-zinc-700 hover:border-zinc-500 hover:text-zinc-50 focus:outline-none focus:ring-2 focus:ring-blue-500/50">Fractal</a>
-            @if(in_array($bot->type, ['strong_level', 'candle_reversal_confirm', 'rsi_contrtrend', 'bollinger_contrtrend'], true))
+            <a href="{{ route('bots.indicators.donchian.edit', $bot) }}"
+                class="inline-flex items-center rounded border border-zinc-600 bg-zinc-800 px-2.5 py-1 text-xs font-medium text-zinc-200 shadow-sm transition-colors hover:bg-zinc-700 hover:border-zinc-500 hover:text-zinc-50 focus:outline-none focus:ring-2 focus:ring-blue-500/50">Donchian</a>
+            <a href="{{ route('bots.indicators.stoch-rsi.edit', $bot) }}"
+                class="inline-flex items-center rounded border border-zinc-600 bg-zinc-800 px-2.5 py-1 text-xs font-medium text-zinc-200 shadow-sm transition-colors hover:bg-zinc-700 hover:border-zinc-500 hover:text-zinc-50 focus:outline-none focus:ring-2 focus:ring-blue-500/50">Stoch RSI</a>
+            <a href="{{ route('bots.indicators.ac.edit', $bot) }}"
+                class="inline-flex items-center rounded border border-zinc-600 bg-zinc-800 px-2.5 py-1 text-xs font-medium text-zinc-200 shadow-sm transition-colors hover:bg-zinc-700 hover:border-zinc-500 hover:text-zinc-50 focus:outline-none focus:ring-2 focus:ring-blue-500/50">AC</a>
+            <a href="{{ route('bots.indicators.bulls-power.edit', $bot) }}"
+                class="inline-flex items-center rounded border border-zinc-600 bg-zinc-800 px-2.5 py-1 text-xs font-medium text-zinc-200 shadow-sm transition-colors hover:bg-zinc-700 hover:border-zinc-500 hover:text-zinc-50 focus:outline-none focus:ring-2 focus:ring-blue-500/50">Bulls Power</a>
+            <a href="{{ route('bots.indicators.bears-power.edit', $bot) }}"
+                class="inline-flex items-center rounded border border-zinc-600 bg-zinc-800 px-2.5 py-1 text-xs font-medium text-zinc-200 shadow-sm transition-colors hover:bg-zinc-700 hover:border-zinc-500 hover:text-zinc-50 focus:outline-none focus:ring-2 focus:ring-blue-500/50">Bears Power</a>
+            <a href="{{ route('bots.indicators.dpo.edit', $bot) }}"
+                class="inline-flex items-center rounded border border-zinc-600 bg-zinc-800 px-2.5 py-1 text-xs font-medium text-zinc-200 shadow-sm transition-colors hover:bg-zinc-700 hover:border-zinc-500 hover:text-zinc-50 focus:outline-none focus:ring-2 focus:ring-blue-500/50">DPO</a>
+            <a href="{{ route('bots.indicators.qstick.edit', $bot) }}"
+                class="inline-flex items-center rounded border border-zinc-600 bg-zinc-800 px-2.5 py-1 text-xs font-medium text-zinc-200 shadow-sm transition-colors hover:bg-zinc-700 hover:border-zinc-500 hover:text-zinc-50 focus:outline-none focus:ring-2 focus:ring-blue-500/50">QStick</a>
+            <a href="{{ route('bots.indicators.vh-filter.edit', $bot) }}"
+                class="inline-flex items-center rounded border border-zinc-600 bg-zinc-800 px-2.5 py-1 text-xs font-medium text-zinc-200 shadow-sm transition-colors hover:bg-zinc-700 hover:border-zinc-500 hover:text-zinc-50 focus:outline-none focus:ring-2 focus:ring-blue-500/50">VHFilter</a>
+            <a href="{{ route('bots.indicators.efficiency-ratio.edit', $bot) }}"
+                class="inline-flex items-center rounded border border-zinc-600 bg-zinc-800 px-2.5 py-1 text-xs font-medium text-zinc-200 shadow-sm transition-colors hover:bg-zinc-700 hover:border-zinc-500 hover:text-zinc-50 focus:outline-none focus:ring-2 focus:ring-blue-500/50">Efficiency Ratio</a>
+            <a href="{{ route('bots.indicators.ravi.edit', $bot) }}"
+                class="inline-flex items-center rounded border border-zinc-600 bg-zinc-800 px-2.5 py-1 text-xs font-medium text-zinc-200 shadow-sm transition-colors hover:bg-zinc-700 hover:border-zinc-500 hover:text-zinc-50 focus:outline-none focus:ring-2 focus:ring-blue-500/50">RAVI</a>
+            <a href="{{ route('bots.indicators.cog.edit', $bot) }}"
+                class="inline-flex items-center rounded border border-zinc-600 bg-zinc-800 px-2.5 py-1 text-xs font-medium text-zinc-200 shadow-sm transition-colors hover:bg-zinc-700 hover:border-zinc-500 hover:text-zinc-50 focus:outline-none focus:ring-2 focus:ring-blue-500/50">COG</a>
+            <a href="{{ route('bots.indicators.pivot-floor.edit', $bot) }}"
+                class="inline-flex items-center rounded border border-zinc-600 bg-zinc-800 px-2.5 py-1 text-xs font-medium text-zinc-200 shadow-sm transition-colors hover:bg-zinc-700 hover:border-zinc-500 hover:text-zinc-50 focus:outline-none focus:ring-2 focus:ring-blue-500/50">Pivot Floor</a>
+            <a href="{{ route('bots.indicators.mass-index.edit', $bot) }}"
+                class="inline-flex items-center rounded border border-zinc-600 bg-zinc-800 px-2.5 py-1 text-xs font-medium text-zinc-200 shadow-sm transition-colors hover:bg-zinc-700 hover:border-zinc-500 hover:text-zinc-50 focus:outline-none focus:ring-2 focus:ring-blue-500/50">Mass Index</a>
             <a href="{{ route('bots.cards', $bot) }}"
                 class="inline-flex items-center rounded border border-zinc-600 bg-zinc-800 px-2.5 py-1 text-xs font-medium text-zinc-200 shadow-sm transition-colors hover:bg-zinc-700 hover:border-zinc-500 hover:text-zinc-50 focus:outline-none focus:ring-2 focus:ring-blue-500/50">Карточки</a>
-            @endif
-            @unless($isChartAnalystBot)
             <a href="{{ route('bots.activity', $bot) }}"
                 class="inline-flex items-center rounded border border-zinc-600 bg-zinc-800 px-2.5 py-1 text-xs font-medium text-zinc-200 shadow-sm transition-colors hover:bg-zinc-700 hover:border-zinc-500 hover:text-zinc-50 focus:outline-none focus:ring-2 focus:ring-blue-500/50">Сигналы и сделки</a>
-            @endunless
             <a href="{{ route('bots.logs', $bot) }}"
                 class="inline-flex items-center rounded border border-zinc-600 bg-zinc-800 px-2.5 py-1 text-xs font-medium text-zinc-200 shadow-sm transition-colors hover:bg-zinc-700 hover:border-zinc-500 hover:text-zinc-50 focus:outline-none focus:ring-2 focus:ring-blue-500/50">Логи и метрики</a>
             <a href="{{ route('bots.index') }}"
@@ -461,58 +483,413 @@
 
                 @include('bots._bollinger-contrtrend-telegram-settings', ['bot' => $bot, 'cfg' => $cfg, 'chartAnalystBots' => $chartAnalystBots ?? []])
             </div>
-        @elseif ($bot->type === 'akim_trade_1m')
+        @elseif ($bot->type === 'pinbar_trade')
+            {{-- OsEngine PinBar: тело в верхней/нижней трети HL + SMA по тренду. --}}
             <div class="space-y-5 border-t border-zinc-800 pt-4">
                 <div class="space-y-2 text-sm text-zinc-400">
                     <p>
-                        <strong class="text-zinc-300">AKIM TRADE 1M</strong> — вход по направлению дня: пробой раннего диапазона сессии задаёт bias,
-                        затем откат к тренду с rejection-свечой на M1. Мини-боковики (узкий диапазон) пропускаются.
+                        <strong class="text-zinc-300">PinBar Trade</strong> — порт OsEngine PinBar:
+                        бычий пин (O/C в верхней 1/3 HL, close &gt; SMA) → CALL;
+                        медвежий (O/C в нижней 1/3, close &lt; SMA) → PUT.
                     </p>
-                    <p class="text-[11px] text-zinc-500">CALL: день вверх + медвежья свеча с нижней тенью у EMA21. PUT: день вниз + бычья с верхней тенью. Нужно ≥ 90 баров M1.</p>
                 </div>
-
                 <div class="grid gap-4 sm:grid-cols-2">
                     <div class="space-y-1">
-                        <label for="count" class="block text-xs font-medium text-zinc-400">Свечей в выборке (count)</label>
-                        <input type="number" name="count" id="count" min="10" max="5000" required
-                            value="{{ old('count', $cfg['count'] ?? 180) }}"
+                        <label for="count" class="block text-xs font-medium text-zinc-400">Свечей (count)</label>
+                        <input type="number" name="count" id="count" min="40" max="5000" required
+                            value="{{ old('count', $cfg['count'] ?? 150) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-                        <p class="text-[11px] text-zinc-500">Минимум 90 M1 для расчёта «направления дня» и EMA21. Рекомендуется 120–180 баров (~2–3 часа).</p>
                         @error('count')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
-                        <label for="expiry_sec" class="block text-xs font-medium text-zinc-400">Экспирация сделки (сек)</label>
-                        <input type="number" name="expiry_sec" id="expiry_sec" min="30" max="86400" required
-                            value="{{ old('expiry_sec', $cfg['expiry_sec'] ?? 60) }}"
+                        <label for="expiry_sec" class="block text-xs font-medium text-zinc-400">Экспирация (сек)</label>
+                        <input type="number" name="expiry_sec" id="expiry_sec" min="60" max="900" required
+                            value="{{ old('expiry_sec', $cfg['expiry_sec'] ?? 180) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-                        <p class="text-[11px] text-zinc-500">Обычно 60 с (1 мин). Сделка создаётся в момент scan при совпадении day-break + откат + EMA.</p>
                         @error('expiry_sec')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
-                        <label for="min_confidence" class="block text-xs font-medium text-zinc-400">Мин. confidence (0–1)</label>
-                        <input type="number" name="min_confidence" id="min_confidence" min="0" max="1" step="0.01" required
-                            value="{{ old('min_confidence', $cfg['min_confidence'] ?? 0.58) }}"
+                        <label for="sma_length" class="block text-xs font-medium text-zinc-400">SMA length</label>
+                        <input type="number" name="sma_length" id="sma_length" min="2" max="500" required
+                            value="{{ old('sma_length', $cfg['sma_length'] ?? 50) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-                        <p class="text-[11px] text-zinc-500">Зависит от качества тени отката, положения относительно EMA21 и payout. Дефолт 0.58.</p>
+                        @error('sma_length')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                    <div class="space-y-1">
+                        <label for="min_confidence" class="block text-xs font-medium text-zinc-400">Мин. confidence</label>
+                        <input type="number" name="min_confidence" id="min_confidence" min="0" max="1" step="0.01" required
+                            value="{{ old('min_confidence', $cfg['min_confidence'] ?? 0.56) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
                         @error('min_confidence')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
                         <label for="min_payout" class="block text-xs font-medium text-zinc-400">Мин. payout (%)</label>
                         <input type="number" name="min_payout" id="min_payout" min="0" max="100" step="0.1" required
-                            value="{{ old('min_payout', $cfg['min_payout'] ?? 80) }}"
+                            value="{{ old('min_payout', $cfg['min_payout'] ?? 75) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-                        <p class="text-[11px] text-zinc-500">Экономический фильтр: пары с низким payout не сканируются.</p>
                         @error('min_payout')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
-                        <label for="stale_after_sec" class="block text-xs font-medium text-zinc-400">Свежесть текущей свечи (сек)</label>
+                        <label for="stale_after_sec" class="block text-xs font-medium text-zinc-400">Свежесть свечи (сек)</label>
                         <input type="number" name="stale_after_sec" id="stale_after_sec" min="5" max="600" required
-                            value="{{ old('stale_after_sec', $cfg['stale_after_sec'] ?? 45) }}"
+                            value="{{ old('stale_after_sec', $cfg['stale_after_sec'] ?? 60) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-                        <p class="text-[11px] text-zinc-500">Пропуск пары, если ingest не обновлял текущую M1 дольше N секунд.</p>
                         @error('stale_after_sec')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                 </div>
+                @include('bots._os-engine-binary-telegram-settings', ['bot' => $bot, 'cfg' => $cfg, 'chartAnalystBots' => $chartAnalystBots ?? []])
+            </div>
+        @elseif ($bot->type === 'williams_range_trade')
+            {{-- OsEngine Williams %R: oversold/overbought. --}}
+            <div class="space-y-5 border-t border-zinc-800 pt-4">
+                <div class="space-y-2 text-sm text-zinc-400">
+                    <p>
+                        <strong class="text-zinc-300">Williams Range Trade</strong> — порт OsEngine Williams %R:
+                        вход в зону (кросс) WR &lt; wr_down → CALL, WR &gt; wr_up → PUT. Без кросса — шум на удержании экстремума.
+                    </p>
+                </div>
+                <div class="grid gap-4 sm:grid-cols-2">
+                    <div class="space-y-1">
+                        <label for="count" class="block text-xs font-medium text-zinc-400">Свечей (count)</label>
+                        <input type="number" name="count" id="count" min="40" max="5000" required
+                            value="{{ old('count', $cfg['count'] ?? 150) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @error('count')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                    <div class="space-y-1">
+                        <label for="expiry_sec" class="block text-xs font-medium text-zinc-400">Экспирация (сек)</label>
+                        <input type="number" name="expiry_sec" id="expiry_sec" min="60" max="900" required
+                            value="{{ old('expiry_sec', $cfg['expiry_sec'] ?? 180) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @error('expiry_sec')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                    <div class="space-y-1">
+                        <label for="wr_length" class="block text-xs font-medium text-zinc-400">WR length</label>
+                        <input type="number" name="wr_length" id="wr_length" min="2" max="500" required
+                            value="{{ old('wr_length', $cfg['wr_length'] ?? 21) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        <p class="text-[11px] text-zinc-500">Дефолт M1: 21 (OsEngine/класси. 14 шумнее).</p>
+                        @error('wr_length')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                    <div class="space-y-1">
+                        <label for="wr_up" class="block text-xs font-medium text-zinc-400">WR up (перекупленность)</label>
+                        <input type="number" name="wr_up" id="wr_up" min="-100" max="0" step="0.1" required
+                            value="{{ old('wr_up', $cfg['wr_up'] ?? -10) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        <p class="text-[11px] text-zinc-500">Дефолт −10 (класси. −20).</p>
+                        @error('wr_up')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                    <div class="space-y-1">
+                        <label for="wr_down" class="block text-xs font-medium text-zinc-400">WR down (перепроданность)</label>
+                        <input type="number" name="wr_down" id="wr_down" min="-100" max="0" step="0.1" required
+                            value="{{ old('wr_down', $cfg['wr_down'] ?? -90) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        <p class="text-[11px] text-zinc-500">Дефолт −90 (класс. −80).</p>
+                        @error('wr_down')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                    <div class="space-y-1 flex items-end">
+                        <label class="flex items-start gap-2 pb-2">
+                            <input type="checkbox" name="require_cross" id="require_cross_wr" value="1"
+                                class="mt-0.5 rounded border-zinc-600 bg-zinc-800 text-blue-500"
+                                @checked(old('require_cross', $cfg['require_cross'] ?? true))>
+                            <span class="text-sm text-zinc-300">Только кросс в зону <span class="text-zinc-500">(анти-шум)</span></span>
+                        </label>
+                    </div>
+                    <div class="space-y-1">
+                        <label for="min_confidence" class="block text-xs font-medium text-zinc-400">Мин. confidence</label>
+                        <input type="number" name="min_confidence" id="min_confidence" min="0" max="1" step="0.01" required
+                            value="{{ old('min_confidence', $cfg['min_confidence'] ?? 0.60) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @error('min_confidence')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                    <div class="space-y-1">
+                        <label for="min_payout" class="block text-xs font-medium text-zinc-400">Мин. payout (%)</label>
+                        <input type="number" name="min_payout" id="min_payout" min="0" max="100" step="0.1" required
+                            value="{{ old('min_payout', $cfg['min_payout'] ?? 75) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @error('min_payout')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                    <div class="space-y-1">
+                        <label for="stale_after_sec" class="block text-xs font-medium text-zinc-400">Свежесть свечи (сек)</label>
+                        <input type="number" name="stale_after_sec" id="stale_after_sec" min="5" max="600" required
+                            value="{{ old('stale_after_sec', $cfg['stale_after_sec'] ?? 60) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @error('stale_after_sec')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                </div>
+                @include('bots._os-engine-binary-telegram-settings', ['bot' => $bot, 'cfg' => $cfg, 'chartAnalystBots' => $chartAnalystBots ?? []])
+            </div>
+        @elseif ($bot->type === 'three_soldier')
+            {{-- OsEngine Three Soldiers / Three Crows. --}}
+            <div class="space-y-5 border-t border-zinc-800 pt-4">
+                <div class="space-y-2 text-sm text-zinc-400">
+                    <p>
+                        <strong class="text-zinc-300">Three Soldier</strong> — порт OsEngine:
+                        три бычьих свечи → CALL, три медвежьих → PUT (фильтр по высоте паттерна %).
+                    </p>
+                </div>
+                <div class="grid gap-4 sm:grid-cols-2">
+                    <div class="space-y-1">
+                        <label for="count" class="block text-xs font-medium text-zinc-400">Свечей (count)</label>
+                        <input type="number" name="count" id="count" min="40" max="5000" required
+                            value="{{ old('count', $cfg['count'] ?? 150) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @error('count')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                    <div class="space-y-1">
+                        <label for="expiry_sec" class="block text-xs font-medium text-zinc-400">Экспирация (сек)</label>
+                        <input type="number" name="expiry_sec" id="expiry_sec" min="60" max="900" required
+                            value="{{ old('expiry_sec', $cfg['expiry_sec'] ?? 180) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @error('expiry_sec')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                    <div class="space-y-1">
+                        <label for="height_soldiers" class="block text-xs font-medium text-zinc-400">Высота паттерна (%)</label>
+                        <input type="number" name="height_soldiers" id="height_soldiers" min="0" max="10" step="0.01" required
+                            value="{{ old('height_soldiers', $cfg['height_soldiers'] ?? 0.08) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @error('height_soldiers')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                    <div class="space-y-1">
+                        <label for="min_height_one_soldier" class="block text-xs font-medium text-zinc-400">Мин. высота одной свечи (%)</label>
+                        <input type="number" name="min_height_one_soldier" id="min_height_one_soldier" min="0" max="10" step="0.01" required
+                            value="{{ old('min_height_one_soldier', $cfg['min_height_one_soldier'] ?? 0.02) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @error('min_height_one_soldier')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                    <div class="space-y-1">
+                        <label for="min_confidence" class="block text-xs font-medium text-zinc-400">Мин. confidence</label>
+                        <input type="number" name="min_confidence" id="min_confidence" min="0" max="1" step="0.01" required
+                            value="{{ old('min_confidence', $cfg['min_confidence'] ?? 0.56) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @error('min_confidence')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                    <div class="space-y-1">
+                        <label for="min_payout" class="block text-xs font-medium text-zinc-400">Мин. payout (%)</label>
+                        <input type="number" name="min_payout" id="min_payout" min="0" max="100" step="0.1" required
+                            value="{{ old('min_payout', $cfg['min_payout'] ?? 75) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @error('min_payout')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                    <div class="space-y-1">
+                        <label for="stale_after_sec" class="block text-xs font-medium text-zinc-400">Свежесть свечи (сек)</label>
+                        <input type="number" name="stale_after_sec" id="stale_after_sec" min="5" max="600" required
+                            value="{{ old('stale_after_sec', $cfg['stale_after_sec'] ?? 60) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @error('stale_after_sec')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                </div>
+                @include('bots._os-engine-binary-telegram-settings', ['bot' => $bot, 'cfg' => $cfg, 'chartAnalystBots' => $chartAnalystBots ?? []])
+            </div>
+        @elseif ($bot->type === 'cci_trade')
+            {{-- OsEngine CCI mean-reversion. --}}
+            <div class="space-y-5 border-t border-zinc-800 pt-4">
+                <div class="space-y-2 text-sm text-zinc-400">
+                    <p>
+                        <strong class="text-zinc-300">CCI Trade</strong> — порт OsEngine CCI:
+                        CCI ≤ cci_down → CALL, CCI ≥ cci_up → PUT.
+                    </p>
+                </div>
+                <div class="grid gap-4 sm:grid-cols-2">
+                    <div class="space-y-1">
+                        <label for="count" class="block text-xs font-medium text-zinc-400">Свечей (count)</label>
+                        <input type="number" name="count" id="count" min="40" max="5000" required
+                            value="{{ old('count', $cfg['count'] ?? 150) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @error('count')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                    <div class="space-y-1">
+                        <label for="expiry_sec" class="block text-xs font-medium text-zinc-400">Экспирация (сек)</label>
+                        <input type="number" name="expiry_sec" id="expiry_sec" min="60" max="900" required
+                            value="{{ old('expiry_sec', $cfg['expiry_sec'] ?? 180) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @error('expiry_sec')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                    <div class="space-y-1">
+                        <label for="cci_length" class="block text-xs font-medium text-zinc-400">CCI length</label>
+                        <input type="number" name="cci_length" id="cci_length" min="2" max="500" required
+                            value="{{ old('cci_length', $cfg['cci_length'] ?? 20) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @error('cci_length')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                    <div class="space-y-1">
+                        <label for="cci_up" class="block text-xs font-medium text-zinc-400">CCI up</label>
+                        <input type="number" name="cci_up" id="cci_up" step="1" required
+                            value="{{ old('cci_up', $cfg['cci_up'] ?? 150) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @error('cci_up')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                    <div class="space-y-1">
+                        <label for="cci_down" class="block text-xs font-medium text-zinc-400">CCI down</label>
+                        <input type="number" name="cci_down" id="cci_down" step="1" required
+                            value="{{ old('cci_down', $cfg['cci_down'] ?? -150) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @error('cci_down')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                    <div class="space-y-1">
+                        <label for="min_confidence" class="block text-xs font-medium text-zinc-400">Мин. confidence</label>
+                        <input type="number" name="min_confidence" id="min_confidence" min="0" max="1" step="0.01" required
+                            value="{{ old('min_confidence', $cfg['min_confidence'] ?? 0.56) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @error('min_confidence')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                    <div class="space-y-1">
+                        <label for="min_payout" class="block text-xs font-medium text-zinc-400">Мин. payout (%)</label>
+                        <input type="number" name="min_payout" id="min_payout" min="0" max="100" step="0.1" required
+                            value="{{ old('min_payout', $cfg['min_payout'] ?? 75) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @error('min_payout')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                    <div class="space-y-1">
+                        <label for="stale_after_sec" class="block text-xs font-medium text-zinc-400">Свежесть свечи (сек)</label>
+                        <input type="number" name="stale_after_sec" id="stale_after_sec" min="5" max="600" required
+                            value="{{ old('stale_after_sec', $cfg['stale_after_sec'] ?? 60) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @error('stale_after_sec')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                </div>
+                @include('bots._os-engine-binary-telegram-settings', ['bot' => $bot, 'cfg' => $cfg, 'chartAnalystBots' => $chartAnalystBots ?? []])
+            </div>
+        @elseif ($bot->type === 'rsi_trade')
+            {{-- OsEngine RSI Trade: кросс из зоны (без SMA Contrtrend). --}}
+            <div class="space-y-5 border-t border-zinc-800 pt-4">
+                <div class="space-y-2 text-sm text-zinc-400">
+                    <p>
+                        <strong class="text-zinc-300">RSI Trade</strong> — порт OsEngine RSI:
+                        кросс вверх из oversold → CALL, кросс вниз из overbought → PUT.
+                    </p>
+                </div>
+                <div class="grid gap-4 sm:grid-cols-2">
+                    <div class="space-y-1">
+                        <label for="count" class="block text-xs font-medium text-zinc-400">Свечей (count)</label>
+                        <input type="number" name="count" id="count" min="40" max="5000" required
+                            value="{{ old('count', $cfg['count'] ?? 150) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @error('count')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                    <div class="space-y-1">
+                        <label for="expiry_sec" class="block text-xs font-medium text-zinc-400">Экспирация (сек)</label>
+                        <input type="number" name="expiry_sec" id="expiry_sec" min="60" max="900" required
+                            value="{{ old('expiry_sec', $cfg['expiry_sec'] ?? 180) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @error('expiry_sec')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                    <div class="space-y-1">
+                        <label for="rsi_length" class="block text-xs font-medium text-zinc-400">RSI length</label>
+                        <input type="number" name="rsi_length" id="rsi_length" min="2" max="500" required
+                            value="{{ old('rsi_length', $cfg['rsi_length'] ?? 14) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @error('rsi_length')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                    <div class="space-y-1">
+                        <label for="rsi_up" class="block text-xs font-medium text-zinc-400">RSI up</label>
+                        <input type="number" name="rsi_up" id="rsi_up" min="0" max="100" step="0.1" required
+                            value="{{ old('rsi_up', $cfg['rsi_up'] ?? 65) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @error('rsi_up')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                    <div class="space-y-1">
+                        <label for="rsi_down" class="block text-xs font-medium text-zinc-400">RSI down</label>
+                        <input type="number" name="rsi_down" id="rsi_down" min="0" max="100" step="0.1" required
+                            value="{{ old('rsi_down', $cfg['rsi_down'] ?? 35) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @error('rsi_down')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                    <div class="space-y-1">
+                        <label for="min_confidence" class="block text-xs font-medium text-zinc-400">Мин. confidence</label>
+                        <input type="number" name="min_confidence" id="min_confidence" min="0" max="1" step="0.01" required
+                            value="{{ old('min_confidence', $cfg['min_confidence'] ?? 0.56) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @error('min_confidence')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                    <div class="space-y-1">
+                        <label for="min_payout" class="block text-xs font-medium text-zinc-400">Мин. payout (%)</label>
+                        <input type="number" name="min_payout" id="min_payout" min="0" max="100" step="0.1" required
+                            value="{{ old('min_payout', $cfg['min_payout'] ?? 75) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @error('min_payout')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                    <div class="space-y-1">
+                        <label for="stale_after_sec" class="block text-xs font-medium text-zinc-400">Свежесть свечи (сек)</label>
+                        <input type="number" name="stale_after_sec" id="stale_after_sec" min="5" max="600" required
+                            value="{{ old('stale_after_sec', $cfg['stale_after_sec'] ?? 60) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @error('stale_after_sec')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                </div>
+                @include('bots._os-engine-binary-telegram-settings', ['bot' => $bot, 'cfg' => $cfg, 'chartAnalystBots' => $chartAnalystBots ?? []])
+            </div>
+        @elseif ($bot->type === 'rvi_trade')
+            {{-- OsEngine RVI: кросс линии / signal. --}}
+            <div class="space-y-5 border-t border-zinc-800 pt-4">
+                <div class="space-y-2 text-sm text-zinc-400">
+                    <p>
+                        <strong class="text-zinc-300">RVI Trade</strong> — порт OsEngine RVI:
+                        только бар кросса RVI через signal (signal достаточно далеко от 0). Без кросса — тысячи сделок на удержании состояния.
+                    </p>
+                </div>
+                <div class="grid gap-4 sm:grid-cols-2">
+                    <div class="space-y-1">
+                        <label for="count" class="block text-xs font-medium text-zinc-400">Свечей (count)</label>
+                        <input type="number" name="count" id="count" min="40" max="5000" required
+                            value="{{ old('count', $cfg['count'] ?? 150) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @error('count')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                    <div class="space-y-1">
+                        <label for="expiry_sec" class="block text-xs font-medium text-zinc-400">Экспирация (сек)</label>
+                        <input type="number" name="expiry_sec" id="expiry_sec" min="60" max="900" required
+                            value="{{ old('expiry_sec', $cfg['expiry_sec'] ?? 180) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @error('expiry_sec')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                    <div class="space-y-1">
+                        <label for="rvi_length" class="block text-xs font-medium text-zinc-400">RVI length</label>
+                        <input type="number" name="rvi_length" id="rvi_length" min="2" max="500" required
+                            value="{{ old('rvi_length', $cfg['rvi_length'] ?? 14) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        <p class="text-[11px] text-zinc-500">Дефолт M1: 14 (OsEngine 10 шумнее).</p>
+                        @error('rvi_length')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                    <div class="space-y-1">
+                        <label for="min_signal_abs" class="block text-xs font-medium text-zinc-400">Мин. |signal|</label>
+                        <input type="number" name="min_signal_abs" id="min_signal_abs" min="0" max="5" step="0.01" required
+                            value="{{ old('min_signal_abs', $cfg['min_signal_abs'] ?? 0.20) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        <p class="text-[11px] text-zinc-500">Отсекает кроссы около нуля.</p>
+                        @error('min_signal_abs')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                    <div class="space-y-1 flex items-end">
+                        <label class="flex items-start gap-2 pb-2">
+                            <input type="checkbox" name="require_cross" id="require_cross_rvi" value="1"
+                                class="mt-0.5 rounded border-zinc-600 bg-zinc-800 text-blue-500"
+                                @checked(old('require_cross', $cfg['require_cross'] ?? true))>
+                            <span class="text-sm text-zinc-300">Только кросс RVI/signal <span class="text-zinc-500">(анти-шум)</span></span>
+                        </label>
+                    </div>
+                    <div class="space-y-1">
+                        <label for="min_confidence" class="block text-xs font-medium text-zinc-400">Мин. confidence</label>
+                        <input type="number" name="min_confidence" id="min_confidence" min="0" max="1" step="0.01" required
+                            value="{{ old('min_confidence', $cfg['min_confidence'] ?? 0.60) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @error('min_confidence')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                    <div class="space-y-1">
+                        <label for="min_payout" class="block text-xs font-medium text-zinc-400">Мин. payout (%)</label>
+                        <input type="number" name="min_payout" id="min_payout" min="0" max="100" step="0.1" required
+                            value="{{ old('min_payout', $cfg['min_payout'] ?? 75) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @error('min_payout')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                    <div class="space-y-1">
+                        <label for="stale_after_sec" class="block text-xs font-medium text-zinc-400">Свежесть свечи (сек)</label>
+                        <input type="number" name="stale_after_sec" id="stale_after_sec" min="5" max="600" required
+                            value="{{ old('stale_after_sec', $cfg['stale_after_sec'] ?? 60) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @error('stale_after_sec')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                </div>
+                @include('bots._os-engine-binary-telegram-settings', ['bot' => $bot, 'cfg' => $cfg, 'chartAnalystBots' => $chartAnalystBots ?? []])
             </div>
         @elseif ($bot->type === 'candle_reversal_confirm')
             @include('bots._candle-reversal-level-settings')
@@ -612,6 +989,10 @@
                         </label>
                 </div>
             </div>
+        @elseif (\App\Support\OsEngineWaveABotConfig::isWaveA($bot->type))
+            @include('bots._wave-a-settings', ['bot' => $bot, 'cfg' => $cfg, 'chartAnalystBots' => $chartAnalystBots ?? []])
+        @elseif (\App\Support\OsEngineWaveBBotConfig::isWaveB($bot->type))
+            @include('bots._wave-b-settings', ['bot' => $bot, 'cfg' => $cfg, 'chartAnalystBots' => $chartAnalystBots ?? []])
         @elseif ($bot->type === 'openrouter_llm')
             <div class="space-y-5 border-t border-zinc-800 pt-4">
                 <div class="space-y-2 text-sm text-zinc-400">

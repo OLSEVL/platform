@@ -280,33 +280,6 @@ Artisan::command('bots:bootstrap', function () {
     $this->info("Бот готов: #{$bot->id} {$bot->name} ({$bot->type})");
 })->purpose('Создать базового бота "3 свечи в ряд"');
 
-Artisan::command('bots:akim-bootstrap', function () {
-    $user = User::query()->orderBy('id')->first();
-    if (! $user) {
-        $this->error('Нет пользователей. Сначала зарегистрируйте пользователя.');
-
-        return;
-    }
-
-    // Бот 1: версия "из первого видео" — M1, тренд + откат.
-    $bot1 = Bot::query()->firstOrCreate(
-        ['user_id' => $user->id, 'name' => 'AKIM TRADE 1M', 'type' => 'akim_trade_1m'],
-        [
-            'is_active' => false,
-            'config' => [
-                'count' => 180,
-                'expiry_sec' => 60,
-                'min_confidence' => 0.58,
-                'min_payout' => 80.0,
-                'stale_after_sec' => 45,
-                'version' => 'akim_trade_1m_v1',
-            ],
-        ]
-    );
-
-    $this->info("Готово: #{$bot1->id} {$bot1->name} ({$bot1->type})");
-})->purpose('Создать бота AKIM TRADE 1M');
-
 Artisan::command('bots:rsi-contrtrend-bootstrap', function () {
     $user = User::query()->orderBy('id')->first();
     if (! $user) {
@@ -377,6 +350,147 @@ Artisan::command('bots:bollinger-contrtrend-bootstrap', function () {
 
     $this->info("Готово: #{$bot->id} {$bot->name} ({$bot->type})");
 })->purpose('Создать бота Bollinger Contrtrend (OsEngine StrategyBollinger → CALL/PUT)');
+
+Artisan::command('bots:os-engine-binary-bootstrap', function () {
+    $user = User::query()->orderBy('id')->first();
+    if (! $user) {
+        $this->error('Нет пользователей. Сначала зарегистрируйте пользователя.');
+
+        return;
+    }
+
+    // Общие runtime-дефолты как у bollinger_contrtrend; стратегия-специфичные ключи — из DEFAULT_* констант.
+    $shared = [
+        'count' => 150,
+        'expiry_sec' => 180,
+        'min_confidence' => 0.56,
+        'min_payout' => 75.0,
+        'stale_after_sec' => 60,
+        'telegram_enabled' => false,
+        'telegram_notify_on' => 'signal_trade',
+        'telegram_alert_format' => 'brief',
+        'telegram_send_chart' => true,
+        'telegram_send_chart_m5' => true,
+    ];
+
+    $bots = [
+        [
+            'name' => 'PinBar Trade',
+            'type' => 'pinbar_trade',
+            'config' => array_merge($shared, [
+                'sma_length' => \App\Services\Bots\Strategies\PinBarTradeStrategy::DEFAULT_SMA_LENGTH,
+                'version' => 'pinbar_trade_v1',
+            ]),
+        ],
+        [
+            'name' => 'Williams Range Trade',
+            'type' => 'williams_range_trade',
+            'config' => array_merge($shared, [
+                'wr_length' => \App\Services\Bots\Strategies\WilliamsRangeTradeStrategy::DEFAULT_WR_LENGTH,
+                'wr_up' => \App\Services\Bots\Strategies\WilliamsRangeTradeStrategy::DEFAULT_WR_UP,
+                'wr_down' => \App\Services\Bots\Strategies\WilliamsRangeTradeStrategy::DEFAULT_WR_DOWN,
+                'require_cross' => true,
+                'min_confidence' => 0.60,
+                'min_payout' => 82.0,
+                'version' => 'williams_range_trade_v1',
+            ]),
+        ],
+        [
+            'name' => 'Three Soldier',
+            'type' => 'three_soldier',
+            'config' => array_merge($shared, [
+                'height_soldiers' => \App\Services\Bots\Strategies\ThreeSoldierStrategy::DEFAULT_HEIGHT_SOLDIERS,
+                'min_height_one_soldier' => \App\Services\Bots\Strategies\ThreeSoldierStrategy::DEFAULT_MIN_HEIGHT_ONE_SOLDIER,
+                'version' => 'three_soldier_v1',
+            ]),
+        ],
+        [
+            'name' => 'CCI Trade',
+            'type' => 'cci_trade',
+            'config' => array_merge($shared, [
+                'cci_length' => \App\Services\Bots\Strategies\CciTradeStrategy::DEFAULT_CCI_LENGTH,
+                'cci_up' => \App\Services\Bots\Strategies\CciTradeStrategy::DEFAULT_CCI_UP,
+                'cci_down' => \App\Services\Bots\Strategies\CciTradeStrategy::DEFAULT_CCI_DOWN,
+                'version' => 'cci_trade_v1',
+            ]),
+        ],
+        [
+            'name' => 'RSI Trade',
+            'type' => 'rsi_trade',
+            'config' => array_merge($shared, [
+                'rsi_length' => \App\Services\Bots\Strategies\RsiTradeStrategy::DEFAULT_RSI_LENGTH,
+                'rsi_up' => \App\Services\Bots\Strategies\RsiTradeStrategy::DEFAULT_RSI_UP,
+                'rsi_down' => \App\Services\Bots\Strategies\RsiTradeStrategy::DEFAULT_RSI_DOWN,
+                'version' => 'rsi_trade_v1',
+            ]),
+        ],
+        [
+            'name' => 'RVI Trade',
+            'type' => 'rvi_trade',
+            'config' => array_merge($shared, [
+                'rvi_length' => \App\Services\Bots\Strategies\RviTradeStrategy::DEFAULT_RVI_LENGTH,
+                'min_signal_abs' => \App\Services\Bots\Strategies\RviTradeStrategy::DEFAULT_MIN_SIGNAL_ABS,
+                'require_cross' => true,
+                'min_confidence' => 0.60,
+                'min_payout' => 82.0,
+                'version' => 'rvi_trade_v1',
+            ]),
+        ],
+    ];
+
+    foreach ($bots as $spec) {
+        $bot = Bot::query()->firstOrCreate(
+            ['user_id' => $user->id, 'name' => $spec['name'], 'type' => $spec['type']],
+            [
+                'is_active' => false,
+                'config' => $spec['config'],
+            ]
+        );
+        $this->info("Готово: #{$bot->id} {$bot->name} ({$bot->type})");
+    }
+})->purpose('Создать 6 OsEngine binary ботов (PinBar/WR/Soldiers/CCI/RSI/RVI), inactive');
+
+Artisan::command('bots:wave-a-bootstrap', function () {
+    $user = User::query()->orderBy('id')->first();
+    if (! $user) {
+        $this->error('Нет пользователей. Сначала зарегистрируйте пользователя.');
+
+        return;
+    }
+
+    foreach (\App\Support\OsEngineWaveABotConfig::TYPES as $type) {
+        $meta = \App\Support\OsEngineWaveABotConfig::meta($type);
+        $bot = Bot::query()->firstOrCreate(
+            ['user_id' => $user->id, 'name' => $meta['title'], 'type' => $type],
+            [
+                'is_active' => false,
+                'config' => \App\Support\OsEngineWaveABotConfig::defaultConfig($type),
+            ]
+        );
+        $this->info("Готово: #{$bot->id} {$bot->name} ({$bot->type})");
+    }
+})->purpose('Создать Wave A OsEngine→CALL/PUT ботов (9 шт.), inactive');
+
+Artisan::command('bots:wave-b-bootstrap', function () {
+    $user = User::query()->orderBy('id')->first();
+    if (! $user) {
+        $this->error('Нет пользователей. Сначала зарегистрируйте пользователя.');
+
+        return;
+    }
+
+    foreach (\App\Support\OsEngineWaveBBotConfig::TYPES as $type) {
+        $meta = \App\Support\OsEngineWaveBBotConfig::meta($type);
+        $bot = Bot::query()->firstOrCreate(
+            ['user_id' => $user->id, 'name' => $meta['title'], 'type' => $type],
+            [
+                'is_active' => false,
+                'config' => \App\Support\OsEngineWaveBBotConfig::defaultConfig($type),
+            ]
+        );
+        $this->info("Готово: #{$bot->id} {$bot->name} ({$bot->type})");
+    }
+})->purpose('Создать Wave B OsEngine→CALL/PUT (impulse/vola-adaptive, 3 шт.), inactive');
 
 Artisan::command('bots:reversal-confirm-bootstrap', function () {
     $user = User::query()->orderBy('id')->first();

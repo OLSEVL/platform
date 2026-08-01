@@ -131,14 +131,24 @@ class OpenRouterLlmAnalystTest extends TestCase
         $this->assertStringContainsString('--- user ---', (string) ($log->request_text ?? ''));
     }
 
-    public function test_activity_redirects_for_analyst(): void
+    public function test_activity_page_works_for_analyst(): void
     {
         $user = User::factory()->create();
         $bot = $this->makeAnalystBot($user);
 
         $this->actingAs($user)
             ->get(route('bots.activity', $bot))
-            ->assertRedirect(route('bots.show', $bot));
+            ->assertOk();
+    }
+
+    public function test_cards_page_works_for_analyst(): void
+    {
+        $user = User::factory()->create();
+        $bot = $this->makeAnalystBot($user);
+
+        $this->actingAs($user)
+            ->get(route('bots.cards', $bot))
+            ->assertOk();
     }
 
     public function test_classic_analyst_omits_smc_flow_from_llm_payload(): void

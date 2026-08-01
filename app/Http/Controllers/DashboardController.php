@@ -50,6 +50,38 @@ use App\Services\Indicators\SmiIndicatorService;
 use App\Services\Indicators\StdDevIndicatorService;
 use App\Services\Indicators\TrixIndicatorService;
 use App\Services\Indicators\UltimateIndicatorService;
+use App\Services\Indicators\DonchianIndicatorService;
+use App\Services\Indicators\StochRsiIndicatorService;
+use App\Services\Indicators\AcIndicatorService;
+use App\Services\Indicators\BullsPowerIndicatorService;
+use App\Services\Indicators\BearsPowerIndicatorService;
+use App\Services\Indicators\DpoIndicatorService;
+use App\Services\Indicators\QstickIndicatorService;
+use App\Services\Indicators\VhFilterIndicatorService;
+use App\Services\Indicators\EfficiencyRatioIndicatorService;
+use App\Services\Indicators\RaviIndicatorService;
+use App\Services\Indicators\CogIndicatorService;
+use App\Services\Indicators\PivotFloorIndicatorService;
+use App\Services\Indicators\MassIndexIndicatorService;
+use App\Services\Indicators\NrtrWatrIndicatorService;
+use App\Services\Indicators\PriceChannelAdaptiveIndicatorService;
+use App\Services\Indicators\PriceChannelOffsetIndicatorService;
+use App\Services\Indicators\ParabolicBollingerIndicatorService;
+use App\Services\Indicators\ParabolicPriceChannelIndicatorService;
+use App\Services\Indicators\AtrChannelIndicatorService;
+use App\Services\Indicators\OffsetSmaIndicatorService;
+use App\Services\Indicators\OffsetEmaIndicatorService;
+use App\Services\Indicators\OffsetSsmaIndicatorService;
+use App\Services\Indicators\VolatilityAverageIndicatorService;
+use App\Services\Indicators\VolatilityAverageChannelIndicatorService;
+use App\Services\Indicators\PriceOscillatorIndicatorService;
+use App\Services\Indicators\DynamicTrendDetectorIndicatorService;
+use App\Services\Indicators\AdaptiveLookBackIndicatorService;
+use App\Services\Indicators\LinRegChannelFastIndicatorService;
+use App\Services\Indicators\VolatilityCandlesIndicatorService;
+use App\Services\Indicators\ZigZagIndicatorService;
+use App\Services\Indicators\VolatilityAverageTwiceIndicatorService;
+use App\Services\Indicators\VolatilityStagesAWIndicatorService;
 use App\Support\M1CandleCountdown;
 use App\Support\PriceScale;
 use Illuminate\Http\JsonResponse;
@@ -498,12 +530,45 @@ class DashboardController extends Controller
         LinRegChannelIndicatorService $linregChannel,
         KalmanIndicatorService $kalman,
         FractalIndicatorService $fractal,
+        DonchianIndicatorService $donchian,
+        StochRsiIndicatorService $stochRsi,
+        AcIndicatorService $ac,
+        BullsPowerIndicatorService $bullsPower,
+        BearsPowerIndicatorService $bearsPower,
+        DpoIndicatorService $dpo,
+        QstickIndicatorService $qstick,
+        VhFilterIndicatorService $vhFilter,
+        EfficiencyRatioIndicatorService $efficiencyRatio,
+        RaviIndicatorService $ravi,
+        CogIndicatorService $cog,
+        PivotFloorIndicatorService $pivotFloor,
+        MassIndexIndicatorService $massIndex,
+        NrtrWatrIndicatorService $nrtrWatr,
+        PriceChannelAdaptiveIndicatorService $priceChannelAdaptive,
+        PriceChannelOffsetIndicatorService $priceChannelOffset,
+        ParabolicBollingerIndicatorService $parabolicBollinger,
+        ParabolicPriceChannelIndicatorService $parabolicPriceChannel,
+        AtrChannelIndicatorService $atrChannel,
+        OffsetSmaIndicatorService $offsetSma,
+        OffsetEmaIndicatorService $offsetEma,
+        OffsetSsmaIndicatorService $offsetSsma,
+        VolatilityAverageIndicatorService $volatilityAverage,
+        VolatilityAverageChannelIndicatorService $volatilityAverageChannel,
+        PriceOscillatorIndicatorService $priceOscillator,
+        DynamicTrendDetectorIndicatorService $dynamicTrendDetector,
+        AdaptiveLookBackIndicatorService $adaptiveLookBack,
+        LinRegChannelFastIndicatorService $linRegChannelFast,
+        VolatilityCandlesIndicatorService $volatilityCandles,
+        ZigZagIndicatorService $zigZag,
+        VolatilityAverageTwiceIndicatorService $volatilityAverageTwice,
+        VolatilityStagesAWIndicatorService $volatilityStagesAw,
     ): JsonResponse {
         $validated = $request->validate([
             'instrument' => ['required', 'string', 'max:64'],
             'timeframe' => ['nullable', 'integer', Rule::in(CandleService::DASHBOARD_TIMEFRAMES)],
             'layers' => ['nullable', 'array'],
-            'layers.*' => ['string', Rule::in(['bollinger', 'rsi', 'sma', 'ema', 'vwma', 'atr', 'macd', 'stochastic', 'cci', 'keltner', 'envelops', 'parabolic_sar', 'supertrend', 'adx', 'williams', 'ao', 'alligator', 'ichimoku', 'price_channel', 'nrtr', 'hma', 'aroon', 'momentum', 'roc', 'osma', 'trix', 'cmo', 'demarker', 'rvi', 'ultimate', 'smi', 'stddev', 'sma_channel', 'ivashov', 'linreg', 'linreg_channel', 'kalman', 'fractal'])],
+            // OHLC-пакет (Donchian…Mass Index) — те же ключи, что на bots/show.
+            'layers.*' => ['string', Rule::in(['bollinger', 'rsi', 'sma', 'ema', 'vwma', 'atr', 'macd', 'stochastic', 'cci', 'keltner', 'envelops', 'parabolic_sar', 'supertrend', 'adx', 'williams', 'ao', 'alligator', 'ichimoku', 'price_channel', 'nrtr', 'hma', 'aroon', 'momentum', 'roc', 'osma', 'trix', 'cmo', 'demarker', 'rvi', 'ultimate', 'smi', 'stddev', 'sma_channel', 'ivashov', 'linreg', 'linreg_channel', 'kalman', 'fractal', 'donchian', 'stoch_rsi', 'ac', 'bulls_power', 'bears_power', 'dpo', 'qstick', 'vh_filter', 'efficiency_ratio', 'ravi', 'cog', 'pivot_floor', 'mass_index', 'nrtr_watr', 'price_channel_adaptive', 'price_channel_offset', 'parabolic_bollinger', 'parabolic_price_channel', 'atr_channel', 'offset_sma', 'offset_ema', 'offset_ssma', 'volatility_average', 'volatility_average_channel', 'price_oscillator', 'dynamic_trend_detector', 'adaptive_look_back', 'linreg_channel_fast', 'volatility_candles', 'zigzag', 'volatility_average_twice', 'volatility_stages_aw'])],
         ]);
 
         $instrument = (string) $validated['instrument'];
@@ -832,6 +897,263 @@ class DashboardController extends Controller
                 $anchorBot !== null
                     ? IndicatorSetting::mergedFractalParams($anchorBot)
                     : FractalIndicatorService::defaultParams()
+            );
+        }
+        // --- OHLC-пакет OsEngine (без объёма): те же merge/default, что на графике бота ---
+        if (! empty($want['donchian'])) {
+            $json['donchian'] = $donchian->compute(
+                $rows,
+                $anchorBot !== null
+                    ? IndicatorSetting::mergedDonchianParams($anchorBot)
+                    : DonchianIndicatorService::defaultParams()
+            );
+        }
+        if (! empty($want['stoch_rsi'])) {
+            $json['stoch_rsi'] = $stochRsi->compute(
+                $rows,
+                $anchorBot !== null
+                    ? IndicatorSetting::mergedStochRsiParams($anchorBot)
+                    : StochRsiIndicatorService::defaultParams()
+            );
+        }
+        if (! empty($want['ac'])) {
+            $json['ac'] = $ac->compute(
+                $rows,
+                $anchorBot !== null
+                    ? IndicatorSetting::mergedAcParams($anchorBot)
+                    : AcIndicatorService::defaultParams()
+            );
+        }
+        if (! empty($want['bulls_power'])) {
+            $json['bulls_power'] = $bullsPower->compute(
+                $rows,
+                $anchorBot !== null
+                    ? IndicatorSetting::mergedBullsPowerParams($anchorBot)
+                    : BullsPowerIndicatorService::defaultParams()
+            );
+        }
+        if (! empty($want['bears_power'])) {
+            $json['bears_power'] = $bearsPower->compute(
+                $rows,
+                $anchorBot !== null
+                    ? IndicatorSetting::mergedBearsPowerParams($anchorBot)
+                    : BearsPowerIndicatorService::defaultParams()
+            );
+        }
+        if (! empty($want['dpo'])) {
+            $json['dpo'] = $dpo->compute(
+                $rows,
+                $anchorBot !== null
+                    ? IndicatorSetting::mergedDpoParams($anchorBot)
+                    : DpoIndicatorService::defaultParams()
+            );
+        }
+        if (! empty($want['qstick'])) {
+            $json['qstick'] = $qstick->compute(
+                $rows,
+                $anchorBot !== null
+                    ? IndicatorSetting::mergedQstickParams($anchorBot)
+                    : QstickIndicatorService::defaultParams()
+            );
+        }
+        if (! empty($want['vh_filter'])) {
+            $json['vh_filter'] = $vhFilter->compute(
+                $rows,
+                $anchorBot !== null
+                    ? IndicatorSetting::mergedVhFilterParams($anchorBot)
+                    : VhFilterIndicatorService::defaultParams()
+            );
+        }
+        if (! empty($want['efficiency_ratio'])) {
+            $json['efficiency_ratio'] = $efficiencyRatio->compute(
+                $rows,
+                $anchorBot !== null
+                    ? IndicatorSetting::mergedEfficiencyRatioParams($anchorBot)
+                    : EfficiencyRatioIndicatorService::defaultParams()
+            );
+        }
+        if (! empty($want['ravi'])) {
+            $json['ravi'] = $ravi->compute(
+                $rows,
+                $anchorBot !== null
+                    ? IndicatorSetting::mergedRaviParams($anchorBot)
+                    : RaviIndicatorService::defaultParams()
+            );
+        }
+        if (! empty($want['cog'])) {
+            $json['cog'] = $cog->compute(
+                $rows,
+                $anchorBot !== null
+                    ? IndicatorSetting::mergedCogParams($anchorBot)
+                    : CogIndicatorService::defaultParams()
+            );
+        }
+        if (! empty($want['pivot_floor'])) {
+            $json['pivot_floor'] = $pivotFloor->compute(
+                $rows,
+                $anchorBot !== null
+                    ? IndicatorSetting::mergedPivotFloorParams($anchorBot)
+                    : PivotFloorIndicatorService::defaultParams()
+            );
+        }
+        if (! empty($want['mass_index'])) {
+            $json['mass_index'] = $massIndex->compute(
+                $rows,
+                $anchorBot !== null
+                    ? IndicatorSetting::mergedMassIndexParams($anchorBot)
+                    : MassIndexIndicatorService::defaultParams()
+            );
+        }
+        if (! empty($want['nrtr_watr'])) {
+            $json['nrtr_watr'] = $nrtrWatr->compute(
+                $rows,
+                $anchorBot !== null
+                    ? IndicatorSetting::mergedNrtrWatrParams($anchorBot)
+                    : NrtrWatrIndicatorService::defaultParams()
+            );
+        }
+        if (! empty($want['price_channel_adaptive'])) {
+            $json['price_channel_adaptive'] = $priceChannelAdaptive->compute(
+                $rows,
+                $anchorBot !== null
+                    ? IndicatorSetting::mergedPriceChannelAdaptiveParams($anchorBot)
+                    : PriceChannelAdaptiveIndicatorService::defaultParams()
+            );
+        }
+        if (! empty($want['price_channel_offset'])) {
+            $json['price_channel_offset'] = $priceChannelOffset->compute(
+                $rows,
+                $anchorBot !== null
+                    ? IndicatorSetting::mergedPriceChannelOffsetParams($anchorBot)
+                    : PriceChannelOffsetIndicatorService::defaultParams()
+            );
+        }
+        if (! empty($want['parabolic_bollinger'])) {
+            $json['parabolic_bollinger'] = $parabolicBollinger->compute(
+                $rows,
+                $anchorBot !== null
+                    ? IndicatorSetting::mergedParabolicBollingerParams($anchorBot)
+                    : ParabolicBollingerIndicatorService::defaultParams()
+            );
+        }
+        if (! empty($want['parabolic_price_channel'])) {
+            $json['parabolic_price_channel'] = $parabolicPriceChannel->compute(
+                $rows,
+                $anchorBot !== null
+                    ? IndicatorSetting::mergedParabolicPriceChannelParams($anchorBot)
+                    : ParabolicPriceChannelIndicatorService::defaultParams()
+            );
+        }
+        if (! empty($want['atr_channel'])) {
+            $json['atr_channel'] = $atrChannel->compute(
+                $rows,
+                $anchorBot !== null
+                    ? IndicatorSetting::mergedAtrChannelParams($anchorBot)
+                    : AtrChannelIndicatorService::defaultParams()
+            );
+        }
+        if (! empty($want['offset_sma'])) {
+            $json['offset_sma'] = $offsetSma->compute(
+                $rows,
+                $anchorBot !== null
+                    ? IndicatorSetting::mergedOffsetSmaParams($anchorBot)
+                    : OffsetSmaIndicatorService::defaultParams()
+            );
+        }
+        if (! empty($want['offset_ema'])) {
+            $json['offset_ema'] = $offsetEma->compute(
+                $rows,
+                $anchorBot !== null
+                    ? IndicatorSetting::mergedOffsetEmaParams($anchorBot)
+                    : OffsetEmaIndicatorService::defaultParams()
+            );
+        }
+        if (! empty($want['offset_ssma'])) {
+            $json['offset_ssma'] = $offsetSsma->compute(
+                $rows,
+                $anchorBot !== null
+                    ? IndicatorSetting::mergedOffsetSsmaParams($anchorBot)
+                    : OffsetSsmaIndicatorService::defaultParams()
+            );
+        }
+        if (! empty($want['volatility_average'])) {
+            $json['volatility_average'] = $volatilityAverage->compute(
+                $rows,
+                $anchorBot !== null
+                    ? IndicatorSetting::mergedVolatilityAverageParams($anchorBot)
+                    : VolatilityAverageIndicatorService::defaultParams()
+            );
+        }
+        if (! empty($want['volatility_average_channel'])) {
+            $json['volatility_average_channel'] = $volatilityAverageChannel->compute(
+                $rows,
+                $anchorBot !== null
+                    ? IndicatorSetting::mergedVolatilityAverageChannelParams($anchorBot)
+                    : VolatilityAverageChannelIndicatorService::defaultParams()
+            );
+        }
+        if (! empty($want['price_oscillator'])) {
+            $json['price_oscillator'] = $priceOscillator->compute(
+                $rows,
+                $anchorBot !== null
+                    ? IndicatorSetting::mergedPriceOscillatorParams($anchorBot)
+                    : PriceOscillatorIndicatorService::defaultParams()
+            );
+        }
+        if (! empty($want['dynamic_trend_detector'])) {
+            $json['dynamic_trend_detector'] = $dynamicTrendDetector->compute(
+                $rows,
+                $anchorBot !== null
+                    ? IndicatorSetting::mergedDynamicTrendDetectorParams($anchorBot)
+                    : DynamicTrendDetectorIndicatorService::defaultParams()
+            );
+        }
+        if (! empty($want['adaptive_look_back'])) {
+            $json['adaptive_look_back'] = $adaptiveLookBack->compute(
+                $rows,
+                $anchorBot !== null
+                    ? IndicatorSetting::mergedAdaptiveLookBackParams($anchorBot)
+                    : AdaptiveLookBackIndicatorService::defaultParams()
+            );
+        }
+        if (! empty($want['linreg_channel_fast'])) {
+            $json['linreg_channel_fast'] = $linRegChannelFast->compute(
+                $rows,
+                $anchorBot !== null
+                    ? IndicatorSetting::mergedLinRegChannelFastParams($anchorBot)
+                    : LinRegChannelFastIndicatorService::defaultParams()
+            );
+        }
+        if (! empty($want['volatility_candles'])) {
+            $json['volatility_candles'] = $volatilityCandles->compute(
+                $rows,
+                $anchorBot !== null
+                    ? IndicatorSetting::mergedVolatilityCandlesParams($anchorBot)
+                    : VolatilityCandlesIndicatorService::defaultParams()
+            );
+        }
+        if (! empty($want['zigzag'])) {
+            $json['zigzag'] = $zigZag->compute(
+                $rows,
+                $anchorBot !== null
+                    ? IndicatorSetting::mergedZigZagParams($anchorBot)
+                    : ZigZagIndicatorService::defaultParams()
+            );
+        }
+        if (! empty($want['volatility_average_twice'])) {
+            $json['volatility_average_twice'] = $volatilityAverageTwice->compute(
+                $rows,
+                $anchorBot !== null
+                    ? IndicatorSetting::mergedVolatilityAverageTwiceParams($anchorBot)
+                    : VolatilityAverageTwiceIndicatorService::defaultParams()
+            );
+        }
+        if (! empty($want['volatility_stages_aw'])) {
+            $json['volatility_stages_aw'] = $volatilityStagesAw->compute(
+                $rows,
+                $anchorBot !== null
+                    ? IndicatorSetting::mergedVolatilityStagesAWParams($anchorBot)
+                    : VolatilityStagesAWIndicatorService::defaultParams()
             );
         }
 

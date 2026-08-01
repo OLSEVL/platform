@@ -93,6 +93,12 @@ class StrongLevelTelegramProcessManager
             'candle_reversal_confirm' => 'Candle Reversal + Confirm',
             'rsi_contrtrend' => 'RSI Contrtrend',
             'bollinger_contrtrend' => 'Bollinger Contrtrend',
+            'pinbar_trade' => 'PinBar Trade',
+            'williams_range_trade' => 'Williams Range Trade',
+            'three_soldier' => 'Three Soldier',
+            'cci_trade' => 'CCI Trade',
+            'rsi_trade' => 'RSI Trade',
+            'rvi_trade' => 'RVI Trade',
             default => 'Strong Level',
         };
 
