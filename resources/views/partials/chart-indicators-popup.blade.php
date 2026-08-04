@@ -14,13 +14,13 @@
      * @var list<array{id:string, help:string, route:?string, label:string, section:?string}>
      */
     $layerRows = [
-        ['id' => 'layer-ob', 'help' => 'ob', 'route' => 'bots.indicators.order-blocks.edit', 'label' => 'Ордерблоки', 'section' => 'Структура рынка'],
+        ['id' => 'layer-ob', 'help' => 'ob', 'route' => 'bots.indicators.order-blocks.edit', 'label' => 'Ордерблоки', 'section' => null],
         ['id' => 'layer-fvg', 'help' => 'fvg', 'route' => 'bots.indicators.fvg.edit', 'label' => 'Имбалансы', 'section' => null],
         ['id' => 'layer-pa-dgt', 'help' => 'pa-dgt', 'route' => 'bots.indicators.price-action-dgt.edit', 'label' => 'Price Action (DGT)', 'section' => null],
         ['id' => 'layer-liquidity-swings', 'help' => 'liquidity-swings', 'route' => 'bots.indicators.liquidity-swings.edit', 'label' => 'Liquidity Swings', 'section' => null],
         ['id' => 'layer-smc-flow', 'help' => 'smc-flow', 'route' => 'bots.indicators.smc-flow.edit', 'label' => 'SMC Flow (UT Bot)', 'section' => null],
 
-        ['id' => 'layer-bollinger', 'help' => 'bollinger', 'route' => 'bots.indicators.bollinger.edit', 'label' => 'Bollinger', 'section' => 'Классика OsEngine'],
+        ['id' => 'layer-bollinger', 'help' => 'bollinger', 'route' => 'bots.indicators.bollinger.edit', 'label' => 'Bollinger', 'section' => null],
         ['id' => 'layer-keltner', 'help' => 'keltner', 'route' => 'bots.indicators.keltner.edit', 'label' => 'Keltner', 'section' => null],
         ['id' => 'layer-envelops', 'help' => 'envelops', 'route' => 'bots.indicators.envelops.edit', 'label' => 'Envelops', 'section' => null],
         ['id' => 'layer-price-channel', 'help' => 'price-channel', 'route' => 'bots.indicators.price-channel.edit', 'label' => 'Price Channel', 'section' => null],
@@ -48,7 +48,7 @@
         ['id' => 'layer-ao', 'help' => 'ao', 'route' => 'bots.indicators.ao.edit', 'label' => 'AO', 'section' => null],
         ['id' => 'layer-atr', 'help' => 'atr', 'route' => 'bots.indicators.atr.edit', 'label' => 'ATR', 'section' => null],
 
-        // 16 новых классических индикаторов OsEngine.
+        // Дополнительные классические индикаторы.
         ['id' => 'layer-momentum', 'help' => 'momentum', 'route' => 'bots.indicators.momentum.edit', 'label' => 'Momentum', 'section' => null],
         ['id' => 'layer-roc', 'help' => 'roc', 'route' => 'bots.indicators.roc.edit', 'label' => 'ROC', 'section' => null],
         ['id' => 'layer-osma', 'help' => 'osma', 'route' => 'bots.indicators.osma.edit', 'label' => 'OsMA', 'section' => null],
@@ -100,8 +100,24 @@
     ];
 
     if ($showLlmLevels) {
-        $layerRows[] = ['id' => 'layer-llm-levels', 'help' => 'llm-levels', 'route' => null, 'label' => 'Уровни LLM', 'section' => 'Аналитика'];
+        $layerRows[] = ['id' => 'layer-llm-levels', 'help' => 'llm-levels', 'route' => null, 'label' => 'Уровни LLM', 'section' => null];
     }
+
+    // Единый алфавитный список по названию в UI (без группировки по секциям).
+    $collator = class_exists(\Collator::class) ? new \Collator('ru_RU') : null;
+    usort($layerRows, static function (array $a, array $b) use ($collator): int {
+        $left = (string) ($a['label'] ?? '');
+        $right = (string) ($b['label'] ?? '');
+        if ($collator instanceof \Collator) {
+            return $collator->compare($left, $right);
+        }
+
+        return strnatcasecmp($left, $right);
+    });
+    foreach ($layerRows as &$layerRow) {
+        $layerRow['section'] = null;
+    }
+    unset($layerRow);
 
     $gearSvg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="h-3.5 w-3.5" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.325.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.241-.438.613-.43.992a7.723 7.723 0 0 1 0 .255c-.008.378.137.75.43.991l1.004.827c.424.35.534.955.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.47 6.47 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.281c-.09.543-.56.94-1.11.94h-2.594c-.55 0-1.019-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.991a6.932 6.932 0 0 1 0-.255c.007-.38-.138-.751-.43-.992l-1.004-.827a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.086.22-.128.332-.183.582-.495.644-.869l.214-1.281Z" /><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" /></svg>';
 @endphp
@@ -115,12 +131,13 @@
     {{-- Затемнение; клик закрывает попап (обрабатывается в JS). --}}
     <div class="absolute inset-0 bg-black/60 backdrop-blur-[1px]" data-layers-overlay-close></div>
 
-    <div class="relative z-[1] flex w-full max-w-4xl max-h-[min(88vh,820px)] flex-col overflow-hidden rounded-xl border border-zinc-600 bg-[#13151a] shadow-2xl shadow-black/60"
+    {{-- Шире окна под подробные short-описания; размер шрифта short = text-xs. --}}
+    <div class="relative z-[1] flex w-full max-w-6xl max-h-[min(90vh,900px)] flex-col overflow-hidden rounded-xl border border-zinc-600 bg-[#13151a] shadow-2xl shadow-black/60"
         data-layers-popup-card>
         <div class="flex items-center justify-between gap-3 border-b border-zinc-700 bg-[#1e2028] px-4 py-3 shrink-0">
             <div>
                 <h2 id="layers-popup-title" class="text-base font-semibold text-zinc-100">Индикаторы на графике</h2>
-                <p class="text-[11px] text-zinc-500 mt-0.5">Включите слой · ⚙ настройки · ? подробная справка</p>
+                <p class="text-[11px] text-zinc-500 mt-0.5">Включите слой · клик по описанию или «?» — простая справка с картинками · ⚙ настройки</p>
             </div>
             <button type="button"
                 class="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-zinc-600 bg-zinc-800 text-zinc-300 hover:bg-zinc-700 hover:text-white"
@@ -128,7 +145,7 @@
                 aria-label="Закрыть">✕</button>
         </div>
 
-        {{-- Прокручиваемый список: слева контролы, справа краткое описание. --}}
+        {{-- Прокручиваемый список: слева контролы, справа описание (кликабельно → справка). --}}
         <div class="flex-1 min-h-0 overflow-y-auto overscroll-contain px-2 py-2 sm:px-3">
             @foreach ($layerRows as $row)
                 @php
@@ -143,8 +160,8 @@
                     </div>
                 @endif
 
-                <div class="grid grid-cols-1 gap-2 rounded-lg px-2 py-2 hover:bg-zinc-800/50 sm:grid-cols-[minmax(11rem,14rem)_minmax(0,1fr)_auto] sm:items-center sm:gap-3">
-                    <label for="{{ $row['id'] }}" class="flex min-w-0 items-center gap-2 text-sm text-zinc-200 cursor-pointer">
+                <div class="grid grid-cols-1 gap-2 rounded-lg px-2 py-2 hover:bg-zinc-800/50 sm:grid-cols-[minmax(11rem,14rem)_minmax(0,1fr)_auto] sm:items-start sm:gap-3">
+                    <label for="{{ $row['id'] }}" class="flex min-w-0 items-center gap-2 text-sm text-zinc-200 cursor-pointer sm:pt-0.5">
                         <input type="checkbox"
                             id="{{ $row['id'] }}"
                             class="rounded border-zinc-600 bg-zinc-800 text-blue-500 shrink-0"
@@ -152,7 +169,11 @@
                         <span class="truncate font-medium">{{ $row['label'] }}</span>
                     </label>
 
-                    <p class="text-xs leading-snug text-zinc-400 sm:pr-1">{{ $short }}</p>
+                    {{-- Клик по тексту открывает ту же справку, что и «?». --}}
+                    <button type="button"
+                        class="text-left text-xs leading-snug text-zinc-400 sm:pr-1 hover:text-sky-300 underline decoration-zinc-600 decoration-dotted underline-offset-2 transition-colors"
+                        data-indicator-help="{{ $row['help'] }}"
+                        title="Открыть простую справку: {{ $title }}">{{ $short }}</button>
 
                     <div class="flex items-center gap-1.5 shrink-0 justify-end">
                         @if ($row['route'])
@@ -183,14 +204,14 @@
     </div>
 </div>
 
-{{-- Второе попап-окно: подробная справка по выбранному индикатору. --}}
+{{-- Второе попап-окно: простая справка + схемы «что происходит». --}}
 <div id="indicator-help-modal"
     class="hidden fixed inset-0 z-[90] flex items-start justify-center sm:items-center p-3 sm:p-6"
     role="dialog"
     aria-modal="true"
     aria-labelledby="indicator-help-title">
     <div class="absolute inset-0 bg-black/70" data-help-overlay-close></div>
-    <div class="relative z-[1] flex w-full max-w-2xl max-h-[min(90vh,760px)] flex-col overflow-hidden rounded-xl border border-zinc-500 bg-[#0f1117] shadow-2xl"
+    <div class="relative z-[1] flex w-full max-w-3xl max-h-[min(92vh,880px)] flex-col overflow-hidden rounded-xl border border-zinc-500 bg-[#0f1117] shadow-2xl"
         data-help-popup-card>
         <div class="flex items-start justify-between gap-3 border-b border-zinc-700 bg-[#1a1d26] px-4 py-3 shrink-0">
             <div class="min-w-0">
@@ -202,17 +223,22 @@
                 data-help-overlay-close
                 aria-label="Закрыть справку">✕</button>
         </div>
-        <div class="flex-1 min-h-0 overflow-y-auto px-4 py-4 space-y-4 text-sm text-zinc-300">
+        <div class="flex-1 min-h-0 overflow-y-auto px-4 py-4 space-y-5 text-sm text-zinc-300">
             <section>
-                <h4 class="text-xs font-semibold uppercase tracking-wider text-emerald-400/90 mb-1.5">Что показывает</h4>
-                <p id="indicator-help-shows" class="leading-relaxed text-zinc-300"></p>
+                <h4 class="text-xs font-semibold uppercase tracking-wider text-emerald-400/90 mb-1.5">Простыми словами</h4>
+                <p id="indicator-help-shows" class="leading-relaxed text-zinc-200"></p>
             </section>
             <section>
-                <h4 class="text-xs font-semibold uppercase tracking-wider text-sky-400/90 mb-1.5">Как пользоваться</h4>
-                <p id="indicator-help-how" class="leading-relaxed text-zinc-300"></p>
+                <h4 class="text-xs font-semibold uppercase tracking-wider text-sky-400/90 mb-1.5">На что смотреть</h4>
+                <p id="indicator-help-how" class="leading-relaxed text-zinc-200"></p>
+            </section>
+            {{-- Схемы-картинки (SVG), объясняют сценарий без жаргона. --}}
+            <section id="indicator-help-diagrams-wrap" class="hidden">
+                <h4 class="text-xs font-semibold uppercase tracking-wider text-violet-400/90 mb-2">Картинки: что происходит</h4>
+                <div id="indicator-help-diagrams" class="grid gap-3 sm:grid-cols-2"></div>
             </section>
             <section>
-                <h4 class="text-xs font-semibold uppercase tracking-wider text-amber-400/90 mb-1.5">Примеры на графике</h4>
+                <h4 class="text-xs font-semibold uppercase tracking-wider text-amber-400/90 mb-1.5">Житейские примеры</h4>
                 <ul id="indicator-help-examples" class="list-disc space-y-2 pl-5 leading-relaxed text-zinc-300"></ul>
             </section>
         </div>

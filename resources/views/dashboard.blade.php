@@ -19,8 +19,8 @@
         border-radius: 4px;
     }
 </style>
-{{-- Классы ниже нужны Tailwind CDN (выставляются из JS) --}}
-<span class="sr-only pointer-events-none bg-blue-900/40 bg-blue-900/50 bg-stone-800/45 text-stone-200" aria-hidden="true"></span>
+{{-- Классы ниже нужны Tailwind CDN (выставляются из JS / кастомный switch «Торговля») --}}
+<span class="sr-only pointer-events-none bg-blue-900/40 bg-blue-900/50 bg-stone-800/45 text-stone-200 bg-emerald-600 peer-checked:bg-emerald-600 peer-checked:translate-x-4 translate-x-4 peer-focus-visible:ring-2 peer-focus-visible:ring-emerald-500/50" aria-hidden="true"></span>
 <div class="flex min-h-0 flex-1 w-full gap-0 overflow-hidden">
     {{-- Список инструментов слева --}}
     <aside class="w-56 shrink-0 bg-zinc-900 border-r border-zinc-800 overflow-hidden flex flex-col min-h-0">
@@ -46,20 +46,20 @@
         </div>
         <ul id="instrument-list" class="min-h-0 flex-1 overflow-y-auto overscroll-y-contain divide-y divide-zinc-800">
             @forelse($instruments as $inst)
-                <li>
-                    <button type="button"
+            <li>
+                <button type="button"
                         class="instrument-btn w-full text-left px-4 py-3 hover:bg-zinc-800 focus:bg-zinc-800 focus:outline-none transition-colors {{ $openTradeInstruments->contains($inst->instrument) ? 'bg-stone-800/45' : '' }}"
-                        data-instrument="{{ $inst->instrument }}"
-                        data-display-name="{{ e($inst->display_name ?? $inst->instrument) }}"
-                        data-search="{{ mb_strtolower(($inst->display_name ?? $inst->instrument).' '.$inst->instrument) }}"
+                    data-instrument="{{ $inst->instrument }}"
+                    data-display-name="{{ e($inst->display_name ?? $inst->instrument) }}"
+                    data-search="{{ mb_strtolower(($inst->display_name ?? $inst->instrument).' '.$inst->instrument) }}"
                         data-open-trade="{{ $openTradeInstruments->contains($inst->instrument) ? '1' : '0' }}">
-                        <div class="flex items-center justify-between gap-2">
-                            <div class="flex min-w-0 flex-1 items-center gap-1.5">
-                                <span class="font-medium text-zinc-100 truncate">{{ $inst->display_name ?? $inst->instrument }}</span>
+                    <div class="flex items-center justify-between gap-2">
+                        <div class="flex min-w-0 flex-1 items-center gap-1.5">
+                            <span class="font-medium text-zinc-100 truncate">{{ $inst->display_name ?? $inst->instrument }}</span>
                                 @if($openTradeInstruments->contains($inst->instrument) && isset($nearestExpiryByInstrument[$inst->instrument]))
                                     <span class="instrument-trade-timer shrink-0 text-xs font-mono tabular-nums text-stone-200" data-expiry-ts="{{ (int) $nearestExpiryByInstrument[$inst->instrument] }}">{{ str_pad((string) intdiv(max(0, (int) $nearestExpiryByInstrument[$inst->instrument] - now()->timestamp), 60), 2, '0', STR_PAD_LEFT) }}:{{ str_pad((string) (max(0, (int) $nearestExpiryByInstrument[$inst->instrument] - now()->timestamp) % 60), 2, '0', STR_PAD_LEFT) }}</span>
-                                @endif
-                            </div>
+                            @endif
+                        </div>
                         <span
                             class="instrument-payout text-xs font-medium {{ $inst->current_payout === null ? 'text-zinc-500' : (((float) $inst->current_payout >= 80) ? 'text-emerald-400' : (((float) $inst->current_payout >= 60) ? 'text-amber-400' : 'text-rose-400')) }}"
                             data-instrument="{{ $inst->instrument }}"
@@ -110,7 +110,28 @@
                     ])
                 </div>
             </div>
-            <span id="chart-loading" class="text-sm text-zinc-500 hidden shrink-0">Загрузка…</span>
+            {{-- Справа: переключатель показа торговли + статус загрузки. --}}
+            <div class="flex items-center gap-3 shrink-0">
+                <label
+                    for="show-trades-toggle"
+                    class="inline-flex items-center gap-2 cursor-pointer select-none"
+                    title="Показывать открытые и закрытые сделки на графике и в списке инструментов. Выключите — чистый график без торговли."
+                >
+                    <span id="show-trades-label" class="text-xs text-zinc-400">Торговля</span>
+                    {{-- Кастомный switch: peer-классы работают с Tailwind CDN. --}}
+                    <span class="relative inline-block h-5 w-9 shrink-0">
+                        <input
+                            type="checkbox"
+                            id="show-trades-toggle"
+                            class="peer sr-only"
+                            checked
+                        >
+                        <span class="block h-5 w-9 rounded-full bg-zinc-700 transition-colors peer-checked:bg-emerald-600 peer-focus-visible:ring-2 peer-focus-visible:ring-emerald-500/50"></span>
+                        <span class="pointer-events-none absolute left-0.5 top-0.5 h-4 w-4 rounded-full bg-zinc-100 shadow transition-transform peer-checked:translate-x-4"></span>
+                    </span>
+                </label>
+                <span id="chart-loading" class="text-sm text-zinc-500 hidden">Загрузка…</span>
+            </div>
         </div>
         <div id="chart-container" class="flex-1 min-h-0 relative">
             <div id="chart-placeholder" class="absolute inset-0 flex items-center justify-center text-zinc-500 bg-zinc-950/90 z-0">
@@ -135,9 +156,116 @@
             </div>
         </div>
     </div>
+
+    {{-- Правая панель входа в сделку (стиль Pocket Option): время / сумма / выплата / CALL|PUT. --}}
+    @php
+        $manualTrade = $manualTrade ?? [
+            'ssid_ready' => false,
+            'is_demo' => true,
+            'default_amount' => 1,
+            'profile_url' => route('profile.trading.edit'),
+        ];
+        $manualDefaultAmount = number_format((float) ($manualTrade['default_amount'] ?? 1), 2, '.', '');
+        $manualDefaultAmount = rtrim(rtrim($manualDefaultAmount, '0'), '.');
+        if ($manualDefaultAmount === '' || $manualDefaultAmount === '0') {
+            $manualDefaultAmount = '1';
+        }
+    @endphp
+    <aside id="manual-trade-panel"
+        class="w-[15.5rem] shrink-0 border-l border-zinc-800 bg-[#161a23] flex flex-col min-h-0 overflow-y-auto"
+        data-ssid-ready="{{ !empty($manualTrade['ssid_ready']) ? '1' : '0' }}"
+        data-is-demo="{{ !empty($manualTrade['is_demo']) ? '1' : '0' }}"
+        data-profile-url="{{ e($manualTrade['profile_url'] ?? route('profile.trading.edit')) }}"
+        data-order-url="{{ route('trading.manual-order') }}">
+        <div class="p-3 space-y-3 flex flex-col flex-1">
+            <div class="flex items-center justify-between gap-2">
+                <p class="text-[11px] font-medium uppercase tracking-wide text-zinc-500">Сделка</p>
+                <span id="manual-trade-account-badge"
+                    class="rounded px-1.5 py-0.5 text-[10px] font-semibold {{ !empty($manualTrade['is_demo']) ? 'bg-amber-900/50 text-amber-200' : 'bg-rose-900/50 text-rose-200' }}">
+                    {{ !empty($manualTrade['is_demo']) ? 'DEMO' : 'REAL' }}
+                </span>
+            </div>
+
+            {{-- Время экспирации --}}
+            <div class="space-y-1">
+                <label for="manual-trade-duration" class="block text-xs text-zinc-400">Время</label>
+                <div class="relative">
+                    <select id="manual-trade-duration"
+                        class="w-full appearance-none rounded-lg border border-zinc-700 bg-zinc-900/80 px-3 py-2.5 pr-9 text-sm font-medium text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-600">
+                        <option value="60">00:01:00</option>
+                        <option value="120">00:02:00</option>
+                        <option value="180">00:03:00</option>
+                        <option value="300" selected>00:05:00</option>
+                        <option value="600">00:10:00</option>
+                        <option value="900">00:15:00</option>
+                        <option value="1800">00:30:00</option>
+                        <option value="3600">01:00:00</option>
+                    </select>
+                    <span class="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-500" aria-hidden="true">
+                        <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.75">
+                            <circle cx="12" cy="12" r="8.5"/><path stroke-linecap="round" d="M12 7.5V12l2.8 1.7"/>
+                        </svg>
+                    </span>
+                </div>
+            </div>
+
+            {{-- Сумма ставки ($) — редактируемая, дефолт из профиля --}}
+            <div class="space-y-1">
+                <label for="manual-trade-amount" class="block text-xs text-zinc-400">Сумма</label>
+                <div class="relative">
+                    <input id="manual-trade-amount" type="number" min="1" max="20000" step="0.01"
+                        value="{{ $manualDefaultAmount }}"
+                        class="w-full rounded-lg border border-zinc-700 bg-zinc-900/80 px-3 py-2.5 pr-9 text-sm font-medium text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-600"
+                        autocomplete="off">
+                    <span class="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-500 text-sm font-semibold" aria-hidden="true">$</span>
+                </div>
+            </div>
+
+            {{-- Выплата по текущему payout инструмента --}}
+            <div class="space-y-1">
+                <div class="flex items-center justify-between text-xs text-zinc-400">
+                    <span>Выплата</span>
+                    <span id="manual-trade-profit-usd" class="tabular-nums">+$0.00</span>
+                </div>
+                <div class="rounded-lg border border-dashed border-zinc-700/80 bg-zinc-900/40 px-3 py-3 text-center">
+                    <p id="manual-trade-payout-pct" class="text-lg font-semibold text-emerald-400 tabular-nums">—</p>
+                    <p id="manual-trade-payout-total" class="mt-0.5 text-sm text-emerald-400/70 tabular-nums">+$0.00</p>
+                </div>
+            </div>
+
+            @if(empty($manualTrade['ssid_ready']))
+                <p class="rounded border border-amber-900/60 bg-amber-950/40 px-2.5 py-2 text-[11px] leading-snug text-amber-100/90">
+                    SSID не готов.
+                    <a href="{{ $manualTrade['profile_url'] ?? route('profile.trading.edit') }}" class="underline hover:text-amber-50">Настроить в профиле</a>
+                </p>
+            @endif
+
+            <div id="manual-trade-status" class="hidden rounded border px-2.5 py-2 text-[11px] leading-snug" role="status" aria-live="polite"></div>
+
+            <div class="mt-auto space-y-2 pt-1">
+                <button type="button" id="manual-trade-buy"
+                    class="flex w-full items-center justify-center gap-2 rounded-lg bg-[#22c55e] px-3 py-3 text-sm font-bold uppercase tracking-wide text-white shadow-sm transition hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-45"
+                    {{ empty($manualTrade['ssid_ready']) ? 'disabled' : '' }}>
+                    <span class="inline-flex h-5 w-5 items-center justify-center rounded-full bg-white/20" aria-hidden="true">
+                        <svg class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M5 15l7-7 7 7"/></svg>
+                    </span>
+                    Купить
+                </button>
+                <button type="button" id="manual-trade-sell"
+                    class="flex w-full items-center justify-center gap-2 rounded-lg bg-[#ef4444] px-3 py-3 text-sm font-bold uppercase tracking-wide text-white shadow-sm transition hover:bg-red-500 disabled:cursor-not-allowed disabled:opacity-45"
+                    {{ empty($manualTrade['ssid_ready']) ? 'disabled' : '' }}>
+                    <span class="inline-flex h-5 w-5 items-center justify-center rounded-full bg-white/20" aria-hidden="true">
+                        <svg class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/></svg>
+                    </span>
+                    Продать
+                </button>
+            </div>
+        </div>
+    </aside>
 </div>
 
 @include('partials.chart-markers-helper')
+@include('partials.chart-candle-smooth-helper')
 <script src="https://unpkg.com/lightweight-charts@5.2.0/dist/lightweight-charts.standalone.production.js"></script>
 <script>
 (function() {
@@ -361,6 +489,128 @@
     const instrumentSearchInput = document.getElementById('instrument-search');
     const instrumentSearchClearBtn = document.getElementById('instrument-search-clear');
     const instrumentListEl = document.getElementById('instrument-list');
+    const showTradesToggle = document.getElementById('show-trades-toggle');
+    const showTradesLabel = document.getElementById('show-trades-label');
+
+    // Показ сделок на дашборде: localStorage, по умолчанию включено (как раньше).
+    const SHOW_TRADES_STORAGE_KEY = 'platform.dashboard.showTrades';
+    // Последняя выбранная пара и ТФ — чтобы перезагрузка не сбрасывала график.
+    const SELECTED_INSTRUMENT_KEY = 'platform.dashboard.selectedInstrument';
+    const SELECTED_TIMEFRAME_KEY = 'platform.dashboard.selectedTimeframe';
+
+    /**
+     * Читает предпочтение «показывать торговлю» из localStorage.
+     * false / '0' / 'false' / 'off' → выкл; иначе вкл.
+     */
+    function loadShowTradesPref() {
+        try {
+            const v = localStorage.getItem(SHOW_TRADES_STORAGE_KEY);
+            if (v == null) return true;
+            return !(v === '0' || v === 'false' || v === 'off');
+        } catch (_) {
+            return true;
+        }
+    }
+
+    function saveShowTradesPref(on) {
+        try {
+            localStorage.setItem(SHOW_TRADES_STORAGE_KEY, on ? '1' : '0');
+        } catch (_) { /* ignore quota / private mode */ }
+    }
+
+    /** Сохраняет выбранный инструмент (символ пары). */
+    function saveSelectedInstrument(instrument) {
+        try {
+            if (!instrument) return;
+            localStorage.setItem(SELECTED_INSTRUMENT_KEY, String(instrument));
+        } catch (_) { /* ignore */ }
+    }
+
+    /** @returns {string|null} */
+    function loadSelectedInstrument() {
+        try {
+            const v = localStorage.getItem(SELECTED_INSTRUMENT_KEY);
+            return v && String(v).trim() !== '' ? String(v).trim() : null;
+        } catch (_) {
+            return null;
+        }
+    }
+
+    /**
+     * Сохраняет таймфрейм (минуты или код секундного: 4005/4015/4030).
+     * @param {number} tf
+     */
+    function saveSelectedTimeframe(tf) {
+        try {
+            if (!Number.isFinite(tf)) return;
+            localStorage.setItem(SELECTED_TIMEFRAME_KEY, String(tf));
+        } catch (_) { /* ignore */ }
+    }
+
+    /**
+     * Читает сохранённый ТФ, только если такая кнопка есть в UI.
+     * @returns {number|null}
+     */
+    function loadSelectedTimeframe() {
+        try {
+            const raw = localStorage.getItem(SELECTED_TIMEFRAME_KEY);
+            if (raw == null || raw === '') return null;
+            const tf = parseInt(raw, 10);
+            if (!Number.isFinite(tf)) return null;
+            const opt = document.querySelector('.tf-option[data-minutes="' + tf + '"]');
+            return opt ? tf : null;
+        } catch (_) {
+            return null;
+        }
+    }
+
+    /** Текущий флаг: рисовать ли сделки (маркеры + сайдбар). */
+    let showTrades = loadShowTradesPref();
+
+    /** Синхронизирует чекбокс/подпись с флагом showTrades. */
+    function syncShowTradesToggleUi() {
+        if (showTradesToggle) showTradesToggle.checked = showTrades;
+        if (showTradesLabel) {
+            showTradesLabel.textContent = 'Торговля';
+            showTradesLabel.classList.toggle('text-zinc-400', showTrades);
+            showTradesLabel.classList.toggle('text-zinc-500', !showTrades);
+        }
+    }
+
+    /**
+     * Убирает из сайдбара визуал открытых сделок (подсветка + таймер),
+     * не трогая выбранный инструмент (синий bg-blue-900/40).
+     */
+    function hideSidebarTradeChrome() {
+        document.querySelectorAll('.instrument-btn').forEach((btn) => {
+            btn.classList.remove('bg-stone-800/45');
+            btn.querySelectorAll('.instrument-trade-timer').forEach((el) => el.remove());
+        });
+    }
+
+    /**
+     * Вкл/выкл показа торговли: маркеры на графике + подсветка/таймеры в списке слева.
+     * При выключении — сразу чистый вид; при включении — перезагрузка сайдбара и сделок.
+     */
+    function applyShowTradesMode(on, { persist = true } = {}) {
+        showTrades = !!on;
+        if (persist) saveShowTradesPref(showTrades);
+        syncShowTradesToggleUi();
+
+        if (!showTrades) {
+            // Чистый график: не держим кэш сделок и не рисуем WIN/LOSE/OPEN.
+            lastChartSignals = [];
+            lastOpenTrades = [];
+            chartTradesFetchSeq += 1; // инвалидируем late-ответы fetch
+            renderChartMarkers();
+            hideSidebarTradeChrome();
+            return;
+        }
+
+        // Снова показываем: обновляем список (таймеры/подсветка) и маркеры по инструменту.
+        refreshInstrumentSidebar();
+        fetchChartTrades();
+    }
 
     // v4: classic OsEngine (bollinger/rsi/sma/ema/atr). При отсутствии ключа тянем v3 без потери старых prefs.
     const LAYER_PREFS_KEY = 'platform.dashboard.chartLayers.v5';
@@ -428,7 +678,11 @@
             if (layerSmaChannel && typeof o.smaChannel === 'boolean') layerSmaChannel.checked = o.smaChannel;
             if (layerIvashov && typeof o.ivashov === 'boolean') layerIvashov.checked = o.ivashov;
             if (layerLinReg && typeof o.linreg === 'boolean') layerLinReg.checked = o.linreg;
-            if (layerLinRegChannel && typeof o.linregChannel === 'boolean') layerLinRegChannel.checked = o.linregChannel;
+            // Совместимость: раньше ключ был camelCase linregChannel, теперь snake_case как в API.
+            if (layerLinRegChannel) {
+                if (typeof o.linreg_channel === 'boolean') layerLinRegChannel.checked = o.linreg_channel;
+                else if (typeof o.linregChannel === 'boolean') layerLinRegChannel.checked = o.linregChannel;
+            }
             if (layerKalman && typeof o.kalman === 'boolean') layerKalman.checked = o.kalman;
             if (layerFractal && typeof o.fractal === 'boolean') layerFractal.checked = o.fractal;
             if (layerDonchian && typeof o.donchian === 'boolean') layerDonchian.checked = o.donchian;
@@ -558,6 +812,11 @@
      * при добавлении markers достаточно вызвать PlatformChartMarkers.applyMarkers(...).
      */
     let candlestickMarkers = null;
+    /**
+     * Плавный close последней свечи (PlatformCandleSmooth): target из poll,
+     * визуал — RAF lerp, allChartData всегда хранит серверные OHLC.
+     */
+    let candleSmooth = null;
     let currentInstrument = null;
     let currentDisplayName = '';
     let currentTimeframeMinutes = 1;
@@ -664,6 +923,8 @@
     let rsiLevelLines = [];
     let classicOscPaneCount = 0;
     let classicIndicatorsFetchSeq = 0;
+    /** Ключ активного classic-запроса (instrument|tf|layers); чтобы 15с-таймер не плодил дубликаты. */
+    let classicIndicatorsInFlightKey = null;
 
     function payoutClassByValue(value) {
         if (value == null || Number.isNaN(value)) return 'text-zinc-500';
@@ -786,7 +1047,9 @@
             const li = document.createElement('li');
             const btn = document.createElement('button');
             btn.type = 'button';
-            btn.className = 'instrument-btn w-full text-left px-4 py-3 hover:bg-zinc-800 focus:bg-zinc-800 focus:outline-none transition-colors' + (inst.open_trade ? ' bg-stone-800/45' : '');
+            // Подсветку открытой сделки показываем только если включён режим «Торговля».
+            const showOpenTrade = !!(showTrades && inst.open_trade);
+            btn.className = 'instrument-btn w-full text-left px-4 py-3 hover:bg-zinc-800 focus:bg-zinc-800 focus:outline-none transition-colors' + (showOpenTrade ? ' bg-stone-800/45' : '');
             btn.dataset.instrument = inst.instrument;
             btn.dataset.displayName = inst.display_name;
             btn.dataset.search = normalizeText(`${inst.display_name || ''} ${inst.instrument || ''}`);
@@ -799,7 +1062,7 @@
             name.className = 'font-medium text-zinc-100 truncate';
             name.textContent = inst.display_name || inst.instrument;
             nameWrap.appendChild(name);
-            if (inst.open_trade && inst.expiry_ts) {
+            if (showOpenTrade && inst.expiry_ts) {
                 const timer = document.createElement('span');
                 timer.className = 'instrument-trade-timer shrink-0 text-xs font-mono tabular-nums text-stone-200';
                 timer.dataset.expiryTs = String(inst.expiry_ts);
@@ -834,6 +1097,8 @@
                 if (currentInstrument) {
                     document.querySelectorAll('.instrument-btn').forEach((b) => b.classList.toggle('bg-blue-900/40', b.dataset.instrument === currentInstrument));
                 }
+                // Обновляем блок «Выплата» в правой панели после refresh payout.
+                if (typeof updateManualTradePayout === 'function') updateManualTradePayout();
             })
             .catch(() => {});
     }
@@ -1098,8 +1363,15 @@
     /**
      * Тянем сделки пользователя по текущему инструменту и рисуем маркеры
      * тем же helper, что и на странице бота (ВВЕРХ/ВНИЗ/WIN/LOSE/OPEN).
+     * Если переключатель «Торговля» выключен — не ходим на API и чистим маркеры.
      */
     function fetchChartTrades() {
+        if (!showTrades) {
+            lastChartSignals = [];
+            lastOpenTrades = [];
+            renderChartMarkers();
+            return;
+        }
         if (!currentInstrument) {
             lastChartSignals = [];
             lastOpenTrades = [];
@@ -1114,6 +1386,7 @@
             .then((r) => r.json())
             .then((d) => {
                 if (seq !== chartTradesFetchSeq) return;
+                if (!showTrades) return;
                 lastChartSignals = Array.isArray(d && d.signals) ? d.signals : [];
                 lastOpenTrades = Array.isArray(d && d.open_trades) ? d.open_trades : [];
                 renderChartMarkers();
@@ -1127,16 +1400,18 @@
     /**
      * Собирает и применяет маркеры: история сделок + открытые + PA (если слой включён).
      * Через PlatformChartMarkers — тот же код, что на bots/show.
+     * При выключенной «Торговле» оставляем только маркеры индикаторов (например PA).
      */
     function renderChartMarkers() {
         if (!candlestickSeries || !currentInstrument) return;
         const PCM = window.PlatformChartMarkers;
         if (!PCM) return;
 
-        const history = typeof PCM.buildHistoryMarkers === 'function'
+        // Сделки на графике только если пользователь не попросил «чистый» режим.
+        const history = (showTrades && typeof PCM.buildHistoryMarkers === 'function')
             ? PCM.buildHistoryMarkers(lastChartSignals, { instrument: currentInstrument })
             : [];
-        const open = typeof PCM.buildOpenTradeMarkers === 'function'
+        const open = (showTrades && typeof PCM.buildOpenTradeMarkers === 'function')
             ? PCM.buildOpenTradeMarkers(lastOpenTrades, {
                 instrument: currentInstrument,
                 nowSec: Math.floor(Date.now() / 1000),
@@ -1676,7 +1951,7 @@
 
         const oscCount = (wantRsi ? 1 : 0) + (wantMacd ? 1 : 0) + (wantStochastic ? 1 : 0) + (wantCci ? 1 : 0) + (wantAtr ? 1 : 0) + (wantAdx ? 1 : 0) + (wantWilliams ? 1 : 0) + (wantAo ? 1 : 0) + (wantAroon ? 1 : 0)
             + (wantMomentum ? 1 : 0) + (wantRoc ? 1 : 0) + (wantOsma ? 1 : 0) + (wantTrix ? 1 : 0) + (wantCmo ? 1 : 0) + (wantDemarker ? 1 : 0) + (wantRvi ? 1 : 0) + (wantUltimate ? 1 : 0) + (wantSmi ? 1 : 0) + (wantStdDev ? 1 : 0) + (wantIvashov ? 1 : 0)
-            + (wantStochRsi ? 1 : 0) + (wantAc ? 1 : 0) + (wantBullsPower ? 1 : 0) + (wantBearsPower ? 1 : 0) + (wantDpo ? 1 : 0) + (wantQstick ? 1 : 0) + (wantVhFilter ? 1 : 0) + (wantEfficiencyRatio ? 1 : 0) + (wantRavi ? 1 : 0) + (wantCog ? 1 : 0) + (wantMassIndex ? 1 : 0) + (wantVolatilityAverage ? 1 : 0) + (wantVolatilityAverageChannel ? 1 : 0) + (wantPriceOscillator ? 1 : 0) + (wantAdaptiveLookBack ? 1 : 0) + (wantVolatilityCandles ? 1 : 0) + (wantVolatilityAverageTwice ? 1 : 0) + (wantVolatilityStagesAw ? 1 : 0);
+            + (wantStochRsi ? 1 : 0) + (wantAc ? 1 : 0) + (wantBullsPower ? 1 : 0) + (wantBearsPower ? 1 : 0) + (wantDpo ? 1 : 0) + (wantQstick ? 1 : 0) + (wantVhFilter ? 1 : 0) + (wantEfficiencyRatio ? 1 : 0) + (wantRavi ? 1 : 0) + (wantCog ? 1 : 0) + (wantMassIndex ? 1 : 0) + (wantVolatilityAverage ? 1 : 0) + (wantVolatilityAverageChannel ? 1 : 0) + (wantPriceOscillator ? 1 : 0) + (wantAdaptiveLookBack ? 1 : 0) + (wantVolatilityCandles ? 1 : 0) + (wantVolatilityAverageTwice ? 1 : 0) + (wantVolatilityStagesAw ? 2 : 0);
         if (oscCount > 0) {
             try {
                 const mainPane = chart.panes()[0];
@@ -2991,21 +3266,14 @@
             addOscLine('vat_fast', ser.sma_fast, st.color_sma_fast, false);
             addOscLine('vat_slow', ser.sma_slow, st.color_sma_slow, false);
         }
-        // VolatilityStagesAW — стадии волы + канал/SMA в отдельной pane.
+        // VolatilityStagesAW — две pane: стадии (1..4) отдельно от канала/SMA волы.
+        // Иначе ordinal stages≈2 и SMA≈0.7 на одной шкале: канал «прилипает» к низу и кажется, что индикатор не рисуется.
         if (wantVolatilityStagesAw) {
             const st = lastVolatilityStagesAwPayload.style || {};
             const ser = lastVolatilityStagesAwPayload.series || {};
             const lineW = st.line_width || 1;
-            let paneIndex = 1;
-            try {
-                const pane = chart.addPane(false);
-                if (pane && typeof pane.setStretchFactor === 'function') pane.setStretchFactor(0.28);
-                paneIndex = Math.max(1, chart.panes().length - 1);
-                classicOscPaneCount += 1;
-            } catch (e) {
-                console.error('[indicators] addPane Vol Stages AW', e);
-            }
-            const addOscLine = (okey, data, color, showLast) => {
+
+            const addOscLineOnPane = (okey, data, color, showLast, paneIndex, precision) => {
                 if (!Array.isArray(data) || !data.length) return;
                 const s = chart.addSeries(LineSeries, {
                     color: color || '#008000',
@@ -3013,17 +3281,49 @@
                     priceLineVisible: false,
                     lastValueVisible: !!showLast,
                     crosshairMarkerVisible: false,
-                    priceFormat: { type: 'price', precision: 2, minMove: 0.01 },
+                    priceFormat: { type: 'price', precision: precision, minMove: Math.pow(10, -precision) },
                 }, paneIndex);
                 s.setData(data.map((p) => ({ time: p.time, value: p.value })));
                 classicLineSeries[okey] = s;
             };
-            addOscLine('vsa_stages', ser.stages, st.color_stages, true);
-            addOscLine('vsa_vol', ser.volatility, st.color_volatility, false);
-            addOscLine('vsa_fast', ser.sma_fast, st.color_sma_fast, false);
-            addOscLine('vsa_slow', ser.sma_slow, st.color_sma_slow, false);
-            addOscLine('vsa_up', ser.up, st.color_up, false);
-            addOscLine('vsa_down', ser.down, st.color_down, false);
+
+            // Pane 1: только стадии режима (целые уровни).
+            if (Array.isArray(ser.stages) && ser.stages.length) {
+                let stagesPaneIndex = 1;
+                try {
+                    const pane = chart.addPane(false);
+                    if (pane && typeof pane.setStretchFactor === 'function') pane.setStretchFactor(0.22);
+                    stagesPaneIndex = Math.max(1, chart.panes().length - 1);
+                    classicOscPaneCount += 1;
+                } catch (e) {
+                    console.error('[indicators] addPane Vol Stages AW (stages)', e);
+                }
+                addOscLineOnPane('vsa_stages', ser.stages, st.color_stages, true, stagesPaneIndex, 0);
+            }
+
+            // Pane 2: volatility + SMA + границы канала (одна масштабная «семья»).
+            const channelSeries = [
+                ['vsa_vol', ser.volatility, st.color_volatility || '#1e90ff', true],
+                ['vsa_fast', ser.sma_fast, st.color_sma_fast || '#8b0000', false],
+                ['vsa_slow', ser.sma_slow, st.color_sma_slow || '#f5f5f5', true],
+                ['vsa_up', ser.up, st.color_up || '#f5f5f5', false],
+                ['vsa_down', ser.down, st.color_down || '#f5f5f5', false],
+            ].filter((row) => Array.isArray(row[1]) && row[1].length);
+
+            if (channelSeries.length) {
+                let channelPaneIndex = 1;
+                try {
+                    const pane = chart.addPane(false);
+                    if (pane && typeof pane.setStretchFactor === 'function') pane.setStretchFactor(0.28);
+                    channelPaneIndex = Math.max(1, chart.panes().length - 1);
+                    classicOscPaneCount += 1;
+                } catch (e) {
+                    console.error('[indicators] addPane Vol Stages AW (channel)', e);
+                }
+                channelSeries.forEach(([okey, data, color, showLast]) => {
+                    addOscLineOnPane(okey, data, color, showLast, channelPaneIndex, 2);
+                });
+            }
         }
 
         if (wantAtr) {
@@ -3270,7 +3570,20 @@
         if (wantVolatilityAverageTwice) layers.push('volatility_average_twice');
         if (wantVolatilityStagesAw) layers.push('volatility_stages_aw');
 
+        // Уникальный ключ запроса: при том же наборе слоёв не стартуем второй fetch.
+        // На M1 classic раньше отвечал ~15с — таймер OVERLAYS_REFRESH_MS как раз столько же
+        // бампил seq и отбрасывал готовый ответ → нижние pane так и не появлялись.
+        const requestKey = [
+            currentInstrument,
+            String(currentTimeframeMinutes),
+            layers.slice().sort().join(','),
+        ].join('|');
+        if (classicIndicatorsInFlightKey === requestKey) {
+            return;
+        }
+
         const seq = ++classicIndicatorsFetchSeq;
+        classicIndicatorsInFlightKey = requestKey;
         const params = new URLSearchParams({
             instrument: currentInstrument,
             timeframe: String(currentTimeframeMinutes),
@@ -3408,13 +3721,35 @@
                     lastCogPayload = null;
                     lastPivotFloorPayload = null;
                     lastMassIndexPayload = null;
+                    lastNrtrWatrPayload = null;
+                    lastPriceChannelAdaptivePayload = null;
+                    lastPriceChannelOffsetPayload = null;
+                    lastParabolicBollingerPayload = null;
+                    lastParabolicPriceChannelPayload = null;
+                    lastAtrChannelPayload = null;
+                    lastOffsetSmaPayload = null;
+                    lastOffsetEmaPayload = null;
+                    lastOffsetSsmaPayload = null;
+                    lastVolatilityAveragePayload = null;
+                    lastVolatilityAverageChannelPayload = null;
+                    lastPriceOscillatorPayload = null;
+                    lastDynamicTrendDetectorPayload = null;
+                    lastAdaptiveLookBackPayload = null;
+                    lastLinRegChannelFastPayload = null;
+                    lastVolatilityCandlesPayload = null;
                     lastZigZagPayload = null;
                     lastVolatilityAverageTwicePayload = null;
                     lastVolatilityStagesAwPayload = null;
                     try { applyClassicOsEngineSeries(); } catch (_) {}
                 }
             })
-            .catch(() => {});
+            .catch(() => {})
+            .finally(() => {
+                // Снимаем «замок» только у актуального запроса (устаревший seq уже не в полёте).
+                if (seq === classicIndicatorsFetchSeq && classicIndicatorsInFlightKey === requestKey) {
+                    classicIndicatorsInFlightKey = null;
+                }
+            });
     }
 
     /**
@@ -3895,43 +4230,84 @@
      * Окраска свечей DGT. На poll НЕ делаем setData всего ряда — только update хвоста;
      * иначе каждые 500ms LightweightCharts пересобирает серию и появляются «ломаные» бары.
      * fullResync: true — при первой загрузке, смене TF и выключении слоя PA.
+     * Последний бар при активном tween берётся через candleSmooth.visualFor — иначе PA
+     * каждый poll снэпает close и убивает плавность.
      */
     function applyPaBarColors(opts = {}) {
         const fullResync = opts && opts.fullResync === true;
         if (!candlestickSeries || !allChartData.length) return;
-        const plainBar = (c) => ({ time: c.time, open: c.open, high: c.high, low: c.low, close: c.close });
-        const plain = allChartData.map(plainBar);
+        const plainBar = (c) => {
+            const src = candleSmooth ? candleSmooth.visualFor(c) : c;
+            return { time: src.time, open: src.open, high: src.high, low: src.low, close: src.close };
+        };
+        const plain = allChartData.map((c) => ({
+            time: c.time, open: c.open, high: c.high, low: c.low, close: c.close,
+        }));
         const bc = lastPaPayload && lastPaPayload.bar_colors ? lastPaPayload.bar_colors : null;
         const paOn = layerPa && layerPa.checked && bc && Object.keys(bc).length > 0;
         if (!paOn) {
             if (fullResync) {
+                if (candleSmooth) candleSmooth.reset();
                 try { candlestickSeries.setData(plain); } catch (e) { console.error('[PA] setData plain', e); }
+                if (candleSmooth && allChartData.length) {
+                    candleSmooth.snap(allChartData[allChartData.length - 1]);
+                }
             }
             return;
         }
         const paintBar = (c) => {
+            const src = candleSmooth ? candleSmooth.visualFor(c) : c;
             const o = bc[String(c.time)];
-            if (!o) return plainBar(c);
+            if (!o) {
+                return { time: src.time, open: src.open, high: src.high, low: src.low, close: src.close };
+            }
             return {
-                time: c.time, open: c.open, high: c.high, low: c.low, close: c.close,
+                time: src.time, open: src.open, high: src.high, low: src.low, close: src.close,
                 color: o.color, borderColor: o.borderColor || o.color, wickColor: o.wickColor || o.color,
             };
         };
         if (fullResync) {
+            if (candleSmooth) candleSmooth.reset();
             try {
                 candlestickSeries.setData(allChartData.map(paintBar));
             } catch (e) {
                 try { candlestickSeries.setData(plain); } catch (e2) { console.error('[PA] fallback', e2); }
             }
+            if (candleSmooth && allChartData.length) {
+                candleSmooth.snap(allChartData[allChartData.length - 1]);
+            }
             return;
         }
         const barSec = timeframeSeconds(currentTimeframeMinutes);
-        const tailFrom = allChartData[allChartData.length - 1].time - barSec * 2;
+        const lastT = allChartData[allChartData.length - 1].time;
+        const tailFrom = lastT - barSec * 2;
         for (const c of allChartData) {
             if (c.time >= tailFrom) {
+                // Хвост без последнего бара: его ведёт candleSmooth.toward / RAF.
+                if (c.time === lastT && candleSmooth && candleSmooth.isAnimating()) {
+                    continue;
+                }
                 try { candlestickSeries.update(paintBar(c)); } catch (e) { console.error('[PA] update', e); }
             }
         }
+    }
+
+    /** Цвета DGT для одного бара — в update-пути плавной анимации. */
+    function paintBarForSmooth(bar) {
+        if (!bar) return bar;
+        const bc = lastPaPayload && lastPaPayload.bar_colors ? lastPaPayload.bar_colors : null;
+        const paOn = layerPa && layerPa.checked && bc && Object.keys(bc).length > 0;
+        if (!paOn) {
+            return { time: bar.time, open: bar.open, high: bar.high, low: bar.low, close: bar.close };
+        }
+        const o = bc[String(bar.time)];
+        if (!o) {
+            return { time: bar.time, open: bar.open, high: bar.high, low: bar.low, close: bar.close };
+        }
+        return {
+            time: bar.time, open: bar.open, high: bar.high, low: bar.low, close: bar.close,
+            color: o.color, borderColor: o.borderColor || o.color, wickColor: o.wickColor || o.color,
+        };
     }
 
     function updateTfOptionStyles() {
@@ -4167,6 +4543,9 @@
      * Poll (POLL_WINDOW_SEC ≈ 5 мин) раньше при совпадении первого бара с oldest делал
      * allChartData = newData и через applyPaBarColors() setData() — график «схлопывался»
      * и ломался примерно через 5–10 минут простоя на одном инструменте.
+     *
+     * Последний бар: не series.update() сразу, а candleSmooth.toward() — close «плывёт»
+     * к новой цене между poll-тиками (как на Pocket Option).
      */
     function applyIncrementalChartUpdate(newData) {
         if (!candlestickSeries || !Array.isArray(newData) || newData.length === 0) return;
@@ -4174,7 +4553,12 @@
         if (allChartData.length === 0) {
             allChartData = newData;
             oldestLoadedTime = Math.min(...allChartData.map(c => c.time));
+            if (candleSmooth) candleSmooth.reset();
             candlestickSeries.setData(allChartData);
+            // Зафиксировать стартовую точку tween на последнем баре.
+            if (candleSmooth && allChartData.length) {
+                candleSmooth.snap(allChartData[allChartData.length - 1]);
+            }
             tickCandleCloseTimer();
             applyPaBarColors({ fullResync: true });
             requestAnimationFrame(redrawPriceActionOverlay);
@@ -4190,17 +4574,24 @@
         const merged = Array.from(byTime.values()).sort((a, b) => a.time - b.time);
 
         const prependedOlder = merged.length > 0 && merged[0].time < prevOldest;
+        const newestTime = merged[merged.length - 1].time;
         // LightweightCharts.update() допускает только последний бар или новый бар после него.
         // Нельзя update() «середину» ряда — иначе Cannot update oldest data и артефакты на графике.
         let updateFailed = false;
         for (const c of newData) {
-            if (c.time >= prevLast) {
-                try {
+            if (c.time < prevLast) {
+                continue;
+            }
+            try {
+                if (c.time === newestTime && candleSmooth) {
+                    // Тот же или новый хвост: toward сам сделает snap при смене time.
+                    candleSmooth.toward(c);
+                } else {
                     candlestickSeries.update(c);
-                } catch (e) {
-                    updateFailed = true;
-                    console.error('[chart] candle update', e);
                 }
+            } catch (e) {
+                updateFailed = true;
+                console.error('[chart] candle update', e);
             }
         }
 
@@ -4210,7 +4601,11 @@
             : Math.min(oldestLoadedTime, merged[0].time);
 
         if (prependedOlder || updateFailed) {
+            if (candleSmooth) candleSmooth.reset();
             candlestickSeries.setData(allChartData);
+            if (candleSmooth && allChartData.length) {
+                candleSmooth.snap(allChartData[allChartData.length - 1]);
+            }
             applyPaBarColors({ fullResync: true });
         } else {
             applyPaBarColors();
@@ -4275,6 +4670,11 @@
     }
 
     function createChart() {
+        // Останавливаем tween предыдущего графика (смена инструмента / TF / rebuild).
+        if (candleSmooth) {
+            candleSmooth.reset();
+            candleSmooth = null;
+        }
         if (chart) chart.remove();
         chartWrapper.innerHTML = '';
         chartWrapper.classList.remove('hidden');
@@ -4315,6 +4715,16 @@
                 minMove: 0.00001
             }
         });
+        // Плавный close последней свечи (~200ms ease-out между poll-обновлениями).
+        if (window.PlatformCandleSmooth && typeof window.PlatformCandleSmooth.create === 'function') {
+            candleSmooth = window.PlatformCandleSmooth.create({
+                getSeries: () => candlestickSeries,
+                paintBar: paintBarForSmooth,
+                durationMs: 200,
+            });
+        } else {
+            candleSmooth = null;
+        }
         // Инициализируем markers-plugin единообразно с bots/show.
         candlestickMarkers = null;
         try {
@@ -4367,7 +4777,11 @@
                 if (toAdd.length === 0) { loadingMore = false; setLoading(false); return; }
                 allChartData = [...toAdd, ...allChartData].sort((a, b) => a.time - b.time);
                 oldestLoadedTime = Math.min(...allChartData.map(c => c.time));
+                if (candleSmooth) candleSmooth.cancel();
                 candlestickSeries.setData(allChartData);
+                if (candleSmooth && allChartData.length) {
+                    candleSmooth.snap(allChartData[allChartData.length - 1]);
+                }
                 loadingMore = false;
                 setLoading(false);
                 tickCandleCloseTimer();
@@ -4392,7 +4806,9 @@
                 allChartData = buildChartData(candles);
                 if (allChartData.length) {
                     oldestLoadedTime = Math.min(...allChartData.map(c => c.time));
+                    if (candleSmooth) candleSmooth.reset();
                     candlestickSeries.setData(allChartData);
+                    if (candleSmooth) candleSmooth.snap(allChartData[allChartData.length - 1]);
                     applyDefaultChartViewport();
                     fetchStructures();
                     fetchPriceActionIndicator();
@@ -4401,6 +4817,7 @@
                     fetchChartTrades();
                     fetchClassicIndicators();
                 } else {
+                    if (candleSmooth) candleSmooth.reset();
                     candlestickSeries.setData([]);
                     lastZones = [];
                     structureOverlay.innerHTML = '';
@@ -4452,7 +4869,11 @@
         if (currentInstrument === instrument) return;
         currentInstrument = instrument;
         currentDisplayName = displayName;
+        // Запоминаем пару — при F5 вернёмся к ней, а не к первой в списке.
+        saveSelectedInstrument(instrument);
         document.querySelectorAll('.instrument-btn').forEach((b) => b.classList.toggle('bg-blue-900/40', b.dataset.instrument === instrument));
+        // Синхронизируем выплату/доступность кнопок CALL|PUT с выбранной парой.
+        if (typeof updateManualTradePayout === 'function') updateManualTradePayout();
         lastZones = [];
         structureOverlay.innerHTML = '';
         lastPaPayload = null;
@@ -4500,7 +4921,9 @@
                 allChartData = buildChartData(candles);
                 if (allChartData.length) {
                     oldestLoadedTime = Math.min(...allChartData.map(c => c.time));
+                    if (candleSmooth) candleSmooth.reset();
                     candlestickSeries.setData(allChartData);
+                    if (candleSmooth) candleSmooth.snap(allChartData[allChartData.length - 1]);
                     applyDefaultChartViewport();
                     // startAutoRefresh внутри уже стартует и медленный таймер оверлеев.
                     startAutoRefresh();
@@ -4549,6 +4972,7 @@
                 return;
             }
             currentTimeframeMinutes = m;
+            saveSelectedTimeframe(m);
             updateTfOptionStyles();
             tfPanel.classList.add('hidden');
             if (currentInstrument && candlestickSeries) {
@@ -4741,17 +5165,198 @@
     updateTfOptionStyles();
     syncSearchClearButton();
 
+    // Переключатель «Торговля» справа в шапке: скрывает сделки на графике и в сайдбаре.
+    syncShowTradesToggleUi();
+    if (showTradesToggle) {
+        showTradesToggle.addEventListener('change', () => {
+            applyShowTradesMode(!!showTradesToggle.checked, { persist: true });
+        });
+    }
+    // SSR-список мог прийти с таймерами открытых сделок — сразу прячем, если режим выкл.
+    if (!showTrades) {
+        hideSidebarTradeChrome();
+    }
+
+    // Восстанавливаем ТФ до выбора инструмента, чтобы initial-fetch шёл уже с нужным периодом.
+    const persistedTf = loadSelectedTimeframe();
+    if (persistedTf != null) {
+        currentTimeframeMinutes = persistedTf;
+        updateTfOptionStyles();
+    }
+
     instrumentListRefreshInterval = setInterval(refreshInstrumentSidebar, 1000);
     sidebarTimerInterval = setInterval(() => {
         tickSidebarTradeTimers();
         tickCandleCloseTimer();
     }, 1000);
     tickSidebarTradeTimers();
+    // Правая панель CALL/PUT: слушатели + первичный расчёт выплаты.
+    initManualTradePanel();
     refreshInstrumentSidebar().then(() => {
         tickCandleCloseTimer();
-        const first = document.querySelector('#instrument-list .instrument-btn');
-        if (first) first.click();
+        // Сначала сохранённая пара, иначе первая доступная в списке.
+        const persistedInstr = loadSelectedInstrument();
+        let btn = null;
+        if (persistedInstr) {
+            document.querySelectorAll('#instrument-list .instrument-btn').forEach((b) => {
+                if (!btn && b.dataset.instrument === persistedInstr) btn = b;
+            });
+        }
+        if (!btn) btn = document.querySelector('#instrument-list .instrument-btn');
+        if (btn) btn.click();
     });
+
+    /**
+     * Панель ручного входа на PO (справа от графика).
+     * SSID читается только на сервере из /profile/trading; сюда не передаём.
+     */
+    function initManualTradePanel() {
+        const panel = document.getElementById('manual-trade-panel');
+        if (!panel) return;
+
+        const amountEl = document.getElementById('manual-trade-amount');
+        const durationEl = document.getElementById('manual-trade-duration');
+        const buyBtn = document.getElementById('manual-trade-buy');
+        const sellBtn = document.getElementById('manual-trade-sell');
+        const statusEl = document.getElementById('manual-trade-status');
+        const ssidReady = panel.dataset.ssidReady === '1';
+        const orderUrl = panel.dataset.orderUrl || '';
+        const csrf = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '';
+
+        let placing = false;
+
+        if (amountEl) {
+            amountEl.addEventListener('input', updateManualTradePayout);
+            amountEl.addEventListener('change', updateManualTradePayout);
+        }
+
+        async function placeSide(side) {
+            if (placing) return;
+            if (!ssidReady) {
+                showManualTradeStatus(false, 'SSID не готов — откройте Профиль → Торговля.');
+                return;
+            }
+            if (!currentInstrument) {
+                showManualTradeStatus(false, 'Сначала выберите инструмент слева.');
+                return;
+            }
+            const amount = amountEl ? parseFloat(amountEl.value) : NaN;
+            const duration = durationEl ? parseInt(durationEl.value, 10) : 0;
+            if (!Number.isFinite(amount) || amount < 1) {
+                showManualTradeStatus(false, 'Укажите сумму ставки (минимум $1).');
+                return;
+            }
+            if (!Number.isFinite(duration) || duration < 5) {
+                showManualTradeStatus(false, 'Выберите время экспирации.');
+                return;
+            }
+
+            placing = true;
+            setManualTradeBusy(true);
+            showManualTradeStatus(null, 'Отправка ордера на Pocket Option…');
+
+            try {
+                const res = await fetch(orderUrl, {
+                    method: 'POST',
+                    headers: {
+                        'X-CSRF-TOKEN': csrf,
+                        'Accept': 'application/json',
+                        'Content-Type': 'application/json',
+                        'X-Requested-With': 'XMLHttpRequest',
+                    },
+                    body: JSON.stringify({
+                        instrument: currentInstrument,
+                        side: side,
+                        amount: amount,
+                        duration: duration,
+                    }),
+                });
+                const data = await res.json().catch(() => ({}));
+                if (data.ok) {
+                    const oid = data.order_id ? (' #' + data.order_id) : '';
+                    const acct = data.is_demo ? 'DEMO' : 'REAL';
+                    showManualTradeStatus(true, (side === 'CALL' ? 'Купить' : 'Продать')
+                        + ': ордер отправлен (' + acct + ')' + oid + '.');
+                } else {
+                    // Laravel validation: { message, errors: { field: [..] } }
+                    let err = data.error || data.message || '';
+                    if (!err && data.errors && typeof data.errors === 'object') {
+                        err = Object.values(data.errors).flat().join(' ');
+                    }
+                    if (!err) err = 'Не удалось открыть сделку (HTTP ' + res.status + ').';
+                    showManualTradeStatus(false, err);
+                }
+            } catch (e) {
+                showManualTradeStatus(false, 'Сеть/прокси недоступны: ' + (e && e.message ? e.message : 'ошибка'));
+            } finally {
+                placing = false;
+                setManualTradeBusy(false);
+            }
+        }
+
+        function setManualTradeBusy(busy) {
+            if (buyBtn) buyBtn.disabled = busy || !ssidReady;
+            if (sellBtn) sellBtn.disabled = busy || !ssidReady;
+            if (amountEl) amountEl.disabled = busy;
+            if (durationEl) durationEl.disabled = busy;
+        }
+
+        function showManualTradeStatus(ok, message) {
+            if (!statusEl) return;
+            statusEl.classList.remove('hidden', 'border-emerald-800', 'bg-emerald-950/40', 'text-emerald-300',
+                'border-rose-800', 'bg-rose-950/40', 'text-rose-300',
+                'border-zinc-700', 'bg-zinc-900/50', 'text-zinc-300');
+            if (ok === true) {
+                statusEl.classList.add('border-emerald-800', 'bg-emerald-950/40', 'text-emerald-300');
+            } else if (ok === false) {
+                statusEl.classList.add('border-rose-800', 'bg-rose-950/40', 'text-rose-300');
+            } else {
+                statusEl.classList.add('border-zinc-700', 'bg-zinc-900/50', 'text-zinc-300');
+            }
+            statusEl.textContent = message || '';
+        }
+
+        if (buyBtn) buyBtn.addEventListener('click', () => placeSide('CALL'));
+        if (sellBtn) sellBtn.addEventListener('click', () => placeSide('PUT'));
+
+        updateManualTradePayout();
+    }
+
+    /** Пересчёт % и $ выплаты по currentInstrument + сумме в панели. */
+    function updateManualTradePayout() {
+        const pctEl = document.getElementById('manual-trade-payout-pct');
+        const totalEl = document.getElementById('manual-trade-payout-total');
+        const profitEl = document.getElementById('manual-trade-profit-usd');
+        const amountEl = document.getElementById('manual-trade-amount');
+        if (!pctEl || !totalEl || !profitEl) return;
+
+        const amount = amountEl ? parseFloat(amountEl.value) : NaN;
+        const amt = Number.isFinite(amount) && amount > 0 ? amount : 0;
+
+        let payout = null;
+        if (currentInstrument) {
+            const span = document.querySelector(
+                '.instrument-payout[data-instrument="' + CSS.escape(currentInstrument) + '"]'
+            );
+            if (span && span.dataset.payout !== '' && span.dataset.payout != null) {
+                const n = parseFloat(span.dataset.payout);
+                if (Number.isFinite(n)) payout = n;
+            }
+        }
+
+        if (payout == null) {
+            pctEl.textContent = '—';
+            profitEl.textContent = '+$0.00';
+            totalEl.textContent = '+$0.00';
+            return;
+        }
+
+        const profit = amt * (payout / 100);
+        const total = amt + profit;
+        pctEl.textContent = '+' + Math.round(payout) + '%';
+        profitEl.textContent = '+$' + profit.toFixed(2);
+        totalEl.textContent = '+$' + total.toFixed(2);
+    }
 })();
 </script>
 @include('partials.chart-indicators-popup-script')

@@ -253,7 +253,8 @@
                         <input type="number" name="count" id="count" min="10" max="5000" required
                             value="{{ old('count', $cfg['count'] ?? 120) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-                        <p class="text-[11px] text-zinc-500">Сколько M1 загружать из БД. Для этой стратегии достаточно 30–120 баров (нужны только последние 3). Больший count почти не влияет на логику.</p>
+
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('count')])
                         @error('count')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
@@ -261,7 +262,8 @@
                         <input type="number" name="expiry_sec" id="expiry_sec" min="30" max="86400" required
                             value="{{ old('expiry_sec', $cfg['expiry_sec'] ?? 60) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-                        <p class="text-[11px] text-zinc-500">Длительность paper-опциона и зеркала на PO. 60 с = 1 мин M1. Также окно dedupe — повторный сигнал по той же паре и стороне в это время не создаётся.</p>
+
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('expiry_sec')])
                         @error('expiry_sec')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
@@ -269,7 +271,8 @@
                         <input type="number" name="min_confidence" id="min_confidence" min="0" max="1" step="0.01" required
                             value="{{ old('min_confidence', $cfg['min_confidence'] ?? 0.55) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-                        <p class="text-[11px] text-zinc-500">Внутренняя оценка силы серии (доля тела свечей, payout). Ниже порога — сигнал отбрасывается.</p>
+
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('min_confidence', $bot->type)])
                         @error('min_confidence')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
@@ -277,7 +280,8 @@
                         <input type="number" name="min_payout" id="min_payout" min="0" max="100" step="0.1" required
                             value="{{ old('min_payout', $cfg['min_payout'] ?? 80) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-                        <p class="text-[11px] text-zinc-500">Пары с текущим payout на PO ниже порога не сканируются. 0 = все активные.</p>
+
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('min_payout')])
                         @error('min_payout')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
@@ -285,7 +289,8 @@
                         <input type="number" name="stale_after_sec" id="stale_after_sec" min="5" max="600" required
                             value="{{ old('stale_after_sec', $cfg['stale_after_sec'] ?? 45) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-                        <p class="text-[11px] text-zinc-500">Если последняя M1 не обновлялась дольше N секунд — пара пропускается (нет живого потока котировок).</p>
+
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('stale_after_sec')])
                         @error('stale_after_sec')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
@@ -293,7 +298,8 @@
                         <input type="number" name="min_body_to_range_ratio" id="min_body_to_range_ratio" min="0" max="1" step="0.01"
                             value="{{ old('min_body_to_range_ratio', $cfg['min_body_to_range_ratio'] ?? 0) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-                        <p class="text-[11px] text-zinc-500">Средняя доля тела/range по 3 свечам серии. Golden-сетап: 0.65 — отсекает слабые/доджи-импульсы.</p>
+
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('min_body_to_range_ratio')])
                         @error('min_body_to_range_ratio')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
@@ -301,7 +307,8 @@
                         <input type="number" name="trade_hour_utc_from" id="trade_hour_utc_from" min="0" max="23" step="1"
                             value="{{ old('trade_hour_utc_from', $cfg['trade_hour_utc_from'] ?? '') }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-                        <p class="text-[11px] text-zinc-500">Начало торгового окна включительно. Вместе с «по» задаёт часы, когда бот торгует.</p>
+
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('trade_hour_utc_from')])
                         @error('trade_hour_utc_from')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
@@ -309,14 +316,16 @@
                         <input type="number" name="trade_hour_utc_to" id="trade_hour_utc_to" min="0" max="23" step="1"
                             value="{{ old('trade_hour_utc_to', $cfg['trade_hour_utc_to'] ?? '') }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-                        <p class="text-[11px] text-zinc-500">Golden: 7–21 UTC (EU/US сессии). Оба поля пустые = круглосуточно.</p>
+
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('trade_hour_utc_to')])
                         @error('trade_hour_utc_to')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1 sm:col-span-2">
                         <label for="blocked_instruments_text" class="block text-xs font-medium text-zinc-400">Blacklist инструментов</label>
                         <textarea name="blocked_instruments_text" id="blocked_instruments_text" rows="3"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 font-mono text-xs text-zinc-100">{{ old('blocked_instruments_text', \App\Services\Telegram\TelegramAnalystInstrumentService::formatInstrumentListForInput($cfg['blocked_instruments'] ?? null)) }}</textarea>
-                        <p class="text-[11px] text-zinc-500">По одному символу на строку. Golden: AUD-base пары (AUDCAD/AUDJPY/…), не GBPAUD — он как раз сильный.</p>
+
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('blocked_instruments_text')])
                         @error('blocked_instruments_text')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                 </div>
@@ -326,13 +335,13 @@
             <div class="space-y-5 border-t border-zinc-800 pt-4">
                 <div class="space-y-2 text-sm text-zinc-400">
                     <p>
-                        <strong class="text-zinc-300">RSI Contrtrend</strong> — порт OsEngine:
+                        <strong class="text-zinc-300">RSI Contrtrend</strong> — стратегия:
                         покупка перепроданности RSI <strong>только в аптренде</strong> (цена выше SMA),
                         продажа перекупленности <strong>только в даунтренде</strong> (цена ниже SMA).
                     </p>
                     <p class="text-[11px] text-zinc-500">
                         CALL: Close &gt; SMA и RSI &lt; Down. PUT: Close &lt; SMA и RSI &gt; Up.
-                        ТФ сигнала M1, экспирация по умолчанию 180 с (3 мин). Выход OsEngine не переносится — фиксируем expiry.
+                        ТФ сигнала M1, экспирация по умолчанию 180 с (3 мин). Выход — фиксированная экспирация (expiry).
                     </p>
                 </div>
 
@@ -342,7 +351,8 @@
                         <input type="number" name="count" id="count" min="60" max="5000" required
                             value="{{ old('count', $cfg['count'] ?? 150) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-                        <p class="text-[11px] text-zinc-500">Нужен запас ≥ SMA+1 и RSI+5. При SMA 10 / RSI 14 достаточно ~60–150 M1.</p>
+
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('count')])
                         @error('count')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
@@ -350,7 +360,8 @@
                         <input type="number" name="expiry_sec" id="expiry_sec" min="60" max="900" required
                             value="{{ old('expiry_sec', $cfg['expiry_sec'] ?? 180) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-                        <p class="text-[11px] text-zinc-500">Дефолт 180 = 3 минуты на M1-сигнале. Также окно dedupe.</p>
+
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('expiry_sec')])
                         @error('expiry_sec')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
@@ -359,7 +370,8 @@
                         <input type="number" name="sma_length" id="sma_length" min="2" max="500" required
                             value="{{ old('sma_length', $cfg['sma_length'] ?? 10) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-                        <p class="text-[11px] text-zinc-500">Дефолт M1 OTC: 10 (OsEngine 50 почти не стреляет на PO).</p>
+
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('sma_length')])
                         @error('sma_length')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
@@ -367,7 +379,8 @@
                         <input type="number" name="rsi_length" id="rsi_length" min="2" max="500" required
                             value="{{ old('rsi_length', $cfg['rsi_length'] ?? 14) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-                        <p class="text-[11px] text-zinc-500">Дефолт M1 OTC: 14 (OsEngine использовал 20).</p>
+
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('rsi_length')])
                         @error('rsi_length')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
@@ -375,7 +388,8 @@
                         <input type="number" name="rsi_up" id="rsi_up" min="50" max="95" step="0.1" required
                             value="{{ old('rsi_up', $cfg['rsi_up'] ?? 60) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-                        <p class="text-[11px] text-zinc-500">PUT, если RSI выше и цена ниже SMA. Дефолт 60 (OsEngine 65).</p>
+
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('rsi_up')])
                         @error('rsi_up')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
@@ -383,7 +397,8 @@
                         <input type="number" name="rsi_down" id="rsi_down" min="5" max="50" step="0.1" required
                             value="{{ old('rsi_down', $cfg['rsi_down'] ?? 40) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-                        <p class="text-[11px] text-zinc-500">CALL, если RSI ниже и цена выше SMA. Дефолт 40 (OsEngine 35).</p>
+
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('rsi_down')])
                         @error('rsi_down')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
@@ -391,6 +406,7 @@
                         <input type="number" name="min_confidence" id="min_confidence" min="0" max="1" step="0.01" required
                             value="{{ old('min_confidence', $cfg['min_confidence'] ?? 0.56) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('min_confidence', $bot->type)])
                         @error('min_confidence')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
@@ -398,6 +414,7 @@
                         <input type="number" name="min_payout" id="min_payout" min="0" max="100" step="0.1" required
                             value="{{ old('min_payout', $cfg['min_payout'] ?? 75) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('min_payout')])
                         @error('min_payout')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
@@ -405,6 +422,7 @@
                         <input type="number" name="stale_after_sec" id="stale_after_sec" min="5" max="600" required
                             value="{{ old('stale_after_sec', $cfg['stale_after_sec'] ?? 60) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('stale_after_sec')])
                         @error('stale_after_sec')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                 </div>
@@ -415,13 +433,13 @@
             <div class="space-y-5 border-t border-zinc-800 pt-4">
                 <div class="space-y-2 text-sm text-zinc-400">
                     <p>
-                        <strong class="text-zinc-300">Bollinger Contrtrend</strong> — порт OsEngine StrategyBollinger:
+                        <strong class="text-zinc-300">Bollinger Contrtrend</strong> — стратегия mean-reversion по полосам Боллинджера:
                         покупка при закрытии <strong>ниже нижней полосы</strong>, продажа при закрытии
                         <strong>выше верхней</strong>.
                     </p>
                     <p class="text-[11px] text-zinc-500">
                         CALL: Close &lt; BB Down. PUT: Close &gt; BB Up.
-                        ТФ M1, экспирация по умолчанию 180 с. Выход OsEngine (SMA15) не переносится — фиксируем expiry.
+                        ТФ M1, экспирация по умолчанию 180 с. Выход — фиксированная экспирация (expiry).
                     </p>
                 </div>
 
@@ -431,7 +449,8 @@
                         <input type="number" name="count" id="count" min="40" max="5000" required
                             value="{{ old('count', $cfg['count'] ?? 150) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-                        <p class="text-[11px] text-zinc-500">Нужен запас ≥ BB length+2. При Length 12 достаточно ~60–150 M1.</p>
+
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('count')])
                         @error('count')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
@@ -439,7 +458,8 @@
                         <input type="number" name="expiry_sec" id="expiry_sec" min="60" max="900" required
                             value="{{ old('expiry_sec', $cfg['expiry_sec'] ?? 180) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-                        <p class="text-[11px] text-zinc-500">Дефолт 180 = 3 минуты на M1. Также окно dedupe.</p>
+
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('expiry_sec')])
                         @error('expiry_sec')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
@@ -447,7 +467,8 @@
                         <input type="number" name="bb_length" id="bb_length" min="2" max="500" required
                             value="{{ old('bb_length', $cfg['bb_length'] ?? 12) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-                        <p class="text-[11px] text-zinc-500">OsEngine chart default 12 (период SMA середины канала).</p>
+
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('bb_length')])
                         @error('bb_length')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
@@ -455,7 +476,8 @@
                         <input type="number" name="bb_deviation" id="bb_deviation" min="0.1" max="10" step="0.1" required
                             value="{{ old('bb_deviation', $cfg['bb_deviation'] ?? 2) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-                        <p class="text-[11px] text-zinc-500">OsEngine default 2.0. Меньше → чаще касания полос.</p>
+
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('bb_deviation')])
                         @error('bb_deviation')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
@@ -463,6 +485,7 @@
                         <input type="number" name="min_confidence" id="min_confidence" min="0" max="1" step="0.01" required
                             value="{{ old('min_confidence', $cfg['min_confidence'] ?? 0.56) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('min_confidence', $bot->type)])
                         @error('min_confidence')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
@@ -470,6 +493,7 @@
                         <input type="number" name="min_payout" id="min_payout" min="0" max="100" step="0.1" required
                             value="{{ old('min_payout', $cfg['min_payout'] ?? 75) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('min_payout')])
                         @error('min_payout')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
@@ -477,6 +501,7 @@
                         <input type="number" name="stale_after_sec" id="stale_after_sec" min="5" max="600" required
                             value="{{ old('stale_after_sec', $cfg['stale_after_sec'] ?? 60) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('stale_after_sec')])
                         @error('stale_after_sec')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                 </div>
@@ -484,11 +509,11 @@
                 @include('bots._bollinger-contrtrend-telegram-settings', ['bot' => $bot, 'cfg' => $cfg, 'chartAnalystBots' => $chartAnalystBots ?? []])
             </div>
         @elseif ($bot->type === 'pinbar_trade')
-            {{-- OsEngine PinBar: тело в верхней/нижней трети HL + SMA по тренду. --}}
+            {{-- PinBar: тело в верхней/нижней трети HL + SMA по тренду. --}}
             <div class="space-y-5 border-t border-zinc-800 pt-4">
                 <div class="space-y-2 text-sm text-zinc-400">
                     <p>
-                        <strong class="text-zinc-300">PinBar Trade</strong> — порт OsEngine PinBar:
+                        <strong class="text-zinc-300">PinBar Trade</strong> — стратегия пинбара:
                         бычий пин (O/C в верхней 1/3 HL, close &gt; SMA) → CALL;
                         медвежий (O/C в нижней 1/3, close &lt; SMA) → PUT.
                     </p>
@@ -499,6 +524,7 @@
                         <input type="number" name="count" id="count" min="40" max="5000" required
                             value="{{ old('count', $cfg['count'] ?? 150) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('count')])
                         @error('count')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
@@ -506,6 +532,7 @@
                         <input type="number" name="expiry_sec" id="expiry_sec" min="60" max="900" required
                             value="{{ old('expiry_sec', $cfg['expiry_sec'] ?? 180) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('expiry_sec')])
                         @error('expiry_sec')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
@@ -513,6 +540,7 @@
                         <input type="number" name="sma_length" id="sma_length" min="2" max="500" required
                             value="{{ old('sma_length', $cfg['sma_length'] ?? 50) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('sma_length')])
                         @error('sma_length')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
@@ -520,6 +548,7 @@
                         <input type="number" name="min_confidence" id="min_confidence" min="0" max="1" step="0.01" required
                             value="{{ old('min_confidence', $cfg['min_confidence'] ?? 0.56) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('min_confidence', $bot->type)])
                         @error('min_confidence')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
@@ -527,6 +556,7 @@
                         <input type="number" name="min_payout" id="min_payout" min="0" max="100" step="0.1" required
                             value="{{ old('min_payout', $cfg['min_payout'] ?? 75) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('min_payout')])
                         @error('min_payout')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
@@ -534,17 +564,18 @@
                         <input type="number" name="stale_after_sec" id="stale_after_sec" min="5" max="600" required
                             value="{{ old('stale_after_sec', $cfg['stale_after_sec'] ?? 60) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('stale_after_sec')])
                         @error('stale_after_sec')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                 </div>
                 @include('bots._os-engine-binary-telegram-settings', ['bot' => $bot, 'cfg' => $cfg, 'chartAnalystBots' => $chartAnalystBots ?? []])
             </div>
         @elseif ($bot->type === 'williams_range_trade')
-            {{-- OsEngine Williams %R: oversold/overbought. --}}
+            {{-- Williams %R: oversold/overbought. --}}
             <div class="space-y-5 border-t border-zinc-800 pt-4">
                 <div class="space-y-2 text-sm text-zinc-400">
                     <p>
-                        <strong class="text-zinc-300">Williams Range Trade</strong> — порт OsEngine Williams %R:
+                        <strong class="text-zinc-300">Williams Range Trade</strong> — стратегия Williams %R:
                         вход в зону (кросс) WR &lt; wr_down → CALL, WR &gt; wr_up → PUT. Без кросса — шум на удержании экстремума.
                     </p>
                 </div>
@@ -554,6 +585,7 @@
                         <input type="number" name="count" id="count" min="40" max="5000" required
                             value="{{ old('count', $cfg['count'] ?? 150) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('count')])
                         @error('count')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
@@ -561,6 +593,7 @@
                         <input type="number" name="expiry_sec" id="expiry_sec" min="60" max="900" required
                             value="{{ old('expiry_sec', $cfg['expiry_sec'] ?? 180) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('expiry_sec')])
                         @error('expiry_sec')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
@@ -568,7 +601,8 @@
                         <input type="number" name="wr_length" id="wr_length" min="2" max="500" required
                             value="{{ old('wr_length', $cfg['wr_length'] ?? 21) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-                        <p class="text-[11px] text-zinc-500">Дефолт M1: 21 (OsEngine/класси. 14 шумнее).</p>
+
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('wr_length')])
                         @error('wr_length')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
@@ -576,7 +610,8 @@
                         <input type="number" name="wr_up" id="wr_up" min="-100" max="0" step="0.1" required
                             value="{{ old('wr_up', $cfg['wr_up'] ?? -10) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-                        <p class="text-[11px] text-zinc-500">Дефолт −10 (класси. −20).</p>
+
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('wr_up')])
                         @error('wr_up')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
@@ -584,7 +619,8 @@
                         <input type="number" name="wr_down" id="wr_down" min="-100" max="0" step="0.1" required
                             value="{{ old('wr_down', $cfg['wr_down'] ?? -90) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-                        <p class="text-[11px] text-zinc-500">Дефолт −90 (класс. −80).</p>
+
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('wr_down')])
                         @error('wr_down')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1 flex items-end">
@@ -594,12 +630,15 @@
                                 @checked(old('require_cross', $cfg['require_cross'] ?? true))>
                             <span class="text-sm text-zinc-300">Только кросс в зону <span class="text-zinc-500">(анти-шум)</span></span>
                         </label>
+                    
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('require_cross')])
                     </div>
                     <div class="space-y-1">
                         <label for="min_confidence" class="block text-xs font-medium text-zinc-400">Мин. confidence</label>
                         <input type="number" name="min_confidence" id="min_confidence" min="0" max="1" step="0.01" required
                             value="{{ old('min_confidence', $cfg['min_confidence'] ?? 0.60) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('min_confidence', $bot->type)])
                         @error('min_confidence')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
@@ -607,6 +646,7 @@
                         <input type="number" name="min_payout" id="min_payout" min="0" max="100" step="0.1" required
                             value="{{ old('min_payout', $cfg['min_payout'] ?? 75) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('min_payout')])
                         @error('min_payout')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
@@ -614,17 +654,18 @@
                         <input type="number" name="stale_after_sec" id="stale_after_sec" min="5" max="600" required
                             value="{{ old('stale_after_sec', $cfg['stale_after_sec'] ?? 60) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('stale_after_sec')])
                         @error('stale_after_sec')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                 </div>
                 @include('bots._os-engine-binary-telegram-settings', ['bot' => $bot, 'cfg' => $cfg, 'chartAnalystBots' => $chartAnalystBots ?? []])
             </div>
         @elseif ($bot->type === 'three_soldier')
-            {{-- OsEngine Three Soldiers / Three Crows. --}}
+            {{-- Three Soldiers / Three Crows. --}}
             <div class="space-y-5 border-t border-zinc-800 pt-4">
                 <div class="space-y-2 text-sm text-zinc-400">
                     <p>
-                        <strong class="text-zinc-300">Three Soldier</strong> — порт OsEngine:
+                        <strong class="text-zinc-300">Three Soldier</strong> — стратегия:
                         три бычьих свечи → CALL, три медвежьих → PUT (фильтр по высоте паттерна %).
                     </p>
                 </div>
@@ -634,6 +675,7 @@
                         <input type="number" name="count" id="count" min="40" max="5000" required
                             value="{{ old('count', $cfg['count'] ?? 150) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('count')])
                         @error('count')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
@@ -641,6 +683,7 @@
                         <input type="number" name="expiry_sec" id="expiry_sec" min="60" max="900" required
                             value="{{ old('expiry_sec', $cfg['expiry_sec'] ?? 180) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('expiry_sec')])
                         @error('expiry_sec')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
@@ -648,6 +691,7 @@
                         <input type="number" name="height_soldiers" id="height_soldiers" min="0" max="10" step="0.01" required
                             value="{{ old('height_soldiers', $cfg['height_soldiers'] ?? 0.08) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('height_soldiers')])
                         @error('height_soldiers')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
@@ -655,6 +699,7 @@
                         <input type="number" name="min_height_one_soldier" id="min_height_one_soldier" min="0" max="10" step="0.01" required
                             value="{{ old('min_height_one_soldier', $cfg['min_height_one_soldier'] ?? 0.02) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('min_height_one_soldier')])
                         @error('min_height_one_soldier')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
@@ -662,6 +707,7 @@
                         <input type="number" name="min_confidence" id="min_confidence" min="0" max="1" step="0.01" required
                             value="{{ old('min_confidence', $cfg['min_confidence'] ?? 0.56) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('min_confidence', $bot->type)])
                         @error('min_confidence')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
@@ -669,6 +715,7 @@
                         <input type="number" name="min_payout" id="min_payout" min="0" max="100" step="0.1" required
                             value="{{ old('min_payout', $cfg['min_payout'] ?? 75) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('min_payout')])
                         @error('min_payout')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
@@ -676,17 +723,18 @@
                         <input type="number" name="stale_after_sec" id="stale_after_sec" min="5" max="600" required
                             value="{{ old('stale_after_sec', $cfg['stale_after_sec'] ?? 60) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('stale_after_sec')])
                         @error('stale_after_sec')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                 </div>
                 @include('bots._os-engine-binary-telegram-settings', ['bot' => $bot, 'cfg' => $cfg, 'chartAnalystBots' => $chartAnalystBots ?? []])
             </div>
         @elseif ($bot->type === 'cci_trade')
-            {{-- OsEngine CCI mean-reversion. --}}
+            {{-- CCI mean-reversion. --}}
             <div class="space-y-5 border-t border-zinc-800 pt-4">
                 <div class="space-y-2 text-sm text-zinc-400">
                     <p>
-                        <strong class="text-zinc-300">CCI Trade</strong> — порт OsEngine CCI:
+                        <strong class="text-zinc-300">CCI Trade</strong> — стратегия CCI:
                         CCI ≤ cci_down → CALL, CCI ≥ cci_up → PUT.
                     </p>
                 </div>
@@ -696,6 +744,7 @@
                         <input type="number" name="count" id="count" min="40" max="5000" required
                             value="{{ old('count', $cfg['count'] ?? 150) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('count')])
                         @error('count')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
@@ -703,6 +752,7 @@
                         <input type="number" name="expiry_sec" id="expiry_sec" min="60" max="900" required
                             value="{{ old('expiry_sec', $cfg['expiry_sec'] ?? 180) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('expiry_sec')])
                         @error('expiry_sec')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
@@ -710,6 +760,7 @@
                         <input type="number" name="cci_length" id="cci_length" min="2" max="500" required
                             value="{{ old('cci_length', $cfg['cci_length'] ?? 20) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('cci_length')])
                         @error('cci_length')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
@@ -717,6 +768,7 @@
                         <input type="number" name="cci_up" id="cci_up" step="1" required
                             value="{{ old('cci_up', $cfg['cci_up'] ?? 150) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('cci_up')])
                         @error('cci_up')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
@@ -724,6 +776,7 @@
                         <input type="number" name="cci_down" id="cci_down" step="1" required
                             value="{{ old('cci_down', $cfg['cci_down'] ?? -150) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('cci_down')])
                         @error('cci_down')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
@@ -731,6 +784,7 @@
                         <input type="number" name="min_confidence" id="min_confidence" min="0" max="1" step="0.01" required
                             value="{{ old('min_confidence', $cfg['min_confidence'] ?? 0.56) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('min_confidence', $bot->type)])
                         @error('min_confidence')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
@@ -738,6 +792,7 @@
                         <input type="number" name="min_payout" id="min_payout" min="0" max="100" step="0.1" required
                             value="{{ old('min_payout', $cfg['min_payout'] ?? 75) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('min_payout')])
                         @error('min_payout')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
@@ -745,17 +800,18 @@
                         <input type="number" name="stale_after_sec" id="stale_after_sec" min="5" max="600" required
                             value="{{ old('stale_after_sec', $cfg['stale_after_sec'] ?? 60) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('stale_after_sec')])
                         @error('stale_after_sec')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                 </div>
                 @include('bots._os-engine-binary-telegram-settings', ['bot' => $bot, 'cfg' => $cfg, 'chartAnalystBots' => $chartAnalystBots ?? []])
             </div>
         @elseif ($bot->type === 'rsi_trade')
-            {{-- OsEngine RSI Trade: кросс из зоны (без SMA Contrtrend). --}}
+            {{-- RSI Trade: кросс из зоны (без SMA Contrtrend). --}}
             <div class="space-y-5 border-t border-zinc-800 pt-4">
                 <div class="space-y-2 text-sm text-zinc-400">
                     <p>
-                        <strong class="text-zinc-300">RSI Trade</strong> — порт OsEngine RSI:
+                        <strong class="text-zinc-300">RSI Trade</strong> — стратегия RSI:
                         кросс вверх из oversold → CALL, кросс вниз из overbought → PUT.
                     </p>
                 </div>
@@ -765,6 +821,7 @@
                         <input type="number" name="count" id="count" min="40" max="5000" required
                             value="{{ old('count', $cfg['count'] ?? 150) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('count')])
                         @error('count')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
@@ -772,6 +829,7 @@
                         <input type="number" name="expiry_sec" id="expiry_sec" min="60" max="900" required
                             value="{{ old('expiry_sec', $cfg['expiry_sec'] ?? 180) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('expiry_sec')])
                         @error('expiry_sec')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
@@ -779,6 +837,7 @@
                         <input type="number" name="rsi_length" id="rsi_length" min="2" max="500" required
                             value="{{ old('rsi_length', $cfg['rsi_length'] ?? 14) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('rsi_length')])
                         @error('rsi_length')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
@@ -786,6 +845,7 @@
                         <input type="number" name="rsi_up" id="rsi_up" min="0" max="100" step="0.1" required
                             value="{{ old('rsi_up', $cfg['rsi_up'] ?? 65) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('rsi_up')])
                         @error('rsi_up')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
@@ -793,6 +853,7 @@
                         <input type="number" name="rsi_down" id="rsi_down" min="0" max="100" step="0.1" required
                             value="{{ old('rsi_down', $cfg['rsi_down'] ?? 35) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('rsi_down')])
                         @error('rsi_down')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
@@ -800,6 +861,7 @@
                         <input type="number" name="min_confidence" id="min_confidence" min="0" max="1" step="0.01" required
                             value="{{ old('min_confidence', $cfg['min_confidence'] ?? 0.56) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('min_confidence', $bot->type)])
                         @error('min_confidence')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
@@ -807,6 +869,7 @@
                         <input type="number" name="min_payout" id="min_payout" min="0" max="100" step="0.1" required
                             value="{{ old('min_payout', $cfg['min_payout'] ?? 75) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('min_payout')])
                         @error('min_payout')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
@@ -814,17 +877,18 @@
                         <input type="number" name="stale_after_sec" id="stale_after_sec" min="5" max="600" required
                             value="{{ old('stale_after_sec', $cfg['stale_after_sec'] ?? 60) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('stale_after_sec')])
                         @error('stale_after_sec')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                 </div>
                 @include('bots._os-engine-binary-telegram-settings', ['bot' => $bot, 'cfg' => $cfg, 'chartAnalystBots' => $chartAnalystBots ?? []])
             </div>
         @elseif ($bot->type === 'rvi_trade')
-            {{-- OsEngine RVI: кросс линии / signal. --}}
+            {{-- RVI: кросс линии / signal. --}}
             <div class="space-y-5 border-t border-zinc-800 pt-4">
                 <div class="space-y-2 text-sm text-zinc-400">
                     <p>
-                        <strong class="text-zinc-300">RVI Trade</strong> — порт OsEngine RVI:
+                        <strong class="text-zinc-300">RVI Trade</strong> — стратегия RVI:
                         только бар кросса RVI через signal (signal достаточно далеко от 0). Без кросса — тысячи сделок на удержании состояния.
                     </p>
                 </div>
@@ -834,6 +898,7 @@
                         <input type="number" name="count" id="count" min="40" max="5000" required
                             value="{{ old('count', $cfg['count'] ?? 150) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('count')])
                         @error('count')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
@@ -841,6 +906,7 @@
                         <input type="number" name="expiry_sec" id="expiry_sec" min="60" max="900" required
                             value="{{ old('expiry_sec', $cfg['expiry_sec'] ?? 180) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('expiry_sec')])
                         @error('expiry_sec')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
@@ -848,7 +914,8 @@
                         <input type="number" name="rvi_length" id="rvi_length" min="2" max="500" required
                             value="{{ old('rvi_length', $cfg['rvi_length'] ?? 14) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-                        <p class="text-[11px] text-zinc-500">Дефолт M1: 14 (OsEngine 10 шумнее).</p>
+
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('rvi_length')])
                         @error('rvi_length')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
@@ -856,7 +923,8 @@
                         <input type="number" name="min_signal_abs" id="min_signal_abs" min="0" max="5" step="0.01" required
                             value="{{ old('min_signal_abs', $cfg['min_signal_abs'] ?? 0.20) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-                        <p class="text-[11px] text-zinc-500">Отсекает кроссы около нуля.</p>
+
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('min_signal_abs')])
                         @error('min_signal_abs')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1 flex items-end">
@@ -866,12 +934,15 @@
                                 @checked(old('require_cross', $cfg['require_cross'] ?? true))>
                             <span class="text-sm text-zinc-300">Только кросс RVI/signal <span class="text-zinc-500">(анти-шум)</span></span>
                         </label>
+                    
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('require_cross')])
                     </div>
                     <div class="space-y-1">
                         <label for="min_confidence" class="block text-xs font-medium text-zinc-400">Мин. confidence</label>
                         <input type="number" name="min_confidence" id="min_confidence" min="0" max="1" step="0.01" required
                             value="{{ old('min_confidence', $cfg['min_confidence'] ?? 0.60) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('min_confidence', $bot->type)])
                         @error('min_confidence')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
@@ -879,6 +950,7 @@
                         <input type="number" name="min_payout" id="min_payout" min="0" max="100" step="0.1" required
                             value="{{ old('min_payout', $cfg['min_payout'] ?? 75) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('min_payout')])
                         @error('min_payout')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
@@ -886,6 +958,7 @@
                         <input type="number" name="stale_after_sec" id="stale_after_sec" min="5" max="600" required
                             value="{{ old('stale_after_sec', $cfg['stale_after_sec'] ?? 60) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('stale_after_sec')])
                         @error('stale_after_sec')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                 </div>
@@ -913,7 +986,8 @@
                         <input type="number" name="count" id="count" min="80" max="5000" required
                             value="{{ old('count', $cfg['count'] ?? 500) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-                        <p class="text-[11px] text-zinc-500">История для расчёта UT, 3BR, OB. Минимум 80 баров. 500 — полный контекст индикатора, scan ~15–25 сек на пару.</p>
+
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('count')])
                         @error('count')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
@@ -921,7 +995,8 @@
                         <input type="number" name="expiry_sec" id="expiry_sec" min="120" max="600" required
                             value="{{ old('expiry_sec', $cfg['expiry_sec'] ?? 180) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-                        <p class="text-[11px] text-zinc-500">Длительность опциона и dedupe-окно. 180 = 3 мин (дефолт). Допустимо 120–600 с.</p>
+
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('expiry_sec')])
                         @error('expiry_sec')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
@@ -929,7 +1004,8 @@
                         <input type="number" name="min_confidence" id="min_confidence" min="0" max="1" step="0.01" required
                             value="{{ old('min_confidence', $cfg['min_confidence'] ?? 0.58) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-                        <p class="text-[11px] text-zinc-500">Зависит от свежести 3BR (0 баров = лучше), типа confirm/pattern и payout.</p>
+
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('min_confidence', $bot->type)])
                         @error('min_confidence')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
@@ -937,7 +1013,8 @@
                         <input type="number" name="min_payout" id="min_payout" min="0" max="100" step="0.1" required
                             value="{{ old('min_payout', $cfg['min_payout'] ?? 80) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-                        <p class="text-[11px] text-zinc-500">Пары с payout ниже порога не сканируются.</p>
+
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('min_payout')])
                         @error('min_payout')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
@@ -945,7 +1022,8 @@
                         <input type="number" name="stale_after_sec" id="stale_after_sec" min="5" max="600" required
                             value="{{ old('stale_after_sec', $cfg['stale_after_sec'] ?? 45) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-                        <p class="text-[11px] text-zinc-500">Пропуск пар без свежего ingest.</p>
+
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('stale_after_sec')])
                         @error('stale_after_sec')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
@@ -953,7 +1031,8 @@
                         <input type="number" name="smc_three_br_confirm_max_bars" id="smc_three_br_confirm_max_bars" min="1" max="120" required
                             value="{{ old('smc_three_br_confirm_max_bars', $cfg['smc_three_br_confirm_max_bars'] ?? 30) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-                        <p class="text-[11px] text-zinc-500">3BR confirm (?) или pattern (^/¡) должен быть не старше N M1-баров относительно UT-сигнала. Больше окно — больше сигналов, слабее связь с UT.</p>
+
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('smc_three_br_confirm_max_bars')])
                         @error('smc_three_br_confirm_max_bars')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
@@ -961,7 +1040,9 @@
                         <input type="number" name="smc_ob_touch_max_bars" id="smc_ob_touch_max_bars" min="0" max="12"
                             value="{{ old('smc_ob_touch_max_bars', $cfg['smc_ob_touch_max_bars'] ?? 3) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-                        <p class="text-[11px] text-zinc-500">0 = close только на последней свече в bull/bear OB. 3 = цена касалась зоны на любом из последних 4 баров (мягче).</p>
+
+                    
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('smc_ob_touch_max_bars')])
                     </div>
                 </div>
 
@@ -1011,7 +1092,8 @@
                         <input type="number" name="count" id="count" min="20" max="500" required
                             value="{{ old('count', $cfg['count'] ?? ($cfg['candles_take'] ?? 120)) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-                        <p class="text-[11px] text-zinc-500">Основной ряд для тайминга входа. 80–120 — баланс контекста и стоимости/latency. Больше 200 — дороже и медленнее.</p>
+
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('count')])
                         @error('count')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1 sm:col-span-2">
@@ -1024,6 +1106,7 @@
                                 <span class="mt-0.5 block text-[11px] font-normal text-zinc-500">Модель получает старшие ТФ для bias и структуры. Выкл. — только M1 (быстрее, но больше шума).</span>
                             </span>
                             </label>
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('mtf_enabled')])
                         @error('mtf_enabled')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
@@ -1031,7 +1114,8 @@
                         <input type="number" name="m5_take" id="m5_take" min="20" max="300" required
                             value="{{ old('m5_take', $cfg['m5_take'] ?? 96) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-                        <p class="text-[11px] text-zinc-500">Подтверждение сетапа, rejection/breakout на M5. ~96 баров = 8 часов.</p>
+
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('m5_take')])
                         @error('m5_take')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
@@ -1039,7 +1123,8 @@
                         <input type="number" name="m15_take" id="m15_take" min="20" max="300" required
                             value="{{ old('m15_take', $cfg['m15_take'] ?? 64) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-                        <p class="text-[11px] text-zinc-500">Структура у уровня: range, retest, breakout. ~64 бара = 16 часов.</p>
+
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('m15_take')])
                         @error('m15_take')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
@@ -1047,7 +1132,8 @@
                         <input type="number" name="h1_take" id="h1_take" min="10" max="200" required
                             value="{{ old('h1_take', $cfg['h1_take'] ?? 24) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-                        <p class="text-[11px] text-zinc-500">Старший bias (up/down/flat). 24 бара = сутки.</p>
+
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('h1_take')])
                         @error('h1_take')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                 </div>
@@ -1059,7 +1145,8 @@
                         <input type="number" name="expiry_sec" id="expiry_sec" min="60" max="900" required
                             value="{{ old('expiry_sec', $cfg['expiry_sec'] ?? 300) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-                        <p class="text-[11px] text-zinc-500">Длительность paper-опциона при CALL/PUT от модели. Также dedupe-окно между сигналами.</p>
+
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('expiry_sec')])
                         @error('expiry_sec')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
@@ -1067,7 +1154,8 @@
                         <input type="number" name="stale_after_sec" id="stale_after_sec" min="5" max="600" required
                             value="{{ old('stale_after_sec', $cfg['stale_after_sec'] ?? 45) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-                        <p class="text-[11px] text-zinc-500">Пропуск «застывших» пар.</p>
+
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('stale_after_sec')])
                         @error('stale_after_sec')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
@@ -1075,7 +1163,8 @@
                         <input type="number" name="min_confidence" id="min_confidence" min="0" max="1" step="0.01" required
                             value="{{ old('min_confidence', $cfg['min_confidence'] ?? 0.65) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-                        <p class="text-[11px] text-zinc-500">Модель возвращает confidence в JSON; ниже порога — сигнал не создаётся (даже если side = CALL/PUT).</p>
+
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('min_confidence', $bot->type)])
                         @error('min_confidence')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
@@ -1083,7 +1172,8 @@
                         <input type="number" name="min_payout" id="min_payout" min="0" max="100" step="0.1" required
                             value="{{ old('min_payout', $cfg['min_payout'] ?? 70) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-                        <p class="text-[11px] text-zinc-500">Экономический фильтр до вызова LLM (экономит API и время scan).</p>
+
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('min_payout')])
                         @error('min_payout')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                 </div>
@@ -1104,7 +1194,8 @@
                         <input type="number" name="temperature" id="temperature" min="0" max="2" step="0.01" required
                             value="{{ old('temperature', $cfg['temperature'] ?? 0) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-                        <p class="text-[11px] text-zinc-500">0 = детерминированные ответы (рекомендуется для торговли). Выше — больше вариативности и риск «NONE»/шума.</p>
+
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('temperature')])
                         @error('temperature')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
@@ -1112,7 +1203,8 @@
                         <input type="number" name="max_tokens" id="max_tokens" min="32" max="4096" required
                             value="{{ old('max_tokens', $cfg['max_tokens'] ?? 350) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-                        <p class="text-[11px] text-zinc-500">Лимит длины ответа. Для JSON-решения достаточно 300–500. Слишком мало — обрезанный JSON и ошибка парсинга.</p>
+
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('max_tokens')])
                         @error('max_tokens')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     @include('bots._openrouter-timeout-field', ['cfg' => $cfg, 'defaultTimeout' => 120])
@@ -1122,8 +1214,9 @@
                     <label for="system_prompt" class="block text-xs font-medium text-zinc-400">System prompt</label>
                     <textarea name="system_prompt" id="system_prompt" rows="10" required
                         class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 font-mono text-xs text-zinc-100 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500">{{ old('system_prompt', $cfg['system_prompt'] ?? $openrouterDefaultPrompt) }}</textarea>
-                    <p class="text-[11px] text-zinc-500">Инструкция модели: MTF-логика, формат JSON (<code class="text-zinc-400">side</code>, <code class="text-zinc-400">confidence</code>, <code class="text-zinc-400">features</code>). Меняйте осторожно — ломается парсер, если формат ответа не совпадает с контрактом.</p>
-                    @error('system_prompt')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+
+                    @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('system_prompt')])
+                        @error('system_prompt')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                 </div>
             </div>
         @elseif ($bot->type === 'openrouter_llm_analyst')
@@ -1148,7 +1241,8 @@
                         <input type="number" name="count" id="count" min="1" max="500" required
                             value="{{ old('count', $cfg['count'] ?? ($cfg['candles_take'] ?? 120)) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-                        <p class="text-[11px] text-zinc-500">Минутный ряд для структуры и тайминга. 120 баров = 2 часа контекста.</p>
+
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('count')])
                         @error('count')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
@@ -1156,7 +1250,8 @@
                         <input type="number" name="s5_take" id="s5_take" min="1" max="1500" required
                             value="{{ old('s5_take', $cfg['s5_take'] ?? 240) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-                        <p class="text-[11px] text-zinc-500">Секундные свечи ingest (шаг 5 сек) — микроструктура внутри текущей M1. 240 ≈ 20 мин. <strong>Не путать с M5</strong> (5 минут).</p>
+
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('s5_take')])
                         @error('s5_take')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1 sm:col-span-2">
@@ -1169,13 +1264,16 @@
                                 <span class="mt-0.5 block text-[11px] font-normal text-zinc-500">Старшие ТФ в запросе аналитика. Выкл. — только M1+S5 (быстрее, меньше контекста).</span>
                             </span>
                         </label>
+                    
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('mtf_enabled')])
                     </div>
                     <div class="space-y-1">
                         <label for="m5_take" class="block text-xs font-medium text-zinc-400">Свечей M5</label>
                         <input type="number" name="m5_take" id="m5_take" min="1" max="300" required
                             value="{{ old('m5_take', $cfg['m5_take'] ?? 96) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-                        <p class="text-[11px] text-zinc-500">Локальная структура и сетапы 3–6 мин экспирации.</p>
+
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('m5_take')])
                         @error('m5_take')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
@@ -1183,7 +1281,8 @@
                         <input type="number" name="m15_take" id="m15_take" min="1" max="300" required
                             value="{{ old('m15_take', $cfg['m15_take'] ?? 64) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-                        <p class="text-[11px] text-zinc-500">Уровни и зоны среднего масштаба.</p>
+
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('m15_take')])
                         @error('m15_take')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
@@ -1191,7 +1290,8 @@
                         <input type="number" name="h1_take" id="h1_take" min="1" max="200" required
                             value="{{ old('h1_take', $cfg['h1_take'] ?? 24) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-                        <p class="text-[11px] text-zinc-500">Дневной/сессионный bias.</p>
+
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('h1_take')])
                         @error('h1_take')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1 sm:col-span-2">
@@ -1207,21 +1307,27 @@
                         <input type="number" name="temperature" id="temperature" min="0" max="2" step="0.01" required
                             value="{{ old('temperature', $cfg['temperature'] ?? 0.2) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-                        <p class="text-[11px] text-zinc-500">0.1–0.3 — стабильный аналитический тон. 0 — максимально предсказуемо.</p>
+
+                    
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('temperature')])
                     </div>
                     <div class="space-y-1">
                         <label for="max_tokens" class="block text-xs font-medium text-zinc-400">Max tokens</label>
                         <input type="number" name="max_tokens" id="max_tokens" min="64" max="8192" required
                             value="{{ old('max_tokens', $cfg['max_tokens'] ?? 900) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-                        <p class="text-[11px] text-zinc-500">Аналитик пишет развёрнутый текст + уровни. 900+ токенов. Мало — обрезанный ответ без chart_levels.</p>
+
+                    
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('max_tokens')])
                     </div>
                     <div class="space-y-1">
                         <label for="max_tokens_short" class="block text-xs font-medium text-zinc-400">Max tokens (краткий режим)</label>
                         <input type="number" name="max_tokens_short" id="max_tokens_short" min="1" required
                             value="{{ old('max_tokens_short', $cfg['max_tokens_short'] ?? \App\Support\OpenRouterLlmConfig::ANALYST_SHORT_MAX_TOKENS_DEFAULT) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-                        <p class="text-[11px] text-zinc-500">Лимит генерации только для краткого режима (CALL/PUT/NONE + вероятность). Меньше токенов — быстрее ответ.</p>
+
+                    
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('max_tokens_short')])
                     </div>
                     @include('bots._openrouter-timeout-field', ['cfg' => $cfg, 'defaultTimeout' => 180])
                 </div>
@@ -1234,22 +1340,25 @@
                         <option value="full" @selected($analystPromptMode === 'full')>Полный — MTF-разбор + chart_levels</option>
                         <option value="short" @selected($analystPromptMode === 'short')>Краткий — CALL/PUT/NONE + вероятность успеха</option>
                     </select>
-                    <p class="text-[11px] text-zinc-500">Краткий режим быстрее: короткий ответ без уровней на графике. Оба промпта сохраняются — переключение без потери текста.</p>
-                    @error('analyst_prompt_mode')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+
+                    @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('analyst_prompt_mode')])
+                        @error('analyst_prompt_mode')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                 </div>
                 <div class="space-y-1">
                     <label for="system_prompt" class="block text-xs font-medium text-zinc-400">System prompt (полный)</label>
                     <textarea name="system_prompt" id="system_prompt" rows="12" required
                         class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 font-mono text-xs text-zinc-100 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500">{{ old('system_prompt', $cfg['system_prompt'] ?? $openrouterAnalystDefaultPrompt) }}</textarea>
-                    <p class="text-[11px] text-zinc-500">MTF-разбор, рекомендация CALL/PUT/NONE, блок chart_levels. При SMC Flow — расширенный промпт при сбросе через artisan sync-prompt.</p>
-                    @error('system_prompt')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+
+                    @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('system_prompt')])
+                        @error('system_prompt')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                 </div>
                 <div class="space-y-1">
                     <label for="system_prompt_short" class="block text-xs font-medium text-zinc-400">System prompt (краткий)</label>
                     <textarea name="system_prompt_short" id="system_prompt_short" rows="10" required
                         class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 font-mono text-xs text-zinc-100 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500">{{ old('system_prompt_short', $cfg['system_prompt_short'] ?? $openrouterAnalystShortDefaultPrompt) }}</textarea>
-                    <p class="text-[11px] text-zinc-500">Только вердикт: «Рекомендация: CALL/PUT/NONE», «Вероятность успеха: NN%», короткая причина. Без chart_levels. Лимит токенов берётся из поля «Max tokens (краткий режим)».</p>
-                    @error('system_prompt_short')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+
+                    @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('system_prompt_short')])
+                        @error('system_prompt_short')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                 </div>
 
                 <p class="text-xs font-semibold uppercase tracking-wide text-zinc-500 border-t border-zinc-800 pt-4">Telegram-меню пар</p>
@@ -1259,7 +1368,8 @@
                         <input type="number" name="min_payout" id="min_payout" min="0" max="100" step="0.1" required
                             value="{{ old('min_payout', $cfg['min_payout'] ?? 0) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-                        <p class="text-[11px] text-zinc-500">Фильтр списка инструментов в Telegram-кнопках. 0 = все активные пары с ingest.</p>
+
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('min_payout')])
                         @error('min_payout')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1 sm:col-span-2">
@@ -1267,14 +1377,16 @@
                         <textarea name="allowed_instruments_text" id="allowed_instruments_text" rows="3"
                             placeholder="EURUSD_otc&#10;GBPUSD_otc"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 font-mono text-xs text-zinc-100">{{ old('allowed_instruments_text', \App\Services\Telegram\TelegramAnalystInstrumentService::formatInstrumentListForInput($cfg['allowed_instruments'] ?? null)) }}</textarea>
-                        <p class="text-[11px] text-zinc-500">По одному символу на строку. Пусто = без ограничения (кроме blacklist и min_payout). Точные имена как в PO, напр. <code class="text-zinc-400">EURUSD_otc</code>.</p>
+
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('allowed_instruments_text')])
                         @error('allowed_instruments_text')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1 sm:col-span-2">
                         <label for="blocked_instruments_text" class="block text-xs font-medium text-zinc-400">Blacklist инструментов</label>
                         <textarea name="blocked_instruments_text" id="blocked_instruments_text" rows="2"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 font-mono text-xs text-zinc-100">{{ old('blocked_instruments_text', \App\Services\Telegram\TelegramAnalystInstrumentService::formatInstrumentListForInput($cfg['blocked_instruments'] ?? null)) }}</textarea>
-                        <p class="text-[11px] text-zinc-500">Исключить шумные или неликвидные пары из Telegram-меню. Имеет приоритет над whitelist.</p>
+
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('blocked_instruments_text')])
                         @error('blocked_instruments_text')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                 </div>
@@ -1313,14 +1425,9 @@
                                 <option value="fixed" @selected($hybridSourceMode === 'fixed')>Фиксированный бот</option>
                                 <option value="best_winrate" @selected($hybridSourceMode === 'best_winrate')>Лучший по paper winrate за период</option>
                             </select>
-                            <p class="text-[11px] text-zinc-500">
-                                В режиме winrate гибрид слушает только текущего лидера среди <strong class="text-zinc-400">active</strong> торговых ботов (Chart Analyst исключён).
-                                Пересчёт с кэшем ~{{ \App\Support\HybridAnalystConfig::LEADER_CACHE_TTL_SEC }} сек — на каждый сигнал БД не долбится.
-                                @if($hybridLeaderId > 0)
-                                    Текущий сохранённый лидер: <code class="text-zinc-400">#{{ $hybridLeaderId }}</code>.
-                                @endif
-                            </p>
-                            @error('hybrid_source_mode')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+
+                            @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('hybrid_source_mode')])
+                        @error('hybrid_source_mode')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                         </div>
                         <div class="space-y-1 sm:col-span-2" id="hybrid-source-bot-wrap">
                             <label for="hybrid_source_bot_id" class="block text-xs font-medium text-zinc-400">Бот первичного анализа</label>
@@ -1346,16 +1453,18 @@
                                 <option value="10800" @selected($hybridLeaderWindow === 10800)>3 часа</option>
                                 <option value="21600" @selected($hybridLeaderWindow === 21600)>6 часов</option>
                             </select>
-                            <p class="text-[11px] text-zinc-500">Paper winrate W/(W+L) по всем парам за это окно.</p>
-                            @error('hybrid_leader_window_sec')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+
+                            @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('hybrid_leader_window_sec')])
+                        @error('hybrid_leader_window_sec')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                         </div>
                         <div class="space-y-1 hybrid-leader-only">
                             <label for="hybrid_leader_min_trades" class="block text-xs font-medium text-zinc-400">Мин. сделок для рейтинга</label>
                             <input type="number" name="hybrid_leader_min_trades" id="hybrid_leader_min_trades" min="1" max="500" required
                                 value="{{ $hybridLeaderMinTrades }}"
                                 class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-                            <p class="text-[11px] text-zinc-500">Иначе бот с 1/1 = 100% не станет лидером. При нехватке данных / ничьей — остаётся прошлый лидер.</p>
-                            @error('hybrid_leader_min_trades')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+
+                            @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('hybrid_leader_min_trades')])
+                        @error('hybrid_leader_min_trades')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                         </div>
                         <div class="space-y-1">
                             <label for="hybrid_trigger" class="block text-xs font-medium text-zinc-400">Когда запускать</label>
@@ -1365,10 +1474,9 @@
                                 <option value="on_signal" @selected($hybridTrigger === 'on_signal')>При каждом CALL/PUT (запись сигнала)</option>
                                 <option value="on_po_mirror" @selected($hybridTrigger === 'on_po_mirror')>Когда paper-сделка уходит на PO (mirror)</option>
                             </select>
-                            <p class="text-[11px] text-zinc-500">
-                                <strong>PO</strong> — только если у source включено зеркало сделок. Alert-only боты без сделки не попадут в этот режим.
-                            </p>
-                            @error('hybrid_trigger')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+
+                            @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('hybrid_trigger')])
+                        @error('hybrid_trigger')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                         </div>
                         <div class="space-y-1">
                             <label for="hybrid_publish" class="block text-xs font-medium text-zinc-400">Публикация в Telegram</label>
@@ -1379,20 +1487,18 @@
                                 <option value="agree_source" @selected($hybridPublish === 'agree_source')>Только если LLM согласен с side source</option>
                                 <option value="call_put_only" @selected($hybridPublish === 'call_put_only')>Только если LLM дал CALL или PUT</option>
                             </select>
-                            <p class="text-[11px] text-zinc-500">Фильтр по стороне. Лог на странице Chart Analyst пишется всегда.</p>
-                            @error('hybrid_publish')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+
+                            @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('hybrid_publish')])
+                        @error('hybrid_publish')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                         </div>
                         <div class="space-y-1">
                             <label for="hybrid_min_success_percent" class="block text-xs font-medium text-zinc-400">Мин. вероятность успеха (%)</label>
                             <input type="number" name="hybrid_min_success_percent" id="hybrid_min_success_percent" min="0" max="100" required
                                 value="{{ old('hybrid_min_success_percent', $cfg['hybrid_min_success_percent'] ?? 0) }}"
                                 class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-                            <p class="text-[11px] text-zinc-500">
-                                Берётся строка <code class="text-zinc-400">Вероятность успеха: NN%</code> из ответа LLM.
-                                В Telegram уходит только если NN ≥ порога. <strong>0</strong> = не фильтровать по вероятности.
-                                Работает вместе с режимом публикации выше.
-                            </p>
-                            @error('hybrid_min_success_percent')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+
+                            @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('hybrid_min_success_percent')])
+                        @error('hybrid_min_success_percent')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                         </div>
                     </div>
                     <div class="space-y-3 border-t border-zinc-800 pt-3">
@@ -1440,8 +1546,9 @@
                             <label for="telegram_analyst_llm_question_hybrid" class="block text-xs font-medium text-zinc-400">Вопрос к LLM по кнопке</label>
                             <textarea name="telegram_analyst_llm_question" id="telegram_analyst_llm_question_hybrid" rows="2"
                                 class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">{{ old('telegram_analyst_llm_question', $cfg['telegram_analyst_llm_question'] ?? \App\Services\Telegram\StrongLevelTelegramLlmButton::DEFAULT_LLM_QUESTION) }}</textarea>
-                            <p class="text-[11px] text-zinc-500">Используется при нажатии кнопки под гибрид-сообщением. Пусто — дефолтный краткий вопрос.</p>
-                            @error('telegram_analyst_llm_question')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+
+                            @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('telegram_analyst_llm_question')])
+                        @error('telegram_analyst_llm_question')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                         </div>
                     </div>
                 </div>
@@ -1515,8 +1622,9 @@
                                 value="{{ old('telegram_chat_id', $cfg['telegram_chat_id'] ?? '') }}"
                                 placeholder="123456789"
                                 class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 font-mono">
-                            <p class="text-[11px] text-zinc-500">Пусто = принимать команды из любого чата (удобно для личного бота). Число — ограничить одним пользователем/группой.</p>
-                            @error('telegram_chat_id')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+
+                            @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('telegram_chat_id')])
+                        @error('telegram_chat_id')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                         </div>
                         <div class="space-y-1 flex flex-col justify-end gap-2">
                             <button type="button" id="telegram-discover-btn-analyst"
@@ -1722,7 +1830,8 @@
                         <input type="number" name="count" id="count" min="200" max="5000" required
                             value="{{ old('count', $cfg['count'] ?? 500) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-                        <p class="text-[11px] text-zinc-500">Сколько минутных свечей загружать из БД на каждую пару за проход scan. Больше — точнее уровни DGT/SMC и swing, но дольше анализ (~20+ сек на пару). Рекомендуется 400–500.</p>
+
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('count')])
                         @error('count')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
@@ -1730,7 +1839,8 @@
                         <input type="number" name="min_closed_bars" id="min_closed_bars" min="80" max="2000" required
                             value="{{ old('min_closed_bars', $cfg['min_closed_bars'] ?? 200) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-                        <p class="text-[11px] text-zinc-500">Пара не анализируется, пока накоплено меньше закрытых M1. Нужен запас для rolling-уровней (4H/1D) и volume profile. Не ставьте ниже 150–200.</p>
+
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('min_closed_bars')])
                         @error('min_closed_bars')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
@@ -1738,7 +1848,8 @@
                         <input type="number" name="min_payout" id="min_payout" min="0" max="100" step="0.1" required
                             value="{{ old('min_payout', $cfg['min_payout'] ?? 82) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-                        <p class="text-[11px] text-zinc-500">Пары с текущим payout на Pocket Options ниже порога пропускаются целиком. 0 = все активные пары. Выше порог — меньше инструментов, но лучше математика бинарки.</p>
+
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('min_payout')])
                         @error('min_payout')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
@@ -1746,7 +1857,8 @@
                         <input type="number" name="stale_after_sec" id="stale_after_sec" min="5" max="600" required
                             value="{{ old('stale_after_sec', $cfg['stale_after_sec'] ?? 45) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-                        <p class="text-[11px] text-zinc-500">Если последняя M1 не обновлялась дольше этого времени, пара считается «застывшей» и пропускается (нет актуального потока котировок).</p>
+
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('stale_after_sec')])
                         @error('stale_after_sec')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
@@ -1754,7 +1866,8 @@
                         <input type="number" name="min_confidence" id="min_confidence" min="0" max="1" step="0.01" required
                             value="{{ old('min_confidence', $cfg['min_confidence'] ?? 0.58) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-                        <p class="text-[11px] text-zinc-500">Внутренняя оценка качества сетапа (сила уровня, касания, режим, H1, payout). Сигнал ниже порога не создаёт сделку, даже если стратегия вернула CALL/PUT.</p>
+
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('min_confidence', $bot->type)])
                         @error('min_confidence')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                 </div>
@@ -1766,7 +1879,8 @@
                         <input type="number" name="min_level_strength" id="min_level_strength" min="40" max="95" step="1" required
                             value="{{ old('min_level_strength', $cfg['min_level_strength'] ?? 58) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-                        <p class="text-[11px] text-zinc-500">Скоринг кластера: число источников (DGT, SMC, swing…), их вес, склейка линий, касания. 58 — сбалансировано. 68+ — редко (нужен 3+ источник). 52–55 — чаще сделки.</p>
+
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('min_level_strength')])
                         @error('min_level_strength')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
@@ -1774,7 +1888,8 @@
                         <input type="number" name="max_level_strength" id="max_level_strength" min="0" max="100" step="1" required
                             value="{{ old('max_level_strength', $cfg['max_level_strength'] ?? 0) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-                        <p class="text-[11px] text-zinc-500">Потолок силы. 90 отсекает «переоптимизированные» уровни с кучей касаний (часто пила). 0 = без потолка.</p>
+
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('max_level_strength')])
                         @error('max_level_strength')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
@@ -1782,7 +1897,8 @@
                         <input type="number" name="min_sources" id="min_sources" min="1" max="6" required
                             value="{{ old('min_sources', $cfg['min_sources'] ?? 1) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-                        <p class="text-[11px] text-zinc-500">Сколько <em>разных</em> типов уровней должны совпасть в одной ценовой зоне. <strong>1</strong> — один сильный источник (чаще). <strong>2</strong> — классический конфлюенс (реже).</p>
+
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('min_sources')])
                         @error('min_sources')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
@@ -1790,7 +1906,8 @@
                         <input type="number" name="cluster_atr_mult_m5" id="cluster_atr_mult_m5" min="0.05" max="1" step="0.01" required
                             value="{{ old('cluster_atr_mult_m5', $cfg['cluster_atr_mult_m5'] ?? 0.28) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-                        <p class="text-[11px] text-zinc-500">Радиус склейки близких цен в один кластер: distance ≤ ATR(M5) × множитель. Меньше — точнее уровень, сложнее набрать конфлюенс. Больше — шире зона, чаще совпадения.</p>
+
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('cluster_atr_mult_m5')])
                         @error('cluster_atr_mult_m5')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
@@ -1798,7 +1915,8 @@
                         <input type="number" name="touch_atr_mult_m1" id="touch_atr_mult_m1" min="0.05" max="1.5" step="0.01" required
                             value="{{ old('touch_atr_mult_m1', $cfg['touch_atr_mult_m1'] ?? 0.55) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-                        <p class="text-[11px] text-zinc-500">Насколько близко текущая цена (close последней M1) должна быть к уровню. 0.55 × ATR(M1) ≈ 2–4 пункта на форексе. Главный рычаг частоты сигналов.</p>
+
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('touch_atr_mult_m1')])
                         @error('touch_atr_mult_m1')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                 </div>
@@ -1814,11 +1932,8 @@
                             <option value="bounce" @selected($entryMode === 'bounce')>Только отскок</option>
                             <option value="breakout" @selected($entryMode === 'breakout')>Только пробой</option>
                         </select>
-                        <p class="text-[11px] text-zinc-500">
-                            <strong>Отскок</strong> — цена у уровня, M5 rejection (тень), M1 в сторону отскока.
-                            <strong>Пробой</strong> — M5 закрылась за уровнем + фильтры ретеста/объёма.
-                            На OTC чаще работает только отскок.
-                        </p>
+
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('entry_mode')])
                         @error('entry_mode')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
@@ -1826,7 +1941,8 @@
                         <input type="number" name="bounce_min_wick_ratio_m5" id="bounce_min_wick_ratio_m5" min="0.15" max="0.8" step="0.01" required
                             value="{{ old('bounce_min_wick_ratio_m5', $cfg['bounce_min_wick_ratio_m5'] ?? 0.28) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-                        <p class="text-[11px] text-zinc-500">Доля тени rejection-свечи M5 в диапазоне свечи. CALL — нижняя тень у support, PUT — верхняя у resistance. 0.35 = 35% (строго). 0.22–0.25 — мягче, больше входов.</p>
+
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('bounce_min_wick_ratio_m5')])
                         @error('bounce_min_wick_ratio_m5')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
@@ -1834,7 +1950,8 @@
                         <input type="number" name="expiry_sec_bounce" id="expiry_sec_bounce" min="120" max="600" required
                             value="{{ old('expiry_sec_bounce', $cfg['expiry_sec_bounce'] ?? 180) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-                        <p class="text-[11px] text-zinc-500">Длительность paper-опциона при сетапе «отскок». 180 = 3 мин. Также используется как окно dedupe (не дублировать сигнал на том же уровне в это время).</p>
+
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('expiry_sec_bounce')])
                         @error('expiry_sec_bounce')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
@@ -1842,7 +1959,8 @@
                         <input type="number" name="expiry_sec_breakout" id="expiry_sec_breakout" min="120" max="600" required
                             value="{{ old('expiry_sec_breakout', $cfg['expiry_sec_breakout'] ?? 300) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-                        <p class="text-[11px] text-zinc-500">Длительность опциона при сетапе «пробой». Обычно 4–5 мин — пробою нужно больше времени на продолжение движения.</p>
+
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('expiry_sec_breakout')])
                         @error('expiry_sec_breakout')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
@@ -1850,7 +1968,8 @@
                         <input type="number" name="h1_flat_strength_extra" id="h1_flat_strength_extra" min="0" max="40" step="1" required
                             value="{{ old('h1_flat_strength_extra', $cfg['h1_flat_strength_extra'] ?? 4) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-                        <p class="text-[11px] text-zinc-500">Когда H1 во флэте и <em>не</em> включён полный запрет flat — к min_level_strength добавляется этот запас. 15–40 — почти нет сигналов во флэте.</p>
+
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('h1_flat_strength_extra')])
                         @error('h1_flat_strength_extra')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                 </div>
@@ -1909,7 +2028,8 @@
                         <input type="number" name="m5_take" id="m5_take" min="20" max="300" required
                             value="{{ old('m5_take', $cfg['m5_take'] ?? 120) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-                        <p class="text-[11px] text-zinc-500">История M5 для rejection/пробоя, ATR M5 (кластеризация) и режима входа. 120 баров ≈ 10 часов.</p>
+
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('m5_take')])
                         @error('m5_take')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
@@ -1917,7 +2037,8 @@
                         <input type="number" name="m15_take" id="m15_take" min="20" max="300" required
                             value="{{ old('m15_take', $cfg['m15_take'] ?? 80) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-                        <p class="text-[11px] text-zinc-500">Swing high/low на M15 как дополнительные уровни в кластере. 80 баров ≈ 20 часов.</p>
+
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('m15_take')])
                         @error('m15_take')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
@@ -1925,7 +2046,8 @@
                         <input type="number" name="h1_take" id="h1_take" min="10" max="200" required
                             value="{{ old('h1_take', $cfg['h1_take'] ?? 48) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-                        <p class="text-[11px] text-zinc-500">Swing H1 + определение H1 bias (up/down/flat по последним 12 свечам). 48 баров = 2 суток.</p>
+
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('h1_take')])
                         @error('h1_take')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                 </div>
@@ -1951,8 +2073,9 @@
                                 <option value="signal_trade" @selected($telegramNotifyOn === 'signal_trade')>Новый сигнал + paper-сделка</option>
                                 <option value="off" @selected($telegramNotifyOn === 'off')>Не уведомлять (даже если Telegram включён)</option>
                             </select>
-                            <p class="text-[11px] text-zinc-500">По умолчанию — при каждой созданной сделке Strong Level. «Не уведомлять» — для отладки без спама.</p>
-                            @error('telegram_notify_on')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+
+                            @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('telegram_notify_on')])
+                        @error('telegram_notify_on')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                         </div>
                         <div class="space-y-1">
                             <label for="telegram_alert_format" class="block text-xs font-medium text-zinc-400">Формат сообщения</label>
@@ -1963,8 +2086,9 @@
                                 <option value="detailed" @selected($telegramAlertFormat === 'detailed')>Развёрнутый</option>
                                 <option value="card" @selected($telegramAlertFormat === 'card')>Как на карточке</option>
                             </select>
-                            <p class="text-[11px] text-zinc-500">Краткий: пара, уровень, режим, экспирация. Развёрнутый: + confidence, H1, источники, причины. «Как на карточке»: шаблонный абзац стратегии + статистика + тех. детали (как в модалке карточек).</p>
-                            @error('telegram_alert_format')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+
+                            @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('telegram_alert_format')])
+                        @error('telegram_alert_format')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                         </div>
                         <div class="space-y-1">
                             <label for="telegram_send_chart" class="block text-xs font-medium text-zinc-400">График в алерте</label>
@@ -1979,8 +2103,9 @@
                                 <option value="1" @selected((string) $telegramSendChart === '1')>Текст + график M1 (PNG)</option>
                                 <option value="0" @selected((string) $telegramSendChart === '0')>Только текст (без картинки)</option>
                             </select>
-                            <p class="text-[11px] text-zinc-500">С графиком: свечи M1, линия уровня, зона касания и маркер входа. Без графика — одно текстовое сообщение (быстрее, меньше трафика).</p>
-                            @error('telegram_send_chart')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+
+                            @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('telegram_send_chart')])
+                        @error('telegram_send_chart')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                         </div>
                         <div class="space-y-1">
                             <label for="telegram_send_chart_m5" class="block text-xs font-medium text-zinc-400">Доп. график M5</label>
@@ -1995,8 +2120,9 @@
                                 <option value="1" @selected((string) $telegramSendChartM5 === '1')>Отправлять второй PNG M5</option>
                                 <option value="0" @selected((string) $telegramSendChartM5 === '0')>Только M1 (без M5)</option>
                             </select>
-                            <p class="text-[11px] text-zinc-500">Работает только при включённом «График в алерте». Показывает старший контекст на M5 отдельным сообщением.</p>
-                            @error('telegram_send_chart_m5')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+
+                            @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('telegram_send_chart_m5')])
+                        @error('telegram_send_chart_m5')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                         </div>
                         <div class="space-y-1 sm:col-span-2">
                             <label class="flex items-start gap-2">
@@ -2008,7 +2134,8 @@
                                     <span class="mt-0.5 block text-[11px] font-normal text-zinc-500">Inline-кнопка под алертом: callback в Strong Level → LLM-анализ Chart Analyst в этом же чате. Нужен poll (кнопка ниже).</span>
                                 </span>
                             </label>
-                            @error('telegram_analyst_llm_enabled')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                            @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('telegram_analyst_llm_enabled')])
+                        @error('telegram_analyst_llm_enabled')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                         </div>
                         <div class="space-y-1">
                             <label for="telegram_analyst_bot_id" class="block text-xs font-medium text-zinc-400">Бот Chart Analyst</label>
@@ -2022,14 +2149,16 @@
                                     </option>
                                 @endforeach
                             </select>
-                            @error('telegram_analyst_bot_id')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                            @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('telegram_analyst_bot_id')])
+                        @error('telegram_analyst_bot_id')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                         </div>
                         <div class="space-y-1 sm:col-span-2">
                             <label for="telegram_analyst_llm_question" class="block text-xs font-medium text-zinc-400">Вопрос к LLM по кнопке</label>
                             <textarea name="telegram_analyst_llm_question" id="telegram_analyst_llm_question" rows="2"
                                 class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">{{ old('telegram_analyst_llm_question', $cfg['telegram_analyst_llm_question'] ?? \App\Services\Telegram\StrongLevelTelegramLlmButton::DEFAULT_LLM_QUESTION) }}</textarea>
-                            <p class="text-[11px] text-zinc-500">Подставляется в RunTelegramAnalystAnalysisJob вместо шага «ваш вопрос».</p>
-                            @error('telegram_analyst_llm_question')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+
+                            @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('telegram_analyst_llm_question')])
+                        @error('telegram_analyst_llm_question')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                         </div>
                         {{-- Статус poll растягиваем на всю строку, чтобы он не смешивался с полями ниже в двухколоночной сетке. --}}
                         <div class="space-y-1 sm:col-span-2">
@@ -2048,8 +2177,9 @@
                                 value="{{ old('telegram_chat_id', $cfg['telegram_chat_id'] ?? '') }}"
                                 placeholder="123456789"
                                 class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 font-mono">
-                            <p class="text-[11px] text-zinc-500">Один chat_id — личный чат, группа или канал.</p>
-                            @error('telegram_chat_id')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+
+                            @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('telegram_chat_id')])
+                        @error('telegram_chat_id')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                         </div>
                         <div class="space-y-1 flex flex-col justify-end gap-2">
                             <button type="button" id="telegram-discover-btn-strong-level"
@@ -2223,7 +2353,8 @@
                             <option value="alert_only" @selected($trendExecutionMode === 'alert_only')>Только алерты (без сделок)</option>
                             <option value="signal_trade" @selected($trendExecutionMode === 'signal_trade')>Сделки + алерты (как strong_level)</option>
                         </select>
-                        <p class="text-[11px] text-zinc-500">В режиме сделок бот создаёт paper-сделки и запускает mirror по обычному пайплайну движка.</p>
+
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('execution_mode')])
                         @error('execution_mode')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
@@ -2231,7 +2362,8 @@
                         <input type="number" name="count" id="count" min="10" max="5000" required
                             value="{{ old('count', $cfg['count'] ?? 30) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-                        <p class="text-[11px] text-zinc-500">Сколько M1 загружать из БД. Для streak_len=6 достаточно 30–60. Больше — запас для диагностики, на логику не влияет.</p>
+
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('count')])
                         @error('count')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
@@ -2239,7 +2371,8 @@
                         <input type="number" name="streak_len" id="streak_len" min="2" max="30" required
                             value="{{ old('streak_len', $cfg['streak_len'] ?? 6) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-                        <p class="text-[11px] text-zinc-500">Длина серии для алерта. 4–5 — чаще сигналы, больше шума. 6–8 — реже, но «чище» импульс. Минимум 2.</p>
+
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('streak_len')])
                         @error('streak_len')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
@@ -2247,7 +2380,8 @@
                         <input type="number" name="expiry_sec" id="expiry_sec" min="30" max="86400" required
                             value="{{ old('expiry_sec', $cfg['expiry_sec'] ?? 60) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-                        <p class="text-[11px] text-zinc-500">Используется только в режиме «Сделки + алерты». Для M1 обычно 60 секунд.</p>
+
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('expiry_sec')])
                         @error('expiry_sec')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
@@ -2255,7 +2389,8 @@
                         <input type="number" name="min_confidence" id="min_confidence" min="0" max="1" step="0.01" required
                             value="{{ old('min_confidence', $cfg['min_confidence'] ?? 0.55) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-                        <p class="text-[11px] text-zinc-500">Confidence = 60% «качество тел свечей» + 40% payout. Базовый минимум стратегии 0.55. Ниже порога — алерт не уходит.</p>
+
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('min_confidence', $bot->type)])
                         @error('min_confidence')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
@@ -2263,7 +2398,8 @@
                         <input type="number" name="min_payout" id="min_payout" min="0" max="100" step="0.1" required
                             value="{{ old('min_payout', $cfg['min_payout'] ?? 80) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-                        <p class="text-[11px] text-zinc-500">Пары с payout на PO ниже порога не сканируются. 0 = все активные с живым ingest.</p>
+
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('min_payout')])
                         @error('min_payout')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
@@ -2271,7 +2407,8 @@
                         <input type="number" name="stale_after_sec" id="stale_after_sec" min="5" max="600" required
                             value="{{ old('stale_after_sec', $cfg['stale_after_sec'] ?? 45) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-                        <p class="text-[11px] text-zinc-500">Если последняя M1 не обновлялась дольше N секунд — пара пропускается (нет живого потока котировок / ingest отстаёт).</p>
+
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('stale_after_sec')])
                         @error('stale_after_sec')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
@@ -2279,7 +2416,8 @@
                         <input type="number" name="dedupe_bucket_sec" id="dedupe_bucket_sec" min="60" max="3600" required
                             value="{{ old('dedupe_bucket_sec', $cfg['dedupe_bucket_sec'] ?? 300) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-                        <p class="text-[11px] text-zinc-500">Не чаще одного алерта на пару + направление (CALL/PUT) в этом окне. 300 с = не спамить при продолжающемся тренде.</p>
+
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('dedupe_bucket_sec')])
                         @error('dedupe_bucket_sec')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
@@ -2290,7 +2428,8 @@
                             <option value="strict" @selected($strictness === 'strict')>Строго (close &gt; open / close &lt; open)</option>
                             <option value="with_doji" @selected($strictness === 'with_doji')>С доджи (close ≥ open / close ≤ open)</option>
                         </select>
-                        <p class="text-[11px] text-zinc-500"><strong>Строго</strong> — доджи (close=open) рвут серию. <strong>С доджи</strong> — плоские свечи допускаются внутри импульса, алертов больше.</p>
+
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('candle_strictness')])
                         @error('candle_strictness')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
@@ -2298,7 +2437,8 @@
                         <input type="number" name="min_body_to_range_ratio" id="min_body_to_range_ratio" min="0" max="1" step="0.01" required
                             value="{{ old('min_body_to_range_ratio', $cfg['min_body_to_range_ratio'] ?? 0) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-                        <p class="text-[11px] text-zinc-500">Средняя |close−open| / (high−low) по серии. 0 = выкл. Рекомендуется 0.55 — отсекает доджи и «пилу».</p>
+
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('min_body_to_range_ratio')])
                         @error('min_body_to_range_ratio')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
@@ -2306,7 +2446,8 @@
                         <input type="number" name="max_body_to_range_ratio" id="max_body_to_range_ratio" min="0" max="1" step="0.01" required
                             value="{{ old('max_body_to_range_ratio', $cfg['max_body_to_range_ratio'] ?? 0) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-                        <p class="text-[11px] text-zinc-500">Верхняя граница средней доли тела. 0.70 отсекает «ракеты» без отката (late entry). 0 = выкл.</p>
+
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('max_body_to_range_ratio')])
                         @error('max_body_to_range_ratio')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                 </div>
@@ -2332,8 +2473,9 @@
                             <input type="number" name="pullback_bars" id="pullback_bars" min="1" max="5" required
                                 value="{{ old('pullback_bars', $cfg['pullback_bars'] ?? 2) }}"
                                 class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-                            <p class="text-[11px] text-zinc-500">Сохраняется в конфиге; в soft-режиме касание ищется по всей серии streak_len.</p>
-                            @error('pullback_bars')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+
+                            @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('pullback_bars')])
+                        @error('pullback_bars')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                         </div>
                         <div class="space-y-1">
                             <label for="pullback_ma_type" class="block text-xs font-medium text-zinc-400">Тип MA</label>
@@ -2343,31 +2485,35 @@
                                 <option value="ema" @selected($pullbackMaType === 'ema')>EMA</option>
                                 <option value="hma" @selected($pullbackMaType === 'hma')>HMA (Hull)</option>
                             </select>
-                            @error('pullback_ma_type')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                            @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('pullback_ma_type')])
+                        @error('pullback_ma_type')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                         </div>
                         <div class="space-y-1">
                             <label for="pullback_ma_length" class="block text-xs font-medium text-zinc-400">Длина MA</label>
                             <input type="number" name="pullback_ma_length" id="pullback_ma_length" min="2" max="100" required
                                 value="{{ old('pullback_ma_length', $cfg['pullback_ma_length'] ?? 9) }}"
                                 class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-                            <p class="text-[11px] text-zinc-500">EMA/HMA(9) на M1 — быстрый откат. 21 — глубже.</p>
-                            @error('pullback_ma_length')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+
+                            @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('pullback_ma_length')])
+                        @error('pullback_ma_length')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                         </div>
                         <div class="space-y-1">
                             <label for="pullback_touch_atr_mult" class="block text-xs font-medium text-zinc-400">Зона касания MA (× ATR)</label>
                             <input type="number" name="pullback_touch_atr_mult" id="pullback_touch_atr_mult" min="0.05" max="2" step="0.01" required
                                 value="{{ old('pullback_touch_atr_mult', $cfg['pullback_touch_atr_mult'] ?? 0.35) }}"
                                 class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-                            <p class="text-[11px] text-zinc-500">Насколько близко low/high к MA считается касанием. 0.5–0.7 — мягче.</p>
-                            @error('pullback_touch_atr_mult')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+
+                            @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('pullback_touch_atr_mult')])
+                        @error('pullback_touch_atr_mult')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                         </div>
                         <div class="space-y-1">
                             <label for="pullback_max_extension_atr" class="block text-xs font-medium text-zinc-400">Макс. удаление от MA (× ATR)</label>
                             <input type="number" name="pullback_max_extension_atr" id="pullback_max_extension_atr" min="0.5" max="5" step="0.1" required
                                 value="{{ old('pullback_max_extension_atr', $cfg['pullback_max_extension_atr'] ?? 1.8) }}"
                                 class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-                            <p class="text-[11px] text-zinc-500">Если в серии не было касания MA — вход всё равно разрешён, пока цена не дальше этого порога от MA. 2.0–2.5 — мягче.</p>
-                            @error('pullback_max_extension_atr')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+
+                            @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('pullback_max_extension_atr')])
+                        @error('pullback_max_extension_atr')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                         </div>
                     </div>
                 </div>
@@ -2395,7 +2541,8 @@
                                     <span class="mt-0.5 block text-[11px] font-normal text-zinc-500">Inline-кнопка под алертом: callback в @trend1123_bot → LLM-анализ Chart Analyst в этом же чате. Нужен poll (кнопка ниже).</span>
                                 </span>
                             </label>
-                            @error('telegram_analyst_llm_enabled')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                            @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('telegram_analyst_llm_enabled')])
+                        @error('telegram_analyst_llm_enabled')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                         </div>
                         <div class="space-y-1">
                             <label for="telegram_analyst_bot_id_trend" class="block text-xs font-medium text-zinc-400">Бот Chart Analyst</label>
@@ -2409,14 +2556,16 @@
                                     </option>
                                 @endforeach
                             </select>
-                            @error('telegram_analyst_bot_id')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                            @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('telegram_analyst_bot_id')])
+                        @error('telegram_analyst_bot_id')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                         </div>
                         <div class="space-y-1 sm:col-span-2">
                             <label for="telegram_analyst_llm_question_trend" class="block text-xs font-medium text-zinc-400">Вопрос к LLM по кнопке</label>
                             <textarea name="telegram_analyst_llm_question" id="telegram_analyst_llm_question_trend" rows="2"
                                 class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">{{ old('telegram_analyst_llm_question', $cfg['telegram_analyst_llm_question'] ?? \App\Services\Telegram\StrongLevelTelegramLlmButton::DEFAULT_LLM_QUESTION) }}</textarea>
-                            <p class="text-[11px] text-zinc-500">Подставляется в RunTelegramAnalystAnalysisJob вместо шага «ваш вопрос».</p>
-                            @error('telegram_analyst_llm_question')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+
+                            @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('telegram_analyst_llm_question')])
+                        @error('telegram_analyst_llm_question')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                         </div>
                         <div class="space-y-1 sm:col-span-2">
                             <p id="telegram-process-status-trend" class="text-xs text-zinc-500">Проверка poll…</p>
@@ -2434,8 +2583,9 @@
                                 <option value="1" @selected((string) $telegramSendChartTrend === '1')>Текст + графики PNG</option>
                                 <option value="0" @selected((string) $telegramSendChartTrend === '0')>Только текст (без графика)</option>
                             </select>
-                            <p class="text-[11px] text-zinc-500">PNG 640×360: M1 (зона серии + маркер close) и опционально M5. Отправляются отдельными сообщениями перед текстом алерта.</p>
-                            @error('telegram_send_chart')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+
+                            @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('telegram_send_chart')])
+                        @error('telegram_send_chart')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                         </div>
                         <div class="space-y-1 sm:col-span-2">
                             <label for="telegram_send_chart_m5_trend" class="block text-xs font-medium text-zinc-400">Доп. график M5</label>
@@ -2450,8 +2600,9 @@
                                 <option value="1" @selected((string) $telegramSendChartM5Trend === '1')>Отправлять второй PNG M5</option>
                                 <option value="0" @selected((string) $telegramSendChartM5Trend === '0')>Только M1 (без M5)</option>
                             </select>
-                            <p class="text-[11px] text-zinc-500">Как у Strong Level / Candle Reversal: старший контекст M5 (агрегация из M1) отдельным фото перед миниатюрой M1.</p>
-                            @error('telegram_send_chart_m5')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+
+                            @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('telegram_send_chart_m5')])
+                        @error('telegram_send_chart_m5')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                         </div>
                         <div class="space-y-1 sm:col-span-2">
                             @include('bots._telegram-bot-token-field', [
@@ -2466,8 +2617,9 @@
                                 value="{{ old('telegram_chat_id', $cfg['telegram_chat_id'] ?? '') }}"
                                 placeholder="123456789"
                                 class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 font-mono">
-                            <p class="text-[11px] text-zinc-500">ID чата/канала куда слать алерты. Обязателен для доставки. Кнопка ниже подставит ID после /start боту.</p>
-                            @error('telegram_chat_id')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+
+                            @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('telegram_chat_id')])
+                        @error('telegram_chat_id')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                         </div>
                         <div class="space-y-1 flex flex-col justify-end gap-2">
                             <button type="button" id="telegram-discover-btn"

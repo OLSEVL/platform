@@ -52,6 +52,7 @@
                         <input type="number" name="length" id="ob-length" required min="3" max="100"
                             value="{{ old('length', $ob['length']) }}"
                             class="mt-1 w-full max-w-xs rounded border border-zinc-600 bg-zinc-900 px-3 py-2 text-zinc-100">
+                    @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::indicator('length')])
                     </div>
                     <div class="grid gap-4 sm:grid-cols-2">
                         <div>
@@ -59,12 +60,14 @@
                             <input type="number" name="show_bull" id="ob-show-bull" required min="0" max="20"
                                 value="{{ old('show_bull', $ob['show_bull']) }}"
                                 class="mt-1 w-full rounded border border-zinc-600 bg-zinc-900 px-3 py-2 text-zinc-100">
+                    @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::indicator('show_bull')])
                         </div>
                         <div>
                             <label for="ob-show-bear" class="block text-xs font-medium text-zinc-400">Show Last Bearish OB</label>
                             <input type="number" name="show_bear" id="ob-show-bear" required min="0" max="20"
                                 value="{{ old('show_bear', $ob['show_bear']) }}"
                                 class="mt-1 w-full rounded border border-zinc-600 bg-zinc-900 px-3 py-2 text-zinc-100">
+                    @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::indicator('show_bear')])
                         </div>
                     </div>
                     <label class="flex cursor-pointer items-center gap-2">
@@ -72,6 +75,7 @@
                             @checked(old('use_body', ($ob['use_body'] ?? false) ? '1' : '') === '1' || (old('use_body') === null && ($ob['use_body'] ?? false)))>
                         <span>Use Candle Body</span>
                     </label>
+                    @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::indicator('use_body')])
                     <p class="text-xs text-zinc-500">
                         Вместо high/low для границ OB используются max/min(open, close). Подписи polarity changes в Pine не перенесены.
                     </p>
@@ -95,17 +99,20 @@
                                 <label for="ob-bull-bg" class="block text-[11px] text-zinc-500">Заливка</label>
                                 <input type="color" name="color_bull_bg" id="ob-bull-bg" value="{{ $bullBgHex }}"
                                     class="mt-1 h-10 w-full max-w-[8rem] cursor-pointer rounded border border-zinc-600 bg-zinc-900">
+                    @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::indicator('color_bull_bg')])
                             </div>
                             <div>
                                 <label for="ob-bull-alpha" class="block text-[11px] text-zinc-500">Прозрачность %</label>
                                 <input type="number" name="color_bull_bg_alpha" id="ob-bull-alpha" required min="0" max="100"
                                     value="{{ old('color_bull_bg_alpha', $ob['color_bull_bg_alpha']) }}"
                                     class="mt-1 w-full rounded border border-zinc-600 bg-zinc-900 px-2 py-1.5 text-zinc-100">
+                    @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::indicator('color_bull_bg_alpha')])
                             </div>
                             <div>
                                 <label for="ob-bull-border" class="block text-[11px] text-zinc-500">Граница (#hex)</label>
                                 <input type="color" name="color_bull_border" id="ob-bull-border" value="{{ $bullBgHex }}"
                                     class="mt-1 h-10 w-full max-w-[8rem] cursor-pointer rounded border border-zinc-600 bg-zinc-900">
+                    @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::indicator('color_bull_border')])
                             </div>
                         </div>
                     </div>
@@ -116,17 +123,20 @@
                                 <label for="ob-bull-brk-bg" class="block text-[11px] text-zinc-500">Заливка</label>
                                 <input type="color" name="color_bull_break_bg" id="ob-bull-brk-bg" value="{{ $bullBrkHex }}"
                                     class="mt-1 h-10 w-full max-w-[8rem] cursor-pointer rounded border border-zinc-600 bg-zinc-900">
+                    @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::indicator('color_bull_break_bg')])
                             </div>
                             <div>
                                 <label for="ob-bull-brk-alpha" class="block text-[11px] text-zinc-500">Прозрачность %</label>
                                 <input type="number" name="color_bull_break_bg_alpha" id="ob-bull-brk-alpha" required min="0" max="100"
                                     value="{{ old('color_bull_break_bg_alpha', $ob['color_bull_break_bg_alpha']) }}"
                                     class="mt-1 w-full rounded border border-zinc-600 bg-zinc-900 px-2 py-1.5 text-zinc-100">
+                    @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::indicator('color_bull_break_bg_alpha')])
                             </div>
                             <div>
                                 <label for="ob-bull-brk-border" class="block text-[11px] text-zinc-500">Граница (#hex)</label>
                                 <input type="color" name="color_bull_break_border" id="ob-bull-brk-border" value="{{ $bullBrkHex }}"
                                     class="mt-1 h-10 w-full max-w-[8rem] cursor-pointer rounded border border-zinc-600 bg-zinc-900">
+                    @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::indicator('color_bull_break_border')])
                             </div>
                         </div>
                     </div>
@@ -137,17 +147,20 @@
                                 <label for="ob-bear-bg" class="block text-[11px] text-zinc-500">Заливка</label>
                                 <input type="color" name="color_bear_bg" id="ob-bear-bg" value="{{ $bearBgHex }}"
                                     class="mt-1 h-10 w-full max-w-[8rem] cursor-pointer rounded border border-zinc-600 bg-zinc-900">
+                    @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::indicator('color_bear_bg')])
                             </div>
                             <div>
                                 <label for="ob-bear-alpha" class="block text-[11px] text-zinc-500">Прозрачность %</label>
                                 <input type="number" name="color_bear_bg_alpha" id="ob-bear-alpha" required min="0" max="100"
                                     value="{{ old('color_bear_bg_alpha', $ob['color_bear_bg_alpha']) }}"
                                     class="mt-1 w-full rounded border border-zinc-600 bg-zinc-900 px-2 py-1.5 text-zinc-100">
+                    @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::indicator('color_bear_bg_alpha')])
                             </div>
                             <div>
                                 <label for="ob-bear-border" class="block text-[11px] text-zinc-500">Граница (#hex)</label>
                                 <input type="color" name="color_bear_border" id="ob-bear-border" value="{{ $bearBgHex }}"
                                     class="mt-1 h-10 w-full max-w-[8rem] cursor-pointer rounded border border-zinc-600 bg-zinc-900">
+                    @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::indicator('color_bear_border')])
                             </div>
                         </div>
                     </div>
@@ -158,17 +171,20 @@
                                 <label for="ob-bear-brk-bg" class="block text-[11px] text-zinc-500">Заливка</label>
                                 <input type="color" name="color_bear_break_bg" id="ob-bear-brk-bg" value="{{ $bearBrkHex }}"
                                     class="mt-1 h-10 w-full max-w-[8rem] cursor-pointer rounded border border-zinc-600 bg-zinc-900">
+                    @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::indicator('color_bear_break_bg')])
                             </div>
                             <div>
                                 <label for="ob-bear-brk-alpha" class="block text-[11px] text-zinc-500">Прозрачность %</label>
                                 <input type="number" name="color_bear_break_bg_alpha" id="ob-bear-brk-alpha" required min="0" max="100"
                                     value="{{ old('color_bear_break_bg_alpha', $ob['color_bear_break_bg_alpha']) }}"
                                     class="mt-1 w-full rounded border border-zinc-600 bg-zinc-900 px-2 py-1.5 text-zinc-100">
+                    @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::indicator('color_bear_break_bg_alpha')])
                             </div>
                             <div>
                                 <label for="ob-bear-brk-border" class="block text-[11px] text-zinc-500">Граница (#hex)</label>
                                 <input type="color" name="color_bear_break_border" id="ob-bear-brk-border" value="{{ $bearBrkHex }}"
                                     class="mt-1 h-10 w-full max-w-[8rem] cursor-pointer rounded border border-zinc-600 bg-zinc-900">
+                    @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::indicator('color_bear_break_border')])
                             </div>
                         </div>
                     </div>
@@ -181,7 +197,8 @@
                     Полный merge с дефолтами сервиса. Ключи см. <code class="text-zinc-400">OrderBlocksIndicatorService::DEFAULT_PARAMS</code>.
                 </p>
                 <textarea name="expert_settings_json" rows="8"
-                    class="mt-2 w-full rounded border border-zinc-700 bg-zinc-900 px-2 py-1.5 font-mono text-[11px] text-zinc-200">{{ old('expert_settings_json', json_encode($ob, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE)) }}</textarea>
+                    class="mt-2 w-full rounded border border-zinc-700 bg-zinc-900 px-2 py-1.5 font-mono text-[11px] text-zinc-200">
+                    @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::indicator('expert_settings_json')]){{ old('expert_settings_json', json_encode($ob, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE)) }}</textarea>
                 @error('expert_settings_json')
                     <p class="mt-1 text-xs text-rose-400">{{ $message }}</p>
                 @enderror
@@ -190,6 +207,7 @@
                         @checked(old('use_expert_json'))>
                     Сохранить из JSON вместо формы
                 </label>
+                    @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::indicator('use_expert_json')])
             </details>
 
             <div class="flex flex-wrap items-center justify-end gap-2 border-t border-zinc-700 bg-[#1a1c22] px-4 py-3">

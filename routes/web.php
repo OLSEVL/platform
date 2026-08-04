@@ -6,6 +6,7 @@ use App\Http\Controllers\BotChartIndicatorController;
 use App\Http\Controllers\BotController;
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\InstrumentController;
+use App\Http\Controllers\ManualTradeController;
 use App\Http\Controllers\PlatformDiagnosticsController;
 use App\Http\Controllers\ProfileMirrorProxiesController;
 use App\Http\Controllers\ProfileMirrorQueueController;
@@ -32,6 +33,8 @@ Route::middleware('auth')->group(function () {
     Route::get('/instruments/data', [DashboardController::class, 'instrumentsSidebarData'])->name('dashboard.instruments.data');
     // Маркеры сделок на главном графике (все боты текущего пользователя по инструменту).
     Route::get('/chart-trades', [DashboardController::class, 'chartTradesData'])->name('dashboard.chart-trades.data');
+    // Ручной CALL/PUT на Pocket Option (SSID из /profile/trading).
+    Route::post('/trading/manual-order', [ManualTradeController::class, 'store'])->name('trading.manual-order');
     Route::prefix('bots')->name('bots.')->group(function () {
         Route::get('/', [BotController::class, 'index'])->name('index');
         Route::get('/analytics', [BotController::class, 'analytics'])->name('analytics');

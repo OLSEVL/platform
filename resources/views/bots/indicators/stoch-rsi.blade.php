@@ -5,7 +5,7 @@
     <div class="flex flex-wrap items-baseline justify-between gap-3">
         <div>
             <h1 class="text-xl font-semibold text-zinc-100 sm:text-2xl">Индикатор графика</h1>
-            <p class="mt-0.5 text-sm text-zinc-500">{{ $bot->name }} · Stochastic RSI (OsEngine) — отдельная pane</p>
+            <p class="mt-0.5 text-sm text-zinc-500">{{ $bot->name }} · Stochastic RSI — отдельная pane</p>
         </div>
         @include('bots.indicators._nav', ['bot' => $bot])
     </div>
@@ -23,23 +23,35 @@
             @csrf
             @method('PUT')
             <div class="grid gap-3 sm:grid-cols-2">
-                <div><label class="block text-xs text-zinc-400">RSI length</label><input type="number" name="rsi_length" min="1" max="500" required value="{{ old('rsi_length', $p['rsi_length']) }}" class="mt-1 w-full rounded border border-zinc-600 bg-zinc-900 px-3 py-2"></div>
-                <div><label class="block text-xs text-zinc-400">Stochastic length</label><input type="number" name="stochastic_length" min="1" max="500" required value="{{ old('stochastic_length', $p['stochastic_length']) }}" class="mt-1 w-full rounded border border-zinc-600 bg-zinc-900 px-3 py-2"></div>
-                <div><label class="block text-xs text-zinc-400">%K smooth</label><input type="number" name="k" min="1" max="100" required value="{{ old('k', $p['k']) }}" class="mt-1 w-full rounded border border-zinc-600 bg-zinc-900 px-3 py-2"></div>
-                <div><label class="block text-xs text-zinc-400">%D</label><input type="number" name="d" min="1" max="100" required value="{{ old('d', $p['d']) }}" class="mt-1 w-full rounded border border-zinc-600 bg-zinc-900 px-3 py-2"></div>
+                <div><label class="block text-xs text-zinc-400">RSI length</label><input type="number" name="rsi_length" min="1" max="500" required value="{{ old('rsi_length', $p['rsi_length']) }}" class="mt-1 w-full rounded border border-zinc-600 bg-zinc-900 px-3 py-2">
+                    @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::indicator('rsi_length')])</div>
+                <div><label class="block text-xs text-zinc-400">Stochastic length</label><input type="number" name="stochastic_length" min="1" max="500" required value="{{ old('stochastic_length', $p['stochastic_length']) }}" class="mt-1 w-full rounded border border-zinc-600 bg-zinc-900 px-3 py-2">
+                    @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::indicator('stochastic_length')])</div>
+                <div><label class="block text-xs text-zinc-400">%K smooth</label><input type="number" name="k" min="1" max="100" required value="{{ old('k', $p['k']) }}" class="mt-1 w-full rounded border border-zinc-600 bg-zinc-900 px-3 py-2">
+                    @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::indicator('k')])</div>
+                <div><label class="block text-xs text-zinc-400">%D</label><input type="number" name="d" min="1" max="100" required value="{{ old('d', $p['d']) }}" class="mt-1 w-full rounded border border-zinc-600 bg-zinc-900 px-3 py-2">
+                    @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::indicator('d')])</div>
             </div>
             <label class="flex items-center gap-2"><input type="checkbox" name="show_k" value="1" class="rounded border-zinc-600" @checked(old('show_k', $p['show_k'] ? '1' : '') === '1' || (old('show_k') === null && $p['show_k']))> Show %K</label>
+                    @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::indicator('show_k')])
             <label class="flex items-center gap-2"><input type="checkbox" name="show_d" value="1" class="rounded border-zinc-600" @checked(old('show_d', $p['show_d'] ? '1' : '') === '1' || (old('show_d') === null && $p['show_d']))> Show %D</label>
+                    @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::indicator('show_d')])
             <div class="grid gap-3 sm:grid-cols-2">
-                <div><label class="block text-xs text-zinc-400">%K color</label><input type="text" name="color_k" value="{{ old('color_k', $p['color_k']) }}" class="mt-1 w-full rounded border border-zinc-600 bg-zinc-900 px-3 py-2"></div>
-                <div><label class="block text-xs text-zinc-400">%D color</label><input type="text" name="color_d" value="{{ old('color_d', $p['color_d']) }}" class="mt-1 w-full rounded border border-zinc-600 bg-zinc-900 px-3 py-2"></div>
-                <div><label class="block text-xs text-zinc-400">Line width</label><input type="number" name="line_width" min="1" max="8" value="{{ old('line_width', $p['line_width']) }}" class="mt-1 w-full rounded border border-zinc-600 bg-zinc-900 px-3 py-2"></div>
+                <div><label class="block text-xs text-zinc-400">%K color</label><input type="text" name="color_k" value="{{ old('color_k', $p['color_k']) }}" class="mt-1 w-full rounded border border-zinc-600 bg-zinc-900 px-3 py-2">
+                    @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::indicator('color_k')])</div>
+                <div><label class="block text-xs text-zinc-400">%D color</label><input type="text" name="color_d" value="{{ old('color_d', $p['color_d']) }}" class="mt-1 w-full rounded border border-zinc-600 bg-zinc-900 px-3 py-2">
+                    @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::indicator('color_d')])</div>
+                <div><label class="block text-xs text-zinc-400">Line width</label><input type="number" name="line_width" min="1" max="8" value="{{ old('line_width', $p['line_width']) }}" class="mt-1 w-full rounded border border-zinc-600 bg-zinc-900 px-3 py-2">
+                    @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::indicator('line_width')])</div>
             </div>
             <div class="rounded border border-zinc-700/60 p-3 space-y-2">
                 <label class="flex items-center gap-2"><input type="checkbox" name="show_levels" value="1" class="rounded border-zinc-600" @checked(old('show_levels', $p['show_levels'] ? '1' : '') === '1' || (old('show_levels') === null && $p['show_levels']))> Levels 80/20</label>
+                    @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::indicator('show_levels')])
                 <div class="grid gap-3 sm:grid-cols-2">
-                    <div><label class="block text-xs text-zinc-400">Overbought</label><input type="number" name="level_overbought" step="any" min="0" max="100" value="{{ old('level_overbought', $p['level_overbought']) }}" class="mt-1 w-full rounded border border-zinc-600 bg-zinc-900 px-3 py-2"></div>
-                    <div><label class="block text-xs text-zinc-400">Oversold</label><input type="number" name="level_oversold" step="any" min="0" max="100" value="{{ old('level_oversold', $p['level_oversold']) }}" class="mt-1 w-full rounded border border-zinc-600 bg-zinc-900 px-3 py-2"></div>
+                    <div><label class="block text-xs text-zinc-400">Overbought</label><input type="number" name="level_overbought" step="any" min="0" max="100" value="{{ old('level_overbought', $p['level_overbought']) }}" class="mt-1 w-full rounded border border-zinc-600 bg-zinc-900 px-3 py-2">
+                    @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::indicator('level_overbought')])</div>
+                    <div><label class="block text-xs text-zinc-400">Oversold</label><input type="number" name="level_oversold" step="any" min="0" max="100" value="{{ old('level_oversold', $p['level_oversold']) }}" class="mt-1 w-full rounded border border-zinc-600 bg-zinc-900 px-3 py-2">
+                    @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::indicator('level_oversold')])</div>
                 </div>
             </div>
             <button type="submit" class="rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-500">Сохранить</button>

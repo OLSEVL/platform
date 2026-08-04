@@ -6,7 +6,7 @@
         <div>
             <h1 class="text-xl font-semibold text-zinc-100 sm:text-2xl">Индикатор графика</h1>
             {{-- Описание: стадии волы 1..N относительно канала SMA. --}}
-            <p class="mt-0.5 text-sm text-zinc-500">{{ $bot->name }} · Volatility Stages AW (OsEngine)</p>
+            <p class="mt-0.5 text-sm text-zinc-500">{{ $bot->name }} · Volatility Stages AW</p>
         </div>
         @include('bots.indicators._nav', ['bot' => $bot])
     </div>
@@ -23,25 +23,44 @@
         <form method="post" action="{{ route('bots.indicators.volatility-stages-aw.update', $bot) }}" class="space-y-4 px-4 py-4 text-sm text-zinc-200">
             @csrf
             @method('PUT')
-            <div><label class="block text-xs text-zinc-400">stages_regime (2/3/4)</label><input type="text" name="stages_regime" required value="{{ old('stages_regime', $p['stages_regime']) }}" class="mt-1 w-full max-w-xs rounded border border-zinc-600 bg-zinc-900 px-3 py-2"></div>
-            <div><label class="block text-xs text-zinc-400">volatility_base_type</label><input type="text" name="volatility_base_type" required value="{{ old('volatility_base_type', $p['volatility_base_type']) }}" class="mt-1 w-full max-w-xs rounded border border-zinc-600 bg-zinc-900 px-3 py-2"></div>
-            <div><label class="block text-xs text-zinc-400">volatility_variable_type</label><input type="text" name="volatility_variable_type" required value="{{ old('volatility_variable_type', $p['volatility_variable_type']) }}" class="mt-1 w-full max-w-xs rounded border border-zinc-600 bg-zinc-900 px-3 py-2"></div>
-            <div><label class="block text-xs text-zinc-400">sma_len_slow</label><input type="number" name="sma_len_slow" required value="{{ old('sma_len_slow', $p['sma_len_slow']) }}" class="mt-1 w-full max-w-xs rounded border border-zinc-600 bg-zinc-900 px-3 py-2"></div>
-            <div><label class="block text-xs text-zinc-400">sma_len_fast</label><input type="number" name="sma_len_fast" required value="{{ old('sma_len_fast', $p['sma_len_fast']) }}" class="mt-1 w-full max-w-xs rounded border border-zinc-600 bg-zinc-900 px-3 py-2"></div>
-            <div><label class="block text-xs text-zinc-400">channel_deviation</label><input type="number" name="channel_deviation" step="0.01" required value="{{ old('channel_deviation', $p['channel_deviation']) }}" class="mt-1 w-full max-w-xs rounded border border-zinc-600 bg-zinc-900 px-3 py-2"></div>
+            <div><label class="block text-xs text-zinc-400">stages_regime (2/3/4)</label><input type="text" name="stages_regime" required value="{{ old('stages_regime', $p['stages_regime']) }}" class="mt-1 w-full max-w-xs rounded border border-zinc-600 bg-zinc-900 px-3 py-2">
+                    @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::indicator('stages_regime')])</div>
+            <div><label class="block text-xs text-zinc-400">volatility_base_type</label><input type="text" name="volatility_base_type" required value="{{ old('volatility_base_type', $p['volatility_base_type']) }}" class="mt-1 w-full max-w-xs rounded border border-zinc-600 bg-zinc-900 px-3 py-2">
+                    @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::indicator('volatility_base_type')])</div>
+            <div><label class="block text-xs text-zinc-400">volatility_variable_type</label><input type="text" name="volatility_variable_type" required value="{{ old('volatility_variable_type', $p['volatility_variable_type']) }}" class="mt-1 w-full max-w-xs rounded border border-zinc-600 bg-zinc-900 px-3 py-2">
+                    @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::indicator('volatility_variable_type')])</div>
+            <div><label class="block text-xs text-zinc-400">sma_len_slow</label><input type="number" name="sma_len_slow" required value="{{ old('sma_len_slow', $p['sma_len_slow']) }}" class="mt-1 w-full max-w-xs rounded border border-zinc-600 bg-zinc-900 px-3 py-2">
+                    @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::indicator('sma_len_slow')])</div>
+            <div><label class="block text-xs text-zinc-400">sma_len_fast</label><input type="number" name="sma_len_fast" required value="{{ old('sma_len_fast', $p['sma_len_fast']) }}" class="mt-1 w-full max-w-xs rounded border border-zinc-600 bg-zinc-900 px-3 py-2">
+                    @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::indicator('sma_len_fast')])</div>
+            <div><label class="block text-xs text-zinc-400">channel_deviation</label><input type="number" name="channel_deviation" step="0.01" required value="{{ old('channel_deviation', $p['channel_deviation']) }}" class="mt-1 w-full max-w-xs rounded border border-zinc-600 bg-zinc-900 px-3 py-2">
+                    @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::indicator('channel_deviation')])</div>
             <label class="flex items-center gap-2"><input type="checkbox" name="show_stages" value="1" class="rounded border-zinc-600" @checked(old('show_stages', $p['show_stages'] ? '1' : '') === '1' || (old('show_stages') === null && $p['show_stages']))> Stages</label>
+                    @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::indicator('show_stages')])
             <label class="flex items-center gap-2"><input type="checkbox" name="show_volatility" value="1" class="rounded border-zinc-600" @checked(old('show_volatility', $p['show_volatility'] ? '1' : '') === '1' || (old('show_volatility') === null && $p['show_volatility']))> Volatility</label>
+                    @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::indicator('show_volatility')])
             <label class="flex items-center gap-2"><input type="checkbox" name="show_sma_fast" value="1" class="rounded border-zinc-600" @checked(old('show_sma_fast', $p['show_sma_fast'] ? '1' : '') === '1' || (old('show_sma_fast') === null && $p['show_sma_fast']))> Sma Fast</label>
+                    @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::indicator('show_sma_fast')])
             <label class="flex items-center gap-2"><input type="checkbox" name="show_sma_slow" value="1" class="rounded border-zinc-600" @checked(old('show_sma_slow', $p['show_sma_slow'] ? '1' : '') === '1' || (old('show_sma_slow') === null && $p['show_sma_slow']))> Sma Slow</label>
+                    @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::indicator('show_sma_slow')])
             <label class="flex items-center gap-2"><input type="checkbox" name="show_up" value="1" class="rounded border-zinc-600" @checked(old('show_up', $p['show_up'] ? '1' : '') === '1' || (old('show_up') === null && $p['show_up']))> Up Channel</label>
+                    @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::indicator('show_up')])
             <label class="flex items-center gap-2"><input type="checkbox" name="show_down" value="1" class="rounded border-zinc-600" @checked(old('show_down', $p['show_down'] ? '1' : '') === '1' || (old('show_down') === null && $p['show_down']))> Down Channel</label>
-            <div><label class="block text-xs text-zinc-400">color_stages</label><input type="text" name="color_stages" value="{{ old('color_stages', $p['color_stages']) }}" class="mt-1 w-full max-w-xs rounded border border-zinc-600 bg-zinc-900 px-2 py-1 text-xs"></div>
-            <div><label class="block text-xs text-zinc-400">color_volatility</label><input type="text" name="color_volatility" value="{{ old('color_volatility', $p['color_volatility']) }}" class="mt-1 w-full max-w-xs rounded border border-zinc-600 bg-zinc-900 px-2 py-1 text-xs"></div>
-            <div><label class="block text-xs text-zinc-400">color_sma_fast</label><input type="text" name="color_sma_fast" value="{{ old('color_sma_fast', $p['color_sma_fast']) }}" class="mt-1 w-full max-w-xs rounded border border-zinc-600 bg-zinc-900 px-2 py-1 text-xs"></div>
-            <div><label class="block text-xs text-zinc-400">color_sma_slow</label><input type="text" name="color_sma_slow" value="{{ old('color_sma_slow', $p['color_sma_slow']) }}" class="mt-1 w-full max-w-xs rounded border border-zinc-600 bg-zinc-900 px-2 py-1 text-xs"></div>
-            <div><label class="block text-xs text-zinc-400">color_up</label><input type="text" name="color_up" value="{{ old('color_up', $p['color_up']) }}" class="mt-1 w-full max-w-xs rounded border border-zinc-600 bg-zinc-900 px-2 py-1 text-xs"></div>
-            <div><label class="block text-xs text-zinc-400">color_down</label><input type="text" name="color_down" value="{{ old('color_down', $p['color_down']) }}" class="mt-1 w-full max-w-xs rounded border border-zinc-600 bg-zinc-900 px-2 py-1 text-xs"></div>
-            <div><label class="block text-xs text-zinc-400">line_width</label><input type="number" name="line_width" required value="{{ old('line_width', $p['line_width']) }}" class="mt-1 w-full max-w-xs rounded border border-zinc-600 bg-zinc-900 px-3 py-2"></div>
+                    @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::indicator('show_down')])
+            <div><label class="block text-xs text-zinc-400">color_stages</label><input type="text" name="color_stages" value="{{ old('color_stages', $p['color_stages']) }}" class="mt-1 w-full max-w-xs rounded border border-zinc-600 bg-zinc-900 px-2 py-1 text-xs">
+                    @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::indicator('color_stages')])</div>
+            <div><label class="block text-xs text-zinc-400">color_volatility</label><input type="text" name="color_volatility" value="{{ old('color_volatility', $p['color_volatility']) }}" class="mt-1 w-full max-w-xs rounded border border-zinc-600 bg-zinc-900 px-2 py-1 text-xs">
+                    @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::indicator('color_volatility')])</div>
+            <div><label class="block text-xs text-zinc-400">color_sma_fast</label><input type="text" name="color_sma_fast" value="{{ old('color_sma_fast', $p['color_sma_fast']) }}" class="mt-1 w-full max-w-xs rounded border border-zinc-600 bg-zinc-900 px-2 py-1 text-xs">
+                    @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::indicator('color_sma_fast')])</div>
+            <div><label class="block text-xs text-zinc-400">color_sma_slow</label><input type="text" name="color_sma_slow" value="{{ old('color_sma_slow', $p['color_sma_slow']) }}" class="mt-1 w-full max-w-xs rounded border border-zinc-600 bg-zinc-900 px-2 py-1 text-xs">
+                    @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::indicator('color_sma_slow')])</div>
+            <div><label class="block text-xs text-zinc-400">color_up</label><input type="text" name="color_up" value="{{ old('color_up', $p['color_up']) }}" class="mt-1 w-full max-w-xs rounded border border-zinc-600 bg-zinc-900 px-2 py-1 text-xs">
+                    @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::indicator('color_up')])</div>
+            <div><label class="block text-xs text-zinc-400">color_down</label><input type="text" name="color_down" value="{{ old('color_down', $p['color_down']) }}" class="mt-1 w-full max-w-xs rounded border border-zinc-600 bg-zinc-900 px-2 py-1 text-xs">
+                    @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::indicator('color_down')])</div>
+            <div><label class="block text-xs text-zinc-400">line_width</label><input type="number" name="line_width" required value="{{ old('line_width', $p['line_width']) }}" class="mt-1 w-full max-w-xs rounded border border-zinc-600 bg-zinc-900 px-3 py-2">
+                    @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::indicator('line_width')])</div>
             <button type="submit" class="rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-500">Сохранить</button>
         </form>
     </div>

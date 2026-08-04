@@ -322,6 +322,7 @@
 
 {{-- LWC v5: addSeries(CandlestickSeries|LineSeries), createSeriesMarkers, реальные panes() для RSI/ATR --}}
 @include('partials.chart-markers-helper')
+@include('partials.chart-candle-smooth-helper')
 <script src="https://unpkg.com/lightweight-charts@5.2.0/dist/lightweight-charts.standalone.production.js"></script>
 <script>
 (function() {
@@ -674,6 +675,10 @@
     let candlestickSeries = null;
     /** LWC v5: маркеры через createSeriesMarkers, не series.setMarkers. */
     let candlestickMarkers = null;
+    /**
+     * Плавный close последней свечи (как на dashboard): target из poll, визуал — RAF lerp.
+     */
+    let candleSmooth = null;
     /** Точность подписи цены кроссхейра (синхронизируется с price_scale API). */
     let botChartPricePrecision = 5;
     let currentInstrument = null;
@@ -2064,7 +2069,7 @@
 
         const oscCount = (wantRsi ? 1 : 0) + (wantMacd ? 1 : 0) + (wantStochastic ? 1 : 0) + (wantCci ? 1 : 0) + (wantAtr ? 1 : 0) + (wantAdx ? 1 : 0) + (wantWilliams ? 1 : 0) + (wantAo ? 1 : 0) + (wantAroon ? 1 : 0)
             + (wantMomentum ? 1 : 0) + (wantRoc ? 1 : 0) + (wantOsma ? 1 : 0) + (wantTrix ? 1 : 0) + (wantCmo ? 1 : 0) + (wantDemarker ? 1 : 0) + (wantRvi ? 1 : 0) + (wantUltimate ? 1 : 0) + (wantSmi ? 1 : 0) + (wantStdDev ? 1 : 0) + (wantIvashov ? 1 : 0)
-            + (wantStochRsi ? 1 : 0) + (wantAc ? 1 : 0) + (wantBullsPower ? 1 : 0) + (wantBearsPower ? 1 : 0) + (wantDpo ? 1 : 0) + (wantQstick ? 1 : 0) + (wantVhFilter ? 1 : 0) + (wantEfficiencyRatio ? 1 : 0) + (wantRavi ? 1 : 0) + (wantCog ? 1 : 0) + (wantMassIndex ? 1 : 0) + (wantVolatilityAverage ? 1 : 0) + (wantVolatilityAverageChannel ? 1 : 0) + (wantPriceOscillator ? 1 : 0) + (wantAdaptiveLookBack ? 1 : 0) + (wantVolatilityCandles ? 1 : 0) + (wantVolatilityAverageTwice ? 1 : 0) + (wantVolatilityStagesAw ? 1 : 0);
+            + (wantStochRsi ? 1 : 0) + (wantAc ? 1 : 0) + (wantBullsPower ? 1 : 0) + (wantBearsPower ? 1 : 0) + (wantDpo ? 1 : 0) + (wantQstick ? 1 : 0) + (wantVhFilter ? 1 : 0) + (wantEfficiencyRatio ? 1 : 0) + (wantRavi ? 1 : 0) + (wantCog ? 1 : 0) + (wantMassIndex ? 1 : 0) + (wantVolatilityAverage ? 1 : 0) + (wantVolatilityAverageChannel ? 1 : 0) + (wantPriceOscillator ? 1 : 0) + (wantAdaptiveLookBack ? 1 : 0) + (wantVolatilityCandles ? 1 : 0) + (wantVolatilityAverageTwice ? 1 : 0) + (wantVolatilityStagesAw ? 2 : 0);
         if (oscCount > 0) {
             // Главная pane крупнее осцилляторов (~1 : 0.28 на каждый нижний pane).
             try {
@@ -3537,21 +3542,14 @@
             addOscLine('vat_fast', ser.sma_fast, st.color_sma_fast, false);
             addOscLine('vat_slow', ser.sma_slow, st.color_sma_slow, false);
         }
-        // VolatilityStagesAW — стадии волы + канал/SMA в отдельной pane.
+        // VolatilityStagesAW — две pane: стадии (1..4) отдельно от канала/SMA волы.
+        // Иначе ordinal stages≈2 и SMA≈0.7 на одной шкале: канал «прилипает» к низу и кажется, что индикатор не рисуется.
         if (wantVolatilityStagesAw) {
             const st = lastVolatilityStagesAwPayload.style || {};
             const ser = lastVolatilityStagesAwPayload.series || {};
             const lineW = st.line_width || 1;
-            let paneIndex = 1;
-            try {
-                const pane = chart.addPane(false);
-                if (pane && typeof pane.setStretchFactor === 'function') pane.setStretchFactor(0.28);
-                paneIndex = Math.max(1, chart.panes().length - 1);
-                classicOscPaneCount += 1;
-            } catch (e) {
-                console.error('[indicators] addPane Vol Stages AW', e);
-            }
-            const addOscLine = (okey, data, color, showLast) => {
+
+            const addOscLineOnPane = (okey, data, color, showLast, paneIndex, precision) => {
                 if (!Array.isArray(data) || !data.length) return;
                 const s = chart.addSeries(LineSeries, {
                     color: color || '#008000',
@@ -3559,17 +3557,49 @@
                     priceLineVisible: false,
                     lastValueVisible: !!showLast,
                     crosshairMarkerVisible: false,
-                    priceFormat: { type: 'price', precision: 2, minMove: 0.01 },
+                    priceFormat: { type: 'price', precision: precision, minMove: Math.pow(10, -precision) },
                 }, paneIndex);
                 s.setData(data.map((p) => ({ time: p.time, value: p.value })));
                 classicLineSeries[okey] = s;
             };
-            addOscLine('vsa_stages', ser.stages, st.color_stages, true);
-            addOscLine('vsa_vol', ser.volatility, st.color_volatility, false);
-            addOscLine('vsa_fast', ser.sma_fast, st.color_sma_fast, false);
-            addOscLine('vsa_slow', ser.sma_slow, st.color_sma_slow, false);
-            addOscLine('vsa_up', ser.up, st.color_up, false);
-            addOscLine('vsa_down', ser.down, st.color_down, false);
+
+            // Pane 1: только стадии режима (целые уровни).
+            if (Array.isArray(ser.stages) && ser.stages.length) {
+                let stagesPaneIndex = 1;
+                try {
+                    const pane = chart.addPane(false);
+                    if (pane && typeof pane.setStretchFactor === 'function') pane.setStretchFactor(0.22);
+                    stagesPaneIndex = Math.max(1, chart.panes().length - 1);
+                    classicOscPaneCount += 1;
+                } catch (e) {
+                    console.error('[indicators] addPane Vol Stages AW (stages)', e);
+                }
+                addOscLineOnPane('vsa_stages', ser.stages, st.color_stages, true, stagesPaneIndex, 0);
+            }
+
+            // Pane 2: volatility + SMA + границы канала (одна масштабная «семья»).
+            const channelSeries = [
+                ['vsa_vol', ser.volatility, st.color_volatility || '#1e90ff', true],
+                ['vsa_fast', ser.sma_fast, st.color_sma_fast || '#8b0000', false],
+                ['vsa_slow', ser.sma_slow, st.color_sma_slow || '#f5f5f5', true],
+                ['vsa_up', ser.up, st.color_up || '#f5f5f5', false],
+                ['vsa_down', ser.down, st.color_down || '#f5f5f5', false],
+            ].filter((row) => Array.isArray(row[1]) && row[1].length);
+
+            if (channelSeries.length) {
+                let channelPaneIndex = 1;
+                try {
+                    const pane = chart.addPane(false);
+                    if (pane && typeof pane.setStretchFactor === 'function') pane.setStretchFactor(0.28);
+                    channelPaneIndex = Math.max(1, chart.panes().length - 1);
+                    classicOscPaneCount += 1;
+                } catch (e) {
+                    console.error('[indicators] addPane Vol Stages AW (channel)', e);
+                }
+                channelSeries.forEach(([okey, data, color, showLast]) => {
+                    addOscLineOnPane(okey, data, color, showLast, channelPaneIndex, 2);
+                });
+            }
         }
 
         // ATR — ещё один pane под RSI/MACD/Stochastic/CCI (или единственный нижний).
@@ -4101,44 +4131,83 @@
         }
     }
 
-    /** Окраска свечей DGT; на poll — только update хвоста (см. applyIncrementalChartUpdate). */
+    /** Окраска свечей DGT; на poll — только update хвоста (см. applyIncrementalChartUpdate).
+     *  Последний бар во время tween — через candleSmooth.visualFor, иначе PA снэпает close. */
     function applyPaBarColors(opts = {}) {
         const fullResync = opts && opts.fullResync === true;
         if (!candlestickSeries || !allChartData.length) return;
-        const plainBar = (c) => ({ time: c.time, open: c.open, high: c.high, low: c.low, close: c.close });
-        const plain = allChartData.map(plainBar);
+        const plainBar = (c) => {
+            const src = candleSmooth ? candleSmooth.visualFor(c) : c;
+            return { time: src.time, open: src.open, high: src.high, low: src.low, close: src.close };
+        };
+        const plain = allChartData.map((c) => ({
+            time: c.time, open: c.open, high: c.high, low: c.low, close: c.close,
+        }));
         const bc = lastPaPayload && lastPaPayload.bar_colors ? lastPaPayload.bar_colors : null;
         const paOn = layerPa && layerPa.checked && bc && Object.keys(bc).length > 0;
         if (!paOn) {
             if (fullResync) {
+                if (candleSmooth) candleSmooth.reset();
                 try { candlestickSeries.setData(plain); } catch (e) { console.error('[PA] setData plain', e); }
+                if (candleSmooth && allChartData.length) {
+                    candleSmooth.snap(allChartData[allChartData.length - 1]);
+                }
             }
             return;
         }
         const paintBar = (c) => {
+            const src = candleSmooth ? candleSmooth.visualFor(c) : c;
             const o = bc[String(c.time)];
-            if (!o) return plainBar(c);
+            if (!o) {
+                return { time: src.time, open: src.open, high: src.high, low: src.low, close: src.close };
+            }
             return {
-                time: c.time, open: c.open, high: c.high, low: c.low, close: c.close,
+                time: src.time, open: src.open, high: src.high, low: src.low, close: src.close,
                 color: o.color, borderColor: o.borderColor || o.color, wickColor: o.wickColor || o.color,
             };
         };
         if (fullResync) {
+            if (candleSmooth) candleSmooth.reset();
             try {
                 candlestickSeries.setData(allChartData.map(paintBar));
             } catch (e) {
                 console.error('[PA] setData painted', e);
                 try { candlestickSeries.setData(plain); } catch (e2) { console.error('[PA] setData fallback', e2); }
             }
+            if (candleSmooth && allChartData.length) {
+                candleSmooth.snap(allChartData[allChartData.length - 1]);
+            }
             return;
         }
         const barSec = timeframeSeconds(currentTimeframeMinutes);
-        const tailFrom = allChartData[allChartData.length - 1].time - barSec * 2;
+        const lastT = allChartData[allChartData.length - 1].time;
+        const tailFrom = lastT - barSec * 2;
         for (const c of allChartData) {
             if (c.time >= tailFrom) {
+                if (c.time === lastT && candleSmooth && candleSmooth.isAnimating()) {
+                    continue;
+                }
                 try { candlestickSeries.update(paintBar(c)); } catch (e) { console.error('[PA] update', e); }
             }
         }
+    }
+
+    /** Цвета DGT для кадра плавной анимации последней свечи. */
+    function paintBarForSmooth(bar) {
+        if (!bar) return bar;
+        const bc = lastPaPayload && lastPaPayload.bar_colors ? lastPaPayload.bar_colors : null;
+        const paOn = layerPa && layerPa.checked && bc && Object.keys(bc).length > 0;
+        if (!paOn) {
+            return { time: bar.time, open: bar.open, high: bar.high, low: bar.low, close: bar.close };
+        }
+        const o = bc[String(bar.time)];
+        if (!o) {
+            return { time: bar.time, open: bar.open, high: bar.high, low: bar.low, close: bar.close };
+        }
+        return {
+            time: bar.time, open: bar.open, high: bar.high, low: bar.low, close: bar.close,
+            color: o.color, borderColor: o.borderColor || o.color, wickColor: o.wickColor || o.color,
+        };
     }
 
     function toBucketTime(unixTs) {
@@ -5730,13 +5799,18 @@
         renderTradeDurationOverlay();
         redrawPriceActionOverlay();
     }
-    /** Upsert poll-свечей в allChartData; не заменять весь ряд узким окном ответа. */
+    /** Upsert poll-свечей в allChartData; не заменять весь ряд узким окном ответа.
+     *  Хвост: candleSmooth.toward() — close плавно доезжает до новой цены. */
     function applyIncrementalChartUpdate(newData) {
         if (!candlestickSeries || !newData.length) return;
         if (!allChartData.length) {
             allChartData = newData;
             oldestLoadedTime = Math.min(...allChartData.map(c => c.time));
+            if (candleSmooth) candleSmooth.reset();
             candlestickSeries.setData(allChartData);
+            if (candleSmooth && allChartData.length) {
+                candleSmooth.snap(allChartData[allChartData.length - 1]);
+            }
             renderChartMarkers();
             renderEntryPriceLines();
             tickCandleCloseTimer();
@@ -5752,16 +5826,22 @@
         for (const c of newData) byTime.set(c.time, c);
         const merged = Array.from(byTime.values()).sort((a, b) => a.time - b.time);
         const prependedOlder = merged.length > 0 && merged[0].time < prevOldest;
+        const newestTime = merged[merged.length - 1].time;
 
         let updateFailed = false;
         for (const c of newData) {
-            if (c.time >= prevLast) {
-                try {
+            if (c.time < prevLast) {
+                continue;
+            }
+            try {
+                if (c.time === newestTime && candleSmooth) {
+                    candleSmooth.toward(c);
+                } else {
                     candlestickSeries.update(c);
-                } catch (e) {
-                    updateFailed = true;
-                    console.error('[bot chart] candle update', e);
                 }
+            } catch (e) {
+                updateFailed = true;
+                console.error('[bot chart] candle update', e);
             }
         }
 
@@ -5771,7 +5851,11 @@
             : Math.min(oldestLoadedTime, merged[0].time);
 
         if (prependedOlder || updateFailed) {
+            if (candleSmooth) candleSmooth.reset();
             candlestickSeries.setData(allChartData);
+            if (candleSmooth && allChartData.length) {
+                candleSmooth.snap(allChartData[allChartData.length - 1]);
+            }
             applyPaBarColors({ fullResync: true });
         } else {
             applyPaBarColors();
@@ -5969,6 +6053,10 @@
 
     function createChart() {
         entryPriceLineHandles = [];
+        if (candleSmooth) {
+            candleSmooth.reset();
+            candleSmooth = null;
+        }
         if (chart) chart.remove();
         chartWrapper.classList.remove('hidden');
         structureOverlay.classList.remove('hidden');
@@ -6049,6 +6137,16 @@
             wickUpColor: '#26a69a', wickDownColor: '#ef5350',
             priceFormat: { type: 'price', precision: 5, minMove: 0.00001 }
         });
+        // Плавный close последней свечи (~200ms ease-out между poll-обновлениями).
+        if (window.PlatformCandleSmooth && typeof window.PlatformCandleSmooth.create === 'function') {
+            candleSmooth = window.PlatformCandleSmooth.create({
+                getSeries: () => candlestickSeries,
+                paintBar: paintBarForSmooth,
+                durationMs: 200,
+            });
+        } else {
+            candleSmooth = null;
+        }
         // LWC v5 markers plugin (вместо series.setMarkers).
         candlestickMarkers = null;
         try {
@@ -6107,7 +6205,11 @@
             if (!toAdd.length) return;
             allChartData = [...toAdd, ...allChartData].sort((a, b) => a.time - b.time);
             oldestLoadedTime = Math.min(...allChartData.map(c => c.time));
+            if (candleSmooth) candleSmooth.cancel();
             candlestickSeries.setData(allChartData);
+            if (candleSmooth && allChartData.length) {
+                candleSmooth.snap(allChartData[allChartData.length - 1]);
+            }
             renderChartMarkers();
             renderEntryPriceLines();
             redrawStructureOverlay();
@@ -6186,13 +6288,16 @@
             allChartData = buildChartData(data.candles || []);
             if (allChartData.length) {
                 oldestLoadedTime = Math.min(...allChartData.map(c => c.time));
+                if (candleSmooth) candleSmooth.reset();
                 candlestickSeries.setData(allChartData);
+                if (candleSmooth) candleSmooth.snap(allChartData[allChartData.length - 1]);
                 renderChartMarkers();
                 renderEntryPriceLines();
                 applyDefaultChartViewport();
                 fetchStructures();
                 fetchPriceActionIndicator({ force: true });
             } else {
+                if (candleSmooth) candleSmooth.reset();
                 candlestickSeries.setData([]);
                 lastZones = [];
                 structureOverlay.innerHTML = '';
@@ -6277,7 +6382,9 @@
             allChartData = buildChartData(data.candles || []);
             if (allChartData.length) {
                 oldestLoadedTime = Math.min(...allChartData.map(c => c.time));
+                if (candleSmooth) candleSmooth.reset();
                 candlestickSeries.setData(allChartData);
+                if (candleSmooth) candleSmooth.snap(allChartData[allChartData.length - 1]);
                 renderChartMarkers();
                 renderEntryPriceLines();
                 applyDefaultChartViewport();
@@ -6289,6 +6396,7 @@
                 fetchPriceActionIndicator({ force: true });
             } else {
                 allChartData = [];
+                if (candleSmooth) candleSmooth.reset();
                 candlestickSeries.setData([]);
                 if (refreshInterval) {
                     clearInterval(refreshInterval);

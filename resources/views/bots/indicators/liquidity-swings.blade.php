@@ -53,13 +53,15 @@
                         <input type="number" name="length" id="ls-length" required min="1" max="500"
                             value="{{ old('length', $ls['length']) }}"
                             class="mt-1 w-full max-w-xs rounded border border-zinc-600 bg-zinc-900 px-3 py-2 text-zinc-100">
+                    @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::indicator('length')])
                     </div>
                     <div>
                         <label for="ls-area" class="block text-xs font-medium text-zinc-400">Swing Area</label>
                         <select name="area" id="ls-area" class="mt-1 w-full max-w-xs rounded border border-zinc-600 bg-zinc-900 px-3 py-2 text-zinc-100">
-                            <option value="wick" @selected(old('area', $ls['area']) === 'wick')>Wick Extremity</option>
+<option value="wick" @selected(old('area', $ls['area']) === 'wick')>Wick Extremity</option>
                             <option value="full" @selected(old('area', $ls['area']) === 'full')>Full Range</option>
                         </select>
+                    @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::indicator('area')])
                     </div>
                     <div class="rounded border border-zinc-700/80 bg-zinc-900/50 px-3 py-2 text-xs text-zinc-500">
                         <span class="font-medium text-zinc-400">Intrabar Precision</span> — в оригинале LuxAlgo использует младший таймфрейм;
@@ -69,15 +71,17 @@
                         <div>
                             <label for="ls-filter-by" class="block text-xs font-medium text-zinc-400">Filter Areas By</label>
                             <select name="filter_by" id="ls-filter-by" class="mt-1 rounded border border-zinc-600 bg-zinc-900 px-3 py-2 text-zinc-100">
-                                <option value="count" @selected(old('filter_by', $ls['filter_by']) === 'count')>Count</option>
+<option value="count" @selected(old('filter_by', $ls['filter_by']) === 'count')>Count</option>
                                 <option value="volume" @selected(old('filter_by', $ls['filter_by']) === 'volume')>Volume</option>
                             </select>
+                    @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::indicator('filter_by')])
                         </div>
                         <div class="flex-1 min-w-[6rem] max-w-xs">
                             <label for="ls-filter-value" class="block text-xs font-medium text-zinc-400">Порог</label>
                             <input type="number" name="filter_value" id="ls-filter-value" required step="any"
                                 value="{{ old('filter_value', $ls['filter_value']) }}"
                                 class="mt-1 w-full rounded border border-zinc-600 bg-zinc-900 px-3 py-2 text-zinc-100">
+                    @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::indicator('filter_value')])
                         </div>
                     </div>
                 </div>
@@ -95,11 +99,13 @@
                                 @checked(old('show_swing_high', $ls['show_swing_high'] ? '1' : '') === '1' || (old('show_swing_high') === null && $ls['show_swing_high']))>
                             <span class="text-zinc-200">Swing High</span>
                         </label>
+                    @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::indicator('show_swing_high')])
                         <div class="grid gap-3 pl-6 sm:grid-cols-2">
                             <div>
                                 <label for="ls-ch-line" class="block text-[11px] text-zinc-500">Линия (#hex)</label>
                                 <input type="color" name="color_high_line" id="ls-ch-line" value="{{ $highLineHex }}"
                                     class="mt-1 h-10 w-full max-w-[8rem] cursor-pointer rounded border border-zinc-600 bg-zinc-900">
+                    @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::indicator('color_high_line')])
                                 <p class="mt-1 text-[10px] text-zinc-500">Нестандартный цвет линии — через JSON внизу.</p>
                             </div>
                             <div>
@@ -108,6 +114,7 @@
                                     value="{{ old('color_high_fill', $ls['color_high_fill']) }}"
                                     class="mt-1 w-full rounded border border-zinc-600 bg-zinc-900 px-2 py-1.5 font-mono text-xs text-zinc-200"
                                     placeholder="rgba(...)">
+                    @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::indicator('color_high_fill')])
                             </div>
                         </div>
                     </div>
@@ -117,11 +124,13 @@
                                 @checked(old('show_swing_low', $ls['show_swing_low'] ? '1' : '') === '1' || (old('show_swing_low') === null && $ls['show_swing_low']))>
                             <span class="text-zinc-200">Swing Low</span>
                         </label>
+                    @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::indicator('show_swing_low')])
                         <div class="grid gap-3 pl-6 sm:grid-cols-2">
                             <div>
                                 <label for="ls-cl-line" class="block text-[11px] text-zinc-500">Линия (#hex)</label>
                                 <input type="color" name="color_low_line" id="ls-cl-line" value="{{ $lowLineHex }}"
                                     class="mt-1 h-10 w-full max-w-[8rem] cursor-pointer rounded border border-zinc-600 bg-zinc-900">
+                    @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::indicator('color_low_line')])
                                 <p class="mt-1 text-[10px] text-zinc-500">Нестандартный цвет — через JSON.</p>
                             </div>
                             <div>
@@ -129,16 +138,18 @@
                                 <input type="text" name="color_low_fill" id="ls-cl-fill" required maxlength="64"
                                     value="{{ old('color_low_fill', $ls['color_low_fill']) }}"
                                     class="mt-1 w-full rounded border border-zinc-600 bg-zinc-900 px-2 py-1.5 font-mono text-xs text-zinc-200">
+                    @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::indicator('color_low_fill')])
                             </div>
                         </div>
                     </div>
                     <div>
                         <label for="ls-label-size" class="block text-xs font-medium text-zinc-400">Labels Size</label>
                         <select name="label_size" id="ls-label-size" class="mt-1 w-full max-w-xs rounded border border-zinc-600 bg-zinc-900 px-3 py-2 text-zinc-100">
-                            <option value="tiny" @selected(old('label_size', $ls['label_size'] ?? 'tiny') === 'tiny')>Tiny</option>
+<option value="tiny" @selected(old('label_size', $ls['label_size'] ?? 'tiny') === 'tiny')>Tiny</option>
                             <option value="small" @selected(old('label_size', $ls['label_size'] ?? 'tiny') === 'small')>Small</option>
                             <option value="normal" @selected(old('label_size', $ls['label_size'] ?? 'tiny') === 'normal')>Normal</option>
                         </select>
+                    @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::indicator('label_size')])
                     </div>
                 </div>
             </div>
@@ -149,7 +160,8 @@
                     Полный merge с дефолтами сервиса. Ключи см. <code class="text-zinc-400">LiquiditySwingsIndicatorService::DEFAULT_PARAMS</code>.
                 </p>
                 <textarea name="expert_settings_json" rows="8"
-                    class="mt-2 w-full rounded border border-zinc-700 bg-zinc-900 px-2 py-1.5 font-mono text-[11px] text-zinc-200">{{ old('expert_settings_json', json_encode($ls, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE)) }}</textarea>
+                    class="mt-2 w-full rounded border border-zinc-700 bg-zinc-900 px-2 py-1.5 font-mono text-[11px] text-zinc-200">
+                    @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::indicator('expert_settings_json')]){{ old('expert_settings_json', json_encode($ls, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE)) }}</textarea>
                 @error('expert_settings_json')
                     <p class="mt-1 text-xs text-rose-400">{{ $message }}</p>
                 @enderror
@@ -158,6 +170,7 @@
                         @checked(old('use_expert_json'))>
                     Сохранить из JSON вместо формы
                 </label>
+                    @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::indicator('use_expert_json')])
             </details>
 
             <div class="flex flex-wrap items-center justify-end gap-2 border-t border-zinc-700 bg-[#1a1c22] px-4 py-3">

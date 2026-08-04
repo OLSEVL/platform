@@ -5,7 +5,7 @@
     <div class="flex flex-wrap items-baseline justify-between gap-3">
         <div>
             <h1 class="text-xl font-semibold text-zinc-100 sm:text-2xl">Индикатор графика</h1>
-            <p class="mt-0.5 text-sm text-zinc-500">{{ $bot->name }} · Fractal (OsEngine) — оверлей</p>
+            <p class="mt-0.5 text-sm text-zinc-500">{{ $bot->name }} · Fractal — оверлей</p>
         </div>
         @include('bots.indicators._nav', ['bot' => $bot])
     </div>
@@ -27,9 +27,13 @@
             @method('PUT')
             <div class="space-y-2 rounded border border-zinc-700/60 p-3">
                 <label class="flex items-center gap-2"><input type="checkbox" name="show_up" value="1" class="rounded border-zinc-600" @checked(old('show_up', $p['show_up'] ? '1' : '') === '1' || (old('show_up') === null && $p['show_up']))> Up фракталы</label>
+                    @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::indicator('show_up')])
                 <input type="text" name="color_up" value="{{ old('color_up', $p['color_up']) }}" class="w-full max-w-xs rounded border border-zinc-600 bg-zinc-900 px-2 py-1 text-xs">
+                    @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::indicator('color_up')])
                 <label class="flex items-center gap-2"><input type="checkbox" name="show_down" value="1" class="rounded border-zinc-600" @checked(old('show_down', $p['show_down'] ? '1' : '') === '1' || (old('show_down') === null && $p['show_down']))> Down фракталы</label>
+                    @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::indicator('show_down')])
                 <input type="text" name="color_down" value="{{ old('color_down', $p['color_down']) }}" class="w-full max-w-xs rounded border border-zinc-600 bg-zinc-900 px-2 py-1 text-xs">
+                    @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::indicator('color_down')])
             </div>
             <button type="submit" class="rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-500">Сохранить</button>
         </form>

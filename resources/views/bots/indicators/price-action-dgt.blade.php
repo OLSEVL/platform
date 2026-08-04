@@ -67,7 +67,8 @@
                     Включите «Сохранить из JSON», чтобы записать настройки из поля ниже вместо формы (полный merge с дефолтами сервиса).
                 </p>
                 <textarea name="expert_settings_json" rows="8"
-                    class="mt-2 w-full rounded border border-zinc-700 bg-zinc-900 px-2 py-1.5 font-mono text-[11px] text-zinc-200">{{ old('expert_settings_json', json_encode($pa, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE)) }}</textarea>
+                    class="mt-2 w-full rounded border border-zinc-700 bg-zinc-900 px-2 py-1.5 font-mono text-[11px] text-zinc-200">
+                    @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::indicator('expert_settings_json')]){{ old('expert_settings_json', json_encode($pa, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE)) }}</textarea>
                 @error('expert_settings_json')
                     <p class="mt-1 text-xs text-rose-400">{{ $message }}</p>
                 @enderror
@@ -76,6 +77,7 @@
                         @checked(old('use_expert_json'))>
                     Сохранить из JSON вместо формы
                 </label>
+                    @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::indicator('use_expert_json')])
             </details>
 
             <div class="flex flex-wrap items-center justify-end gap-2 border-t border-zinc-700 bg-[#1a1c22] px-4 py-3">

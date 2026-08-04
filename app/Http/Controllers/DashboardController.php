@@ -9,6 +9,7 @@ use App\Models\PocketInstrument;
 use App\Services\CandleService;
 use App\Services\CandleStructureZoneDetector;
 use App\Services\CurrentCandleCacheService;
+use App\Services\Trading\ManualPocketOrderService;
 use App\Services\Indicators\AtrIndicatorService;
 use App\Services\Indicators\BollingerIndicatorService;
 use App\Services\Indicators\EmaIndicatorService;
@@ -121,6 +122,8 @@ class DashboardController extends Controller
             'timeframes' => $timeframes,
             // Первый бот пользователя — якорь для шестерёнок «Индикаторы» (те же страницы, что у графика бота).
             'chartIndicatorBot' => $this->chartIndicatorBotForUser(),
+            // Дефолты правой панели CALL/PUT: сумма и готовность SSID из профиля.
+            'manualTrade' => app(ManualPocketOrderService::class)->panelDefaults(auth()->user()),
         ]);
     }
 
@@ -149,6 +152,29 @@ class DashboardController extends Controller
         }
 
         return [time() - 86400, 5000];
+    }
+
+    /**
+     * Окно свечей именно для /indicators/classic.
+     *
+     * Общий overlayHistoryWindow(24ч / до 5000 баров) на M1 даёт ~1200+ минут + тяжёлые
+     * VolStages/ZigZag → ответ 10–20с. Фронт параллельно каждые 15с инвалидирует in-flight
+     * через classicIndicatorsFetchSeq — ответ никогда не применяется, нижняя pane «не появляется».
+     * Режем до ~500 баров: SMA/RSI/каналам хватает, ответ укладывается в 1–2с.
+     *
+     * @return array{0:int,1:int} [sinceUnix, maxBars]
+     */
+    private function classicIndicatorsHistoryWindow(int $timeframe): array
+    {
+        if (in_array($timeframe, CandleService::DASHBOARD_SECOND_TIMEFRAMES, true)) {
+            return $this->overlayHistoryWindow($timeframe);
+        }
+
+        $maxBars = 500;
+        // timeframe на дашборде — минуты (1, 5, 15…); секунды бара = minutes * 60.
+        $barSec = max(60, $timeframe * 60);
+
+        return [time() - ($maxBars * $barSec), $maxBars];
     }
 
     public function instrumentsSidebarData(): JsonResponse
@@ -585,7 +611,8 @@ class DashboardController extends Controller
             ]);
         }
 
-        [$since, $maxBars] = $this->overlayHistoryWindow($timeframe);
+        // Classic — отдельное «короткое» окно: см. classicIndicatorsHistoryWindow().
+        [$since, $maxBars] = $this->classicIndicatorsHistoryWindow($timeframe);
         $rows = $candleService->seriesForDashboard($instrument, $timeframe, $since, null, $maxBars);
         $anchorBot = $this->chartIndicatorBotForUser();
 

@@ -193,7 +193,7 @@ class LevelBounceAlertPresenter
             'cci_trade' => 'CCI',
             'rsi_trade' => 'RSI Trade',
             'rvi_trade' => 'RVI',
-            default => 'OsEngine Binary',
+            default => 'Binary',
         };
     }
 
@@ -451,7 +451,7 @@ class LevelBounceAlertPresenter
         }
 
         $setup = (string) ($features['setup'] ?? '');
-        $setupTitle = self::SETUP_TITLES[$setup] ?? ($setup !== '' ? $setup : 'OsEngine binary');
+        $setupTitle = self::SETUP_TITLES[$setup] ?? ($setup !== '' ? $setup : 'Binary setup');
         $close = isset($features['close']) ? (float) $features['close'] : 0.0;
 
         if ($close > 0) {

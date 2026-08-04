@@ -1,18 +1,23 @@
 {{--
-  Общий блок Telegram + Chart Analyst LLM для OsEngine binary ботов
+  Общий блок Telegram + Chart Analyst LLM для binary CALL/PUT ботов
   (pinbar / williams / three_soldier / cci / rsi_trade / rvi).
   Ids с суффиксом _ose, чтобы не конфликтовать с BB/RSI partials на одной странице.
 --}}
 <div class="space-y-4 rounded border border-zinc-700/80 bg-zinc-900/40 p-4">
     <div class="space-y-1">
         <h3 class="text-sm font-semibold text-zinc-200">Telegram-алерты</h3>
-        <p class="text-[11px] text-zinc-500">После paper-сделки — текст + опционально графики M1/M5 (тот же pipeline, что у Candle Reversal / Bollinger).</p>
+        <p class="text-[11px] leading-snug text-zinc-500">
+            Когда бот открыл бумажную сделку, можно сразу получить сообщение в Telegram: короткий текст и по желанию картинки графика (1 минута и/или 5 минут). Так вы видите сигнал, даже не сидя у экрана.
+        </p>
     </div>
     <label class="flex items-start gap-2">
         <input type="checkbox" name="telegram_enabled" id="telegram_enabled_ose" value="1"
             class="mt-0.5 rounded border-zinc-600 bg-zinc-800 text-blue-500"
             @checked(old('telegram_enabled', $cfg['telegram_enabled'] ?? false))>
-        <span class="text-sm font-medium text-zinc-300">Включить Telegram</span>
+        <span>
+            <span class="text-sm font-medium text-zinc-300">Включить Telegram</span>
+            @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('telegram_enabled')])
+        </span>
     </label>
     <div class="grid gap-4 sm:grid-cols-2">
         <div class="space-y-1">
@@ -23,6 +28,7 @@
                 <option value="signal_trade" @selected($telegramNotifyOn === 'signal_trade')>Новый сигнал + paper-сделка</option>
                 <option value="off" @selected($telegramNotifyOn === 'off')>Не уведомлять</option>
             </select>
+            @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('telegram_notify_on')])
         </div>
         <div class="space-y-1">
             <label for="telegram_alert_format_ose" class="block text-xs font-medium text-zinc-400">Формат сообщения</label>
@@ -33,6 +39,7 @@
                 <option value="detailed" @selected($telegramAlertFormat === 'detailed')>Развёрнутый</option>
                 <option value="card" @selected($telegramAlertFormat === 'card')>Как на карточке</option>
             </select>
+            @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('telegram_alert_format')])
         </div>
         <div class="space-y-1">
             <label for="telegram_send_chart_ose" class="block text-xs font-medium text-zinc-400">График M1</label>
@@ -42,6 +49,7 @@
                 <option value="1" @selected((string) $telegramSendChart === '1')>Текст + график M1</option>
                 <option value="0" @selected((string) $telegramSendChart === '0')>Только текст</option>
             </select>
+            @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('telegram_send_chart')])
         </div>
         <div class="space-y-1">
             <label for="telegram_send_chart_m5_ose" class="block text-xs font-medium text-zinc-400">График M5</label>
@@ -51,13 +59,17 @@
                 <option value="1" @selected((string) $telegramSendChartM5 === '1')>Отправлять PNG M5</option>
                 <option value="0" @selected((string) $telegramSendChartM5 === '0')>Только M1</option>
             </select>
+            @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('telegram_send_chart_m5')])
         </div>
         <div class="space-y-1 sm:col-span-2">
             <label class="flex items-start gap-2">
                 <input type="checkbox" name="telegram_analyst_llm_enabled" id="telegram_analyst_llm_enabled_ose" value="1"
                     class="mt-0.5 rounded border-zinc-600 bg-zinc-800 text-blue-500"
                     @checked(old('telegram_analyst_llm_enabled', $cfg['telegram_analyst_llm_enabled'] ?? true))>
-                <span class="text-sm font-medium text-zinc-300">Кнопка «{{ \App\Services\Telegram\StrongLevelTelegramLlmButton::BUTTON_LABEL }}»</span>
+                <span>
+                    <span class="text-sm font-medium text-zinc-300">Кнопка «{{ \App\Services\Telegram\StrongLevelTelegramLlmButton::BUTTON_LABEL }}»</span>
+                    @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('telegram_analyst_llm_enabled')])
+                </span>
             </label>
         </div>
         <div class="space-y-1">
@@ -72,11 +84,13 @@
                     </option>
                 @endforeach
             </select>
+            @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('telegram_analyst_bot_id')])
         </div>
         <div class="space-y-1 sm:col-span-2">
             <label for="telegram_analyst_llm_question_ose" class="block text-xs font-medium text-zinc-400">Вопрос к LLM</label>
             <textarea name="telegram_analyst_llm_question" id="telegram_analyst_llm_question_ose" rows="2"
                 class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">{{ old('telegram_analyst_llm_question', $cfg['telegram_analyst_llm_question'] ?? \App\Services\Telegram\StrongLevelTelegramLlmButton::DEFAULT_LLM_QUESTION) }}</textarea>
+            @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('telegram_analyst_llm_question')])
         </div>
         <div class="space-y-1 sm:col-span-2">
             <p id="telegram-process-status-ose" class="text-xs text-zinc-500">Проверка poll…</p>
@@ -93,6 +107,7 @@
                 value="{{ old('telegram_chat_id', $cfg['telegram_chat_id'] ?? '') }}"
                 placeholder="123456789"
                 class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 font-mono">
+            @include('partials.field-hint', ['text' => 'Номер чата, куда слать сообщения (ваш личный chat id или id группы). Можно получить кнопкой «Получить chat_id» ниже, написав боту в Telegram.'])
         </div>
         <div class="space-y-1 flex flex-col justify-end gap-2">
             <button type="button" id="telegram-discover-btn-ose"
