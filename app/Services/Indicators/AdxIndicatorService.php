@@ -2,6 +2,8 @@
 
 namespace App\Services\Indicators;
 
+use App\Support\PriceScale;
+
 /**
  * ADX / +DI / −DI — порт OsEngine Indicators/Scripts/ADX.cs (CalculateADX).
  * Отдельная pane: сила тренда (ADX) и направление (+DI/−DI).
@@ -120,9 +122,9 @@ class AdxIndicatorService
 
         // Округление как в OsEngine (4 знака) на выходе серий.
         for ($i = 0; $i < $n; $i++) {
-            $adx[$i] = round($adx[$i], 4);
-            $diPlus[$i] = round($diPlus[$i], 4);
-            $diMinus[$i] = round($diMinus[$i], 4);
+            $adx[$i] = PriceScale::roundMarket($adx[$i]);
+            $diPlus[$i] = PriceScale::roundMarket($diPlus[$i]);
+            $diMinus[$i] = PriceScale::roundMarket($diMinus[$i]);
         }
 
         return ['adx' => $adx, 'plus' => $diPlus, 'minus' => $diMinus];

@@ -3,6 +3,7 @@
 namespace App\Services\Indicators;
 
 use App\Services\CandleService;
+use App\Support\PriceScale;
 
 /**
  * Порт индикатора Pine "Price Action - Support & Resistance by DGT" (strategy1.txt).
@@ -872,8 +873,8 @@ class PriceActionDgtIndicatorService
         $labels = [];
         if ($p['vp_price_levels']) {
             $lc = (string) $p['vp_label_color'];
-            $labels[] = ['text' => (string) round($priceHighest, 5), 'price' => $priceHighest, 'time' => $timeEnd + $offsetSec, 'color' => $lc, 'place' => 'high'];
-            $labels[] = ['text' => (string) round($priceLowest, 5), 'price' => $priceLowest, 'time' => $timeEnd + $offsetSec, 'color' => $lc, 'place' => 'low'];
+            $labels[] = ['text' => (string) PriceScale::roundMarket($priceHighest), 'price' => $priceHighest, 'time' => $timeEnd + $offsetSec, 'color' => $lc, 'place' => 'high'];
+            $labels[] = ['text' => (string) PriceScale::roundMarket($priceLowest), 'price' => $priceLowest, 'time' => $timeEnd + $offsetSec, 'color' => $lc, 'place' => 'low'];
         }
 
         return [

@@ -2,6 +2,8 @@
 
 namespace App\Services\Indicators;
 
+use App\Support\PriceScale;
+
 /**
  * RSI — порт OsEngine Indicators/Scripts/RSI.cs.
  * Сглаживание приростов — MovingAverageHard: seed SMA, далее a = 2/(length*2) = 1/length.
@@ -85,7 +87,7 @@ class RsiIndicatorService
                 $rsi = 100.0;
             }
 
-            $values[$index] = round($rsi, 2);
+            $values[$index] = PriceScale::roundMarket($rsi);
         }
 
         return $values;

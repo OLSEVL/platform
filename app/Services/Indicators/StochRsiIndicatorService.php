@@ -2,6 +2,8 @@
 
 namespace App\Services\Indicators;
 
+use App\Support\PriceScale;
+
 /**
  * Stochastic RSI — порт OsEngine CandleChart/Indicators/StochRsi.cs.
  *
@@ -169,6 +171,6 @@ class StochRsiIndicatorService
             $average += $values[$i];
         }
 
-        return round($average / $length, 2);
+        return PriceScale::roundMarket($average / $length);
     }
 }

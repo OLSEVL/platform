@@ -2,6 +2,8 @@
 
 namespace App\Services\Indicators;
 
+use App\Support\PriceScale;
+
 /**
  * ROC (Rate of Change) — порт OsEngine Indicators/Scripts/ROC.cs.
  * value = (price - price[n]) / price[n] * 100; round 3.
@@ -49,7 +51,7 @@ class RocIndicatorService
                 continue;
             }
             $cur = OsEngineCandleMath::candlePoint($rows[$index], $point);
-            $values[$index] = round(($cur - $prev) / $prev * 100.0, 3);
+            $values[$index] = PriceScale::roundMarket(($cur - $prev) / $prev * 100.0);
         }
 
         return $values;

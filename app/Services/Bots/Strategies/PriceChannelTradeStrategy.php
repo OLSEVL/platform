@@ -69,10 +69,10 @@ class PriceChannelTradeStrategy implements BotStrategyInterface
             OsEngineBinaryDecision::confidence($depth, $payout),
             [
                 $call
-                    ? sprintf('High > PC Up(prev)=%.5f — пробой вверх.', $up)
-                    : sprintf('Low < PC Down(prev)=%.5f — пробой вниз.', $down),
+                    ? sprintf('High > PC Up(prev)=%.8f — пробой вверх.', $up)
+                    : sprintf('Low < PC Down(prev)=%.8f — пробой вниз.', $down),
             ],
-            sprintf('price_channel_trade: %s; up=%.5f down=%.5f', $setup, $up, $down),
+            sprintf('price_channel_trade: %s; up=%.8f down=%.8f', $setup, $up, $down),
             [
                 'up' => round($up, 8),
                 'down' => round($down, 8),

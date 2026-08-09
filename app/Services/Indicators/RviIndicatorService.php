@@ -2,6 +2,8 @@
 
 namespace App\Services\Indicators;
 
+use App\Support\PriceScale;
+
 /**
  * RVI — порт OsEngine Indicators/Scripts/RVI.cs.
  * Value1 = sum(moveAvg)/sum(rangeAvg) за period;
@@ -71,7 +73,7 @@ class RviIndicatorService
             if ($sumRa == 0.0 || $sumMa == 0.0) {
                 $rvi[$index] = 0.0;
             } else {
-                $rvi[$index] = round($sumMa / $sumRa, 2);
+                $rvi[$index] = PriceScale::roundMarket($sumMa / $sumRa);
             }
 
             if ($index >= $period + 6) {

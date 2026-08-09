@@ -86,10 +86,10 @@ class ParabolicBollingerStrategy implements BotStrategyInterface
             OsEngineBinaryDecision::confidence($depth, $payout),
             [
                 $call
-                    ? sprintf('Пробой BB Up(%.5f), SAR внутри канала (%.5f).', $up, $para)
-                    : sprintf('Пробой BB Down(%.5f), SAR внутри канала (%.5f).', $down, $para),
+                    ? sprintf('Пробой BB Up(%.8f), SAR внутри канала (%.8f).', $up, $para)
+                    : sprintf('Пробой BB Down(%.8f), SAR внутри канала (%.8f).', $down, $para),
             ],
-            sprintf('parabolic_bollinger: %s; up=%.5f down=%.5f para=%.5f', $setup, $up, $down, $para),
+            sprintf('parabolic_bollinger: %s; up=%.8f down=%.8f para=%.8f', $setup, $up, $down, $para),
             [
                 'up' => round($up, 8),
                 'down' => round($down, 8),

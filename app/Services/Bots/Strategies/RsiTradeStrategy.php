@@ -98,7 +98,7 @@ class RsiTradeStrategy implements BotStrategyInterface
             $side === 'CALL'
                 ? sprintf('RSI кросс вверх через %.0f: prev=%.2f → curr=%.2f.', $rsiDown, $prevRsi, $currRsi)
                 : sprintf('RSI кросс вниз через %.0f: prev=%.2f → curr=%.2f.', $rsiUp, $prevRsi, $currRsi),
-            sprintf('RSI(%d) · Up=%.0f · Down=%.0f · Close=%.5f', $rsiLen, $rsiUp, $rsiDown, $close),
+            sprintf('RSI(%d) · Up=%.0f · Down=%.0f · Close=%.8f', $rsiLen, $rsiUp, $rsiDown, $close),
         ];
         if ($payout !== null) {
             $reasons[] = sprintf('Payout: %.0f%%', $payout);
@@ -109,7 +109,7 @@ class RsiTradeStrategy implements BotStrategyInterface
             'confidence' => $confidence,
             'reasons_short' => $reasons,
             'analysis_text' => sprintf(
-                'rsi_trade: %s; prev=%.2f curr=%.2f close=%.5f; confidence=%.2f.',
+                'rsi_trade: %s; prev=%.2f curr=%.2f close=%.8f; confidence=%.2f.',
                 $setup,
                 $prevRsi,
                 $currRsi,

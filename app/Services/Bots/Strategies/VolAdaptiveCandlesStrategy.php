@@ -84,7 +84,7 @@ class VolAdaptiveCandlesStrategy implements BotStrategyInterface
             $side === 'CALL'
                 ? sprintf('Бычья сигнальная свеча: тело %.3f%% ≥ порог %.3f%%.', $bodyPct, $height)
                 : sprintf('Медвежья сигнальная свеча: тело %.3f%% ≥ порог %.3f%%.', $bodyPct, $height),
-            sprintf('Close=%.5f · days=%d · vola_share=%.1f%%', $close, $days, $volaShare),
+            sprintf('Close=%.8f · days=%d · vola_share=%.1f%%', $close, $days, $volaShare),
         ];
         if ($payout !== null) {
             $reasons[] = sprintf('Payout: %.0f%%', $payout);
@@ -97,7 +97,7 @@ class VolAdaptiveCandlesStrategy implements BotStrategyInterface
             $confidence,
             $reasons,
             sprintf(
-                'vol_adaptive_candles: %s; body_pct=%.4f height=%.4f close=%.5f',
+                'vol_adaptive_candles: %s; body_pct=%.4f height=%.4f close=%.8f',
                 $setup,
                 $bodyPct,
                 $height,

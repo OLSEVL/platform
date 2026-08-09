@@ -245,6 +245,8 @@
                 <div id="price-action-overlay" class="chart-dom-overlay absolute inset-0 pointer-events-none overflow-visible hidden"></div>
                 <div id="smc-flow-overlay" class="chart-dom-overlay absolute inset-0 pointer-events-none overflow-visible hidden"></div>
                 <div id="llm-levels-overlay" class="chart-dom-overlay absolute inset-0 pointer-events-none overflow-visible hidden"></div>
+                {{-- Названия включённых индикаторов (оверлеи + лейблы pane осцилляторов). --}}
+                <div id="classic-indicator-labels" class="chart-dom-overlay absolute inset-0 pointer-events-none overflow-hidden hidden"></div>
                 {{-- Кроссхейр поверх всех DOM-оверлеев: линии + подписи цены/времени не перекрываются уровнями LLM. --}}
                 <div id="bot-crosshair-overlay" class="absolute inset-0 pointer-events-none overflow-visible hidden">
                     <div id="bot-crosshair-hline" class="absolute left-0 hidden h-0 w-0"></div>
@@ -323,6 +325,7 @@
 {{-- LWC v5: addSeries(CandlestickSeries|LineSeries), createSeriesMarkers, реальные panes() для RSI/ATR --}}
 @include('partials.chart-markers-helper')
 @include('partials.chart-candle-smooth-helper')
+@include('partials.chart-fetch-helper')
 <script src="https://unpkg.com/lightweight-charts@5.2.0/dist/lightweight-charts.standalone.production.js"></script>
 <script>
 (function() {
@@ -356,9 +359,11 @@
     const SELECTED_INSTRUMENT_KEY = 'platform.bot.show.selectedInstrument.{{ $bot->id }}';
     // Увеличенное окно истории:
     // - LIMIT: сколько свечей максимум запрашиваем у API за один вызов;
-    // - WINDOW_SEC: базовый диапазон времени (в секундах), который показываем даже без сигналов.
+    // - WINDOW_SEC: базовый диапазон (3 суток) даже без сигналов;
+    // - INITIAL_BARS: минимум баров TF (на длинных TF 3 суток может дать <130 баров).
     const LIMIT = 3000;
     const WINDOW_SEC = 259200;
+    const INITIAL_BARS = 130;
     // Poll — узкое окно хвоста (как на dashboard), чтобы не перетирать историю и не гонять 3000 баров каждые 500ms.
     const POLL_WINDOW_SEC = 5 * 60;
     const POLL_LIMIT = 32;
@@ -391,7 +396,7 @@
         m1CloseCountdownAnchorPerfMs = performance.now();
     }
 
-    /** Микро-инструменты (LBP/USD OTC ~0.0000057): precision/minMove с API, иначе свечи схлопываются. */
+    /** Микро-инструменты (NGN/LBP OTC и т.п.): precision/minMove с API (единые 8 знаков), иначе свечи схлопываются. */
     function applyPriceScaleFromPayload(payload) {
         if (!candlestickSeries || !payload || !payload.price_scale) return;
         const precision = Number(payload.price_scale.precision);
@@ -468,6 +473,7 @@
     const priceActionOverlay = document.getElementById('price-action-overlay');
     const smcFlowOverlay = document.getElementById('smc-flow-overlay');
     const llmLevelsOverlay = document.getElementById('llm-levels-overlay');
+    const classicIndicatorLabelsEl = document.getElementById('classic-indicator-labels');
     const botCrosshairOverlay = document.getElementById('bot-crosshair-overlay');
     const botCrosshairHLine = document.getElementById('bot-crosshair-hline');
     const botCrosshairVLine = document.getElementById('bot-crosshair-vline');
@@ -670,6 +676,11 @@
     let rsiLevelLines = [];
     /** Индексы pane осцилляторов (после pane 0 = свечи); сбрасываем при clear. */
     let classicOscPaneCount = 0;
+    /**
+     * Кэш подписей классических индикаторов для DOM-оверлея названий.
+     * overlays — на основной pane; oscillators — по порядку addPane (pane 1..n).
+     */
+    let lastClassicNameState = { overlays: [], oscillators: [] };
 
     let chart = null;
     let candlestickSeries = null;
@@ -693,7 +704,6 @@
     let chartLoadSeq = 0;
     let pollSeq = 0;
     // То же для /indicators/data: расчёт тяжёлый, без seq гонки clear+redraw оставляли пустой график.
-    let indicatorFetchSeq = 0;
     // Не чаще одного пересчёта индикаторов в этот интервал (кроме явного toggle слоя).
     let lastIndicatorFetchAt = 0;
     const INDICATOR_MIN_REFETCH_MS = 2000;
@@ -1039,11 +1049,23 @@
 
     /** Рисует горизонтали/зоны из chart_levels поверх графика (только openrouter_llm_analyst). */
     function redrawLlmLevelsOverlay() {
-        if (!BOT_IS_CHART_ANALYST || !llmLevelsOverlay || !chart || !candlestickSeries) return;
+        if (!BOT_IS_CHART_ANALYST || !llmLevelsOverlay || !chart || !candlestickSeries) {
+            renderAllIndicatorNameLabels();
+            return;
+        }
         llmLevelsOverlay.innerHTML = '';
-        if (!layerLlmLevels || !layerLlmLevels.checked) return;
-        if (!lastLlmChartLevels || !allChartData.length) return;
-        if (lastLlmChartLevelsInstrument && currentInstrument && lastLlmChartLevelsInstrument !== currentInstrument) return;
+        if (!layerLlmLevels || !layerLlmLevels.checked) {
+            renderAllIndicatorNameLabels();
+            return;
+        }
+        if (!lastLlmChartLevels || !allChartData.length) {
+            renderAllIndicatorNameLabels();
+            return;
+        }
+        if (lastLlmChartLevelsInstrument && currentInstrument && lastLlmChartLevelsInstrument !== currentInstrument) {
+            renderAllIndicatorNameLabels();
+            return;
+        }
 
         const chartW = Math.max(1, chartWrapper ? chartWrapper.clientWidth : 0);
         const labelLanes = new Map();
@@ -1144,6 +1166,7 @@
         } catch (e) {
             console.error('[LLM levels] redraw', e);
         }
+        renderAllIndicatorNameLabels();
     }
 
     function applyLlmChartLevelsFromAnalysis(data) {
@@ -1215,7 +1238,6 @@
             return;
         }
         lastIndicatorFetchAt = now;
-        const fetchSeq = ++indicatorFetchSeq;
         const wantPa = layerPa && layerPa.checked;
         const wantLs = layerLiquidity && layerLiquidity.checked;
         const wantSmc = layerSmc && layerSmc.checked;
@@ -1365,6 +1387,7 @@
             lastZigZagPayload = null;
             lastVolatilityAverageTwicePayload = null;
             lastVolatilityStagesAwPayload = null;
+            if (window.PlatformChartFetch) window.PlatformChartFetch.invalidate('bot-indicators');
             redrawPriceActionOverlay();
             applyPaBarColors({ fullResync: true });
             renderChartMarkers();
@@ -1447,11 +1470,19 @@
         if (wantVolatilityAverageTwice) layers.push('volatility_average_twice');
         if (wantVolatilityStagesAw) layers.push('volatility_stages_aw');
         layers.forEach((l) => params.append('layers[]', l));
-        fetch(`${PA_INDICATOR_URL}?${params.toString()}`, { headers: { 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' } })
-            .then((r) => r.json())
-            .then((d) => {
-                // Устаревший ответ (пришёл после более нового запроса) — не трогаем payload/chart.
-                if (fetchSeq !== indicatorFetchSeq) return;
+        if (!window.PlatformChartFetch) return;
+        // Ключ включает слои: смена чекбоксов abort'ит старый запрос; тот же ключ coalesce (throttle+таймер).
+        const requestKey = [
+            currentInstrument,
+            String(currentTimeframeMinutes),
+            layers.slice().sort().join(','),
+        ].join('|');
+        // force=true (reload / toggle): не coalesce — перезапрашиваем даже при совпадающем key.
+        PlatformChartFetch.requestJson('bot-indicators', {
+            key: requestKey,
+            url: `${PA_INDICATOR_URL}?${params.toString()}`,
+            coalesce: !force,
+            apply: (d) => {
                 try {
                     lastPaPayload = wantPa && d && d.indicator ? d.indicator : null;
                     lastLsPayload = wantLs && d && d.liquidity_swings ? d.liquidity_swings : null;
@@ -1612,19 +1643,80 @@
                         applyClassicOsEngineSeries();
                     } catch (_) {}
                 }
-            })
-            .catch(() => {});
+            },
+        });
     }
 
     /**
      * Удаляет line-series классических индикаторов и лишние pane осцилляторов (LWC v5).
      * После removeSeries пустые pane обычно схлопываются; removePane — страховка.
      */
+    /**
+     * Названия structural-слоёв (OB/FVG/PA/…) — тоже показываем, когда слой включён.
+     * @returns {Array<{name:string,color:string,layerId:string,settingsUrl:?string}>}
+     */
+    function structureLayerNameLabels() {
+        const out = [];
+        const add = (layerId, fallbackName) => {
+            const cb = document.getElementById(layerId);
+            if (!cb || !cb.checked) return;
+            const meta = (window.PLATFORM_INDICATOR_LAYER_META && window.PLATFORM_INDICATOR_LAYER_META[layerId]) || {};
+            out.push({
+                name: meta.label || fallbackName,
+                color: '#f4f4f5',
+                layerId,
+                settingsUrl: meta.settingsUrl || null,
+            });
+        };
+        add('layer-ob', 'Ордерблоки');
+        add('layer-fvg', 'Имбалансы');
+        add('layer-pa-dgt', 'Price Action (DGT)');
+        add('layer-liquidity-swings', 'Liquidity Swings');
+        add('layer-smc-flow', 'SMC Flow');
+        if (BOT_IS_CHART_ANALYST) add('layer-llm-levels', 'Уровни LLM');
+        return out;
+    }
+
+    /**
+     * Собирает объект лейбла: title из API («RSI 14») + слой для иконок карандаш/×.
+     * @returns {{name:string,color:string,layerId:string,settingsUrl:?string}|null}
+     */
+    function classicIndicatorLabel(on, payload, fallbackName, layerId) {
+        if (!on) return null;
+        const meta = (window.PLATFORM_INDICATOR_LAYER_META && window.PLATFORM_INDICATOR_LAYER_META[layerId]) || {};
+        const title = payload && payload.title ? String(payload.title) : fallbackName;
+        return {
+            name: title,
+            color: '#f4f4f5',
+            layerId: layerId || null,
+            settingsUrl: meta.settingsUrl || null,
+        };
+    }
+
+    /** Перерисовывает DOM-бейджи названий индикаторов (structural + classic). */
+    function renderAllIndicatorNameLabels() {
+        if (!window.PlatformChartMarkers
+            || typeof window.PlatformChartMarkers.renderIndicatorNameLabels !== 'function') {
+            return;
+        }
+        window.PlatformChartMarkers.renderIndicatorNameLabels({
+            chart,
+            container: classicIndicatorLabelsEl,
+            mainLabels: [
+                ...structureLayerNameLabels(),
+                ...(lastClassicNameState.overlays || []),
+            ],
+            oscLabels: lastClassicNameState.oscillators || [],
+        });
+    }
+
     function clearClassicOsEngineSeries() {
         if (!chart) {
             classicLineSeries = {};
             rsiLevelLines = [];
             classicOscPaneCount = 0;
+            lastClassicNameState = { overlays: [], oscillators: [] };
+            renderAllIndicatorNameLabels();
             return;
         }
         Object.keys(classicLineSeries).forEach((k) => {
@@ -1639,12 +1731,14 @@
             }
         } catch (_) {}
         classicOscPaneCount = 0;
+        lastClassicNameState = { overlays: [], oscillators: [] };
         // Основная шкала снова на всю высоту pane 0 (без «фейкового» низа под RSI).
         try {
             chart.priceScale('right').applyOptions({
                 scaleMargins: { top: 0.08, bottom: 0.05 },
             });
         } catch (_) {}
+        renderAllIndicatorNameLabels();
     }
 
     /**
@@ -3627,6 +3721,119 @@
             s.setData(data.map((p) => ({ time: p.time, value: p.value })));
             classicLineSeries['atr'] = s;
         }
+
+        // Подписи названий в стиле PO: title из API («RSI 14») + иконки через layerId.
+        const overlays = [];
+        const pushOverlay = (on, payload, fallbackName, layerId) => {
+            const lb = classicIndicatorLabel(on, payload, fallbackName, layerId);
+            if (lb) overlays.push(lb);
+        };
+        pushOverlay(wantBb, lastBollingerPayload, 'Bollinger', 'layer-bollinger');
+        pushOverlay(wantSma, lastSmaPayload, 'SMA', 'layer-sma');
+        pushOverlay(wantEma, lastEmaPayload, 'EMA', 'layer-ema');
+        pushOverlay(wantVwma, lastVwmaPayload, 'VWMA', 'layer-vwma');
+        pushOverlay(wantKeltner, lastKeltnerPayload, 'Keltner', 'layer-keltner');
+        pushOverlay(wantEnvelops, lastEnvelopsPayload, 'Envelops', 'layer-envelops');
+        pushOverlay(wantParabolicSar, lastParabolicSarPayload, 'Parabolic SAR', 'layer-parabolic-sar');
+        pushOverlay(wantSuperTrend, lastSuperTrendPayload, 'SuperTrend', 'layer-supertrend');
+        pushOverlay(wantAlligator, lastAlligatorPayload, 'Alligator', 'layer-alligator');
+        pushOverlay(wantIchimoku, lastIchimokuPayload, 'Ichimoku', 'layer-ichimoku');
+        pushOverlay(wantPriceChannel, lastPriceChannelPayload, 'Price Channel', 'layer-price-channel');
+        pushOverlay(wantNrtr, lastNrtrPayload, 'NRTR', 'layer-nrtr');
+        pushOverlay(wantHma, lastHmaPayload, 'HMA', 'layer-hma');
+        pushOverlay(wantSmaChannel, lastSmaChannelPayload, 'SMA Channel', 'layer-sma-channel');
+        pushOverlay(wantLinReg, lastLinRegPayload, 'Linear Regression', 'layer-linreg');
+        pushOverlay(wantLinRegChannel, lastLinRegChannelPayload, 'Linear Reg. Channel', 'layer-linreg-channel');
+        pushOverlay(wantKalman, lastKalmanPayload, 'Kalman Filter', 'layer-kalman');
+        pushOverlay(wantFractal, lastFractalPayload, 'Fractal', 'layer-fractal');
+        pushOverlay(wantDonchian, lastDonchianPayload, 'Donchian', 'layer-donchian');
+        pushOverlay(wantPivotFloor, lastPivotFloorPayload, 'Pivot Floor', 'layer-pivot-floor');
+        pushOverlay(wantNrtrWatr, lastNrtrWatrPayload, 'NRTR WATR', 'layer-nrtr-watr');
+        pushOverlay(wantPriceChannelAdaptive, lastPriceChannelAdaptivePayload, 'PC Adaptive', 'layer-price-channel-adaptive');
+        pushOverlay(wantPriceChannelOffset, lastPriceChannelOffsetPayload, 'PC Offset', 'layer-price-channel-offset');
+        pushOverlay(wantParabolicBollinger, lastParabolicBollingerPayload, 'Parabolic BB', 'layer-parabolic-bollinger');
+        pushOverlay(wantParabolicPriceChannel, lastParabolicPriceChannelPayload, 'Parabolic PC', 'layer-parabolic-price-channel');
+        pushOverlay(wantAtrChannel, lastAtrChannelPayload, 'ATR Channel', 'layer-atr-channel');
+        pushOverlay(wantOffsetSma, lastOffsetSmaPayload, 'Offset SMA', 'layer-offset-sma');
+        pushOverlay(wantOffsetEma, lastOffsetEmaPayload, 'Offset EMA', 'layer-offset-ema');
+        pushOverlay(wantOffsetSsma, lastOffsetSsmaPayload, 'Offset SSMA', 'layer-offset-ssma');
+        pushOverlay(wantDynamicTrendDetector, lastDynamicTrendDetectorPayload, 'DTD', 'layer-dynamic-trend-detector');
+        pushOverlay(wantLinRegChannelFast, lastLinRegChannelFastPayload, 'LR Channel Fast', 'layer-linreg-channel-fast');
+        pushOverlay(wantZigZag, lastZigZagPayload, 'ZigZag', 'layer-zigzag');
+
+        // Порядок pushOsc ОБЯЗАН совпадать с порядком addPane в этой функции.
+        const oscillators = [];
+        const pushOsc = (on, payload, fallbackName, layerId) => {
+            const lb = classicIndicatorLabel(on, payload, fallbackName, layerId);
+            if (lb) oscillators.push(lb);
+        };
+        pushOsc(wantRsi, lastRsiPayload, 'RSI', 'layer-rsi');
+        pushOsc(wantMacd, lastMacdPayload, 'MACD', 'layer-macd');
+        pushOsc(wantStochastic, lastStochasticPayload, 'Stochastic', 'layer-stochastic');
+        pushOsc(wantCci, lastCciPayload, 'CCI', 'layer-cci');
+        pushOsc(wantAdx, lastAdxPayload, 'ADX', 'layer-adx');
+        pushOsc(wantWilliams, lastWilliamsPayload, 'Williams %R', 'layer-williams');
+        pushOsc(wantAo, lastAoPayload, 'AO', 'layer-ao');
+        pushOsc(wantAroon, lastAroonPayload, 'Aroon', 'layer-aroon');
+        pushOsc(wantMomentum, lastMomentumPayload, 'Momentum', 'layer-momentum');
+        pushOsc(wantRoc, lastRocPayload, 'ROC', 'layer-roc');
+        pushOsc(wantOsma, lastOsmaPayload, 'OsMA', 'layer-osma');
+        pushOsc(wantTrix, lastTrixPayload, 'TRIX', 'layer-trix');
+        pushOsc(wantCmo, lastCmoPayload, 'CMO', 'layer-cmo');
+        pushOsc(wantDemarker, lastDemarkerPayload, 'DeMarker', 'layer-demarker');
+        pushOsc(wantRvi, lastRviPayload, 'RVI', 'layer-rvi');
+        pushOsc(wantUltimate, lastUltimatePayload, 'Ultimate Oscillator', 'layer-ultimate');
+        pushOsc(wantSmi, lastSmiPayload, 'SMI', 'layer-smi');
+        pushOsc(wantStdDev, lastStdDevPayload, 'StdDev', 'layer-stddev');
+        pushOsc(wantIvashov, lastIvashovPayload, 'Ivashov Range', 'layer-ivashov');
+        pushOsc(wantStochRsi, lastStochRsiPayload, 'Stoch RSI', 'layer-stoch-rsi');
+        pushOsc(wantAc, lastAcPayload, 'AC', 'layer-ac');
+        pushOsc(wantBullsPower, lastBullsPowerPayload, 'Bulls Power', 'layer-bulls-power');
+        pushOsc(wantBearsPower, lastBearsPowerPayload, 'Bears Power', 'layer-bears-power');
+        pushOsc(wantDpo, lastDpoPayload, 'DPO', 'layer-dpo');
+        pushOsc(wantQstick, lastQstickPayload, 'QStick', 'layer-qstick');
+        pushOsc(wantVhFilter, lastVhFilterPayload, 'VHFilter', 'layer-vh-filter');
+        pushOsc(wantEfficiencyRatio, lastEfficiencyRatioPayload, 'Efficiency Ratio', 'layer-efficiency-ratio');
+        pushOsc(wantRavi, lastRaviPayload, 'RAVI', 'layer-ravi');
+        pushOsc(wantCog, lastCogPayload, 'COG', 'layer-cog');
+        pushOsc(wantMassIndex, lastMassIndexPayload, 'Mass Index', 'layer-mass-index');
+        pushOsc(wantVolatilityAverage, lastVolatilityAveragePayload, 'Vol Average', 'layer-volatility-average');
+        pushOsc(wantVolatilityAverageChannel, lastVolatilityAverageChannelPayload, 'Vol Avg Channel', 'layer-volatility-average-channel');
+        pushOsc(wantPriceOscillator, lastPriceOscillatorPayload, 'Price Oscillator', 'layer-price-oscillator');
+        pushOsc(wantAdaptiveLookBack, lastAdaptiveLookBackPayload, 'Adaptive Look Back', 'layer-adaptive-look-back');
+        pushOsc(wantVolatilityCandles, lastVolatilityCandlesPayload, 'Volatility Candles', 'layer-volatility-candles');
+        pushOsc(wantVolatilityAverageTwice, lastVolatilityAverageTwicePayload, 'Vol Avg Twice', 'layer-volatility-average-twice');
+        // VolatilityStagesAW может дать 0–2 pane — зеркалим те же условия, что и при addPane.
+        if (wantVolatilityStagesAw && lastVolatilityStagesAwPayload) {
+            const ser = lastVolatilityStagesAwPayload.series || {};
+            const baseTitle = (lastVolatilityStagesAwPayload.title)
+                ? String(lastVolatilityStagesAwPayload.title)
+                : 'Vol Stages AW';
+            const meta = (window.PLATFORM_INDICATOR_LAYER_META && window.PLATFORM_INDICATOR_LAYER_META['layer-volatility-stages-aw']) || {};
+            if (Array.isArray(ser.stages) && ser.stages.length) {
+                oscillators.push({
+                    name: baseTitle,
+                    color: '#f4f4f5',
+                    layerId: 'layer-volatility-stages-aw',
+                    settingsUrl: meta.settingsUrl || null,
+                });
+            }
+            const hasChannel = ['volatility', 'sma_fast', 'sma_slow', 'up', 'down']
+                .some((k) => Array.isArray(ser[k]) && ser[k].length);
+            if (hasChannel) {
+                oscillators.push({
+                    name: `${baseTitle} (ch)`,
+                    color: '#f4f4f5',
+                    layerId: 'layer-volatility-stages-aw',
+                    settingsUrl: meta.settingsUrl || null,
+                });
+            }
+        }
+        pushOsc(wantAtr, lastAtrPayload, 'ATR', 'layer-atr');
+
+        lastClassicNameState = { overlays, oscillators };
+        // rAF: после addPane высоты pane из LWC обычно уже актуальны.
+        requestAnimationFrame(() => renderAllIndicatorNameLabels());
     }
 
     /** Включён ли хотя бы один слой, требующий /indicators/data. */
@@ -3960,34 +4167,35 @@
         redrawLiquiditySwingsOverlay();
         // SMC Flow должен жить отдельно от DGT: обновляем его даже когда PA слой выключен.
         redrawSmcFlowOverlay();
-        if (!priceActionOverlay || !chart || !candlestickSeries) return;
-        priceActionOverlay.innerHTML = '';
-        if (!layerPa || !layerPa.checked || !lastPaPayload || !allChartData.length) return;
-        const ts = chart.timeScale();
-        /**
-         * Боковой VP: колонка у правого края панели, вплотную к ценовой шкале.
-         * Ширина шкалы берётся из API (меняется при зуме и длине подписей), а не фиксированные ~78px.
-         */
-        const vpPanelMaxHistPx = 100;
-        const vpPanelMaxDomPx = 26;
-        const vpPanelGapPx = 2;
-        const computeVpAnchorRight = () => {
-            const cw = chartWrapper.clientWidth || 0;
-            if (!Number.isFinite(cw) || cw < 40) return null;
-            let scaleW = 0;
-            try {
-                if (candlestickSeries && typeof candlestickSeries.priceScale === 'function') {
-                    scaleW = Number(candlestickSeries.priceScale().width());
+        try {
+            if (!priceActionOverlay || !chart || !candlestickSeries) return;
+            priceActionOverlay.innerHTML = '';
+            if (!layerPa || !layerPa.checked || !lastPaPayload || !allChartData.length) return;
+            const ts = chart.timeScale();
+            /**
+             * Боковой VP: колонка у правого края панели, вплотную к ценовой шкале.
+             * Ширина шкалы берётся из API (меняется при зуме и длине подписей), а не фиксированные ~78px.
+             */
+            const vpPanelMaxHistPx = 100;
+            const vpPanelMaxDomPx = 26;
+            const vpPanelGapPx = 2;
+            const computeVpAnchorRight = () => {
+                const cw = chartWrapper.clientWidth || 0;
+                if (!Number.isFinite(cw) || cw < 40) return null;
+                let scaleW = 0;
+                try {
+                    if (candlestickSeries && typeof candlestickSeries.priceScale === 'function') {
+                        scaleW = Number(candlestickSeries.priceScale().width());
+                    }
+                } catch (_) {
+                    scaleW = 0;
                 }
-            } catch (_) {
-                scaleW = 0;
-            }
-            if (!Number.isFinite(scaleW) || scaleW < 0) scaleW = 0;
-            const effectiveScale = scaleW > 0 ? scaleW : 78;
-            const borderGapPx = 1;
-            const anchor = cw - effectiveScale - borderGapPx;
-            return anchor > 8 ? anchor : null;
-        };
+                if (!Number.isFinite(scaleW) || scaleW < 0) scaleW = 0;
+                const effectiveScale = scaleW > 0 ? scaleW : 78;
+                const borderGapPx = 1;
+                const anchor = cw - effectiveScale - borderGapPx;
+                return anchor > 8 ? anchor : null;
+            };
         const appendVpLevelBar = (leftPx, topPx, widthPx, heightPx, background, opacity) => {
             if (!Number.isFinite(leftPx) || !Number.isFinite(topPx) || !Number.isFinite(widthPx) || !Number.isFinite(heightPx)) return;
             const div = document.createElement('div');
@@ -4128,6 +4336,10 @@
         }
         } catch (e) {
             console.error('[PriceAction DGT] redraw overlay', e);
+        }
+        } finally {
+            // Названия structural/classic-слоёв обновляем после любого выхода из PA overlay.
+            renderAllIndicatorNameLabels();
         }
     }
 
@@ -5185,9 +5397,20 @@
         wrap.classList.remove('hidden');
     }
     function refreshInstrumentSidebar() {
-        return fetch(INSTRUMENTS_SIDEBAR_URL, { headers: { 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' } })
-            .then((r) => r.json())
-            .then((d) => {
+        if (!window.PlatformChartFetch) {
+            return fetch(INSTRUMENTS_SIDEBAR_URL, { headers: { 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' } })
+                .then((r) => r.json())
+                .then((d) => {
+                    if (d && d.server_time) lastServerTimes.instruments = d.server_time;
+                    renderInstrumentSidebarRows(d.instruments || []);
+                })
+                .catch(() => {});
+        }
+        // coalesce: таймер сайдбара 1с не плодит параллельные GET.
+        return PlatformChartFetch.requestJson('instruments-sidebar', {
+            key: 'sidebar',
+            url: INSTRUMENTS_SIDEBAR_URL,
+            apply: (d) => {
                 if (d && d.server_time) lastServerTimes.instruments = d.server_time;
                 renderInstrumentSidebarRows(d.instruments || []);
                 updateScanRemainingCounter(d);
@@ -5197,8 +5420,8 @@
                     document.querySelectorAll('.instrument-btn').forEach((b) => b.classList.toggle('bg-blue-900/40', b.dataset.instrument === currentInstrument));
                 }
                 renderTimeDebugPanel();
-            })
-            .catch(() => {});
+            },
+        }) || Promise.resolve();
     }
     function applyInstrumentFilter(rawQuery) {
         const query = normalizeText(rawQuery);
@@ -5579,12 +5802,13 @@
     }
     function refreshOpenTrades() {
         if (!currentInstrument) return;
+        if (!window.PlatformChartFetch) return;
         const params = new URLSearchParams({ instrument: currentInstrument });
-        fetch(`${OPEN_TRADES_URL}?${params.toString()}`, {
-            headers: { 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
-        })
-            .then((r) => r.json())
-            .then((d) => {
+        // coalesce: интервал 3с не стартует второй GET, пока первый ещё летит.
+        PlatformChartFetch.requestJson('open-trades', {
+            key: currentInstrument,
+            url: `${OPEN_TRADES_URL}?${params.toString()}`,
+            apply: (d) => {
                 if (d && d.server_time) lastServerTimes.openTrades = d.server_time;
                 const prevOpenTrades = openTrades || [];
                 openTrades = d.trades || [];
@@ -5635,16 +5859,18 @@
                 focusTargetTradeOnChart();
                 updateSidebarActiveTradePanel();
                 renderTimeDebugPanel();
-            })
-            .catch(() => {});
+            },
+        });
     }
     function refreshSignalsHistory() {
         // История сигналов обновляется отдельно от open-trades, иначе после закрытия сделки маркер exp может пропасть до перезагрузки.
+        if (!window.PlatformChartFetch) return;
         const params = new URLSearchParams();
         if (currentInstrument) params.set('instrument', currentInstrument);
-        fetch(`${SIGNALS_URL}?${params.toString()}`, { headers: { 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' } })
-            .then((r) => r.json())
-            .then((d) => {
+        PlatformChartFetch.requestJson('signals', {
+            key: currentInstrument || '',
+            url: `${SIGNALS_URL}?${params.toString()}`,
+            apply: (d) => {
                 if (d && d.server_time) lastServerTimes.signals = d.server_time;
                 if (!Array.isArray(d.signals)) return;
                 signals = d.signals;
@@ -5663,8 +5889,8 @@
                 renderChartMarkers();
                 focusTargetTradeOnChart();
                 renderTimeDebugPanel();
-            })
-            .catch(() => {});
+            },
+        });
     }
     function buildChartData(candles) {
         return (candles || []).map((c) => ({ time: c.time, open: c.open, high: c.high, low: c.low, close: c.close }))
@@ -5689,8 +5915,11 @@
             const dynamicSince = (earliestSignalTs && Number.isFinite(earliestSignalTs))
                 ? Math.min(candlesSince(), Math.max(0, earliestSignalTs - 3600))
                 : candlesSince();
-            since = dynamicSince;
-            limit = LIMIT;
+            // Гарантируем ≥ INITIAL_BARS: берём более ранний since (больший lookback).
+            const barBasedSince = Math.floor(Date.now() / 1000)
+                - timeframeSeconds(currentTimeframeMinutes) * INITIAL_BARS;
+            since = Math.min(dynamicSince, barBasedSince);
+            limit = Math.max(LIMIT, INITIAL_BARS + 10);
         }
 
         const params = new URLSearchParams({
@@ -5704,34 +5933,64 @@
         if (before == null) {
             params.set('include_partial', '1');
         }
-        return fetch(`${CANDLES_URL}?${params.toString()}`, { headers: { 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' } })
-            .then((r) => r.json())
-            .then((payload) => {
-                applyM1CountdownFromPayload(payload);
-                applyPriceScaleFromPayload(payload);
-                if (currentTimeframeMinutes !== 1) {
-                    applyGenericCountdownFromPayload(payload, currentTimeframeMinutes);
-                } else {
-                    tfCloseCountdownAnchorSec = null;
-                    tfCloseCountdownAnchorPerfMs = null;
-                }
-                if (payload && payload.feed_debug && typeof payload.feed_debug === 'object') {
-                    lastFeedDebug = {
-                        rawFeedTime: payload.feed_debug.raw_feed_time ?? null,
-                        effectiveFeedTime: payload.feed_debug.effective_feed_time ?? null,
-                        ingestReceivedAt: payload.feed_debug.ingest_received_at ?? null,
-                        lastClosedCandleTime: payload.feed_debug.last_closed_candle_time ?? null,
-                    };
-                }
-                renderTimeDebugPanel();
-                return payload;
-            });
+        const url = `${CANDLES_URL}?${params.toString()}`;
+        const channel = kind === 'poll' ? 'candles-poll'
+            : (kind === 'more' ? 'candles-more' : 'candles-initial');
+        const key = kind === 'poll'
+            ? (instrument + '|' + String(currentTimeframeMinutes) + '|poll')
+            : (instrument + '|' + String(currentTimeframeMinutes) + '|' + kind + '|' + String(before ?? ''));
+
+        const finishPayload = (payload) => {
+            if (!payload || typeof payload !== 'object') {
+                return { candles: [] };
+            }
+            applyM1CountdownFromPayload(payload);
+            applyPriceScaleFromPayload(payload);
+            if (currentTimeframeMinutes !== 1) {
+                applyGenericCountdownFromPayload(payload, currentTimeframeMinutes);
+            } else {
+                tfCloseCountdownAnchorSec = null;
+                tfCloseCountdownAnchorPerfMs = null;
+            }
+            if (payload && payload.feed_debug && typeof payload.feed_debug === 'object') {
+                lastFeedDebug = {
+                    rawFeedTime: payload.feed_debug.raw_feed_time ?? null,
+                    effectiveFeedTime: payload.feed_debug.effective_feed_time ?? null,
+                    ingestReceivedAt: payload.feed_debug.ingest_received_at ?? null,
+                    lastClosedCandleTime: payload.feed_debug.last_closed_candle_time ?? null,
+                };
+            }
+            renderTimeDebugPanel();
+            return payload;
+        };
+
+        if (!window.PlatformChartFetch) {
+            return fetch(url, { headers: { 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' } })
+                .then((r) => r.json())
+                .then(finishPayload);
+        }
+        const p = PlatformChartFetch.requestJson(channel, {
+            key: key,
+            url: url,
+            coalesce: kind !== 'initial',
+        });
+        if (!p) {
+            return Promise.resolve({ candles: [] });
+        }
+        return p.then((payload) => finishPayload(payload));
     }
     function fetchStructures() {
         if (!currentInstrument) return;
+        if (!window.PlatformChartFetch) return;
         const params = new URLSearchParams({ instrument: currentInstrument, timeframe: String(currentTimeframeMinutes) });
-        fetch(`${STRUCTURES_URL}?${params.toString()}`, { headers: { 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' } })
-            .then(r => r.json()).then(d => { lastZones = d.zones || []; redrawStructureOverlay(); }).catch(() => {});
+        PlatformChartFetch.requestJson('structures', {
+            key: currentInstrument + '|' + String(currentTimeframeMinutes),
+            url: `${STRUCTURES_URL}?${params.toString()}`,
+            apply: (d) => {
+                lastZones = d.zones || [];
+                redrawStructureOverlay();
+            },
+        });
     }
     function redrawStructureOverlay() {
         if (!chart || !candlestickSeries || !structureOverlay) return;
@@ -6064,6 +6323,7 @@
         if (priceActionOverlay) priceActionOverlay.classList.remove('hidden');
         if (smcFlowOverlay) smcFlowOverlay.classList.remove('hidden');
         if (BOT_IS_CHART_ANALYST && llmLevelsOverlay) llmLevelsOverlay.classList.remove('hidden');
+        if (classicIndicatorLabelsEl) classicIndicatorLabelsEl.classList.remove('hidden');
         chartPlaceholder.classList.add('hidden');
         // Собираем конфиг кроссхейра в зависимости от настройки из "Настройки бота":
         // - true: режим как в TradingView (свободный курсор + линии X/Y + подписи),
@@ -6161,6 +6421,11 @@
         classicLineSeries = {};
         rsiLevelLines = [];
         classicOscPaneCount = 0;
+        lastClassicNameState = { overlays: [], oscillators: [] };
+        if (classicIndicatorLabelsEl) {
+            classicIndicatorLabelsEl.innerHTML = '';
+            classicIndicatorLabelsEl.classList.remove('hidden');
+        }
         try {
             candlestickSeries.attachPrimitive(createBotChartDomOverlaySyncPrimitive());
         } catch (e) {
@@ -6178,7 +6443,8 @@
         chart.timeScale().subscribeVisibleLogicalRangeChange(() => {
             try {
                 const range = chart.timeScale().getVisibleLogicalRange();
-                if (range && currentTimeframeMinutes === 1 && !loadingMore && oldestLoadedTime != null && range.from < 2) loadMoreCandles();
+                // Догрузка влево на любом TF (раньше только M1).
+                if (range && !loadingMore && oldestLoadedTime != null && range.from < 2) loadMoreCandles();
                 redrawStructureOverlay();
                 requestAnimationFrame(positionCandleTimerOverlay);
             } catch (e) {
@@ -6187,7 +6453,7 @@
         });
     }
     function loadMoreCandles() {
-        if (currentTimeframeMinutes !== 1 || !currentInstrument || loadingMore || oldestLoadedTime == null) return;
+        if (!currentInstrument || loadingMore || oldestLoadedTime == null) return;
         const earliestSignalTs = earliestSignalTsForInstrument(currentInstrument);
         const dynamicSince = (earliestSignalTs && Number.isFinite(earliestSignalTs))
             ? Math.min(candlesSince(), Math.max(0, earliestSignalTs - 3600))
@@ -6197,6 +6463,7 @@
         setLoading(true);
         const inst = currentInstrument;
         const loadSeq = ++chartLoadSeq;
+        // before на любом TF: API больше не режет TF≠1 пустым ответом.
         fetchCandles(inst, { before: oldestLoadedTime, kind: 'more' }).then((data) => {
             if (loadSeq !== chartLoadSeq || inst !== currentInstrument) return;
             const newBars = buildChartData(data.candles || []);
@@ -6327,7 +6594,8 @@
         stopHeavyOverlaysRefresh();
         pollSeq++;
         const loadSeq = ++chartLoadSeq;
-        indicatorFetchSeq++; // инвалидируем in-flight индикаторы при смене пары
+        // Abort всех in-flight chart-fetch (индикаторы/свечи/structures) при смене пары.
+        if (window.PlatformChartFetch) window.PlatformChartFetch.invalidateAll();
         const hadPriorInstrument = currentInstrument !== null;
         currentInstrument = instrument;
         currentDisplayName = displayName;
@@ -6426,6 +6694,7 @@
         currentTimeframeMinutes = m;
         updateTfOptionStyles();
         tfPanel.classList.add('hidden');
+        if (window.PlatformChartFetch) window.PlatformChartFetch.invalidateAll();
         if (currentInstrument && candlestickSeries) reloadChartData();
     }));
     // Попап индикаторов / справка — в partials/chart-indicators-popup-script.

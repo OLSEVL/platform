@@ -2,6 +2,8 @@
 
 namespace App\Services\Indicators;
 
+use App\Support\PriceScale;
+
 /**
  * VolatilityAverageChannel — порт OsEngine Indicators/Scripts/VolatilityAverageChannel.cs.
  *
@@ -193,7 +195,7 @@ class VolatilityAverageChannelIndicatorService
             if (gmdate('Y-m-d', (int) $rows[$i]['time']) !== $curDay) {
                 break;
             }
-            $smaFast[$i] = round($fastSma, 5);
+            $smaFast[$i] = PriceScale::roundMarket($fastSma);
         }
 
         // Slow SMA + канал вокруг неё.
@@ -202,9 +204,9 @@ class VolatilityAverageChannelIndicatorService
             if (gmdate('Y-m-d', (int) $rows[$i]['time']) !== $curDay) {
                 break;
             }
-            $smaSlow[$i] = round($slowSma, 5);
-            $up[$i] = round($slowSma + $slowSma * $dev, 5);
-            $down[$i] = round($slowSma - $slowSma * $dev, 5);
+            $smaSlow[$i] = PriceScale::roundMarket($slowSma);
+            $up[$i] = PriceScale::roundMarket($slowSma + $slowSma * $dev);
+            $down[$i] = PriceScale::roundMarket($slowSma - $slowSma * $dev);
         }
     }
 
@@ -281,8 +283,8 @@ class VolatilityAverageChannelIndicatorService
                 break;
             }
             $smaSlow[$i] = $slowSma;
-            $up[$i] = round($slowSma + $slowSma * $dev, 5);
-            $down[$i] = round($slowSma - $slowSma * $dev, 5);
+            $up[$i] = PriceScale::roundMarket($slowSma + $slowSma * $dev);
+            $down[$i] = PriceScale::roundMarket($slowSma - $slowSma * $dev);
         }
     }
 
@@ -314,8 +316,8 @@ class VolatilityAverageChannelIndicatorService
         $smaFast[$index] = $this->smaLastBars($volatility, $index, $lenFast);
         $slow = $this->smaLastBars($volatility, $index, $lenSlow);
         $smaSlow[$index] = $slow;
-        $up[$index] = round($slow + $slow * $dev, 5);
-        $down[$index] = round($slow - $slow * $dev, 5);
+        $up[$index] = PriceScale::roundMarket($slow + $slow * $dev);
+        $down[$index] = PriceScale::roundMarket($slow - $slow * $dev);
     }
 
     private function rangeToVolatility(float $high, float $low, string $varType): float
@@ -327,7 +329,7 @@ class VolatilityAverageChannelIndicatorService
             return 0.0;
         }
 
-        return round(($high - $low) / ($low / 100.0), 5);
+        return PriceScale::roundMarket(($high - $low) / ($low / 100.0));
     }
 
     /**

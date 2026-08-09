@@ -2,6 +2,8 @@
 
 namespace App\Services\Indicators;
 
+use App\Support\PriceScale;
+
 /**
  * Stochastic Momentum Index — порт OsEngine Indicators/Scripts/StochasticMomentumIndex.cs.
  * DM = close - mid(HL); Diff = H-L; двойное SMA сглаживание; SMI = 100*dm2/diff2; signal = SMA(SMI).
@@ -77,8 +79,8 @@ class SmiIndicatorService
         $smi = [];
         $signal = [];
         for ($i = 0; $i < $n; $i++) {
-            $smi[$i] = round($diffS[$i], 2);
-            $signal[$i] = round($diffS2[$i], 2);
+            $smi[$i] = PriceScale::roundMarket($diffS[$i]);
+            $signal[$i] = PriceScale::roundMarket($diffS2[$i]);
         }
 
         return ['smi' => $smi, 'signal' => $signal];

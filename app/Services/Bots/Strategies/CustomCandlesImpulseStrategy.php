@@ -93,7 +93,7 @@ class CustomCandlesImpulseStrategy implements BotStrategyInterface
             $side === 'CALL'
                 ? sprintf('Импульс: %d бычьих свечей за %d с (лимит %d с).', $nEntry, $spanSec, $maxSec)
                 : sprintf('Импульс: %d медвежьих свечей за %d с (лимит %d с).', $nEntry, $spanSec, $maxSec),
-            sprintf('Close=%.5f · avg_body=%.3f%%', $lastClose, $avgBody),
+            sprintf('Close=%.8f · avg_body=%.3f%%', $lastClose, $avgBody),
         ];
         if ($payout !== null) {
             $reasons[] = sprintf('Payout: %.0f%%', $payout);
@@ -106,7 +106,7 @@ class CustomCandlesImpulseStrategy implements BotStrategyInterface
             $confidence,
             $reasons,
             sprintf(
-                'custom_candles_impulse: %s; n=%d span=%ds close=%.5f',
+                'custom_candles_impulse: %s; n=%d span=%ds close=%.8f',
                 $setup,
                 $nEntry,
                 $spanSec,

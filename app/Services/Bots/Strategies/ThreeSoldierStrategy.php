@@ -106,7 +106,7 @@ class ThreeSoldierStrategy implements BotStrategyInterface
             $side === 'CALL'
                 ? sprintf('Три бычьих солдата, высота паттерна %.3f%% (порог %.3f%%).', $patternPct, $heightSoldiers)
                 : sprintf('Три медвежьих солдата, высота паттерна %.3f%% (порог %.3f%%).', $patternPct, $heightSoldiers),
-            sprintf('Close=%.5f · min_one=%.3f%%', $lastClose, $minOne),
+            sprintf('Close=%.8f · min_one=%.3f%%', $lastClose, $minOne),
         ];
         if ($payout !== null) {
             $reasons[] = sprintf('Payout: %.0f%%', $payout);
@@ -117,7 +117,7 @@ class ThreeSoldierStrategy implements BotStrategyInterface
             'confidence' => $confidence,
             'reasons_short' => $reasons,
             'analysis_text' => sprintf(
-                'three_soldier: %s; pattern_pct=%.4f close=%.5f; confidence=%.2f.',
+                'three_soldier: %s; pattern_pct=%.4f close=%.8f; confidence=%.2f.',
                 $setup,
                 $patternPct,
                 $lastClose,

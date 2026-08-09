@@ -2,6 +2,8 @@
 
 namespace App\Services\Indicators;
 
+use App\Support\PriceScale;
+
 /**
  * IvashovRange — порт OsEngine Indicators/Scripts/IvashovRange.cs.
  * range = |SMA(close, lengthMa) - close|; value = SMA(range, lengthAvg).
@@ -64,7 +66,7 @@ class IvashovRangeIndicatorService
                 for ($i = $index - $lengthAvg + 1; $i <= $index; $i++) {
                     $var += $range[$i];
                 }
-                $average[$index] = round($var / $lengthAvg, 4);
+                $average[$index] = PriceScale::roundMarket($var / $lengthAvg);
             }
 
             if ($index < $lengthAvg || $index < $lengthMa || $moving[$index] == 0.0) {

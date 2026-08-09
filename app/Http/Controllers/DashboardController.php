@@ -288,13 +288,8 @@ class DashboardController extends Controller
 
         $serverUnix = time();
 
-        if ($timeframe !== 1 && $before !== null) {
-            return response()->json([
-                'candles' => [],
-                'server_unix' => $serverUnix,
-                'm1_seconds_to_close' => null,
-            ]);
-        }
+        // before поддерживаем на всех TF: фронт догружает историю скроллом влево (loadMore).
+        // Раньше для TF≠1 отдавали [] — на M5/M15 нельзя было набрать больше initial-окна.
 
         $rows = $candleService->seriesForDashboard(
             $instrument,
@@ -372,7 +367,7 @@ class DashboardController extends Controller
             ? M1CandleCountdown::secondsToClose($lastOpen, $serverUnix)
             : null;
 
-        // LBP/USD OTC и другие микро-цены: адаптивная точность вместо фиксированных 5 знаков.
+        // Микро-цены (NGN/LBP OTC и т.п.): единые 8 знаков вместо фиксированных 5.
         $priceDecimals = PriceScale::resolveFromCandles($data);
         $data = array_map(static fn (array $c) => [
             'time' => $c['time'],
@@ -1183,6 +1178,9 @@ class DashboardController extends Controller
                     : VolatilityStagesAWIndicatorService::defaultParams()
             );
         }
+
+        // Заголовки для лейблов на графике («RSI 14», «MACD 12 26 9») — как на Pocket Option.
+        $json = \App\Support\ClassicIndicatorChartTitle::enrich($json, $anchorBot);
 
         return response()->json($json);
     }

@@ -132,9 +132,11 @@ class TelegramAnalystHandler
             return;
         }
 
-        if (str_starts_with($data, 'ins:')) {
-            $index = (int) substr($data, 4);
-            $instrument = $this->instruments->instrumentByIndex($bot, $index);
+        // Выбор пары из меню: callback_data = «ins:EURUSD_otc» (имя, не индекс),
+        // иначе при обновлении payout индекс указывал бы на другую пару.
+        $callbackRaw = $this->instruments->parseInstrumentCallback($data);
+        if ($callbackRaw !== null) {
+            $instrument = $this->instruments->resolveCallbackSelection($bot, $callbackRaw);
             if ($instrument === null) {
                 $this->telegram->answerCallbackQuery($token, $callbackId, 'Инструмент недоступен');
                 $this->sendInstrumentMenu($bot, $token, $chatId);
@@ -319,7 +321,7 @@ class TelegramAnalystHandler
     }
 
     /**
-     * @param  array{items:list<array{index:int,instrument:string,payout:?float}>,total:int}  $menuData
+     * @param  array{items:list<array{instrument:string,callback_data:string,payout:?float}>,total:int}  $menuData
      * @return list<list<array{text:string,callback_data:string}>>
      */
     private function buildInstrumentKeyboard(array $menuData): array
@@ -327,6 +329,7 @@ class TelegramAnalystHandler
         $rows = [];
         $row = [];
         foreach ($menuData['items'] as $item) {
+            // Текст кнопки можно укорачивать; callback_data всегда несёт полное имя пары.
             $label = $item['instrument'];
             if ($item['payout'] !== null) {
                 $label .= ' '.number_format($item['payout'], 0).'%';
@@ -336,7 +339,7 @@ class TelegramAnalystHandler
             }
             $row[] = [
                 'text' => $label,
-                'callback_data' => 'ins:'.$item['index'],
+                'callback_data' => $item['callback_data'],
             ];
             if (count($row) >= 3) {
                 $rows[] = $row;

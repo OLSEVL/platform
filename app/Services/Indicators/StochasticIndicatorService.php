@@ -2,6 +2,8 @@
 
 namespace App\Services\Indicators;
 
+use App\Support\PriceScale;
+
 /**
  * Stochastic — порт OsEngine Indicators/Scripts/Stochastic.cs.
  *
@@ -75,8 +77,8 @@ class StochasticIndicatorService
 
         // SeriesOne/Two в OsEngine = Round(..., 2) — округляем только на выходе.
         for ($index = 0; $index < $n; $index++) {
-            $k[$index] = round($k[$index], 2);
-            $kM[$index] = round($kM[$index], 2);
+            $k[$index] = PriceScale::roundMarket($k[$index]);
+            $kM[$index] = PriceScale::roundMarket($kM[$index]);
         }
 
         return [

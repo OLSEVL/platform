@@ -107,10 +107,10 @@ class BreakLinRegChannelStrategy implements BotStrategyInterface
             OsEngineBinaryDecision::confidence($depth, $payout),
             [
                 $call
-                    ? sprintf('Close(%.5f) > LR Up(%.5f).', $close, $up)
-                    : sprintf('Close(%.5f) < LR Down(%.5f).', $close, $down),
+                    ? sprintf('Close(%.8f) > LR Up(%.8f).', $close, $up)
+                    : sprintf('Close(%.8f) < LR Down(%.8f).', $close, $down),
             ],
-            sprintf('break_linreg_channel: %s; up=%.5f down=%.5f', $setup, $up, $down),
+            sprintf('break_linreg_channel: %s; up=%.8f down=%.8f', $setup, $up, $down),
             [
                 'up' => round($up, 8),
                 'down' => round($down, 8),

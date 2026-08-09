@@ -579,7 +579,7 @@ class TelegramAnalystServicesTest extends TestCase
         app(TelegramAnalystHandler::class)->handleUpdate($bot, [
             'callback_query' => [
                 'id' => 'cb-skip',
-                'data' => 'ins:0',
+                'data' => 'ins:EURUSD_otc',
                 'message' => ['chat' => ['id' => 55555]],
             ],
         ]);
@@ -590,5 +590,94 @@ class TelegramAnalystServicesTest extends TestCase
                 && $job->instrument === 'EURUSD_otc'
                 && $job->userQuestion === '';
         });
+    }
+
+    /**
+     * Регрессия: кнопка несёт имя пары. Если бы резолв шёл по индексу,
+     * после выпадения первой пары из фильтра по payout клик по «EURUSD» дал бы другую.
+     */
+    public function test_instrument_callback_uses_name_not_shifting_index(): void
+    {
+        Queue::fake();
+
+        PocketInstrument::query()->create([
+            'instrument' => 'AAA_otc',
+            'display_name' => 'AAA',
+            'is_active' => true,
+            'current_payout' => 40, // ниже min_payout — в меню её не было бы, но индекс «0» сейчас это EURUSD
+            'priority' => 1,
+        ]);
+        PocketInstrument::query()->create([
+            'instrument' => 'EURUSD_otc',
+            'display_name' => 'EUR/USD OTC',
+            'is_active' => true,
+            'current_payout' => 90,
+            'priority' => 1,
+        ]);
+
+        $user = User::factory()->create();
+        $bot = Bot::query()->create([
+            'user_id' => $user->id,
+            'name' => 'Chart Analyst SMC Flow',
+            'type' => 'openrouter_llm_analyst',
+            'is_active' => false,
+            'config' => [
+                'telegram_enabled' => true,
+                'telegram_bot_token' => 'analyst-token',
+                'telegram_skip_user_question' => true,
+                'min_payout' => 80,
+            ],
+        ]);
+
+        $service = app(TelegramAnalystInstrumentService::class);
+        $menu = $service->keyboardItems($bot);
+        $this->assertCount(1, $menu['items']);
+        $this->assertSame('EURUSD_otc', $menu['items'][0]['instrument']);
+        $this->assertSame('ins:EURUSD_otc', $menu['items'][0]['callback_data']);
+
+        // Симуляция: после показа меню AAA снова стала «проходимой» по payout —
+        // при индексе «0» резолв дал бы AAA; по имени должен остаться EURUSD.
+        PocketInstrument::query()->where('instrument', 'AAA_otc')->update(['current_payout' => 95]);
+
+        app(TelegramAnalystHandler::class)->handleUpdate($bot, [
+            'callback_query' => [
+                'id' => 'cb-name',
+                'data' => 'ins:EURUSD_otc',
+                'message' => ['chat' => ['id' => 55556]],
+            ],
+        ]);
+
+        Queue::assertPushed(RunTelegramAnalystAnalysisJob::class, function ($job) use ($bot): bool {
+            return $job->botId === $bot->id
+                && $job->chatId === '55556'
+                && $job->instrument === 'EURUSD_otc';
+        });
+    }
+
+    public function test_encode_and_resolve_instrument_callback(): void
+    {
+        PocketInstrument::query()->create([
+            'instrument' => 'GBPUSD_otc',
+            'display_name' => 'GBP/USD OTC',
+            'is_active' => true,
+            'current_payout' => 50,
+            'priority' => 1,
+        ]);
+
+        $user = User::factory()->create();
+        $bot = Bot::query()->create([
+            'user_id' => $user->id,
+            'name' => 'Test Analyst',
+            'type' => 'openrouter_llm_analyst',
+            'is_active' => false,
+            'config' => ['min_payout' => 80],
+        ]);
+
+        $service = app(TelegramAnalystInstrumentService::class);
+        $encoded = $service->encodeInstrumentCallback('GBPUSD_otc');
+        $this->assertSame('ins:GBPUSD_otc', $encoded);
+        $this->assertSame('GBPUSD_otc', $service->parseInstrumentCallback((string) $encoded));
+        // Даже ниже min_payout — имя из кнопки резолвится по активному инструменту.
+        $this->assertSame('GBPUSD_otc', $service->resolveCallbackSelection($bot, 'GBPUSD_otc'));
     }
 }

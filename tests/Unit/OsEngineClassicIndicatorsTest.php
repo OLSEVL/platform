@@ -241,7 +241,7 @@ class OsEngineClassicIndicatorsTest extends TestCase
         }
         $expected = round(
             (OsEngineCandleMath::candlePoint($rows[$index], 'Typical') - $ma) / ($md * 0.015 / $length),
-            5
+            8
         );
         $this->assertEqualsWithDelta($expected, (float) $cci[$index], 1e-12);
     }
@@ -360,8 +360,8 @@ class OsEngineClassicIndicatorsTest extends TestCase
         $this->assertSame(0.0, $series['mid'][$length]);
         $sma = OsEngineCandleMath::smaAt($rows, $index, $length, 'Close');
         $this->assertEqualsWithDelta($sma, $series['mid'][$index], 1e-12);
-        $this->assertEqualsWithDelta(round($sma + $sma * $dev / 100, 6), $series['up'][$index], 1e-12);
-        $this->assertEqualsWithDelta(round($sma - $sma * $dev / 100, 6), $series['down'][$index], 1e-12);
+        $this->assertEqualsWithDelta(round($sma + $sma * $dev / 100, 8), $series['up'][$index], 1e-12);
+        $this->assertEqualsWithDelta(round($sma - $sma * $dev / 100, 8), $series['down'][$index], 1e-12);
     }
 
     /** ADX: до length*2-1 значение 0; после — в диапазоне 0..100. */

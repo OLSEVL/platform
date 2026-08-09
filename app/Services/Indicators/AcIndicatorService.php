@@ -2,6 +2,8 @@
 
 namespace App\Services\Indicators;
 
+use App\Support\PriceScale;
+
 /**
  * Accelerator Oscillator (AC) — порт OsEngine CandleChart/Indicators/Ac.cs.
  *
@@ -51,7 +53,8 @@ class AcIndicatorService
             if ($index - $longLen <= 0 || $index - $shortLen <= 0) {
                 continue;
             }
-            $ao[$index] = round((float) $smaShort[$index] - (float) $smaLong[$index], 6);
+            // 8 знаков: AO-разность на микро-парах иначе схлопывается в 0.
+            $ao[$index] = PriceScale::roundMarket((float) $smaShort[$index] - (float) $smaLong[$index]);
         }
 
         // SMA(AO, length_short) — сглаживание серии AO простой MA.

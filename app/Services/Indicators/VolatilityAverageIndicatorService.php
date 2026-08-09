@@ -2,6 +2,8 @@
 
 namespace App\Services\Indicators;
 
+use App\Support\PriceScale;
+
 /**
  * VolatilityAverage — порт OsEngine Indicators/Scripts/VolatilityAverage.cs.
  *
@@ -145,7 +147,7 @@ class VolatilityAverageIndicatorService
             if (gmdate('Y-m-d', (int) $rows[$i]['time']) !== $curDay) {
                 break;
             }
-            $sma[$i] = round($valueSma, 5);
+            $sma[$i] = PriceScale::roundMarket($valueSma);
         }
     }
 
@@ -206,7 +208,7 @@ class VolatilityAverageIndicatorService
             if ($d <= $lastSundayDate) {
                 break;
             }
-            $sma[$i] = round($valueSma, 5);
+            $sma[$i] = PriceScale::roundMarket($valueSma);
         }
     }
 
@@ -239,7 +241,7 @@ class VolatilityAverageIndicatorService
             }
         }
 
-        $sma[$index] = round($summValue / $countChangeVola, 5);
+        $sma[$index] = PriceScale::roundMarket($summValue / $countChangeVola);
     }
 
     /** Absolute = high−low; Percent = (high−low)/(low/100), Round 5. */
@@ -254,7 +256,7 @@ class VolatilityAverageIndicatorService
             return 0.0;
         }
 
-        return round(($high - $low) / ($low / 100.0), 5);
+        return PriceScale::roundMarket(($high - $low) / ($low / 100.0));
     }
 
     /**

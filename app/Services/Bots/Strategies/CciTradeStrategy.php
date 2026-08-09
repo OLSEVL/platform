@@ -90,7 +90,7 @@ class CciTradeStrategy implements BotStrategyInterface
             $side === 'CALL'
                 ? sprintf('CCI(%.2f) < %.0f — перепроданность, отскок вверх.', $cci, $cciDown)
                 : sprintf('CCI(%.2f) > %.0f — перекупленность, отскок вниз.', $cci, $cciUp),
-            sprintf('CCI len=%d · Up=%.0f · Down=%.0f · Close=%.5f', $cciLen, $cciUp, $cciDown, $close),
+            sprintf('CCI len=%d · Up=%.0f · Down=%.0f · Close=%.8f', $cciLen, $cciUp, $cciDown, $close),
         ];
         if ($payout !== null) {
             $reasons[] = sprintf('Payout: %.0f%%', $payout);
@@ -101,7 +101,7 @@ class CciTradeStrategy implements BotStrategyInterface
             'confidence' => $confidence,
             'reasons_short' => $reasons,
             'analysis_text' => sprintf(
-                'cci_trade: %s; cci=%.2f close=%.5f; confidence=%.2f.',
+                'cci_trade: %s; cci=%.2f close=%.8f; confidence=%.2f.',
                 $setup,
                 $cci,
                 $close,

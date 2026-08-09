@@ -67,11 +67,11 @@ class PivotPointsStrategy implements BotStrategyInterface
             OsEngineBinaryDecision::confidence($depth, $payout),
             [
                 $call
-                    ? sprintf('Кросс R1 вверх: O=%.5f C=%.5f R1=%.5f.', $open, $close, $r1)
-                    : sprintf('Кросс S1 вниз: O=%.5f C=%.5f S1=%.5f.', $open, $close, $s1),
-                sprintf('Pivot P=%.5f (%s)', $p, $period),
+                    ? sprintf('Кросс R1 вверх: O=%.8f C=%.8f R1=%.8f.', $open, $close, $r1)
+                    : sprintf('Кросс S1 вниз: O=%.8f C=%.8f S1=%.8f.', $open, $close, $s1),
+                sprintf('Pivot P=%.8f (%s)', $p, $period),
             ],
-            sprintf('pivot_points: %s; r1=%.5f s1=%.5f', $setup, $r1, $s1),
+            sprintf('pivot_points: %s; r1=%.8f s1=%.8f', $setup, $r1, $s1),
             [
                 'r1' => round($r1, 8),
                 's1' => round($s1, 8),

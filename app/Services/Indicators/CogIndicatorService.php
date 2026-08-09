@@ -2,6 +2,8 @@
 
 namespace App\Services\Indicators;
 
+use App\Support\PriceScale;
+
 /**
  * COG (Centre of Gravity Oscillator) — порт OsEngine Scripts/COG_CentreOfGravity_Oscr.cs.
  *
@@ -66,8 +68,8 @@ class CogIndicatorService
             }
 
             $cogVal = $temp / $temp2 - ($length + 1) / 2.0;
-            $cog[$index] = round($cogVal, 3);
-            $prevCog[$index] = round($index > 0 ? $cog[$index - 1] : 0.0, 3);
+            $cog[$index] = PriceScale::roundMarket($cogVal);
+            $prevCog[$index] = PriceScale::roundMarket($index > 0 ? $cog[$index - 1] : 0.0);
         }
 
         return ['cog' => $cog, 'prev_cog' => $prevCog];

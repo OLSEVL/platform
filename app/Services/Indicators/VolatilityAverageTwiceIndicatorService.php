@@ -2,6 +2,8 @@
 
 namespace App\Services\Indicators;
 
+use App\Support\PriceScale;
+
 /**
  * VolatilityAverageTwice — порт OsEngine Indicators/Scripts/VolatilityAverageTwice.cs.
  *
@@ -136,8 +138,8 @@ class VolatilityAverageTwiceIndicatorService
             if (gmdate('Y-m-d', (int) $rows[$i]['time']) !== $curDay) {
                 break;
             }
-            $smaFast[$i] = round($fast, 5);
-            $smaSlow[$i] = round($slow, 5);
+            $smaFast[$i] = PriceScale::roundMarket($fast);
+            $smaSlow[$i] = PriceScale::roundMarket($slow);
         }
     }
 
@@ -177,8 +179,8 @@ class VolatilityAverageTwiceIndicatorService
             if (gmdate('Y-m-d', (int) $rows[$i]['time']) <= $lastSundayDate) {
                 break;
             }
-            $smaFast[$i] = round($fast, 5);
-            $smaSlow[$i] = round($slow, 5);
+            $smaFast[$i] = PriceScale::roundMarket($fast);
+            $smaSlow[$i] = PriceScale::roundMarket($slow);
         }
     }
 
@@ -201,8 +203,8 @@ class VolatilityAverageTwiceIndicatorService
         $h = (float) $rows[$index]['high'];
         $l = (float) $rows[$index]['low'];
         $volatility[$index] = $this->rangeToVolatility($h, $l, $varType);
-        $smaFast[$index] = round($this->smaLastBars($volatility, $index, $lenFast), 5);
-        $smaSlow[$index] = round($this->smaLastBars($volatility, $index, $lenSlow), 5);
+        $smaFast[$index] = PriceScale::roundMarket($this->smaLastBars($volatility, $index, $lenFast));
+        $smaSlow[$index] = PriceScale::roundMarket($this->smaLastBars($volatility, $index, $lenSlow));
     }
 
     /**
@@ -270,7 +272,7 @@ class VolatilityAverageTwiceIndicatorService
             return 0.0;
         }
 
-        return round(($high - $low) / ($low / 100.0), 5);
+        return PriceScale::roundMarket(($high - $low) / ($low / 100.0));
     }
 
     /** @param  list<float>  $volatility */

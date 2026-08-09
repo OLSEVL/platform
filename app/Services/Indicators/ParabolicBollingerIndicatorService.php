@@ -2,6 +2,8 @@
 
 namespace App\Services\Indicators;
 
+use App\Support\PriceScale;
+
 /**
  * ParabolicBollinger — порт OsEngine Indicators/Scripts/ParabolicBollinger_indicator.cs.
  *
@@ -81,7 +83,7 @@ class ParabolicBollingerIndicatorService
             }
 
             $valueVolatility = $hiLowDifference * $volatMult;
-            $volatility[$index] = round($valueVolatility, 6);
+            $volatility[$index] = PriceScale::roundMarket($valueVolatility);
 
             // Средний шаг параболы по уже заполненной серии ValueVolatility.
             $valueVolatilityAverage = $this->getAverageVolatilityValue(
@@ -106,8 +108,8 @@ class ParabolicBollingerIndicatorService
             $div = $length > 30 ? ($length - 1) : $length;
             $sigma = $div > 0 ? sqrt($sumSq / $div) : 0.0;
 
-            $upLine = round($valueSma + $sigma * $deviation, 6);
-            $downLine = round($valueSma - $sigma * $deviation, 6);
+            $upLine = PriceScale::roundMarket($valueSma + $sigma * $deviation);
+            $downLine = PriceScale::roundMarket($valueSma - $sigma * $deviation);
             $up[$index] = $upLine;
             $down[$index] = $downLine;
 

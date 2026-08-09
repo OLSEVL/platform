@@ -2,10 +2,12 @@
 
 namespace App\Services\Indicators;
 
+use App\Support\PriceScale;
+
 /**
  * Williams %R — порт OsEngine Indicators/Scripts/WilliamsRange.cs.
  *
- * WR = round(-100 * (highMax - close) / (highMax - lowMin), 2) за окно period.
+ * WR = PriceScale::roundMarket(-100 * (highMax - close) / (highMax - lowMin)) за окно period.
  * При high-low==0 — предыдущее значение серии (как в OsEngine).
  */
 class WilliamsRangeIndicatorService
@@ -58,7 +60,7 @@ class WilliamsRangeIndicatorService
             }
 
             $close = (float) $rows[$index]['close'];
-            $values[$index] = round(-100.0 * ($highMax - $close) / $range, 2);
+            $values[$index] = PriceScale::roundMarket(-100.0 * ($highMax - $close) / $range);
         }
 
         return $values;

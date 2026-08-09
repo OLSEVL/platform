@@ -114,7 +114,7 @@ class RviTradeStrategy implements BotStrategyInterface
             $side === 'CALL'
                 ? sprintf('RVI bull-кросс: rvi %.3f→%.3f через signal %.3f (signal<0).', $prevRviUp, $rviUp, $rviDown)
                 : sprintf('RVI bear-кросс: rvi %.3f→%.3f через signal %.3f (signal>0).', $prevRviUp, $rviUp, $rviDown),
-            sprintf('RVI period=%d · |signal|≥%.2f · Close=%.5f', $rviLen, $minSignalAbs, $close),
+            sprintf('RVI period=%d · |signal|≥%.2f · Close=%.8f', $rviLen, $minSignalAbs, $close),
         ];
         if ($payout !== null) {
             $reasons[] = sprintf('Payout: %.0f%%', $payout);
@@ -125,7 +125,7 @@ class RviTradeStrategy implements BotStrategyInterface
             'confidence' => $confidence,
             'reasons_short' => $reasons,
             'analysis_text' => sprintf(
-                'rvi_trade: %s; rvi=%.3f signal=%.3f close=%.5f; confidence=%.2f.',
+                'rvi_trade: %s; rvi=%.3f signal=%.3f close=%.8f; confidence=%.2f.',
                 $setup,
                 $rviUp,
                 $rviDown,

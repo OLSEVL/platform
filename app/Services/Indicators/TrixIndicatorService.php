@@ -2,6 +2,8 @@
 
 namespace App\Services\Indicators;
 
+use App\Support\PriceScale;
+
 /**
  * Trix — порт OsEngine Indicators/Scripts/Trix.cs.
  * Тройная EMA цены, затем % изменение EMA3: (ema3[i]-ema3[i-1])*100/ema3[i-1].
@@ -59,7 +61,7 @@ class TrixIndicatorService
             if ($index < $period * 7 - 1 || ($ema3[$index - 1] ?? 0) == 0.0 || ($ema3[$index] ?? 0) == 0.0) {
                 continue;
             }
-            $values[$index] = round(($ema3[$index] - $ema3[$index - 1]) * 100.0 / $ema3[$index - 1], 4);
+            $values[$index] = PriceScale::roundMarket(($ema3[$index] - $ema3[$index - 1]) * 100.0 / $ema3[$index - 1]);
         }
 
         return $values;

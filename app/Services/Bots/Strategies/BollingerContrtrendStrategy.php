@@ -92,9 +92,9 @@ class BollingerContrtrendStrategy implements BotStrategyInterface
         $bandPrice = $side === 'CALL' ? $down : $up;
         $reasons = [
             $side === 'CALL'
-                ? sprintf('Close %.5f ниже нижней BB(%d, %.1fσ)=%.5f — отскок вверх.', $close, $bbLen, $bbDev, $down)
-                : sprintf('Close %.5f выше верхней BB(%d, %.1fσ)=%.5f — отскок вниз.', $close, $bbLen, $bbDev, $up),
-            sprintf('Mid=%.5f · Up=%.5f · Down=%.5f', $mid, $up, $down),
+                ? sprintf('Close %.8f ниже нижней BB(%d, %.1fσ)=%.8f — отскок вверх.', $close, $bbLen, $bbDev, $down)
+                : sprintf('Close %.8f выше верхней BB(%d, %.1fσ)=%.8f — отскок вниз.', $close, $bbLen, $bbDev, $up),
+            sprintf('Mid=%.8f · Up=%.8f · Down=%.8f', $mid, $up, $down),
         ];
         if ($payout !== null) {
             $reasons[] = sprintf('Payout: %.0f%%', $payout);
@@ -105,7 +105,7 @@ class BollingerContrtrendStrategy implements BotStrategyInterface
             'confidence' => $confidence,
             'reasons_short' => $reasons,
             'analysis_text' => sprintf(
-                'bollinger_contrtrend: %s; close=%.5f up=%.5f mid=%.5f down=%.5f; confidence=%.2f.',
+                'bollinger_contrtrend: %s; close=%.8f up=%.8f mid=%.8f down=%.8f; confidence=%.2f.',
                 $setup,
                 $close,
                 $up,

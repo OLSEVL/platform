@@ -81,10 +81,10 @@ class MomentumMacdStrategy implements BotStrategyInterface
             OsEngineBinaryDecision::confidence(min(1.0, $depth), $payout),
             [
                 $call
-                    ? sprintf('MACD(%.5f) > Signal(%.5f) и Momentum(%.2f) > 100.', $macd, $signal, $mom)
-                    : sprintf('MACD(%.5f) < Signal(%.5f) и Momentum(%.2f) < 100.', $macd, $signal, $mom),
+                    ? sprintf('MACD(%.8f) > Signal(%.8f) и Momentum(%.2f) > 100.', $macd, $signal, $mom)
+                    : sprintf('MACD(%.8f) < Signal(%.8f) и Momentum(%.2f) < 100.', $macd, $signal, $mom),
             ],
-            sprintf('momentum_macd: %s; macd=%.5f sig=%.5f mom=%.2f', $setup, $macd, $signal, $mom),
+            sprintf('momentum_macd: %s; macd=%.8f sig=%.8f mom=%.2f', $setup, $macd, $signal, $mom),
             [
                 'macd' => round($macd, 8),
                 'signal' => round($signal, 8),

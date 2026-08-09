@@ -2,10 +2,12 @@
 
 namespace App\Services\Indicators;
 
+use App\Support\PriceScale;
+
 /**
  * RAVI — порт OsEngine Scripts/RAVI.cs.
  *
- * RAVI = round((SMA_fast − SMA_slow) / SMA_slow * 100, 5).
+ * RAVI = PriceScale::roundMarket((SMA_fast − SMA_slow) / SMA_slow * 100).
  * CalcSma: сумма от index−length до index−1 (текущий бар НЕ включается) / length.
  */
 class RaviIndicatorService
@@ -69,7 +71,7 @@ class RaviIndicatorService
                 continue;
             }
 
-            $ravi[$index] = round(($smaFast - $smaSlow) / $smaSlow * 100.0, 5);
+            $ravi[$index] = PriceScale::roundMarket(($smaFast - $smaSlow) / $smaSlow * 100.0);
         }
 
         return ['ravi' => $ravi, 'up_line' => $up, 'down_line' => $down];

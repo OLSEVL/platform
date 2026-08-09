@@ -110,7 +110,7 @@ class RsiContrtrendStrategy implements BotStrategyInterface
             $side === 'CALL'
                 ? sprintf('Цена выше SMA(%d), RSI(%.1f) < %.0f — отскок вверх в аптренде.', $smaLen, $rsi, $rsiDown)
                 : sprintf('Цена ниже SMA(%d), RSI(%.1f) > %.0f — отскок вниз в даунтренде.', $smaLen, $rsi, $rsiUp),
-            sprintf('SMA=%.5f · Close=%.5f · RSI=%.2f', $sma, $close, $rsi),
+            sprintf('SMA=%.8f · Close=%.8f · RSI=%.2f', $sma, $close, $rsi),
         ];
         if ($payout !== null) {
             $reasons[] = sprintf('Payout: %.0f%%', $payout);
@@ -121,7 +121,7 @@ class RsiContrtrendStrategy implements BotStrategyInterface
             'confidence' => $confidence,
             'reasons_short' => $reasons,
             'analysis_text' => sprintf(
-                'rsi_contrtrend: %s; sma=%.5f close=%.5f rsi=%.2f; confidence=%.2f.',
+                'rsi_contrtrend: %s; sma=%.8f close=%.8f rsi=%.2f; confidence=%.2f.',
                 $setup,
                 $sma,
                 $close,

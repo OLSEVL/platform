@@ -12,6 +12,12 @@ use Illuminate\Support\Collection;
  */
 class TelegramAnalystInstrumentService
 {
+    /** Префикс inline callback_data для выбора инструмента из меню. */
+    public const CALLBACK_PREFIX = 'ins:';
+
+    /** Лимит Telegram Bot API на длину callback_data (байты). */
+    private const CALLBACK_DATA_MAX_BYTES = 64;
+
     /**
      * @return Collection<int, PocketInstrument>
      */
@@ -47,8 +53,13 @@ class TelegramAnalystInstrumentService
     /**
      * Все отфильтрованные инструменты для inline-клавиатуры (без пагинации).
      *
+     * Важно: в callback_data кладём имя инструмента (не индекс!). Индекс ломается,
+     * когда между показом меню и кликом меняется filtered-список (обычно из‑за
+     * обновления current_payout относительно min_payout) — кнопка «EURUSD» внезапно
+     * запускала анализ другой пары по тому же порядковому номеру.
+     *
      * @return array{
-     *   items:list<array{index:int,instrument:string,payout:?float}>,
+     *   items:list<array{instrument:string,callback_data:string,payout:?float}>,
      *   total:int
      * }
      */
@@ -56,10 +67,16 @@ class TelegramAnalystInstrumentService
     {
         $all = $this->filteredInstruments($bot);
         $items = [];
-        foreach ($all as $index => $row) {
+        foreach ($all as $row) {
+            $instrument = (string) $row->instrument;
+            // Пропускаем пары, чьё имя не влезает в лимит Telegram callback_data.
+            $callbackData = $this->encodeInstrumentCallback($instrument);
+            if ($callbackData === null) {
+                continue;
+            }
             $items[] = [
-                'index' => $index,
-                'instrument' => (string) $row->instrument,
+                'instrument' => $instrument,
+                'callback_data' => $callbackData,
                 'payout' => $row->current_payout !== null ? (float) $row->current_payout : null,
             ];
         }
@@ -70,6 +87,65 @@ class TelegramAnalystInstrumentService
         ];
     }
 
+    /**
+     * Собирает callback_data вида «ins:EURUSD_otc». Null — если имя пустое или >64 байт.
+     */
+    public function encodeInstrumentCallback(string $instrument): ?string
+    {
+        $instrument = trim($instrument);
+        if ($instrument === '') {
+            return null;
+        }
+
+        $data = self::CALLBACK_PREFIX.$instrument;
+        if (strlen($data) > self::CALLBACK_DATA_MAX_BYTES) {
+            return null;
+        }
+
+        return $data;
+    }
+
+    /**
+     * Разбирает callback_data «ins:…» → сырое значение после префикса (имя или legacy-индекс).
+     */
+    public function parseInstrumentCallback(string $data): ?string
+    {
+        $data = trim($data);
+        if (! str_starts_with($data, self::CALLBACK_PREFIX)) {
+            return null;
+        }
+
+        $raw = trim(substr($data, strlen(self::CALLBACK_PREFIX)));
+
+        return $raw !== '' ? $raw : null;
+    }
+
+    /**
+     * Резолвит выбор пользователя из callback: имя пары (основной путь) или
+     * устаревший числовой индекс из старых сообщений в чате.
+     */
+    public function resolveCallbackSelection(Bot $bot, string $raw): ?string
+    {
+        $raw = trim($raw);
+        if ($raw === '') {
+            return null;
+        }
+
+        // Старые кнопки ещё могут слать «ins:5» — оставляем совместимость, но новые
+        // уже шлют имя; индекс хрупок при смене payout-фильтра.
+        if (ctype_digit($raw)) {
+            return $this->instrumentByIndex($bot, (int) $raw);
+        }
+
+        // Имя пары из кнопки: ищем активный инструмент без payout-фильтра,
+        // чтобы клик по уже показанной кнопке не «прыгал» на другую пару.
+        return $this->resolveActiveInstrument($raw);
+    }
+
+    /**
+     * @deprecated Индекс нестабилен при смене filtered-списка; оставлен только
+     *             для старых inline-кнопок в истории чата.
+     */
     public function instrumentByIndex(Bot $bot, int $index): ?string
     {
         $all = $this->filteredInstruments($bot);

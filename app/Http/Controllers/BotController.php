@@ -834,8 +834,11 @@ class BotController extends Controller
     public function liveTradesData(): JsonResponse
     {
         $from = now()->subHours(2);
+        $userId = (int) auth()->id();
         $trades = BotTrade::query()
             ->with('bot')
+            // Только сделки ботов текущего пользователя (лента и колонка на dashboard).
+            ->whereHas('bot', static fn ($q) => $q->where('user_id', $userId))
             // Лента «последние 2 ч» — по фактическому появлению записи, не по плановому entry_time (бар).
             ->where('created_at', '>=', $from)
             ->latest('created_at')
@@ -3118,6 +3121,9 @@ class BotController extends Controller
         if (! empty($want['volatility_stages_aw'])) {
             $json['volatility_stages_aw'] = $volatilityStagesAw->compute($rows, IndicatorSetting::mergedVolatilityStagesAWParams($bot));
         }
+
+        // Заголовки для лейблов на графике («RSI 14», «MACD 12 26 9») — как на Pocket Option.
+        $json = \App\Support\ClassicIndicatorChartTitle::enrich($json, $bot);
 
         return response()->json($json);
     }

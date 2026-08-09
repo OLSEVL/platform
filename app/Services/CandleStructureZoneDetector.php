@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Services\Indicators\OrderBlocksIndicatorService;
+use App\Support\PriceScale;
 
 /**
  * Детекция ордерблоков (LuxAlgo OB & Breaker Blocks) и имбалансов (FVG) по свечам.
@@ -114,8 +115,8 @@ class CandleStructureZoneDetector
             'type' => $type,
             'time_start' => $formedAt,
             'time_end' => $lastTime,
-            'price_low' => round($low, 5),
-            'price_high' => round($high, 5),
+            'price_low' => PriceScale::roundMarket($low),
+            'price_high' => PriceScale::roundMarket($high),
             'formed_at' => $formedAt,
         ];
     }

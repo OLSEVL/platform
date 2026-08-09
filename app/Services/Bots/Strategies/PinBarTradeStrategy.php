@@ -102,9 +102,9 @@ class PinBarTradeStrategy implements BotStrategyInterface
 
         $reasons = [
             $side === 'CALL'
-                ? sprintf('Бычий пин: O/C в верхней 1/3 HL, SMA(%d)=%.5f < close=%.5f.', $smaLen, $sma, $close)
-                : sprintf('Медвежий пин: O/C в нижней 1/3 HL, SMA(%d)=%.5f > close=%.5f.', $smaLen, $sma, $close),
-            sprintf('HL=%.5f..%.5f · range=%.5f · SMA=%.5f', $low, $high, $range, $sma),
+                ? sprintf('Бычий пин: O/C в верхней 1/3 HL, SMA(%d)=%.8f < close=%.8f.', $smaLen, $sma, $close)
+                : sprintf('Медвежий пин: O/C в нижней 1/3 HL, SMA(%d)=%.8f > close=%.8f.', $smaLen, $sma, $close),
+            sprintf('HL=%.8f..%.8f · range=%.8f · SMA=%.8f', $low, $high, $range, $sma),
         ];
         if ($payout !== null) {
             $reasons[] = sprintf('Payout: %.0f%%', $payout);
@@ -115,7 +115,7 @@ class PinBarTradeStrategy implements BotStrategyInterface
             'confidence' => $confidence,
             'reasons_short' => $reasons,
             'analysis_text' => sprintf(
-                'pinbar_trade: %s; close=%.5f sma=%.5f; confidence=%.2f.',
+                'pinbar_trade: %s; close=%.8f sma=%.8f; confidence=%.2f.',
                 $setup,
                 $close,
                 $sma,

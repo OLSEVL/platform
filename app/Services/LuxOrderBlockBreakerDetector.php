@@ -2,6 +2,8 @@
 
 namespace App\Services;
 
+use App\Support\PriceScale;
+
 /**
  * LuxAlgo «Order Blocks & Breaker Blocks» — порт Pine Script из orderblock.txt.
  *
@@ -258,8 +260,8 @@ class LuxOrderBlockBreakerDetector
      */
     private function zonesForOb(array $ob, int $lastTime, bool $bullish): array
     {
-        $low = round($ob['btm'], 5);
-        $high = round($ob['top'], 5);
+        $low = PriceScale::roundMarket($ob['btm']);
+        $high = PriceScale::roundMarket($ob['top']);
         $formedAt = (int) $ob['loc'];
 
         if ($ob['breaker'] && $ob['break_loc'] !== null) {

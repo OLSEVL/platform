@@ -2,6 +2,8 @@
 
 namespace App\Services\Indicators;
 
+use App\Support\PriceScale;
+
 /**
  * ParabolicPriceChannel — порт OsEngine Indicators/Scripts/ParabolicPriceChannel_indicator.cs.
  *
@@ -79,7 +81,7 @@ class ParabolicPriceChannelIndicatorService
 
             $hiLowDifference = $this->getVolatility($rows, $index, $volPeriod);
             $valueVolatility = $hiLowDifference * $volatMult;
-            $volatility[$index] = round($valueVolatility, 6);
+            $volatility[$index] = PriceScale::roundMarket($valueVolatility);
 
             $valueVolatilityAverage = $this->getAverageVolatilityValue(
                 $volatility,

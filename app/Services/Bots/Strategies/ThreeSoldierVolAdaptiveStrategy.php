@@ -106,7 +106,7 @@ class ThreeSoldierVolAdaptiveStrategy implements BotStrategyInterface
             $side === 'CALL'
                 ? sprintf('Три бычьих солдата (vola-adaptive), высота %.3f%% (порог %.3f%%).', $patternPct, $heightSoldiers)
                 : sprintf('Три медвежьих солдата (vola-adaptive), высота %.3f%% (порог %.3f%%).', $patternPct, $heightSoldiers),
-            sprintf('Close=%.5f · min_one=%.3f%% · days=%d', $lastClose, $minOne, $days),
+            sprintf('Close=%.8f · min_one=%.3f%% · days=%d', $lastClose, $minOne, $days),
         ];
         if ($payout !== null) {
             $reasons[] = sprintf('Payout: %.0f%%', $payout);
@@ -119,7 +119,7 @@ class ThreeSoldierVolAdaptiveStrategy implements BotStrategyInterface
             $confidence,
             $reasons,
             sprintf(
-                'three_soldier_vol_adaptive: %s; pattern_pct=%.4f height=%.4f close=%.5f',
+                'three_soldier_vol_adaptive: %s; pattern_pct=%.4f height=%.4f close=%.8f',
                 $setup,
                 $patternPct,
                 $heightSoldiers,

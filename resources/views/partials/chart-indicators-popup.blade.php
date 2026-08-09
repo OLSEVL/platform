@@ -247,3 +247,20 @@
 
 {{-- Каталог справки для JS (второй попап). --}}
 <script type="application/json" id="indicator-help-catalog">@json($helpCatalog)</script>
+@php
+    // Мета слоёв для лейблов на графике (настройки / снять слой) — как иконки у подписи на Pocket Option.
+    $layerMetaForJs = [];
+    foreach ($layerRows as $row) {
+        $layerMetaForJs[$row['id']] = [
+            'label' => $row['label'],
+            'help' => $row['help'],
+            'settingsUrl' => ($row['route'] && $settingsBot)
+                ? route($row['route'], $settingsBot)
+                : null,
+        ];
+    }
+@endphp
+<script>
+    // Глобальная карта: id чекбокса слоя → URL настроек (для карандаша на лейбле графика).
+    window.PLATFORM_INDICATOR_LAYER_META = @json($layerMetaForJs);
+</script>

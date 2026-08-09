@@ -2,6 +2,8 @@
 
 namespace App\Services\Indicators;
 
+use App\Support\PriceScale;
+
 /**
  * SmaChannel — порт OsEngine Indicators/Scripts/SmaChannel.cs.
  * Up/Down = SMA ± SMA * deviation/100.
@@ -55,7 +57,7 @@ class SmaChannelIndicatorService
                 continue;
             }
             $valueSma = (float) $sma[$index];
-            $delta = round($valueSma * $dev / 100.0, 6);
+            $delta = PriceScale::roundMarket($valueSma * $dev / 100.0);
             $mid[$index] = $valueSma;
             $up[$index] = $valueSma + $delta;
             $down[$index] = $valueSma - $delta;

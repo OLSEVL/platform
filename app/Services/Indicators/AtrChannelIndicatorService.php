@@ -2,6 +2,8 @@
 
 namespace App\Services\Indicators;
 
+use App\Support\PriceScale;
+
 /**
  * ATR Channel (Kopyrkin) — порт OsEngine Charts/CandleChart/Indicators/AtrChannel.cs.
  *
@@ -204,15 +206,15 @@ class AtrChannelIndicatorService
                 }
                 $moving[$index] = $sum / $length;
             } else {
-                $lastTr = round($trueRange[$index], 7);
+                $lastTr = PriceScale::roundMarket($trueRange[$index]);
                 $prev = $moving[$index - 1];
-                $moving[$index] = round($prev + ($lastTr - $prev) * $lambda, 7);
+                $moving[$index] = PriceScale::roundMarket($prev + ($lastTr - $prev) * $lambda);
             }
         }
 
         // OsEngine Atr.GetValue округляет до 7 знаков на выходе.
         for ($i = 0; $i < $n; $i++) {
-            $moving[$i] = round($moving[$i], 7);
+            $moving[$i] = PriceScale::roundMarket($moving[$i]);
         }
 
         return $moving;

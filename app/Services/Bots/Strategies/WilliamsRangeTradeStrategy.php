@@ -106,7 +106,7 @@ class WilliamsRangeTradeStrategy implements BotStrategyInterface
             $side === 'CALL'
                 ? sprintf('Williams %%R вошёл ниже %.0f (было %.2f → %.2f) — перепроданность.', $wrDown, $prevWr, $wr)
                 : sprintf('Williams %%R вошёл выше %.0f (было %.2f → %.2f) — перекупленность.', $wrUp, $prevWr, $wr),
-            sprintf('WR=%d · Up=%.0f · Down=%.0f · Close=%.5f', $wrLen, $wrUp, $wrDown, $close),
+            sprintf('WR=%d · Up=%.0f · Down=%.0f · Close=%.8f', $wrLen, $wrUp, $wrDown, $close),
         ];
         if ($payout !== null) {
             $reasons[] = sprintf('Payout: %.0f%%', $payout);
@@ -117,7 +117,7 @@ class WilliamsRangeTradeStrategy implements BotStrategyInterface
             'confidence' => $confidence,
             'reasons_short' => $reasons,
             'analysis_text' => sprintf(
-                'williams_range_trade: %s; wr=%.2f prev=%.2f close=%.5f; confidence=%.2f.',
+                'williams_range_trade: %s; wr=%.2f prev=%.2f close=%.8f; confidence=%.2f.',
                 $setup,
                 $wr,
                 $prevWr,

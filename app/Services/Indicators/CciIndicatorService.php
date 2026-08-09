@@ -2,6 +2,8 @@
 
 namespace App\Services\Indicators;
 
+use App\Support\PriceScale;
+
 /**
  * CCI — порт OsEngine Indicators/Scripts/CCI.cs.
  *
@@ -72,7 +74,7 @@ class CciIndicatorService
 
             // (price - ma) / (md * 0.015 / length) == (price - ma) / (0.015 * meanDev)
             $cci = (OsEngineCandleMath::candlePoint($rows[$index], $point) - $ma) / ($md * 0.015 / $length);
-            $values[$index] = round($cci, 5);
+            $values[$index] = PriceScale::roundMarket($cci);
         }
 
         return $values;

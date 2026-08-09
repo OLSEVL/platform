@@ -2,6 +2,8 @@
 
 namespace App\Services\Indicators;
 
+use App\Support\PriceScale;
+
 /**
  * VolatilityStagesAW — порт OsEngine Indicators/Scripts/VolatilityStagesAW.cs.
  *
@@ -205,10 +207,10 @@ class VolatilityStagesAWIndicatorService
 
         $fast = $this->smaDistinctVolatility($volatility, $index, $lenFast);
         $slow = $this->smaDistinctVolatility($volatility, $index, $lenSlow);
-        $upVal = round($slow + $slow * $dev, 5);
-        $downVal = round($slow - $slow * $dev, 5);
-        $fastR = round($fast, 5);
-        $slowR = round($slow, 5);
+        $upVal = PriceScale::roundMarket($slow + $slow * $dev);
+        $downVal = PriceScale::roundMarket($slow - $slow * $dev);
+        $fastR = PriceScale::roundMarket($fast);
+        $slowR = PriceScale::roundMarket($slow);
 
         // Пишем SMA/канал на индекс, чтобы GetVolatilityStage видел актуальные значения.
         $smaFast[$index] = $fastR;
@@ -283,10 +285,10 @@ class VolatilityStagesAWIndicatorService
 
         $fast = $this->smaDistinctVolatility($volatility, $index, $lenFast);
         $slow = $this->smaDistinctVolatility($volatility, $index, $lenSlow);
-        $upVal = round($slow + $slow * $dev, 5);
-        $downVal = round($slow - $slow * $dev, 5);
-        $fastR = round($fast, 5);
-        $slowR = round($slow, 5);
+        $upVal = PriceScale::roundMarket($slow + $slow * $dev);
+        $downVal = PriceScale::roundMarket($slow - $slow * $dev);
+        $fastR = PriceScale::roundMarket($fast);
+        $slowR = PriceScale::roundMarket($slow);
         $stage = $this->getVolatilityStage($regime, $fastR, $slowR, $upVal, $downVal);
 
         for ($i = $index; $i >= 0; $i--) {
@@ -329,10 +331,10 @@ class VolatilityStagesAWIndicatorService
         $l = (float) $rows[$index]['low'];
         $volatility[$index] = $this->rangeToVolatility($h, $l, $varType);
 
-        $fast = round($this->smaLastBars($volatility, $index, $lenFast), 5);
-        $slow = round($this->smaLastBars($volatility, $index, $lenSlow), 5);
-        $upVal = round($slow + $slow * $dev, 5);
-        $downVal = round($slow - $slow * $dev, 5);
+        $fast = PriceScale::roundMarket($this->smaLastBars($volatility, $index, $lenFast));
+        $slow = PriceScale::roundMarket($this->smaLastBars($volatility, $index, $lenSlow));
+        $upVal = PriceScale::roundMarket($slow + $slow * $dev);
+        $downVal = PriceScale::roundMarket($slow - $slow * $dev);
 
         $smaFast[$index] = $fast;
         $smaSlow[$index] = $slow;
@@ -398,7 +400,7 @@ class VolatilityStagesAWIndicatorService
             return 0.0;
         }
 
-        return round(($high - $low) / ($low / 100.0), 5);
+        return PriceScale::roundMarket(($high - $low) / ($low / 100.0));
     }
 
     /** @param  list<float>  $volatility */

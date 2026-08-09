@@ -2,6 +2,8 @@
 
 namespace App\Services\Indicators;
 
+use App\Support\PriceScale;
+
 /**
  * CMO (Chande Momentum Oscillator) — порт OsEngine Indicators/Scripts/CMO.cs.
  * 100 * (sumPos - sumNeg) / (sumPos + sumNeg) за period; цикл OsEngine пропускает i==0.
@@ -68,7 +70,7 @@ class CmoIndicatorService
             if ($sumPos + $sumNeg == 0.0) {
                 continue;
             }
-            $values[$index] = round(100.0 * ($sumPos - $sumNeg) / ($sumPos + $sumNeg), 2);
+            $values[$index] = PriceScale::roundMarket(100.0 * ($sumPos - $sumNeg) / ($sumPos + $sumNeg));
         }
 
         return $values;

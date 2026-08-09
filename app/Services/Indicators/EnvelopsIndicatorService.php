@@ -2,6 +2,8 @@
 
 namespace App\Services\Indicators;
 
+use App\Support\PriceScale;
+
 /**
  * Envelops — порт OsEngine Indicators/Scripts/Envelops.cs.
  * Центр = SMA(Close); up/down = SMA ± SMA * deviation/100.
@@ -58,8 +60,8 @@ class EnvelopsIndicatorService
                 continue;
             }
             $mid[$index] = $valueSma;
-            $up[$index] = round($valueSma + $valueSma * $deviation / 100.0, 6);
-            $down[$index] = round($valueSma - $valueSma * $deviation / 100.0, 6);
+            $up[$index] = PriceScale::roundMarket($valueSma + $valueSma * $deviation / 100.0);
+            $down[$index] = PriceScale::roundMarket($valueSma - $valueSma * $deviation / 100.0);
         }
 
         return ['mid' => $mid, 'up' => $up, 'down' => $down];

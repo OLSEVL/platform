@@ -145,6 +145,8 @@
             <div id="price-action-overlay" class="absolute inset-0 z-[7] pointer-events-none overflow-visible hidden"></div>
             {{-- SMC Flow (UT Bot): поверх DGT, отдельный слой — не смешиваем с Price Action. --}}
             <div id="smc-flow-overlay" class="absolute inset-0 z-[8] pointer-events-none overflow-visible hidden"></div>
+            {{-- Названия включённых индикаторов (оверлеи на основной pane + лейблы осцилляторов). --}}
+            <div id="classic-indicator-labels" class="absolute inset-0 z-[9] pointer-events-none overflow-hidden hidden"></div>
             <div id="candle-timer-overlay"
                 class="pointer-events-none absolute z-[6] hidden h-0 w-0 overflow-visible"
                 title="До закрытия текущей минутной свечи (по времени открытия бара с графика, мм:сс)">
@@ -172,12 +174,13 @@
         }
     @endphp
     <aside id="manual-trade-panel"
-        class="w-[15.5rem] shrink-0 border-l border-zinc-800 bg-[#161a23] flex flex-col min-h-0 overflow-y-auto"
+        class="w-[15.5rem] shrink-0 border-l border-zinc-800 bg-[#161a23] flex flex-col min-h-0 overflow-hidden"
         data-ssid-ready="{{ !empty($manualTrade['ssid_ready']) ? '1' : '0' }}"
         data-is-demo="{{ !empty($manualTrade['is_demo']) ? '1' : '0' }}"
         data-profile-url="{{ e($manualTrade['profile_url'] ?? route('profile.trading.edit')) }}"
         data-order-url="{{ route('trading.manual-order') }}">
-        <div class="p-3 space-y-3 flex flex-col flex-1">
+        {{-- Верх: ручной вход CALL/PUT (как на PO). --}}
+        <div class="shrink-0 p-3 space-y-3 border-b border-zinc-800/80">
             <div class="flex items-center justify-between gap-2">
                 <p class="text-[11px] font-medium uppercase tracking-wide text-zinc-500">Сделка</p>
                 <span id="manual-trade-account-badge"
@@ -242,7 +245,7 @@
 
             <div id="manual-trade-status" class="hidden rounded border px-2.5 py-2 text-[11px] leading-snug" role="status" aria-live="polite"></div>
 
-            <div class="mt-auto space-y-2 pt-1">
+            <div class="space-y-2 pt-1">
                 <button type="button" id="manual-trade-buy"
                     class="flex w-full items-center justify-center gap-2 rounded-lg bg-[#22c55e] px-3 py-3 text-sm font-bold uppercase tracking-wide text-white shadow-sm transition hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-45"
                     {{ empty($manualTrade['ssid_ready']) ? 'disabled' : '' }}>
@@ -261,11 +264,30 @@
                 </button>
             </div>
         </div>
+
+        {{-- Низ: компактная лента зеркалимых на Pocket Option сделок (poll live-trades.data). --}}
+        <div class="flex min-h-0 flex-1 flex-col">
+            <div class="shrink-0 flex items-center justify-between gap-2 border-b border-zinc-800/80 px-3 py-2">
+                <div class="min-w-0">
+                    <p class="text-[11px] font-medium uppercase tracking-wide text-zinc-500">Сделки PO</p>
+                    <p id="dash-po-trades-meta" class="truncate text-[10px] text-zinc-600">Загрузка…</p>
+                </div>
+                <a href="{{ route('bots.live-trades') }}"
+                    class="shrink-0 rounded border border-zinc-700 bg-zinc-900/80 px-1.5 py-0.5 text-[10px] text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100"
+                    title="Полная лента сделок">Все</a>
+            </div>
+            <div id="dash-po-trades-list"
+                class="min-h-0 flex-1 overflow-y-auto overscroll-contain divide-y divide-zinc-800/80"
+                aria-live="polite">
+                <div class="px-3 py-6 text-center text-[11px] text-zinc-500">Загрузка…</div>
+            </div>
+        </div>
     </aside>
 </div>
 
 @include('partials.chart-markers-helper')
 @include('partials.chart-candle-smooth-helper')
+@include('partials.chart-fetch-helper')
 <script src="https://unpkg.com/lightweight-charts@5.2.0/dist/lightweight-charts.standalone.production.js"></script>
 <script>
 (function() {
@@ -279,6 +301,9 @@
     const INSTRUMENTS_SIDEBAR_URL = '{{ route("dashboard.instruments.data") }}';
     // Сделки всех ботов пользователя по текущему инструменту → маркеры WIN/LOSE/OPEN.
     const CHART_TRADES_URL = '{{ route("dashboard.chart-trades.data") }}';
+    // Лента зеркалимых на PO сделок для правой колонки dashboard.
+    const LIVE_TRADES_URL = '{{ route("bots.live-trades.data") }}';
+    const LIVE_TRADES_ACTIVITY_TMPL = '{{ route("bots.activity", ["bot" => "__BOT_ID__"]) }}';
 
     // Окна загрузки разделены на три режима, чтобы переключение между инструментами
     // было быстрым, но при этом сохранялись lazy-догрузка истории и live-обновление.
@@ -286,25 +311,20 @@
     // 1) INITIAL — что грузим при первом показе инструмента (selectInstrument / reloadChartData).
     //    Минутные TF: 2 часа (~110 M1-баров). Секундные (S5/S15/S30): окно привязано к viewport
     //    (~130 баров), чтобы не тянуть 1440 S5-свечей на каждый клик.
-    // 2) MAX — максимальная глубина истории, до которой можно догружать через loadMoreCandles
-    //    при скролле графика влево. Сохраняем прежние 24 часа как «потолок».
-    // 3) POLL — узкое окно для регулярного auto-refresh: достаточно последних минут, чтобы
-    //    стабильно получить последний закрытый бар + текущую partial. Поллингу не нужна
-    //    вся история — наоборот, при широком окне он перетирает уже догруженные пользователем
-    //    бары слева в applyIncrementalChartUpdate.
-    const INITIAL_WINDOW_SEC = 2 * 3600;
+    // INITIAL — первичный показ: считаем в БАРАХ (не в часах), иначе на M5/M15
+    //     2 часа давали ~24/~8 свечей. Берём viewport + буфер = 130 баров на любом TF.
+    // MAX — максимальная глубина истории для loadMoreCandles при скролле влево (24ч).
+    // POLL — узкое окно auto-refresh хвоста.
     const MAX_WINDOW_SEC = 24 * 3600;
     const POLL_WINDOW_SEC = 5 * 60;
 
     // Лимиты баров в одном ответе:
-    // - INITIAL_LIMIT — для минутных TF; секундные считаются через initialLimitForTf().
-    // - LOAD_MORE_LIMIT используется при ленивой подгрузке старшей истории.
-    // - POLL_LIMIT мал и нужен только для апдейта хвоста.
-    const INITIAL_LIMIT = 1500;
+    // - INITIAL_BARS / initialLimitForTf — первичная загрузка по числу свечей TF.
+    // - LOAD_MORE_LIMIT — ленивая подгрузка старшей истории.
+    // - POLL_LIMIT — апдейт хвоста.
+    const INITIAL_VISIBLE_BUFFER_BARS = 20;
     const LOAD_MORE_LIMIT = 1440;
     const POLL_LIMIT = 32;
-    /** Запас баров поверх CHART_DEFAULT_VISIBLE_BARS для initial-окна секундных TF. */
-    const INITIAL_VISIBLE_BUFFER_BARS = 20;
 
     // Секундные ID (4005/4015/4030) и минутные (1,2,3...) — единая шкала для poll/таймера/PA.
     function timeframeSeconds(tf) {
@@ -332,6 +352,27 @@
     let m1CloseCountdownAnchorPerfMs = null;
     let tfCloseCountdownAnchorSec = null;
     let tfCloseCountdownAnchorPerfMs = null;
+    /** Точность оси цены; синхронизируется с price_scale из /candles (NGN/LBP → 8 знаков). */
+    let chartPricePrecision = 5;
+
+    /**
+     * Применяем precision/minMove с API к candlestick-серии.
+     * Без этого дашборд оставался на hardcoded 5 знаках и микро-пары (NGN/USD OTC) рисовались плоской линией.
+     */
+    function applyPriceScaleFromPayload(payload) {
+        if (!candlestickSeries || !payload || !payload.price_scale) return;
+        const precision = Number(payload.price_scale.precision);
+        const minMove = Number(payload.price_scale.min_move);
+        if (!Number.isFinite(precision) || !Number.isFinite(minMove) || precision <= 0 || minMove <= 0) return;
+        chartPricePrecision = precision;
+        try {
+            candlestickSeries.applyOptions({
+                priceFormat: { type: 'price', precision, minMove },
+            });
+        } catch (e) {
+            console.error('[dashboard chart] price scale', e);
+        }
+    }
 
     function applyM1CountdownFromPayload(payload) {
         if (!payload || typeof payload.m1_seconds_to_close !== 'number' || !Number.isFinite(payload.m1_seconds_to_close)) {
@@ -486,6 +527,7 @@
     const priceActionOverlay = document.getElementById('price-action-overlay');
     const liquiditySwingsOverlay = document.getElementById('liquidity-swings-overlay');
     const smcFlowOverlay = document.getElementById('smc-flow-overlay');
+    const classicIndicatorLabelsEl = document.getElementById('classic-indicator-labels');
     const instrumentSearchInput = document.getElementById('instrument-search');
     const instrumentSearchClearBtn = document.getElementById('instrument-search-clear');
     const instrumentListEl = document.getElementById('instrument-list');
@@ -601,7 +643,8 @@
             // Чистый график: не держим кэш сделок и не рисуем WIN/LOSE/OPEN.
             lastChartSignals = [];
             lastOpenTrades = [];
-            chartTradesFetchSeq += 1; // инвалидируем late-ответы fetch
+            // Инвалидируем late-ответы fetchChartTrades через общий helper.
+            if (window.PlatformChartFetch) window.PlatformChartFetch.invalidate('chart-trades');
             renderChartMarkers();
             hideSidebarTradeChrome();
             return;
@@ -845,7 +888,6 @@
     /** Сигналы/сделки для маркеров (формат как на bots/show). */
     let lastChartSignals = [];
     let lastOpenTrades = [];
-    let chartTradesFetchSeq = 0;
     /** Payloads классики OsEngine (BB/RSI/SMA/EMA/VWMA/ATR). */
     let lastBollingerPayload = null;
     let lastRsiPayload = null;
@@ -922,9 +964,66 @@
     let classicLineSeries = {};
     let rsiLevelLines = [];
     let classicOscPaneCount = 0;
-    let classicIndicatorsFetchSeq = 0;
-    /** Ключ активного classic-запроса (instrument|tf|layers); чтобы 15с-таймер не плодил дубликаты. */
-    let classicIndicatorsInFlightKey = null;
+    /** overlays — основная pane; oscillators — в порядке addPane (pane 1..n). */
+    let lastClassicNameState = { overlays: [], oscillators: [] };
+
+    /**
+     * Названия structural-слоёв (OB/FVG/PA/…) при включённом чекбоксе.
+     * @returns {Array<{name:string,color:string,layerId:string,settingsUrl:?string}>}
+     */
+    function structureLayerNameLabels() {
+        const out = [];
+        const add = (layerId, fallbackName) => {
+            const cb = document.getElementById(layerId);
+            if (!cb || !cb.checked) return;
+            const meta = (window.PLATFORM_INDICATOR_LAYER_META && window.PLATFORM_INDICATOR_LAYER_META[layerId]) || {};
+            out.push({
+                name: meta.label || fallbackName,
+                color: '#f4f4f5',
+                layerId,
+                settingsUrl: meta.settingsUrl || null,
+            });
+        };
+        add('layer-ob', 'Ордерблоки');
+        add('layer-fvg', 'Имбалансы');
+        add('layer-pa-dgt', 'Price Action (DGT)');
+        add('layer-liquidity-swings', 'Liquidity Swings');
+        add('layer-smc-flow', 'SMC Flow');
+        return out;
+    }
+
+    /**
+     * Лейбл классики: title из API («RSI 14») + слой для иконок карандаш/×.
+     * @returns {{name:string,color:string,layerId:string,settingsUrl:?string}|null}
+     */
+    function classicIndicatorLabel(on, payload, fallbackName, layerId) {
+        if (!on) return null;
+        const meta = (window.PLATFORM_INDICATOR_LAYER_META && window.PLATFORM_INDICATOR_LAYER_META[layerId]) || {};
+        const title = payload && payload.title ? String(payload.title) : fallbackName;
+        return {
+            name: title,
+            color: '#f4f4f5',
+            layerId: layerId || null,
+            settingsUrl: meta.settingsUrl || null,
+        };
+    }
+
+    /** DOM-бейджи названий индикаторов (structural + classic). */
+    function renderAllIndicatorNameLabels() {
+        if (!window.PlatformChartMarkers
+            || typeof window.PlatformChartMarkers.renderIndicatorNameLabels !== 'function') {
+            return;
+        }
+        window.PlatformChartMarkers.renderIndicatorNameLabels({
+            chart,
+            container: classicIndicatorLabelsEl,
+            mainLabels: [
+                ...structureLayerNameLabels(),
+                ...(lastClassicNameState.overlays || []),
+            ],
+            oscLabels: lastClassicNameState.oscillators || [],
+        });
+    }
 
     function payoutClassByValue(value) {
         if (value == null || Number.isNaN(value)) return 'text-zinc-500';
@@ -1086,9 +1185,19 @@
     }
 
     function refreshInstrumentSidebar() {
-        return fetch(INSTRUMENTS_SIDEBAR_URL, { headers: { 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' } })
-            .then((r) => r.json())
-            .then((d) => {
+        if (!window.PlatformChartFetch) {
+            return fetch(INSTRUMENTS_SIDEBAR_URL, { headers: { 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' } })
+                .then((r) => r.json())
+                .then((d) => {
+                    renderInstrumentSidebarRows(d.instruments || []);
+                })
+                .catch(() => {});
+        }
+        // coalesce: несколько триггеров (toggle «Торговля», таймер списка) не дублируют GET.
+        return PlatformChartFetch.requestJson('instruments-sidebar', {
+            key: 'sidebar',
+            url: INSTRUMENTS_SIDEBAR_URL,
+            apply: (d) => {
                 renderInstrumentSidebarRows(d.instruments || []);
                 if (instrumentSearchInput) {
                     applyInstrumentFilter(instrumentSearchInput.value);
@@ -1099,8 +1208,8 @@
                 }
                 // Обновляем блок «Выплата» в правой панели после refresh payout.
                 if (typeof updateManualTradePayout === 'function') updateManualTradePayout();
-            })
-            .catch(() => {});
+            },
+        }) || Promise.resolve();
     }
 
     function normalizeText(s) {
@@ -1144,7 +1253,7 @@
      * Нижняя граница «потолка» доступной истории графика.
      * Используется в loadMoreCandles как стоп для ленивой подгрузки влево
      * (`oldestLoadedTime <= candlesSince()` => дальше не идём).
-     * Это НЕ окно первичной загрузки: первичный показ ограничен INITIAL_WINDOW_SEC.
+     * Это НЕ окно первичной загрузки: первичный показ = INITIAL_BARS свечей TF.
      */
     function candlesSince() {
         return Math.floor(Date.now() / 1000) - MAX_WINDOW_SEC;
@@ -1153,20 +1262,19 @@
     /** ~кол-во свечей по горизонтали и «воздух» справа (в долях бара), как на референсе */
     const CHART_DEFAULT_VISIBLE_BARS = 110;
     const CHART_RIGHT_GAP_BARS = 22;
+    /** Первичный показ: сколько баров TF тянем (viewport + буфер слева). */
+    const INITIAL_BARS = CHART_DEFAULT_VISIBLE_BARS + INITIAL_VISIBLE_BUFFER_BARS;
 
-    /** Initial-окно для секундных TF: ~viewport + буфер, без 2ч / 1440 S5-баров. */
+    /**
+     * Окно since для initial: INITIAL_BARS × длительность бара.
+     * Раньше для минутных был фиксированный 2ч → M5≈24 / M15≈8 свечей.
+     */
     function initialWindowSecForTf(tf) {
-        if (!isSecondTimeframe(tf)) {
-            return INITIAL_WINDOW_SEC;
-        }
-        return timeframeSeconds(tf) * (CHART_DEFAULT_VISIBLE_BARS + INITIAL_VISIBLE_BUFFER_BARS);
+        return timeframeSeconds(tf) * INITIAL_BARS;
     }
 
     function initialLimitForTf(tf) {
-        if (!isSecondTimeframe(tf)) {
-            return INITIAL_LIMIT;
-        }
-        return Math.ceil(initialWindowSecForTf(tf) / timeframeSeconds(tf)) + 10;
+        return INITIAL_BARS + 10;
     }
 
     function applyDefaultChartViewport() {
@@ -1333,14 +1441,19 @@
     function fetchPriceActionIndicator() {
         if (!currentInstrument || !layerPa || !layerPa.checked) {
             lastPaPayload = null;
+            if (window.PlatformChartFetch) window.PlatformChartFetch.invalidate('pa');
             redrawPriceActionOverlay();
             applyPaBarColors({ fullResync: true });
             return;
         }
         const params = new URLSearchParams({ instrument: currentInstrument, timeframe: String(currentTimeframeMinutes) });
-        fetch(PA_INDICATOR_URL + '?' + params.toString(), { headers: { 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' } })
-            .then((r) => r.json())
-            .then((d) => {
+        const key = currentInstrument + '|' + String(currentTimeframeMinutes);
+        if (!window.PlatformChartFetch) return;
+        // coalesce: повторный тик 15с с тем же key не стартует второй запрос.
+        PlatformChartFetch.requestJson('pa', {
+            key: key,
+            url: PA_INDICATOR_URL + '?' + params.toString(),
+            apply: (d) => {
                 try {
                     lastPaPayload = d && d.indicator ? d.indicator : null;
                     redrawPriceActionOverlay();
@@ -1356,8 +1469,8 @@
                         renderChartMarkers();
                     } catch (_) {}
                 }
-            })
-            .catch(() => {});
+            },
+        });
     }
 
     /**
@@ -1369,32 +1482,32 @@
         if (!showTrades) {
             lastChartSignals = [];
             lastOpenTrades = [];
+            if (window.PlatformChartFetch) window.PlatformChartFetch.invalidate('chart-trades');
             renderChartMarkers();
             return;
         }
         if (!currentInstrument) {
             lastChartSignals = [];
             lastOpenTrades = [];
+            if (window.PlatformChartFetch) window.PlatformChartFetch.invalidate('chart-trades');
             renderChartMarkers();
             return;
         }
-        const seq = ++chartTradesFetchSeq;
+        if (!window.PlatformChartFetch) return;
         const params = new URLSearchParams({ instrument: currentInstrument });
-        fetch(CHART_TRADES_URL + '?' + params.toString(), {
-            headers: { 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
-        })
-            .then((r) => r.json())
-            .then((d) => {
-                if (seq !== chartTradesFetchSeq) return;
+        PlatformChartFetch.requestJson('chart-trades', {
+            key: currentInstrument,
+            url: CHART_TRADES_URL + '?' + params.toString(),
+            apply: (d) => {
                 if (!showTrades) return;
                 lastChartSignals = Array.isArray(d && d.signals) ? d.signals : [];
                 lastOpenTrades = Array.isArray(d && d.open_trades) ? d.open_trades : [];
                 renderChartMarkers();
-            })
-            .catch(() => {
-                if (seq !== chartTradesFetchSeq) return;
+            },
+            onError: () => {
                 // При ошибке сети не стираем уже показанные маркеры.
-            });
+            },
+        });
     }
 
     /**
@@ -1514,6 +1627,8 @@
             classicLineSeries = {};
             rsiLevelLines = [];
             classicOscPaneCount = 0;
+            lastClassicNameState = { overlays: [], oscillators: [] };
+            renderAllIndicatorNameLabels();
             return;
         }
         Object.keys(classicLineSeries).forEach((k) => {
@@ -1527,11 +1642,13 @@
             }
         } catch (_) {}
         classicOscPaneCount = 0;
+        lastClassicNameState = { overlays: [], oscillators: [] };
         try {
             chart.priceScale('right').applyOptions({
                 scaleMargins: { top: 0.08, bottom: 0.05 },
             });
         } catch (_) {}
+        renderAllIndicatorNameLabels();
     }
 
     /** Рисует BB/SMA/EMA/VWMA на pane 0; RSI и ATR — в отдельных addPane(). */
@@ -3350,6 +3467,116 @@
             s.setData(data.map((p) => ({ time: p.time, value: p.value })));
             classicLineSeries['atr'] = s;
         }
+
+        // Подписи названий в стиле PO: title из API («RSI 14») + иконки через layerId.
+        const overlays = [];
+        const pushOverlay = (on, payload, fallbackName, layerId) => {
+            const lb = classicIndicatorLabel(on, payload, fallbackName, layerId);
+            if (lb) overlays.push(lb);
+        };
+        pushOverlay(wantBb, lastBollingerPayload, 'Bollinger', 'layer-bollinger');
+        pushOverlay(wantSma, lastSmaPayload, 'SMA', 'layer-sma');
+        pushOverlay(wantEma, lastEmaPayload, 'EMA', 'layer-ema');
+        pushOverlay(wantVwma, lastVwmaPayload, 'VWMA', 'layer-vwma');
+        pushOverlay(wantKeltner, lastKeltnerPayload, 'Keltner', 'layer-keltner');
+        pushOverlay(wantEnvelops, lastEnvelopsPayload, 'Envelops', 'layer-envelops');
+        pushOverlay(wantParabolicSar, lastParabolicSarPayload, 'Parabolic SAR', 'layer-parabolic-sar');
+        pushOverlay(wantSuperTrend, lastSuperTrendPayload, 'SuperTrend', 'layer-supertrend');
+        pushOverlay(wantAlligator, lastAlligatorPayload, 'Alligator', 'layer-alligator');
+        pushOverlay(wantIchimoku, lastIchimokuPayload, 'Ichimoku', 'layer-ichimoku');
+        pushOverlay(wantPriceChannel, lastPriceChannelPayload, 'Price Channel', 'layer-price-channel');
+        pushOverlay(wantNrtr, lastNrtrPayload, 'NRTR', 'layer-nrtr');
+        pushOverlay(wantHma, lastHmaPayload, 'HMA', 'layer-hma');
+        pushOverlay(wantSmaChannel, lastSmaChannelPayload, 'SMA Channel', 'layer-sma-channel');
+        pushOverlay(wantLinReg, lastLinRegPayload, 'Linear Regression', 'layer-linreg');
+        pushOverlay(wantLinRegChannel, lastLinRegChannelPayload, 'Linear Reg. Channel', 'layer-linreg-channel');
+        pushOverlay(wantKalman, lastKalmanPayload, 'Kalman Filter', 'layer-kalman');
+        pushOverlay(wantFractal, lastFractalPayload, 'Fractal', 'layer-fractal');
+        pushOverlay(wantDonchian, lastDonchianPayload, 'Donchian', 'layer-donchian');
+        pushOverlay(wantPivotFloor, lastPivotFloorPayload, 'Pivot Floor', 'layer-pivot-floor');
+        pushOverlay(wantNrtrWatr, lastNrtrWatrPayload, 'NRTR WATR', 'layer-nrtr-watr');
+        pushOverlay(wantPriceChannelAdaptive, lastPriceChannelAdaptivePayload, 'PC Adaptive', 'layer-price-channel-adaptive');
+        pushOverlay(wantPriceChannelOffset, lastPriceChannelOffsetPayload, 'PC Offset', 'layer-price-channel-offset');
+        pushOverlay(wantParabolicBollinger, lastParabolicBollingerPayload, 'Parabolic BB', 'layer-parabolic-bollinger');
+        pushOverlay(wantParabolicPriceChannel, lastParabolicPriceChannelPayload, 'Parabolic PC', 'layer-parabolic-price-channel');
+        pushOverlay(wantAtrChannel, lastAtrChannelPayload, 'ATR Channel', 'layer-atr-channel');
+        pushOverlay(wantOffsetSma, lastOffsetSmaPayload, 'Offset SMA', 'layer-offset-sma');
+        pushOverlay(wantOffsetEma, lastOffsetEmaPayload, 'Offset EMA', 'layer-offset-ema');
+        pushOverlay(wantOffsetSsma, lastOffsetSsmaPayload, 'Offset SSMA', 'layer-offset-ssma');
+        pushOverlay(wantDynamicTrendDetector, lastDynamicTrendDetectorPayload, 'DTD', 'layer-dynamic-trend-detector');
+        pushOverlay(wantLinRegChannelFast, lastLinRegChannelFastPayload, 'LR Channel Fast', 'layer-linreg-channel-fast');
+        pushOverlay(wantZigZag, lastZigZagPayload, 'ZigZag', 'layer-zigzag');
+
+        const oscillators = [];
+        const pushOsc = (on, payload, fallbackName, layerId) => {
+            const lb = classicIndicatorLabel(on, payload, fallbackName, layerId);
+            if (lb) oscillators.push(lb);
+        };
+        pushOsc(wantRsi, lastRsiPayload, 'RSI', 'layer-rsi');
+        pushOsc(wantMacd, lastMacdPayload, 'MACD', 'layer-macd');
+        pushOsc(wantStochastic, lastStochasticPayload, 'Stochastic', 'layer-stochastic');
+        pushOsc(wantCci, lastCciPayload, 'CCI', 'layer-cci');
+        pushOsc(wantAdx, lastAdxPayload, 'ADX', 'layer-adx');
+        pushOsc(wantWilliams, lastWilliamsPayload, 'Williams %R', 'layer-williams');
+        pushOsc(wantAo, lastAoPayload, 'AO', 'layer-ao');
+        pushOsc(wantAroon, lastAroonPayload, 'Aroon', 'layer-aroon');
+        pushOsc(wantMomentum, lastMomentumPayload, 'Momentum', 'layer-momentum');
+        pushOsc(wantRoc, lastRocPayload, 'ROC', 'layer-roc');
+        pushOsc(wantOsma, lastOsmaPayload, 'OsMA', 'layer-osma');
+        pushOsc(wantTrix, lastTrixPayload, 'TRIX', 'layer-trix');
+        pushOsc(wantCmo, lastCmoPayload, 'CMO', 'layer-cmo');
+        pushOsc(wantDemarker, lastDemarkerPayload, 'DeMarker', 'layer-demarker');
+        pushOsc(wantRvi, lastRviPayload, 'RVI', 'layer-rvi');
+        pushOsc(wantUltimate, lastUltimatePayload, 'Ultimate Oscillator', 'layer-ultimate');
+        pushOsc(wantSmi, lastSmiPayload, 'SMI', 'layer-smi');
+        pushOsc(wantStdDev, lastStdDevPayload, 'StdDev', 'layer-stddev');
+        pushOsc(wantIvashov, lastIvashovPayload, 'Ivashov Range', 'layer-ivashov');
+        pushOsc(wantStochRsi, lastStochRsiPayload, 'Stoch RSI', 'layer-stoch-rsi');
+        pushOsc(wantAc, lastAcPayload, 'AC', 'layer-ac');
+        pushOsc(wantBullsPower, lastBullsPowerPayload, 'Bulls Power', 'layer-bulls-power');
+        pushOsc(wantBearsPower, lastBearsPowerPayload, 'Bears Power', 'layer-bears-power');
+        pushOsc(wantDpo, lastDpoPayload, 'DPO', 'layer-dpo');
+        pushOsc(wantQstick, lastQstickPayload, 'QStick', 'layer-qstick');
+        pushOsc(wantVhFilter, lastVhFilterPayload, 'VHFilter', 'layer-vh-filter');
+        pushOsc(wantEfficiencyRatio, lastEfficiencyRatioPayload, 'Efficiency Ratio', 'layer-efficiency-ratio');
+        pushOsc(wantRavi, lastRaviPayload, 'RAVI', 'layer-ravi');
+        pushOsc(wantCog, lastCogPayload, 'COG', 'layer-cog');
+        pushOsc(wantMassIndex, lastMassIndexPayload, 'Mass Index', 'layer-mass-index');
+        pushOsc(wantVolatilityAverage, lastVolatilityAveragePayload, 'Vol Average', 'layer-volatility-average');
+        pushOsc(wantVolatilityAverageChannel, lastVolatilityAverageChannelPayload, 'Vol Avg Channel', 'layer-volatility-average-channel');
+        pushOsc(wantPriceOscillator, lastPriceOscillatorPayload, 'Price Oscillator', 'layer-price-oscillator');
+        pushOsc(wantAdaptiveLookBack, lastAdaptiveLookBackPayload, 'Adaptive Look Back', 'layer-adaptive-look-back');
+        pushOsc(wantVolatilityCandles, lastVolatilityCandlesPayload, 'Volatility Candles', 'layer-volatility-candles');
+        pushOsc(wantVolatilityAverageTwice, lastVolatilityAverageTwicePayload, 'Vol Avg Twice', 'layer-volatility-average-twice');
+        if (wantVolatilityStagesAw && lastVolatilityStagesAwPayload) {
+            const ser = lastVolatilityStagesAwPayload.series || {};
+            const baseTitle = (lastVolatilityStagesAwPayload.title)
+                ? String(lastVolatilityStagesAwPayload.title)
+                : 'Vol Stages AW';
+            const meta = (window.PLATFORM_INDICATOR_LAYER_META && window.PLATFORM_INDICATOR_LAYER_META['layer-volatility-stages-aw']) || {};
+            if (Array.isArray(ser.stages) && ser.stages.length) {
+                oscillators.push({
+                    name: baseTitle,
+                    color: '#f4f4f5',
+                    layerId: 'layer-volatility-stages-aw',
+                    settingsUrl: meta.settingsUrl || null,
+                });
+            }
+            const hasChannel = ['volatility', 'sma_fast', 'sma_slow', 'up', 'down']
+                .some((k) => Array.isArray(ser[k]) && ser[k].length);
+            if (hasChannel) {
+                oscillators.push({
+                    name: `${baseTitle} (ch)`,
+                    color: '#f4f4f5',
+                    layerId: 'layer-volatility-stages-aw',
+                    settingsUrl: meta.settingsUrl || null,
+                });
+            }
+        }
+        pushOsc(wantAtr, lastAtrPayload, 'ATR', 'layer-atr');
+
+        lastClassicNameState = { overlays, oscillators };
+        requestAnimationFrame(() => renderAllIndicatorNameLabels());
     }
 
     /** Тянем только включённые classic-слои и рисуем series/panes. */
@@ -3425,6 +3652,7 @@
             lastZigZagPayload = null;
             lastVolatilityAverageTwicePayload = null;
             lastVolatilityStagesAwPayload = null;
+            if (window.PlatformChartFetch) window.PlatformChartFetch.invalidate('classic');
             applyClassicOsEngineSeries();
             return;
         }
@@ -3570,32 +3798,24 @@
         if (wantVolatilityAverageTwice) layers.push('volatility_average_twice');
         if (wantVolatilityStagesAw) layers.push('volatility_stages_aw');
 
-        // Уникальный ключ запроса: при том же наборе слоёв не стартуем второй fetch.
-        // На M1 classic раньше отвечал ~15с — таймер OVERLAYS_REFRESH_MS как раз столько же
-        // бампил seq и отбрасывал готовый ответ → нижние pane так и не появлялись.
+        if (!window.PlatformChartFetch) return;
+
+        // Ключ: instrument|tf|layers — тот же набор не стартует повторно (таймер 15с).
         const requestKey = [
             currentInstrument,
             String(currentTimeframeMinutes),
             layers.slice().sort().join(','),
         ].join('|');
-        if (classicIndicatorsInFlightKey === requestKey) {
-            return;
-        }
-
-        const seq = ++classicIndicatorsFetchSeq;
-        classicIndicatorsInFlightKey = requestKey;
         const params = new URLSearchParams({
             instrument: currentInstrument,
             timeframe: String(currentTimeframeMinutes),
         });
         layers.forEach((l) => params.append('layers[]', l));
 
-        fetch(CLASSIC_INDICATORS_URL + '?' + params.toString(), {
-            headers: { 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
-        })
-            .then((r) => r.json())
-            .then((d) => {
-                if (seq !== classicIndicatorsFetchSeq) return;
+        PlatformChartFetch.requestJson('classic', {
+            key: requestKey,
+            url: CLASSIC_INDICATORS_URL + '?' + params.toString(),
+            apply: (d) => {
                 try {
                     lastBollingerPayload = wantBb && d && d.bollinger ? d.bollinger : null;
                     lastRsiPayload = wantRsi && d && d.rsi ? d.rsi : null;
@@ -3742,14 +3962,8 @@
                     lastVolatilityStagesAwPayload = null;
                     try { applyClassicOsEngineSeries(); } catch (_) {}
                 }
-            })
-            .catch(() => {})
-            .finally(() => {
-                // Снимаем «замок» только у актуального запроса (устаревший seq уже не в полёте).
-                if (seq === classicIndicatorsFetchSeq && classicIndicatorsInFlightKey === requestKey) {
-                    classicIndicatorsInFlightKey = null;
-                }
-            });
+            },
+        });
     }
 
     /**
@@ -3759,13 +3973,16 @@
     function fetchLiquiditySwingsIndicator() {
         if (!currentInstrument || !layerLiquidity || !layerLiquidity.checked) {
             lastLsPayload = null;
+            if (window.PlatformChartFetch) window.PlatformChartFetch.invalidate('liquidity');
             redrawLiquiditySwingsOverlay();
             return;
         }
+        if (!window.PlatformChartFetch) return;
         const params = new URLSearchParams({ instrument: currentInstrument, timeframe: String(currentTimeframeMinutes) });
-        fetch(LS_INDICATOR_URL + '?' + params.toString(), { headers: { 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' } })
-            .then((r) => r.json())
-            .then((d) => {
+        PlatformChartFetch.requestJson('liquidity', {
+            key: currentInstrument + '|' + String(currentTimeframeMinutes),
+            url: LS_INDICATOR_URL + '?' + params.toString(),
+            apply: (d) => {
                 try {
                     lastLsPayload = d && d.liquidity_swings ? d.liquidity_swings : null;
                     redrawLiquiditySwingsOverlay();
@@ -3774,8 +3991,8 @@
                     lastLsPayload = null;
                     try { redrawLiquiditySwingsOverlay(); } catch (_) {}
                 }
-            })
-            .catch(() => {});
+            },
+        });
     }
 
     /**
@@ -3785,13 +4002,16 @@
     function fetchSmcFlowIndicator() {
         if (!currentInstrument || !layerSmc || !layerSmc.checked) {
             lastSmcPayload = null;
+            if (window.PlatformChartFetch) window.PlatformChartFetch.invalidate('smc');
             redrawSmcFlowOverlay();
             return;
         }
+        if (!window.PlatformChartFetch) return;
         const params = new URLSearchParams({ instrument: currentInstrument, timeframe: String(currentTimeframeMinutes) });
-        fetch(SMC_INDICATOR_URL + '?' + params.toString(), { headers: { 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' } })
-            .then((r) => r.json())
-            .then((d) => {
+        PlatformChartFetch.requestJson('smc', {
+            key: currentInstrument + '|' + String(currentTimeframeMinutes),
+            url: SMC_INDICATOR_URL + '?' + params.toString(),
+            apply: (d) => {
                 try {
                     lastSmcPayload = d && d.smc_flow ? d.smc_flow : null;
                     redrawSmcFlowOverlay();
@@ -3800,8 +4020,8 @@
                     lastSmcPayload = null;
                     try { redrawSmcFlowOverlay(); } catch (_) {}
                 }
-            })
-            .catch(() => {});
+            },
+        });
     }
 
     /** Размер подписей объёма: как Labels Size в LuxAlgo (tiny / small / normal). */
@@ -4059,27 +4279,28 @@
         redrawLiquiditySwingsOverlay();
         // SMC Flow не зависит от слоя DGT — перерисовываем всегда при sync оверлеев.
         redrawSmcFlowOverlay();
-        if (!priceActionOverlay || !chart || !candlestickSeries) return;
-        priceActionOverlay.innerHTML = '';
-        if (!layerPa || !layerPa.checked || !lastPaPayload || !allChartData.length) return;
-        const ts = chart.timeScale();
-        const vpPanelMaxHistPx = 100;
-        const vpPanelMaxDomPx = 26;
-        const vpPanelGapPx = 2;
-        /** Правый край колонки VP = левый край области подписей цен (ширина шкалы меняется при зуме и формате чисел). */
-        const computeVpAnchorRight = () => {
-            const cw = chartWrapper.clientWidth || 0;
-            if (!Number.isFinite(cw) || cw < 40) return null;
-            let scaleW = 0;
-            try {
-                if (candlestickSeries && typeof candlestickSeries.priceScale === 'function') {
-                    scaleW = Number(candlestickSeries.priceScale().width());
+        try {
+            if (!priceActionOverlay || !chart || !candlestickSeries) return;
+            priceActionOverlay.innerHTML = '';
+            if (!layerPa || !layerPa.checked || !lastPaPayload || !allChartData.length) return;
+            const ts = chart.timeScale();
+            const vpPanelMaxHistPx = 100;
+            const vpPanelMaxDomPx = 26;
+            const vpPanelGapPx = 2;
+            /** Правый край колонки VP = левый край области подписей цен (ширина шкалы меняется при зуме и формате чисел). */
+            const computeVpAnchorRight = () => {
+                const cw = chartWrapper.clientWidth || 0;
+                if (!Number.isFinite(cw) || cw < 40) return null;
+                let scaleW = 0;
+                try {
+                    if (candlestickSeries && typeof candlestickSeries.priceScale === 'function') {
+                        scaleW = Number(candlestickSeries.priceScale().width());
+                    }
+                } catch (_) {
+                    scaleW = 0;
                 }
-            } catch (_) {
-                scaleW = 0;
-            }
-            if (!Number.isFinite(scaleW) || scaleW < 0) scaleW = 0;
-            // На первом кадре width() иногда 0 — не даём VP уехать вправо за холст (старый запас ~78px).
+                if (!Number.isFinite(scaleW) || scaleW < 0) scaleW = 0;
+                // На первом кадре width() иногда 0 — не даём VP уехать вправо за холст (старый запас ~78px).
             const effectiveScale = scaleW > 0 ? scaleW : 78;
             const borderGapPx = 1;
             const anchor = cw - effectiveScale - borderGapPx;
@@ -4223,6 +4444,10 @@
             }
         } catch (e) {
             console.error('[PriceAction DGT] dashboard redraw', e);
+        }
+        } finally {
+            // Названия structural/classic-слоёв обновляем после любого выхода из PA overlay.
+            renderAllIndicatorNameLabels();
         }
     }
 
@@ -4368,19 +4593,19 @@
 
     function fetchStructures() {
         if (!currentInstrument) return;
+        if (!window.PlatformChartFetch) return;
         const params = new URLSearchParams({
             instrument: currentInstrument,
             timeframe: String(currentTimeframeMinutes)
         });
-        fetch(STRUCTURES_URL + '?' + params.toString(), {
-            headers: { 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' }
-        })
-            .then(r => r.json())
-            .then(data => {
+        PlatformChartFetch.requestJson('structures', {
+            key: currentInstrument + '|' + String(currentTimeframeMinutes),
+            url: STRUCTURES_URL + '?' + params.toString(),
+            apply: (data) => {
                 lastZones = data.zones || [];
                 requestAnimationFrame(redrawStructureOverlay);
-            })
-            .catch(() => {});
+            },
+        });
     }
 
     function startAutoRefresh() {
@@ -4496,7 +4721,7 @@
             since = Math.floor(Date.now() / 1000) - POLL_WINDOW_SEC;
             limit = POLL_LIMIT;
         } else {
-            // Первичный показ: минутные TF — 2ч; секундные — окно под viewport (~130 баров).
+            // Первичный показ: INITIAL_BARS свечей выбранного TF (не «2 часа на всех»).
             since = Math.floor(Date.now() / 1000) - initialWindowSecForTf(currentTimeframeMinutes);
             limit = initialLimitForTf(currentTimeframeMinutes);
         }
@@ -4512,20 +4737,49 @@
         if (before == null) {
             params.set('include_partial', '1');
         }
-        return fetch(CANDLES_URL + '?' + params.toString(), {
-            headers: { 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
-        })
-            .then((r) => r.json())
-            .then((payload) => {
-                applyM1CountdownFromPayload(payload);
-                if (currentTimeframeMinutes !== 1) {
-                    applyGenericCountdownFromPayload(payload, currentTimeframeMinutes);
-                } else {
-                    tfCloseCountdownAnchorSec = null;
-                    tfCloseCountdownAnchorPerfMs = null;
-                }
-                return payload;
-            });
+
+        const url = CANDLES_URL + '?' + params.toString();
+        // Отдельные каналы: poll не abort'ит initial/more и наоборот.
+        // Poll coalesce по instrument|tf — не копим очередь 500мс-тиков.
+        const channel = kind === 'poll' ? 'candles-poll'
+            : (kind === 'more' ? 'candles-more' : 'candles-initial');
+        const key = kind === 'poll'
+            ? (instrument + '|' + String(currentTimeframeMinutes) + '|poll')
+            : (instrument + '|' + String(currentTimeframeMinutes) + '|' + kind + '|' + String(before ?? ''));
+
+        const finishPayload = (payload) => {
+            if (!payload || typeof payload !== 'object') {
+                return { candles: [] };
+            }
+            applyM1CountdownFromPayload(payload);
+            // Микро-инструменты: подставляем 8 знаков (или иной scale) до setData/update.
+            applyPriceScaleFromPayload(payload);
+            if (currentTimeframeMinutes !== 1) {
+                applyGenericCountdownFromPayload(payload, currentTimeframeMinutes);
+            } else {
+                tfCloseCountdownAnchorSec = null;
+                tfCloseCountdownAnchorPerfMs = null;
+            }
+            return payload;
+        };
+
+        if (!window.PlatformChartFetch) {
+            return fetch(url, {
+                headers: { 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+            }).then((r) => r.json()).then(finishPayload);
+        }
+
+        const p = PlatformChartFetch.requestJson(channel, {
+            key: key,
+            url: url,
+            // initial всегда уникален по смыслу; poll/more coalesce.
+            coalesce: kind !== 'initial',
+        });
+        // Coalesce poll: нет нового HTTP — отдаём пустой хвост (caller early-return).
+        if (!p) {
+            return Promise.resolve({ candles: [] });
+        }
+        return p.then((payload) => finishPayload(payload));
     }
 
     function buildChartData(candles) {
@@ -4682,6 +4936,7 @@
         if (liquiditySwingsOverlay) liquiditySwingsOverlay.classList.remove('hidden');
         if (priceActionOverlay) priceActionOverlay.classList.remove('hidden');
         if (smcFlowOverlay) smcFlowOverlay.classList.remove('hidden');
+        if (classicIndicatorLabelsEl) classicIndicatorLabelsEl.classList.remove('hidden');
         chartPlaceholder.classList.add('hidden');
 
         chart = LightweightCharts.createChart(chartWrapper, {
@@ -4739,6 +4994,11 @@
         classicLineSeries = {};
         rsiLevelLines = [];
         classicOscPaneCount = 0;
+        lastClassicNameState = { overlays: [], oscillators: [] };
+        if (classicIndicatorLabelsEl) {
+            classicIndicatorLabelsEl.innerHTML = '';
+            classicIndicatorLabelsEl.classList.remove('hidden');
+        }
 
         try {
             candlestickSeries.attachPrimitive(createChartDomOverlaySyncPrimitive());
@@ -4748,7 +5008,8 @@
 
         chart.timeScale().subscribeVisibleLogicalRangeChange(() => {
             const range = chart.timeScale().getVisibleLogicalRange();
-            if (range && currentTimeframeMinutes === 1 && !loadingMore && oldestLoadedTime != null && range.from < 2) {
+            // Догрузка влево на любом TF (раньше только M1 — на M5+ история обрывалась на initial).
+            if (range && !loadingMore && oldestLoadedTime != null && range.from < 2) {
                 loadMoreCandles();
             }
             redrawStructureOverlay();
@@ -4758,15 +5019,14 @@
     }
 
     function loadMoreCandles() {
-        if (currentTimeframeMinutes !== 1) return;
         if (!currentInstrument || loadingMore || oldestLoadedTime == null) return;
         const sinceT = candlesSince();
         if (oldestLoadedTime <= sinceT) return;
 
         loadingMore = true;
         setLoading(true);
-        // Догрузка более старой истории: расширяем окно до MAX_WINDOW_SEC и используем
-        // увеличенный лимит баров, чтобы за один запрос покрыть пролистывание влево.
+        // Догрузка более старой истории: расширяем окно до MAX_WINDOW_SEC.
+        // Работает для всех TF графика (M1/M5/… и S5/S15/S30).
         fetchCandles(currentInstrument, { before: oldestLoadedTime, kind: 'more' })
             .then(data => {
                 const candles = data.candles || [];
@@ -4867,6 +5127,8 @@
 
     function selectInstrument(instrument, displayName) {
         if (currentInstrument === instrument) return;
+        // Сброс всех in-flight: иначе ответ по старой паре может перезаписать новый график.
+        if (window.PlatformChartFetch) window.PlatformChartFetch.invalidateAll();
         currentInstrument = instrument;
         currentDisplayName = displayName;
         // Запоминаем пару — при F5 вернёмся к ней, а не к первой в списке.
@@ -4975,6 +5237,8 @@
             saveSelectedTimeframe(m);
             updateTfOptionStyles();
             tfPanel.classList.add('hidden');
+            // Смена TF: abort старых classic/structures и т.п., чтобы не нарисовать M5 поверх M1.
+            if (window.PlatformChartFetch) window.PlatformChartFetch.invalidateAll();
             if (currentInstrument && candlestickSeries) {
                 reloadChartData();
             }
@@ -5357,6 +5621,216 @@
         profitEl.textContent = '+$' + profit.toFixed(2);
         totalEl.textContent = '+$' + total.toFixed(2);
     }
+
+    // -------------------------------------------------------------------------
+    // Правая колонка: компактная лента зеркалимых на Pocket Option сделок.
+    // Источник — GET bots.live-trades.data; на UI показываем только mirrored_*.
+    // Клик по карточке переключает график на инструмент сделки (selectInstrument).
+    // -------------------------------------------------------------------------
+    (function initDashPoTrades() {
+        const listEl = document.getElementById('dash-po-trades-list');
+        const metaEl = document.getElementById('dash-po-trades-meta');
+        if (!listEl || !metaEl || !LIVE_TRADES_URL) return;
+
+        let pollTimer = null;
+        let lastRenderedIds = '';
+
+        function escapeHtml(s) {
+            return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        }
+
+        function sideLabel(side) {
+            const raw = String(side ?? '').toUpperCase();
+            if (raw === 'PUT') return 'ВНИЗ';
+            if (raw === 'CALL') return 'ВВЕРХ';
+            return side ?? '—';
+        }
+
+        function sideTone(side) {
+            const raw = String(side ?? '').toUpperCase();
+            if (raw === 'CALL') return 'text-emerald-400';
+            if (raw === 'PUT') return 'text-rose-400';
+            return 'text-zinc-300';
+        }
+
+        // Компактный бейдж результата (paper или PO).
+        function resultBadge(result, title) {
+            const r = String(result ?? '').toLowerCase();
+            const tip = title ? ` title="${escapeHtml(title).replace(/"/g, '&quot;')}"` : '';
+            if (r === 'win') return `<span class="text-emerald-400"${tip}>win</span>`;
+            if (r === 'loss') return `<span class="text-rose-400"${tip}>loss</span>`;
+            if (r === 'draw') return `<span class="text-amber-400"${tip}>draw</span>`;
+            if (r === 'pending' || r === '') return `<span class="text-zinc-500"${tip}>…</span>`;
+            return `<span class="text-zinc-400"${tip}>${escapeHtml(r)}</span>`;
+        }
+
+        // Итог на PO: учитываем assume_not_opened / ожидание successcloseOrder.
+        function poBadge(t) {
+            const src = t.mirror_po_result_source ? String(t.mirror_po_result_source) : '';
+            const mirrorStatus = t.mirror_status ? String(t.mirror_status) : '';
+            if (src === 'po_assume_not_opened' || mirrorStatus === 'assumed_not_opened') {
+                return '<span class="text-amber-400" title="PO: открытие не подтверждено">?</span>';
+            }
+            if (src === 'paper_fallback') {
+                return '<span class="text-amber-400" title="PO-итог не получен">err</span>';
+            }
+            if (!t.mirror_po_result) {
+                if (t.mirror_status === 'executed' && t.status === 'open') {
+                    return '<span class="text-zinc-500" title="Ждём итог PO">…</span>';
+                }
+                return '<span class="text-zinc-600">—</span>';
+            }
+            return resultBadge(t.mirror_po_result, 'Итог Pocket Option');
+        }
+
+        function secondsToClock(total) {
+            const s = Math.max(0, Math.floor(total));
+            const m = Math.floor(s / 60);
+            const r = s % 60;
+            return String(m).padStart(2, '0') + ':' + String(r).padStart(2, '0');
+        }
+
+        // Таймер до экспирации для open; для закрытых — короткий статус.
+        function timeLeftHtml(t) {
+            if (t.status !== 'open') {
+                return '<span class="text-zinc-600">готово</span>';
+            }
+            if (!t.expiry_ts) return '<span class="text-zinc-600">—</span>';
+            const left = t.expiry_ts - Math.floor(Date.now() / 1000);
+            if (left <= 0) return '<span class="text-amber-400 font-mono">00:00</span>';
+            return '<span class="text-cyan-300 font-mono tabular-nums">' + secondsToClock(left) + '</span>';
+        }
+
+        // Реально ушло на PO: markMirror('executed') или settlement assumed_not_opened.
+        // mirrored_at ставится и для skipped_* / failed — сам по себе не критерий.
+        function isMirroredToPo(t) {
+            const st = String(t.mirror_status ?? '').toLowerCase();
+            return st === 'executed' || st === 'assumed_not_opened';
+        }
+
+        // Имя для selectInstrument: из кнопки в сайдбаре или сам код инструмента.
+        function displayNameForInstrument(instrument) {
+            const key = String(instrument ?? '');
+            if (!key) return key;
+            const btn = document.querySelector(
+                '.instrument-btn[data-instrument="' + CSS.escape(key) + '"]'
+            );
+            return (btn && btn.dataset.displayName) ? btn.dataset.displayName : key;
+        }
+
+        function renderCards(trades) {
+            // Ограничиваем высоту колонки: свежие сверху (API уже latest).
+            const mirrored = (trades || []).filter(isMirroredToPo).slice(0, 40);
+            // Стабильный ключ: не перерисовываем DOM каждую секунду без нужды
+            // (таймеры обновляем через data-expiry-ts в tickTimers).
+            const idsKey = mirrored.map((t) =>
+                [t.id, t.status, t.paper_result || t.result, t.mirror_po_result || '', t.mirror_status || ''].join(':')
+            ).join('|');
+
+            if (idsKey === lastRenderedIds && listEl.querySelector('[data-trade-id]')) {
+                tickTimers(listEl);
+                return;
+            }
+            lastRenderedIds = idsKey;
+
+            if (!mirrored.length) {
+                listEl.innerHTML = '<div class="px-3 py-6 text-center text-[11px] text-zinc-500">Нет зеркалимых сделок за 2 ч</div>';
+                return;
+            }
+
+            listEl.innerHTML = mirrored.map((t) => {
+                const side = String(t.side ?? '').toUpperCase();
+                const isOpen = t.status === 'open';
+                const instrument = String(t.instrument ?? '');
+                const amount = t.entry_amount != null ? String(t.entry_amount) : '—';
+                const bot = escapeHtml(t.bot_name || '—');
+                const paper = resultBadge(t.paper_result ?? t.result, 'Paper');
+                const po = poBadge(t);
+                const ring = isOpen ? 'ring-1 ring-inset ring-sky-800/50' : '';
+                return `
+                    <button type="button"
+                        data-trade-id="${escapeHtml(t.id)}"
+                        data-instrument="${escapeHtml(instrument)}"
+                        data-expiry-ts="${t.expiry_ts || ''}"
+                        data-status="${escapeHtml(t.status || '')}"
+                        class="dash-po-trade-card w-full text-left px-3 py-2.5 hover:bg-zinc-800/60 transition ${ring} ${currentInstrument === instrument ? 'bg-blue-950/30' : ''}"
+                        title="Открыть ${escapeHtml(instrument)} на графике">
+                        <div class="flex items-start justify-between gap-2">
+                            <div class="min-w-0">
+                                <p class="truncate text-[12px] font-semibold text-zinc-100">${escapeHtml(instrument)}</p>
+                                <p class="mt-0.5 truncate text-[10px] text-zinc-500">${bot}</p>
+                            </div>
+                            <div class="shrink-0 text-right">
+                                <p class="text-[11px] font-semibold tabular-nums ${sideTone(side)}">${sideLabel(side)}</p>
+                                <p class="mt-0.5 text-[11px] font-mono tabular-nums text-zinc-200">$${escapeHtml(amount)}</p>
+                            </div>
+                        </div>
+                        <div class="mt-1.5 flex items-center justify-between gap-2 text-[10px]">
+                            <span class="dash-po-timer">${timeLeftHtml(t)}</span>
+                            <span class="tabular-nums text-zinc-500">P ${paper} · PO ${po}</span>
+                        </div>
+                    </button>`;
+            }).join('');
+        }
+
+        // Обновляем только countdown без полного re-render списка.
+        function tickTimers(root) {
+            root.querySelectorAll('.dash-po-trade-card[data-status="open"]').forEach((card) => {
+                const timerEl = card.querySelector('.dash-po-timer');
+                if (!timerEl) return;
+                const ts = Number(card.dataset.expiryTs || 0);
+                if (!ts) {
+                    timerEl.innerHTML = '<span class="text-zinc-600">—</span>';
+                    return;
+                }
+                const left = ts - Math.floor(Date.now() / 1000);
+                if (left <= 0) {
+                    timerEl.innerHTML = '<span class="text-amber-400 font-mono">00:00</span>';
+                    return;
+                }
+                timerEl.innerHTML = '<span class="text-cyan-300 font-mono tabular-nums">' + secondsToClock(left) + '</span>';
+            });
+        }
+
+        // Клик по карточке → переключить инструмент на графике (как в сайдбаре).
+        listEl.addEventListener('click', (ev) => {
+            const card = ev.target.closest('.dash-po-trade-card');
+            if (!card) return;
+            const instrument = card.dataset.instrument;
+            if (!instrument) return;
+            selectInstrument(instrument, displayNameForInstrument(instrument));
+            // Подсветка выбранной карточки без ожидания следующего poll.
+            listEl.querySelectorAll('.dash-po-trade-card').forEach((el) => {
+                el.classList.toggle('bg-blue-950/30', el === card);
+            });
+        });
+
+        async function refreshOnce() {
+            try {
+                const res = await fetch(LIVE_TRADES_URL, {
+                    headers: { Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+                    cache: 'no-store',
+                });
+                if (!res.ok) throw new Error('HTTP ' + res.status);
+                const data = await res.json();
+                const all = data.trades || [];
+                const mirrored = all.filter(isMirroredToPo);
+                renderCards(all);
+                const openCnt = mirrored.filter((t) => t.status === 'open').length;
+                metaEl.textContent = mirrored.length
+                    ? `${mirrored.length} · open ${openCnt}`
+                    : 'пусто';
+            } catch (_) {
+                metaEl.textContent = 'ошибка…';
+            }
+        }
+
+        refreshOnce();
+        pollTimer = setInterval(refreshOnce, 2000);
+        window.addEventListener('beforeunload', () => {
+            if (pollTimer) clearInterval(pollTimer);
+        });
+    })();
 })();
 </script>
 @include('partials.chart-indicators-popup-script')

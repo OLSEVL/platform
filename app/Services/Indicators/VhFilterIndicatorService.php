@@ -2,6 +2,8 @@
 
 namespace App\Services\Indicators;
 
+use App\Support\PriceScale;
+
 /**
  * VHFilter — порт OsEngine Scripts/VHFilter.cs.
  *
@@ -55,7 +57,7 @@ class VhFilterIndicatorService
                 continue;
             }
 
-            $values[$index] = round($highLow[$index] / $sum, 2);
+            $values[$index] = PriceScale::roundMarket($highLow[$index] / $sum);
         }
 
         return $values;

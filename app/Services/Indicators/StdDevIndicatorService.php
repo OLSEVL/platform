@@ -2,6 +2,8 @@
 
 namespace App\Services\Indicators;
 
+use App\Support\PriceScale;
+
 /**
  * StdDev — порт OsEngine Indicators/Scripts/StdDev.cs.
  * σ по окну period; length2 quirk OsEngine сохранён.
@@ -59,7 +61,8 @@ class StdDevIndicatorService
                 $x = OsEngineCandleMath::candlePoint($rows[$i], $point) - $m;
                 $sd += $x * $x;
             }
-            $values[$index] = round(sqrt($sd / $length2), 5);
+            // σ на NGN ~1e-7; round(...,5) обнулял серию целиком.
+            $values[$index] = PriceScale::roundMarket(sqrt($sd / $length2));
         }
 
         return $values;

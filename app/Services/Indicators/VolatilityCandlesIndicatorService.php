@@ -2,6 +2,8 @@
 
 namespace App\Services\Indicators;
 
+use App\Support\PriceScale;
+
 /**
  * VolatilityCandles — порт OsEngine Indicators/Scripts/VolatilityCandles.cs.
  *
@@ -63,7 +65,7 @@ class VolatilityCandlesIndicatorService
             }
 
             // Math.Round(volatility, 3) в C#.
-            $values[$index] = round($volatility, 3);
+            $values[$index] = PriceScale::roundMarket($volatility);
         }
 
         return $values;

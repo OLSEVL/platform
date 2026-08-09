@@ -2,6 +2,8 @@
 
 namespace App\Services\Indicators;
 
+use App\Support\PriceScale;
+
 /**
  * Hull Moving Average (HMA) — порт OsEngine Indicators/Scripts/HMA.cs.
  *
@@ -104,7 +106,7 @@ class HmaIndicatorService
 
         $result = $weights != 0.0 ? $sum / $weights : 0.0;
 
-        return round($result, 4);
+        return PriceScale::roundMarket($result);
     }
 
     /**
@@ -125,6 +127,6 @@ class HmaIndicatorService
 
         $result = $weights != 0.0 ? $sum / $weights : 0.0;
 
-        return round($result, 4);
+        return PriceScale::roundMarket($result);
     }
 }

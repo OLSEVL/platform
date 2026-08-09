@@ -69,11 +69,11 @@ class EnvelopTrendStrategy implements BotStrategyInterface
             OsEngineBinaryDecision::confidence($depth, $payout),
             [
                 $call
-                    ? sprintf('High пробил верхнюю Envelop(%.5f).', $up)
-                    : sprintf('Low пробил нижнюю Envelop(%.5f).', $down),
-                sprintf('Mid=%.5f · Close=%.5f', $mid, $close),
+                    ? sprintf('High пробил верхнюю Envelop(%.8f).', $up)
+                    : sprintf('Low пробил нижнюю Envelop(%.8f).', $down),
+                sprintf('Mid=%.8f · Close=%.8f', $mid, $close),
             ],
-            sprintf('envelop_trend: %s; up=%.5f down=%.5f close=%.5f', $setup, $up, $down, $close),
+            sprintf('envelop_trend: %s; up=%.8f down=%.8f close=%.8f', $setup, $up, $down, $close),
             [
                 'up' => round($up, 8),
                 'down' => round($down, 8),

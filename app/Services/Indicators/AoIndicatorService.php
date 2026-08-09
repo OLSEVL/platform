@@ -2,6 +2,8 @@
 
 namespace App\Services\Indicators;
 
+use App\Support\PriceScale;
+
 /**
  * Awesome Oscillator (AO) — порт OsEngine Indicators/Scripts/AO.cs.
  *
@@ -52,7 +54,8 @@ class AoIndicatorService
                 continue;
             }
 
-            $values[$index] = round((float) $emaFast[$index] - (float) $emaSlow[$index], 6);
+            // 8 знаков: на NGN |AO|~1e-7, round(...,6) обнулял гистограмму.
+            $values[$index] = PriceScale::roundMarket((float) $emaFast[$index] - (float) $emaSlow[$index]);
         }
 
         return $values;

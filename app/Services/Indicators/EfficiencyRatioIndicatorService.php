@@ -2,6 +2,8 @@
 
 namespace App\Services\Indicators;
 
+use App\Support\PriceScale;
+
 /**
  * Efficiency Ratio (ER) — порт OsEngine Scripts/EfficiencyRatio.cs.
  *
@@ -56,7 +58,7 @@ class EfficiencyRatioIndicatorService
             }
 
             if ($eR2 != 0.0) {
-                $values[$index] = round($eR1 / $eR2, 4);
+                $values[$index] = PriceScale::roundMarket($eR1 / $eR2);
             } else {
                 $values[$index] = 0.0;
             }

@@ -71,10 +71,10 @@ class ParabolicSarTradeStrategy implements BotStrategyInterface
             OsEngineBinaryDecision::confidence($depth, $payout),
             [
                 $side === 'CALL'
-                    ? sprintf('Close(%.5f) выше SAR(%.5f).', $close, $sar)
-                    : sprintf('Close(%.5f) ниже SAR(%.5f).', $close, $sar),
+                    ? sprintf('Close(%.8f) выше SAR(%.8f).', $close, $sar)
+                    : sprintf('Close(%.8f) ниже SAR(%.8f).', $close, $sar),
             ],
-            sprintf('parabolic_sar_trade: %s; sar=%.5f close=%.5f', $setup, $sar, $close),
+            sprintf('parabolic_sar_trade: %s; sar=%.8f close=%.8f', $setup, $sar, $close),
             [
                 'sar' => round($sar, 8),
                 'close' => round($close, 8),

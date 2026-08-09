@@ -102,9 +102,9 @@ class SmaStochasticStrategy implements BotStrategyInterface
                 $call
                     ? sprintf('Close > SMA+step и %%K кросс вверх через %.0f.', $downLine)
                     : sprintf('Close < SMA−step и %%K кросс вниз через %.0f.', $upLine),
-                sprintf('SMA=%.5f · K=%.2f → %.2f · step=%.6f', $sma, $kPrev, $k, $step),
+                sprintf('SMA=%.8f · K=%.2f → %.2f · step=%.6f', $sma, $kPrev, $k, $step),
             ],
-            sprintf('sma_stochastic: %s; sma=%.5f k=%.2f', $setup, $sma, $k),
+            sprintf('sma_stochastic: %s; sma=%.8f k=%.2f', $setup, $sma, $k),
             [
                 'sma' => round($sma, 8),
                 'k' => round($k, 4),

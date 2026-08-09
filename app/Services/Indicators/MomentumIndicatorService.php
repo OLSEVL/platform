@@ -2,6 +2,8 @@
 
 namespace App\Services\Indicators;
 
+use App\Support\PriceScale;
+
 /**
  * Momentum — порт OsEngine Indicators/Scripts/Momentum.cs.
  * value = (price / price[index-length]) * 100; round 6.
@@ -49,7 +51,7 @@ class MomentumIndicatorService
                 continue;
             }
             $cur = OsEngineCandleMath::candlePoint($rows[$index], $point);
-            $values[$index] = round(($cur / $divider) * 100.0, 6);
+            $values[$index] = PriceScale::roundMarket(($cur / $divider) * 100.0);
         }
 
         return $values;

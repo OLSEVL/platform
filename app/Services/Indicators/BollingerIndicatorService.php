@@ -2,6 +2,8 @@
 
 namespace App\Services\Indicators;
 
+use App\Support\PriceScale;
+
 /**
  * Bollinger Bands — порт OsEngine Indicators/Scripts/Bollinger.cs.
  * Центр = SMA(Close, Length); полосы = SMA ± Deviation * σ.
@@ -66,8 +68,9 @@ class BollingerIndicatorService
             $div = $length > 30 ? ($length - 1) : $length;
             $sigma = $div > 0 ? sqrt($sumSq / $div) : 0.0;
 
-            $up[$index] = round($valueSma + $sigma * $deviation, 6);
-            $down[$index] = round($valueSma - $sigma * $deviation, 6);
+            // Полосы в единицах цены — 8 знаков, иначе на NGN up≈down≈sma.
+            $up[$index] = PriceScale::roundMarket($valueSma + $sigma * $deviation);
+            $down[$index] = PriceScale::roundMarket($valueSma - $sigma * $deviation);
         }
 
         return ['mid' => $mid, 'up' => $up, 'down' => $down];
