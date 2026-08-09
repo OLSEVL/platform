@@ -65,4 +65,10 @@ class Bot extends Model
 
         return (bool) $cfg['mirror_trades_enabled'];
     }
+
+    /** Бот-контейнер для ручных CALL/PUT с главной (не сканируется). */
+    public function isManualDashboardBot(): bool
+    {
+        return $this->type === \App\Support\ManualTradeConfig::BOT_TYPE;
+    }
 }

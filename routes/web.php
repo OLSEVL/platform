@@ -35,6 +35,8 @@ Route::middleware('auth')->group(function () {
     Route::get('/chart-trades', [DashboardController::class, 'chartTradesData'])->name('dashboard.chart-trades.data');
     // Ручной CALL/PUT на Pocket Option (SSID из /profile/trading).
     Route::post('/trading/manual-order', [ManualTradeController::class, 'store'])->name('trading.manual-order');
+    // Тумблеры ручной панели (wait previous / мартингейл / сумма с шага).
+    Route::put('/trading/manual-settings', [ManualTradeController::class, 'updateSettings'])->name('trading.manual-settings');
     Route::prefix('bots')->name('bots.')->group(function () {
         Route::get('/', [BotController::class, 'index'])->name('index');
         Route::get('/analytics', [BotController::class, 'analytics'])->name('analytics');

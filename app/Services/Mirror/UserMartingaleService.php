@@ -4,12 +4,14 @@ namespace App\Services\Mirror;
 
 use App\Models\BotTrade;
 use App\Models\UserTradingSetting;
+use App\Support\ManualTradeConfig;
 use Illuminate\Support\Facades\DB;
 
 /**
  * Сдвиг шага мартингейла после settle paper-сделки (только если зеркало на PO было executed).
  *
  * Результат для шага: предпочтительно итог PO (mirror_po_result), иначе paper.
+ * Ручные сделки (source=manual) двигают шаг только при manual_advance_martingale=true.
  */
 class UserMartingaleService
 {
@@ -34,6 +36,16 @@ class UserMartingaleService
         $userId = (int) ($trade->bot?->user_id ?? 0);
         if ($userId <= 0) {
             return;
+        }
+
+        // Ручной вход: по умолчанию не трогаем цепочку мартингейла ботов.
+        if (($meta['source'] ?? null) === ManualTradeConfig::META_SOURCE) {
+            $allowManual = UserTradingSetting::query()
+                ->where('user_id', $userId)
+                ->value('manual_advance_martingale');
+            if (! (bool) $allowManual) {
+                return;
+            }
         }
 
         DB::transaction(function () use ($userId, $result): void {

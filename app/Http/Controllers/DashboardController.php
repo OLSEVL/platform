@@ -132,6 +132,8 @@ class DashboardController extends Controller
     {
         return Bot::query()
             ->where('user_id', (int) auth()->id())
+            // Контейнер ручных сделок не используем как якорь индикаторов.
+            ->where('type', '!=', \App\Support\ManualTradeConfig::BOT_TYPE)
             ->orderBy('id')
             ->first();
     }

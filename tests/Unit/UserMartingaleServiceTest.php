@@ -102,6 +102,43 @@ class UserMartingaleServiceTest extends TestCase
         $this->assertSame(1, (int) UserTradingSetting::query()->where('user_id', $user->id)->value('martingale_step'));
     }
 
+    public function test_manual_source_skips_martingale_unless_flag_on(): void
+    {
+        $user = User::factory()->create();
+        UserTradingSetting::query()->create([
+            'user_id' => $user->id,
+            'pocket_ssid' => '42["auth",{"session":"x","uid":1,"isDemo":1,"platform":2}]',
+            'order_amounts' => [1.0, 2.0, 4.0],
+            'martingale_step' => 0,
+            'order_amount' => 1,
+            'mirror_trades_enabled' => true,
+            'manual_advance_martingale' => false,
+        ]);
+
+        $bot = Bot::query()->create([
+            'user_id' => $user->id,
+            'name' => 'Ручная / Manual',
+            'type' => 'manual_dashboard',
+            'is_active' => false,
+            'config' => ['mirror_trades_enabled' => false],
+        ]);
+
+        $trade = $this->makeTrade($bot->id, [
+            'source' => 'manual',
+            'mirror_status' => 'executed',
+        ]);
+        app(UserMartingaleService::class)->advanceAfterSettledTrade($trade, BotTrade::RESULT_LOSS, 'executed');
+        $this->assertSame(0, (int) UserTradingSetting::query()->where('user_id', $user->id)->value('martingale_step'));
+
+        UserTradingSetting::query()->where('user_id', $user->id)->update(['manual_advance_martingale' => true]);
+        $trade2 = $this->makeTrade($bot->id, [
+            'source' => 'manual',
+            'mirror_status' => 'executed',
+        ]);
+        app(UserMartingaleService::class)->advanceAfterSettledTrade($trade2, BotTrade::RESULT_LOSS, 'executed');
+        $this->assertSame(1, (int) UserTradingSetting::query()->where('user_id', $user->id)->value('martingale_step'));
+    }
+
     /** @param  array<string, mixed>  $meta */
     private function makeTrade(int $botId, array $meta): BotTrade
     {

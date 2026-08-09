@@ -165,45 +165,70 @@
             'ssid_ready' => false,
             'is_demo' => true,
             'default_amount' => 1,
+            'martingale_amount' => 1,
+            'manual_respect_wait_previous' => false,
+            'manual_advance_martingale' => false,
+            'manual_amount_from_martingale' => false,
             'profile_url' => route('profile.trading.edit'),
+            'settings_url' => route('trading.manual-settings'),
         ];
         $manualDefaultAmount = number_format((float) ($manualTrade['default_amount'] ?? 1), 2, '.', '');
         $manualDefaultAmount = rtrim(rtrim($manualDefaultAmount, '0'), '.');
         if ($manualDefaultAmount === '' || $manualDefaultAmount === '0') {
             $manualDefaultAmount = '1';
         }
+        $manualMartingaleAmount = number_format((float) ($manualTrade['martingale_amount'] ?? $manualTrade['default_amount'] ?? 1), 2, '.', '');
+        $manualMartingaleAmount = rtrim(rtrim($manualMartingaleAmount, '0'), '.');
+        if ($manualMartingaleAmount === '' || $manualMartingaleAmount === '0') {
+            $manualMartingaleAmount = '1';
+        }
+        $manualAmountFromMg = ! empty($manualTrade['manual_amount_from_martingale']);
     @endphp
     <aside id="manual-trade-panel"
         class="w-[15.5rem] shrink-0 border-l border-zinc-800 bg-[#161a23] flex flex-col min-h-0 overflow-hidden"
         data-ssid-ready="{{ !empty($manualTrade['ssid_ready']) ? '1' : '0' }}"
         data-is-demo="{{ !empty($manualTrade['is_demo']) ? '1' : '0' }}"
         data-profile-url="{{ e($manualTrade['profile_url'] ?? route('profile.trading.edit')) }}"
-        data-order-url="{{ route('trading.manual-order') }}">
+        data-order-url="{{ route('trading.manual-order') }}"
+        data-settings-url="{{ e($manualTrade['settings_url'] ?? route('trading.manual-settings')) }}"
+        data-martingale-amount="{{ e($manualMartingaleAmount) }}"
+        data-flag-wait="{{ !empty($manualTrade['manual_respect_wait_previous']) ? '1' : '0' }}"
+        data-flag-martingale="{{ !empty($manualTrade['manual_advance_martingale']) ? '1' : '0' }}"
+        data-flag-amount-mg="{{ $manualAmountFromMg ? '1' : '0' }}">
         {{-- Верх: ручной вход CALL/PUT (как на PO). --}}
         <div class="shrink-0 p-3 space-y-3 border-b border-zinc-800/80">
             <div class="flex items-center justify-between gap-2">
                 <p class="text-[11px] font-medium uppercase tracking-wide text-zinc-500">Сделка</p>
-                <span id="manual-trade-account-badge"
-                    class="rounded px-1.5 py-0.5 text-[10px] font-semibold {{ !empty($manualTrade['is_demo']) ? 'bg-amber-900/50 text-amber-200' : 'bg-rose-900/50 text-rose-200' }}">
-                    {{ !empty($manualTrade['is_demo']) ? 'DEMO' : 'REAL' }}
-                </span>
+                <div class="flex items-center gap-1.5">
+                    {{-- Шестерёнка: три тумблера wait / мартингейл / сумма с шага. --}}
+                    <button type="button" id="manual-trade-settings-btn"
+                        class="inline-flex h-6 w-6 items-center justify-center rounded text-zinc-400 transition hover:bg-zinc-800 hover:text-zinc-100"
+                        title="Настройки ручной торговли" aria-haspopup="dialog" aria-controls="manual-trade-settings-modal">
+                        <svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.75" aria-hidden="true">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+                        </svg>
+                    </button>
+                    <span id="manual-trade-account-badge"
+                        class="rounded px-1.5 py-0.5 text-[10px] font-semibold {{ !empty($manualTrade['is_demo']) ? 'bg-amber-900/50 text-amber-200' : 'bg-rose-900/50 text-rose-200' }}">
+                        {{ !empty($manualTrade['is_demo']) ? 'DEMO' : 'REAL' }}
+                    </span>
+                </div>
             </div>
 
-            {{-- Время экспирации --}}
+            {{-- Время экспирации: поле + поповер как на Pocket Option (степперы + пресеты). --}}
             <div class="space-y-1">
                 <label for="manual-trade-duration" class="block text-xs text-zinc-400">Время</label>
-                <div class="relative">
-                    <select id="manual-trade-duration"
-                        class="w-full appearance-none rounded-lg border border-zinc-700 bg-zinc-900/80 px-3 py-2.5 pr-9 text-sm font-medium text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-600">
-                        <option value="60">00:01:00</option>
-                        <option value="120">00:02:00</option>
-                        <option value="180">00:03:00</option>
-                        <option value="300" selected>00:05:00</option>
-                        <option value="600">00:10:00</option>
-                        <option value="900">00:15:00</option>
-                        <option value="1800">00:30:00</option>
-                        <option value="3600">01:00:00</option>
-                    </select>
+                <div class="relative" id="manual-trade-duration-wrap">
+                    <input id="manual-trade-duration" type="text" inputmode="numeric"
+                        value="00:05:00"
+                        placeholder="00:05:00"
+                        autocomplete="off"
+                        spellcheck="false"
+                        aria-haspopup="dialog"
+                        aria-controls="manual-trade-duration-popover"
+                        class="w-full rounded-lg border border-zinc-700 bg-zinc-900/80 px-3 py-2.5 pr-9 font-mono text-sm font-medium tabular-nums text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:ring-2 focus:ring-blue-600"
+                        title="Формат MM:SS или HH:MM:SS (от 00:00:03 до 12:00:00)">
                     <span class="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-500" aria-hidden="true">
                         <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.75">
                             <circle cx="12" cy="12" r="8.5"/><path stroke-linecap="round" d="M12 7.5V12l2.8 1.7"/>
@@ -212,13 +237,18 @@
                 </div>
             </div>
 
-            {{-- Сумма ставки ($) — редактируемая, дефолт из профиля --}}
+            {{-- Сумма ставки ($): UI или шаг мартингейла (read-only) — тумблер в модалке --}}
             <div class="space-y-1">
-                <label for="manual-trade-amount" class="block text-xs text-zinc-400">Сумма</label>
+                <div class="flex items-center justify-between gap-2">
+                    <label for="manual-trade-amount" class="block text-xs text-zinc-400">Сумма</label>
+                    <span id="manual-trade-amount-hint"
+                        class="text-[10px] text-zinc-600 {{ $manualAmountFromMg ? '' : 'hidden' }}">шаг МГ</span>
+                </div>
                 <div class="relative">
                     <input id="manual-trade-amount" type="number" min="1" max="20000" step="0.01"
-                        value="{{ $manualDefaultAmount }}"
-                        class="w-full rounded-lg border border-zinc-700 bg-zinc-900/80 px-3 py-2.5 pr-9 text-sm font-medium text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-600"
+                        value="{{ $manualAmountFromMg ? $manualMartingaleAmount : $manualDefaultAmount }}"
+                        @if($manualAmountFromMg) readonly @endif
+                        class="w-full rounded-lg border border-zinc-700 bg-zinc-900/80 px-3 py-2.5 pr-9 text-sm font-medium text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-600 read-only:bg-zinc-900/50 read-only:text-zinc-300 read-only:ring-0"
                         autocomplete="off">
                     <span class="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-500 text-sm font-semibold" aria-hidden="true">$</span>
                 </div>
@@ -283,6 +313,101 @@
             </div>
         </div>
     </aside>
+</div>
+
+{{-- Модалка настроек ручной торговли (три тумблера → user_trading_settings). --}}
+<div id="manual-trade-settings-modal" class="fixed inset-0 z-50 hidden" role="dialog" aria-modal="true" aria-labelledby="manual-trade-settings-title">
+    <div class="absolute inset-0 bg-black/60" data-manual-settings-dismiss></div>
+    <div class="relative mx-auto flex min-h-full items-center justify-center p-4">
+        <div class="w-full max-w-sm rounded-xl border border-zinc-700 bg-[#1a1f2b] shadow-xl">
+            <div class="flex items-center justify-between gap-2 border-b border-zinc-800 px-4 py-3">
+                <h2 id="manual-trade-settings-title" class="text-sm font-semibold text-zinc-100">Ручная торговля</h2>
+                <button type="button" class="rounded p-1 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100" data-manual-settings-dismiss aria-label="Закрыть">
+                    <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
+                </button>
+            </div>
+            <div class="space-y-4 px-4 py-4 text-sm text-zinc-200">
+                <label class="flex cursor-pointer items-start gap-3">
+                    <input id="manual-flag-wait" type="checkbox" class="mt-0.5 h-4 w-4 rounded border-zinc-600 bg-zinc-900 text-blue-600 focus:ring-blue-600">
+                    <span>
+                        <span class="block font-medium text-zinc-100">Ждать предыдущую на PO</span>
+                        <span class="mt-0.5 block text-[11px] leading-snug text-zinc-500">Не открывать поверх open-сделки; своя open блокирует зеркало ботов.</span>
+                    </span>
+                </label>
+                <label class="flex cursor-pointer items-start gap-3">
+                    <input id="manual-flag-martingale" type="checkbox" class="mt-0.5 h-4 w-4 rounded border-zinc-600 bg-zinc-900 text-blue-600 focus:ring-blue-600">
+                    <span>
+                        <span class="block font-medium text-zinc-100">Двигать мартингейл</span>
+                        <span class="mt-0.5 block text-[11px] leading-snug text-zinc-500">Win/loss ручной сделки сдвигает шаг сумм в профиле.</span>
+                    </span>
+                </label>
+                <label class="flex cursor-pointer items-start gap-3">
+                    <input id="manual-flag-amount-mg" type="checkbox" class="mt-0.5 h-4 w-4 rounded border-zinc-600 bg-zinc-900 text-blue-600 focus:ring-blue-600">
+                    <span>
+                        <span class="block font-medium text-zinc-100">Сумма с шага мартингейла</span>
+                        <span class="mt-0.5 block text-[11px] leading-snug text-zinc-500">Поле суммы = текущий шаг профиля (только чтение).</span>
+                    </span>
+                </label>
+                <p id="manual-settings-status" class="hidden text-[11px] leading-snug" role="status"></p>
+            </div>
+            <div class="flex items-center justify-end gap-2 border-t border-zinc-800 px-4 py-3">
+                <button type="button" data-manual-settings-dismiss
+                    class="rounded-lg border border-zinc-700 px-3 py-1.5 text-xs font-medium text-zinc-300 hover:bg-zinc-800">Отмена</button>
+                <button type="button" id="manual-settings-save"
+                    class="rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-500">Сохранить</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+{{-- Поповер времени как на PO: fixed, чтобы не клипался overflow панели. --}}
+<div id="manual-trade-duration-popover"
+    class="fixed z-[60] hidden w-[13.5rem] rounded-xl border border-zinc-700/90 bg-[#1c2230] p-3 shadow-2xl shadow-black/50"
+    role="dialog" aria-label="Выбор времени экспирации">
+    {{-- Степперы HH : MM : SS --}}
+    <div class="flex items-center justify-center gap-1.5 pb-3">
+        <div class="flex w-14 flex-col items-center gap-1">
+            <button type="button" data-dur-step="h" data-dur-delta="1"
+                class="flex h-8 w-full items-center justify-center rounded-md bg-zinc-800/90 text-lg font-semibold text-zinc-200 transition hover:bg-zinc-700 hover:text-white"
+                aria-label="Час плюс">+</button>
+            <span id="manual-dur-h" class="py-1 font-mono text-xl font-semibold tabular-nums text-zinc-50">00</span>
+            <button type="button" data-dur-step="h" data-dur-delta="-1"
+                class="flex h-8 w-full items-center justify-center rounded-md bg-zinc-800/90 text-lg font-semibold text-zinc-200 transition hover:bg-zinc-700 hover:text-white"
+                aria-label="Час минус">−</button>
+        </div>
+        <span class="pb-1 text-lg font-semibold text-zinc-500">:</span>
+        <div class="flex w-14 flex-col items-center gap-1">
+            <button type="button" data-dur-step="m" data-dur-delta="1"
+                class="flex h-8 w-full items-center justify-center rounded-md bg-zinc-800/90 text-lg font-semibold text-zinc-200 transition hover:bg-zinc-700 hover:text-white"
+                aria-label="Минута плюс">+</button>
+            <span id="manual-dur-m" class="py-1 font-mono text-xl font-semibold tabular-nums text-zinc-50">05</span>
+            <button type="button" data-dur-step="m" data-dur-delta="-1"
+                class="flex h-8 w-full items-center justify-center rounded-md bg-zinc-800/90 text-lg font-semibold text-zinc-200 transition hover:bg-zinc-700 hover:text-white"
+                aria-label="Минута минус">−</button>
+        </div>
+        <span class="pb-1 text-lg font-semibold text-zinc-500">:</span>
+        <div class="flex w-14 flex-col items-center gap-1">
+            <button type="button" data-dur-step="s" data-dur-delta="1"
+                class="flex h-8 w-full items-center justify-center rounded-md bg-zinc-800/90 text-lg font-semibold text-zinc-200 transition hover:bg-zinc-700 hover:text-white"
+                aria-label="Секунда плюс">+</button>
+            <span id="manual-dur-s" class="py-1 font-mono text-xl font-semibold tabular-nums text-zinc-50">00</span>
+            <button type="button" data-dur-step="s" data-dur-delta="-1"
+                class="flex h-8 w-full items-center justify-center rounded-md bg-zinc-800/90 text-lg font-semibold text-zinc-200 transition hover:bg-zinc-700 hover:text-white"
+                aria-label="Секунда минус">−</button>
+        </div>
+    </div>
+    {{-- Быстрые пресеты как на PO --}}
+    <div class="grid grid-cols-3 gap-1.5 border-t border-zinc-700/70 pt-3">
+        <button type="button" data-dur-preset="3" class="rounded-md bg-zinc-800/80 px-1 py-2 text-center text-xs font-medium text-zinc-300 transition hover:bg-zinc-700 hover:text-white">S3</button>
+        <button type="button" data-dur-preset="15" class="rounded-md bg-zinc-800/80 px-1 py-2 text-center text-xs font-medium text-zinc-300 transition hover:bg-zinc-700 hover:text-white">S15</button>
+        <button type="button" data-dur-preset="30" class="rounded-md bg-zinc-800/80 px-1 py-2 text-center text-xs font-medium text-zinc-300 transition hover:bg-zinc-700 hover:text-white">S30</button>
+        <button type="button" data-dur-preset="60" class="rounded-md bg-zinc-800/80 px-1 py-2 text-center text-xs font-medium text-zinc-300 transition hover:bg-zinc-700 hover:text-white">M1</button>
+        <button type="button" data-dur-preset="180" class="rounded-md bg-zinc-800/80 px-1 py-2 text-center text-xs font-medium text-zinc-300 transition hover:bg-zinc-700 hover:text-white">M3</button>
+        <button type="button" data-dur-preset="300" class="rounded-md bg-zinc-800/80 px-1 py-2 text-center text-xs font-medium text-zinc-300 transition hover:bg-zinc-700 hover:text-white">M5</button>
+        <button type="button" data-dur-preset="1800" class="rounded-md bg-zinc-800/80 px-1 py-2 text-center text-xs font-medium text-zinc-300 transition hover:bg-zinc-700 hover:text-white">M30</button>
+        <button type="button" data-dur-preset="3600" class="rounded-md bg-zinc-800/80 px-1 py-2 text-center text-xs font-medium text-zinc-300 transition hover:bg-zinc-700 hover:text-white">H1</button>
+        <button type="button" data-dur-preset="14400" class="rounded-md bg-zinc-800/80 px-1 py-2 text-center text-xs font-medium text-zinc-300 transition hover:bg-zinc-700 hover:text-white">H4</button>
+    </div>
 </div>
 
 @include('partials.chart-markers-helper')
@@ -5473,25 +5598,361 @@
     /**
      * Панель ручного входа на PO (справа от графика).
      * SSID читается только на сервере из /profile/trading; сюда не передаём.
+     * Paper+mirror идут в бот «Ручная / Manual» → лента Сделки PO ниже.
      */
     function initManualTradePanel() {
         const panel = document.getElementById('manual-trade-panel');
         if (!panel) return;
 
         const amountEl = document.getElementById('manual-trade-amount');
+        const amountHintEl = document.getElementById('manual-trade-amount-hint');
         const durationEl = document.getElementById('manual-trade-duration');
+        const durationPopover = document.getElementById('manual-trade-duration-popover');
+        const durHEl = document.getElementById('manual-dur-h');
+        const durMEl = document.getElementById('manual-dur-m');
+        const durSEl = document.getElementById('manual-dur-s');
         const buyBtn = document.getElementById('manual-trade-buy');
         const sellBtn = document.getElementById('manual-trade-sell');
         const statusEl = document.getElementById('manual-trade-status');
+        const settingsBtn = document.getElementById('manual-trade-settings-btn');
+        const settingsModal = document.getElementById('manual-trade-settings-modal');
+        const flagWaitEl = document.getElementById('manual-flag-wait');
+        const flagMgEl = document.getElementById('manual-flag-martingale');
+        const flagAmountMgEl = document.getElementById('manual-flag-amount-mg');
+        const settingsSaveBtn = document.getElementById('manual-settings-save');
+        const settingsStatusEl = document.getElementById('manual-settings-status');
+
         const ssidReady = panel.dataset.ssidReady === '1';
         const orderUrl = panel.dataset.orderUrl || '';
+        const settingsUrl = panel.dataset.settingsUrl || '';
         const csrf = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '';
+        // Как на сервере: ManualPocketOrderService::MIN/MAX_DURATION_SEC (S3 = 3с как на PO).
+        const DURATION_MIN_SEC = 3;
+        const DURATION_MAX_SEC = 43200;
+        // Переживают F5 в этом браузере (тумблеры шестерёнки — уже в профиле БД).
+        const LS_DURATION_SEC = 'platform.manualTrade.durationSec';
+        const LS_AMOUNT = 'platform.manualTrade.amount';
 
         let placing = false;
+        let amountFromMartingale = panel.dataset.flagAmountMg === '1';
+        // Текущее значение поповера в секундах (синхронизируется с полем).
+        let popoverDurationSec = 300;
+
+        function persistManualDurationSec(sec) {
+            try {
+                localStorage.setItem(LS_DURATION_SEC, String(clampDurationSec(sec)));
+            } catch (_) { /* private mode / quota */ }
+        }
+
+        function persistManualAmount(amount) {
+            if (amountFromMartingale) return;
+            if (!Number.isFinite(amount) || amount < 1) return;
+            try {
+                localStorage.setItem(LS_AMOUNT, String(amount));
+            } catch (_) { /* private mode / quota */ }
+        }
+
+        function restoreManualPanelPrefs() {
+            try {
+                const rawDur = localStorage.getItem(LS_DURATION_SEC);
+                if (rawDur != null && rawDur !== '') {
+                    const sec = parseInt(rawDur, 10);
+                    if (Number.isFinite(sec)) {
+                        writeDurationToInput(sec);
+                        syncPopoverDigits(sec);
+                    }
+                }
+            } catch (_) { /* ignore */ }
+
+            // Сумму восстанавливаем только если не включён «сумма с шага МГ».
+            if (!amountFromMartingale && amountEl) {
+                try {
+                    const rawAmt = localStorage.getItem(LS_AMOUNT);
+                    const amt = rawAmt != null ? parseFloat(rawAmt) : NaN;
+                    if (Number.isFinite(amt) && amt >= 1) {
+                        amountEl.value = String(amt);
+                    }
+                } catch (_) { /* ignore */ }
+            }
+        }
 
         if (amountEl) {
-            amountEl.addEventListener('input', updateManualTradePayout);
-            amountEl.addEventListener('change', updateManualTradePayout);
+            amountEl.addEventListener('input', () => {
+                updateManualTradePayout();
+                const amt = parseFloat(amountEl.value);
+                if (Number.isFinite(amt)) persistManualAmount(amt);
+            });
+            amountEl.addEventListener('change', () => {
+                updateManualTradePayout();
+                const amt = parseFloat(amountEl.value);
+                if (Number.isFinite(amt)) persistManualAmount(amt);
+            });
+        }
+
+        /** Секунды → HH:MM:SS. */
+        function formatDurationClock(totalSec) {
+            const s = Math.max(0, Math.floor(Number(totalSec) || 0));
+            const hh = Math.floor(s / 3600);
+            const mm = Math.floor((s % 3600) / 60);
+            const ss = s % 60;
+            return String(hh).padStart(2, '0') + ':'
+                + String(mm).padStart(2, '0') + ':'
+                + String(ss).padStart(2, '0');
+        }
+
+        /**
+         * Парс MM:SS / HH:MM:SS (+ голые секунды цифрами).
+         * @returns {number|null}
+         */
+        function parseDurationClock(raw) {
+            const text = String(raw ?? '').trim();
+            if (!text) return null;
+            if (/^\d+$/.test(text)) {
+                const n = parseInt(text, 10);
+                return Number.isFinite(n) ? n : null;
+            }
+            const parts = text.split(':').map((p) => p.trim());
+            if (parts.length < 2 || parts.length > 3) return null;
+            if (!parts.every((p) => /^\d{1,2}$/.test(p))) return null;
+            const nums = parts.map((p) => parseInt(p, 10));
+            let hh = 0, mm = 0, ss = 0;
+            if (nums.length === 2) {
+                mm = nums[0];
+                ss = nums[1];
+            } else {
+                hh = nums[0];
+                mm = nums[1];
+                ss = nums[2];
+            }
+            if (mm > 59 || ss > 59 || hh > 12) return null;
+            return hh * 3600 + mm * 60 + ss;
+        }
+
+        function clampDurationSec(sec) {
+            if (!Number.isFinite(sec)) return DURATION_MIN_SEC;
+            return Math.min(DURATION_MAX_SEC, Math.max(DURATION_MIN_SEC, Math.floor(sec)));
+        }
+
+        function resolveManualDurationSec() {
+            return parseDurationClock(durationEl ? durationEl.value : '');
+        }
+
+        function writeDurationToInput(sec) {
+            if (!durationEl) return;
+            durationEl.value = formatDurationClock(clampDurationSec(sec));
+        }
+
+        function syncPopoverDigits(sec) {
+            const s = clampDurationSec(sec);
+            popoverDurationSec = s;
+            const hh = Math.floor(s / 3600);
+            const mm = Math.floor((s % 3600) / 60);
+            const ss = s % 60;
+            if (durHEl) durHEl.textContent = String(hh).padStart(2, '0');
+            if (durMEl) durMEl.textContent = String(mm).padStart(2, '0');
+            if (durSEl) durSEl.textContent = String(ss).padStart(2, '0');
+            // Подсветка активного пресета.
+            if (durationPopover) {
+                durationPopover.querySelectorAll('[data-dur-preset]').forEach((btn) => {
+                    const match = parseInt(btn.getAttribute('data-dur-preset') || '', 10) === s;
+                    btn.classList.toggle('ring-1', match);
+                    btn.classList.toggle('ring-blue-500', match);
+                    btn.classList.toggle('text-white', match);
+                    btn.classList.toggle('bg-zinc-700', match);
+                });
+            }
+        }
+
+        function applyDurationSec(sec, { close = false } = {}) {
+            const clamped = clampDurationSec(sec);
+            writeDurationToInput(clamped);
+            syncPopoverDigits(clamped);
+            persistManualDurationSec(clamped);
+            if (close) closeDurationPopover();
+        }
+
+        function positionDurationPopover() {
+            if (!durationPopover || !durationEl) return;
+            const rect = durationEl.getBoundingClientRect();
+            const popW = durationPopover.offsetWidth || 216;
+            const popH = durationPopover.offsetHeight || 260;
+            // Слева от поля (как на PO); если не влезает — прижимаем к краю.
+            let left = rect.left - popW - 10;
+            let top = rect.top;
+            if (left < 8) left = 8;
+            if (top + popH > window.innerHeight - 8) {
+                top = Math.max(8, window.innerHeight - popH - 8);
+            }
+            durationPopover.style.left = left + 'px';
+            durationPopover.style.top = top + 'px';
+        }
+
+        function isDurationPopoverOpen() {
+            return durationPopover && !durationPopover.classList.contains('hidden');
+        }
+
+        function openDurationPopover() {
+            if (!durationPopover) return;
+            const parsed = resolveManualDurationSec();
+            const sec = parsed != null ? clampDurationSec(parsed) : 300;
+            syncPopoverDigits(sec);
+            durationPopover.classList.remove('hidden');
+            positionDurationPopover();
+        }
+
+        function closeDurationPopover() {
+            if (durationPopover) durationPopover.classList.add('hidden');
+        }
+
+        if (durationEl) {
+            durationEl.addEventListener('focus', () => openDurationPopover());
+            durationEl.addEventListener('click', () => openDurationPopover());
+            durationEl.addEventListener('blur', () => {
+                // Не закрываем сразу: клик по степперам уводит фокус с input.
+                const sec = resolveManualDurationSec();
+                if (sec != null && sec >= DURATION_MIN_SEC && sec <= DURATION_MAX_SEC) {
+                    writeDurationToInput(sec);
+                    syncPopoverDigits(sec);
+                    persistManualDurationSec(sec);
+                }
+            });
+            durationEl.addEventListener('keydown', (ev) => {
+                if (ev.key === 'Escape') {
+                    closeDurationPopover();
+                    durationEl.blur();
+                }
+                if (ev.key === 'Enter') {
+                    ev.preventDefault();
+                    const sec = resolveManualDurationSec();
+                    if (sec != null) applyDurationSec(sec, { close: true });
+                }
+            });
+        }
+
+        if (durationPopover) {
+            durationPopover.addEventListener('mousedown', (ev) => {
+                // Не даём input потерять «сессию» до обработки клика по кнопке.
+                ev.preventDefault();
+            });
+            durationPopover.addEventListener('click', (ev) => {
+                const stepBtn = ev.target.closest('[data-dur-step]');
+                if (stepBtn) {
+                    const unit = stepBtn.getAttribute('data-dur-step');
+                    const delta = parseInt(stepBtn.getAttribute('data-dur-delta') || '0', 10);
+                    let next = popoverDurationSec;
+                    if (unit === 'h') next += delta * 3600;
+                    else if (unit === 'm') next += delta * 60;
+                    else if (unit === 's') next += delta;
+                    applyDurationSec(next);
+                    return;
+                }
+                const presetBtn = ev.target.closest('[data-dur-preset]');
+                if (presetBtn) {
+                    const sec = parseInt(presetBtn.getAttribute('data-dur-preset') || '', 10);
+                    if (Number.isFinite(sec)) applyDurationSec(sec, { close: true });
+                }
+            });
+        }
+
+        document.addEventListener('mousedown', (ev) => {
+            if (!isDurationPopoverOpen()) return;
+            const t = ev.target;
+            if (durationPopover && durationPopover.contains(t)) return;
+            if (durationEl && (t === durationEl || durationEl.contains(t))) return;
+            closeDurationPopover();
+        });
+        window.addEventListener('resize', () => {
+            if (isDurationPopoverOpen()) positionDurationPopover();
+        });
+        window.addEventListener('scroll', () => {
+            if (isDurationPopoverOpen()) positionDurationPopover();
+        }, true);
+
+        function applyAmountMode() {
+            if (!amountEl) return;
+            const mg = parseFloat(panel.dataset.martingaleAmount || '1');
+            if (amountFromMartingale) {
+                amountEl.value = Number.isFinite(mg) ? String(mg) : '1';
+                amountEl.readOnly = true;
+                if (amountHintEl) amountHintEl.classList.remove('hidden');
+            } else {
+                amountEl.readOnly = false;
+                if (amountHintEl) amountHintEl.classList.add('hidden');
+            }
+            updateManualTradePayout();
+        }
+
+        function openSettingsModal() {
+            if (!settingsModal) return;
+            if (flagWaitEl) flagWaitEl.checked = panel.dataset.flagWait === '1';
+            if (flagMgEl) flagMgEl.checked = panel.dataset.flagMartingale === '1';
+            if (flagAmountMgEl) flagAmountMgEl.checked = panel.dataset.flagAmountMg === '1';
+            if (settingsStatusEl) {
+                settingsStatusEl.classList.add('hidden');
+                settingsStatusEl.textContent = '';
+            }
+            settingsModal.classList.remove('hidden');
+        }
+
+        function closeSettingsModal() {
+            if (settingsModal) settingsModal.classList.add('hidden');
+        }
+
+        async function saveSettings() {
+            if (!settingsUrl || !settingsSaveBtn) return;
+            settingsSaveBtn.disabled = true;
+            try {
+                const res = await fetch(settingsUrl, {
+                    method: 'PUT',
+                    headers: {
+                        'X-CSRF-TOKEN': csrf,
+                        'Accept': 'application/json',
+                        'Content-Type': 'application/json',
+                        'X-Requested-With': 'XMLHttpRequest',
+                    },
+                    body: JSON.stringify({
+                        manual_respect_wait_previous: !!(flagWaitEl && flagWaitEl.checked),
+                        manual_advance_martingale: !!(flagMgEl && flagMgEl.checked),
+                        manual_amount_from_martingale: !!(flagAmountMgEl && flagAmountMgEl.checked),
+                    }),
+                });
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok || !data.ok) {
+                    throw new Error(data.message || data.error || ('HTTP ' + res.status));
+                }
+                panel.dataset.flagWait = data.manual_respect_wait_previous ? '1' : '0';
+                panel.dataset.flagMartingale = data.manual_advance_martingale ? '1' : '0';
+                panel.dataset.flagAmountMg = data.manual_amount_from_martingale ? '1' : '0';
+                if (data.martingale_amount != null) {
+                    panel.dataset.martingaleAmount = String(data.martingale_amount);
+                }
+                amountFromMartingale = !!data.manual_amount_from_martingale;
+                applyAmountMode();
+                // Вернуть время (и сумму, если не режим МГ) из localStorage.
+                restoreManualPanelPrefs();
+                closeSettingsModal();
+            } catch (e) {
+                if (settingsStatusEl) {
+                    settingsStatusEl.classList.remove('hidden');
+                    settingsStatusEl.className = 'text-[11px] leading-snug text-rose-300';
+                    settingsStatusEl.textContent = e && e.message ? e.message : 'Не удалось сохранить';
+                }
+            } finally {
+                settingsSaveBtn.disabled = false;
+            }
+        }
+
+        if (settingsBtn) settingsBtn.addEventListener('click', openSettingsModal);
+        if (settingsSaveBtn) settingsSaveBtn.addEventListener('click', saveSettings);
+        if (settingsModal) {
+            settingsModal.querySelectorAll('[data-manual-settings-dismiss]').forEach((el) => {
+                el.addEventListener('click', closeSettingsModal);
+            });
+            document.addEventListener('keydown', (ev) => {
+                if (ev.key === 'Escape' && !settingsModal.classList.contains('hidden')) {
+                    closeSettingsModal();
+                }
+            });
         }
 
         async function placeSide(side) {
@@ -5504,19 +5965,29 @@
                 showManualTradeStatus(false, 'Сначала выберите инструмент слева.');
                 return;
             }
-            const amount = amountEl ? parseFloat(amountEl.value) : NaN;
-            const duration = durationEl ? parseInt(durationEl.value, 10) : 0;
+            let amount = amountEl ? parseFloat(amountEl.value) : NaN;
+            // На всякий случай синхронизируем с шагом МГ, если тумблер включён.
+            if (amountFromMartingale) {
+                const mg = parseFloat(panel.dataset.martingaleAmount || '');
+                if (Number.isFinite(mg) && mg >= 1) amount = mg;
+            }
+            const duration = resolveManualDurationSec();
             if (!Number.isFinite(amount) || amount < 1) {
                 showManualTradeStatus(false, 'Укажите сумму ставки (минимум $1).');
                 return;
             }
-            if (!Number.isFinite(duration) || duration < 5) {
-                showManualTradeStatus(false, 'Выберите время экспирации.');
+            if (duration == null || !Number.isFinite(duration)) {
+                showManualTradeStatus(false, 'Введите время как MM:SS или HH:MM:SS (например 00:05:00).');
+                return;
+            }
+            if (duration < DURATION_MIN_SEC || duration > DURATION_MAX_SEC) {
+                showManualTradeStatus(false, 'Время экспирации: от 00:00:03 до 12:00:00.');
                 return;
             }
 
             placing = true;
             setManualTradeBusy(true);
+            closeDurationPopover();
             showManualTradeStatus(null, 'Отправка ордера на Pocket Option…');
 
             try {
@@ -5541,8 +6012,11 @@
                     const acct = data.is_demo ? 'DEMO' : 'REAL';
                     showManualTradeStatus(true, (side === 'CALL' ? 'Купить' : 'Продать')
                         + ': ордер отправлен (' + acct + ')' + oid + '.');
+                    // Сразу обновить ленту Сделки PO (paper+mirror уже в БД).
+                    if (typeof window.refreshDashPoTrades === 'function') {
+                        window.refreshDashPoTrades();
+                    }
                 } else {
-                    // Laravel validation: { message, errors: { field: [..] } }
                     let err = data.error || data.message || '';
                     if (!err && data.errors && typeof data.errors === 'object') {
                         err = Object.values(data.errors).flat().join(' ');
@@ -5583,6 +6057,9 @@
         if (buyBtn) buyBtn.addEventListener('click', () => placeSide('CALL'));
         if (sellBtn) sellBtn.addEventListener('click', () => placeSide('PUT'));
 
+        applyAmountMode();
+        // После дефолтов с сервера — время/сумма с прошлого визита (localStorage).
+        restoreManualPanelPrefs();
         updateManualTradePayout();
     }
 
@@ -5824,6 +6301,9 @@
                 metaEl.textContent = 'ошибка…';
             }
         }
+
+        // Экспорт для initManualTradePanel: обновить ленту сразу после ручного place.
+        window.refreshDashPoTrades = refreshOnce;
 
         refreshOnce();
         pollTimer = setInterval(refreshOnce, 2000);
