@@ -297,4 +297,149 @@ class StrongTrendTelegramStrategyTest extends TestCase
         $this->assertNotNull($decision);
         $this->assertFalse($decision['notify_only']);
     }
+
+    public function test_wait_opposite_bull_streak_then_bear_enters_call(): void
+    {
+        $strategy = new StrongTrendTelegramStrategy;
+        $candles = [];
+        $price = 1.1000;
+        // 6 бычьих → импульс вверх.
+        for ($i = 0; $i < 6; $i++) {
+            $open = $price;
+            $close = $price + 0.0005;
+            $candles[] = [
+                'time' => 1000 + ($i * 60),
+                'open' => $open,
+                'high' => $close + 0.0001,
+                'low' => $open - 0.0001,
+                'close' => $close,
+                'volume' => 1.0,
+            ];
+            $price = $close;
+        }
+        // Контр-свеча вниз → вход в продолжение (CALL).
+        $candles[] = [
+            'time' => 1360,
+            'open' => $price,
+            'high' => $price + 0.00005,
+            'low' => $price - 0.0004,
+            'close' => $price - 0.0003,
+            'volume' => 1.0,
+        ];
+
+        $decision = $strategy->analyze($candles, null, [
+            'config' => [
+                'streak_len' => 6,
+                'candle_strictness' => 'strict',
+                'wait_opposite_then_continue' => true,
+                'execution_mode' => 'signal_trade',
+            ],
+            'payout' => 85.0,
+        ]);
+
+        $this->assertNotNull($decision);
+        $this->assertSame('up', $decision['trend']);
+        $this->assertSame('CALL', $decision['side']);
+        $this->assertTrue($decision['features']['wait_opposite_then_continue']);
+    }
+
+    public function test_wait_opposite_rejects_pure_streak_without_counter(): void
+    {
+        $strategy = new StrongTrendTelegramStrategy;
+        $candles = [];
+        $price = 1.1000;
+        for ($i = 0; $i < 6; $i++) {
+            $open = $price;
+            $close = $price + 0.0005;
+            $candles[] = [
+                'time' => 1000 + ($i * 60),
+                'open' => $open,
+                'high' => $close,
+                'low' => $open,
+                'close' => $close,
+                'volume' => 1.0,
+            ];
+            $price = $close;
+        }
+
+        $decision = $strategy->analyze($candles, null, [
+            'config' => [
+                'streak_len' => 6,
+                'wait_opposite_then_continue' => true,
+            ],
+        ]);
+
+        // Без контр-свечи при включённой опции сигнала нет (старое поведение отключено).
+        $this->assertNull($decision);
+    }
+
+    public function test_wait_opposite_bear_streak_then_bull_enters_put(): void
+    {
+        $strategy = new StrongTrendTelegramStrategy;
+        $candles = [];
+        $price = 1.1000;
+        for ($i = 0; $i < 6; $i++) {
+            $open = $price;
+            $close = $price - 0.0005;
+            $candles[] = [
+                'time' => 1000 + ($i * 60),
+                'open' => $open,
+                'high' => $open + 0.0001,
+                'low' => $close - 0.0001,
+                'close' => $close,
+                'volume' => 1.0,
+            ];
+            $price = $close;
+        }
+        $candles[] = [
+            'time' => 1360,
+            'open' => $price,
+            'high' => $price + 0.0004,
+            'low' => $price - 0.00005,
+            'close' => $price + 0.0003,
+            'volume' => 1.0,
+        ];
+
+        $decision = $strategy->analyze($candles, null, [
+            'config' => [
+                'streak_len' => 6,
+                'wait_opposite_then_continue' => true,
+            ],
+        ]);
+
+        $this->assertNotNull($decision);
+        $this->assertSame('PUT', $decision['side']);
+        $this->assertSame('down', $decision['trend']);
+    }
+
+    public function test_wait_opposite_off_keeps_legacy_on_nth_candle(): void
+    {
+        $strategy = new StrongTrendTelegramStrategy;
+        $candles = [];
+        $price = 1.1000;
+        for ($i = 0; $i < 6; $i++) {
+            $open = $price;
+            $close = $price + 0.0005;
+            $candles[] = [
+                'time' => 1000 + ($i * 60),
+                'open' => $open,
+                'high' => $close,
+                'low' => $open,
+                'close' => $close,
+                'volume' => 1.0,
+            ];
+            $price = $close;
+        }
+
+        $decision = $strategy->analyze($candles, null, [
+            'config' => [
+                'streak_len' => 6,
+                'wait_opposite_then_continue' => false,
+            ],
+        ]);
+
+        $this->assertNotNull($decision);
+        $this->assertSame('CALL', $decision['side']);
+        $this->assertFalse($decision['features']['wait_opposite_then_continue']);
+    }
 }

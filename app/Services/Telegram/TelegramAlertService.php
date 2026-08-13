@@ -3,13 +3,14 @@
 namespace App\Services\Telegram;
 
 use App\Models\Bot;
+use App\Models\BotTrade;
 use App\Services\Bots\Levels\StrongLevelCardPresenter;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
 /**
  * Отправка алертов в Telegram Bot API.
- * Token и chat_id берутся из config конкретного бота (не из .env).
+ * Token — из config бота; получатели — telegram_chat_id + telegram_subscribers.
  */
 class TelegramAlertService
 {
@@ -69,8 +70,8 @@ class TelegramAlertService
         }
 
         $token = trim((string) ($cfg['telegram_bot_token'] ?? ''));
-        $chatId = trim((string) ($cfg['telegram_chat_id'] ?? ''));
-        if ($token === '' || $chatId === '') {
+        $recipients = TelegramChatAccess::recipientChatIds($cfg);
+        if ($token === '' || $recipients === []) {
             return ['ok' => false, 'error' => 'telegram_token_or_chat_id_missing'];
         }
 
@@ -98,6 +99,13 @@ class TelegramAlertService
             'Таймфрейм: M1',
             "{$streakLen} {$candleLabel} свечей подряд ({$strictnessLabel})",
         ];
+        // Если стратегия ждала контр-свечу — явно пишем, что вход в продолжение после отката.
+        $waitOpposite = (bool) ($decision['features']['wait_opposite_then_continue']
+            ?? ($cfg['wait_opposite_then_continue'] ?? false));
+        if ($waitOpposite) {
+            $counterLabel = $trend === 'up' ? 'медвежья' : 'бычья';
+            $lines[] = "После серии — {$counterLabel} контр-свеча → вход в продолжение";
+        }
         if ($payout !== null) {
             $lines[] = 'Payout: '.number_format($payout, 1, '.', '').'%';
         }
@@ -105,11 +113,14 @@ class TelegramAlertService
 
         $text = implode("\n", $lines);
 
-        // Как у Strong Level / CRC: сначала старший контекст M5 (агрегация из M1), затем миниатюра M1.
+        // Как у Strong Level / CRC: сначала старший контекст M5, затем полный M1-график.
         $sendChart = (bool) ($cfg['telegram_send_chart'] ?? true);
         $sendChartM5 = (bool) ($cfg['telegram_send_chart_m5'] ?? true);
         $photoOk = null;
         $photoError = null;
+        $m5PngPath = null;
+        $m1PngPath = null;
+        $captionBase = null;
         if ($sendChart && $m1Candles !== [] && extension_loaded('gd')) {
             $chartLevels = app(StrongTrendTelegramChartBuilder::class)
                 ->chartLevelsFromDecision($decision, $m1Candles);
@@ -132,22 +143,9 @@ class TelegramAlertService
                     'font_size_title' => 10,
                     'font_size_axis' => 8,
                     'font_size_label' => 8,
+                    'timeframe_label' => 'M5',
                 ]);
-                if ($m5PngPath !== null) {
-                    $m5PhotoResult = $this->sendPhoto($token, $chatId, $m5PngPath, $captionBase.' · M5');
-                    $m5Ok = (bool) ($m5PhotoResult['ok'] ?? false);
-                    $photoOk = $m5Ok;
-                    if (! $m5Ok) {
-                        $m5Error = (string) ($m5PhotoResult['error'] ?? 'telegram_photo_failed');
-                        $photoError = 'm5:'.$m5Error;
-                        Log::warning('strong_trend_telegram_photo_m5_failed', [
-                            'bot_id' => $bot->id,
-                            'instrument' => $instrument,
-                            'error' => $m5Error,
-                        ]);
-                    }
-                    @unlink($m5PngPath);
-                } else {
+                if ($m5PngPath === null) {
                     $photoOk = false;
                     $photoError = 'm5:render_failed';
                     Log::warning('strong_trend_telegram_photo_m5_skipped', [
@@ -165,38 +163,11 @@ class TelegramAlertService
                 ]);
             }
 
-            // 2) Компактная миниатюра M1: зона серии + маркер последнего close.
-            $maxBars = max(24, $streakLen + 12);
+            // 2) Полный M1-график как у Strong Level: 900×520, до 90 свечей (не миниатюра).
             $m1PngPath = app(TelegramChartImageRenderer::class)->render($instrument, $m1Candles, $chartLevels, [
-                'width' => 640,
-                'height' => 360,
-                'max_bars' => $maxBars,
-                'margin_left' => 56,
-                'margin_top' => 32,
-                'margin_bottom' => 28,
-                'font_size_title' => 10,
-                'font_size_axis' => 8,
-                'font_size_label' => 8,
+                'timeframe_label' => 'M1',
             ]);
-            if ($m1PngPath !== null) {
-                $photoResult = $this->sendPhoto($token, $chatId, $m1PngPath, $captionBase.' · M1');
-                $m1Ok = (bool) ($photoResult['ok'] ?? false);
-                if ($photoOk === null) {
-                    $photoOk = $m1Ok;
-                } else {
-                    $photoOk = $photoOk && $m1Ok;
-                }
-                if (! $m1Ok) {
-                    $m1Error = (string) ($photoResult['error'] ?? 'telegram_photo_failed');
-                    $photoError = $photoError !== null ? $photoError.';m1:'.$m1Error : 'm1:'.$m1Error;
-                    Log::warning('strong_trend_telegram_photo_failed', [
-                        'bot_id' => $bot->id,
-                        'instrument' => $instrument,
-                        'error' => $m1Error,
-                    ]);
-                }
-                @unlink($m1PngPath);
-            } else {
+            if ($m1PngPath === null) {
                 $photoOk = $photoOk === null ? false : $photoOk;
                 $photoError = $photoError !== null ? $photoError.';m1:render_failed' : 'm1:render_failed';
                 Log::warning('strong_trend_telegram_photo_skipped', [
@@ -211,13 +182,66 @@ class TelegramAlertService
         }
 
         $llmMarkup = StrongLevelTelegramLlmButton::inlineKeyboardMarkup($cfg, $bot, $instrument);
-        if ($llmMarkup !== null) {
+        // Poll нужен для LLM-кнопок и для /start автоподписки.
+        if ($llmMarkup !== null || TelegramChatAccess::autoSubscribeEnabled($cfg)) {
             app(StrongLevelTelegramProcessManager::class)->ensurePollRunning($bot->id);
         }
 
-        $messageResult = $llmMarkup !== null
-            ? $this->sendMessageWithMarkup($token, $chatId, $text, $llmMarkup)
-            : $this->sendMessage($token, $chatId, $text);
+        $messageResult = $this->broadcastToRecipients($token, $recipients, function (string $chatId) use (
+            $token,
+            $m5PngPath,
+            $m1PngPath,
+            $captionBase,
+            $text,
+            $llmMarkup,
+            $bot,
+            $instrument,
+            &$photoOk,
+            &$photoError,
+        ): array {
+            if ($m5PngPath !== null && $captionBase !== null) {
+                $m5PhotoResult = $this->sendPhoto($token, $chatId, $m5PngPath, $captionBase.' · M5');
+                $m5Ok = (bool) ($m5PhotoResult['ok'] ?? false);
+                $photoOk = $photoOk === null ? $m5Ok : ($photoOk && $m5Ok);
+                if (! $m5Ok) {
+                    $m5Error = (string) ($m5PhotoResult['error'] ?? 'telegram_photo_failed');
+                    $photoError = $photoError !== null ? $photoError.';m5:'.$m5Error : 'm5:'.$m5Error;
+                    Log::warning('strong_trend_telegram_photo_m5_failed', [
+                        'bot_id' => $bot->id,
+                        'instrument' => $instrument,
+                        'chat_id' => $chatId,
+                        'error' => $m5Error,
+                    ]);
+                }
+            }
+            if ($m1PngPath !== null && $captionBase !== null) {
+                $photoResult = $this->sendPhoto($token, $chatId, $m1PngPath, $captionBase.' · M1');
+                $m1Ok = (bool) ($photoResult['ok'] ?? false);
+                $photoOk = $photoOk === null ? $m1Ok : ($photoOk && $m1Ok);
+                if (! $m1Ok) {
+                    $m1Error = (string) ($photoResult['error'] ?? 'telegram_photo_failed');
+                    $photoError = $photoError !== null ? $photoError.';m1:'.$m1Error : 'm1:'.$m1Error;
+                    Log::warning('strong_trend_telegram_photo_failed', [
+                        'bot_id' => $bot->id,
+                        'instrument' => $instrument,
+                        'chat_id' => $chatId,
+                        'error' => $m1Error,
+                    ]);
+                }
+            }
+
+            return $llmMarkup !== null
+                ? $this->sendMessageWithMarkup($token, $chatId, $text, $llmMarkup)
+                : $this->sendMessage($token, $chatId, $text);
+        });
+
+        if ($m5PngPath !== null) {
+            @unlink($m5PngPath);
+        }
+        if ($m1PngPath !== null) {
+            @unlink($m1PngPath);
+        }
+
         if (! ($messageResult['ok'] ?? false)) {
             return array_merge($messageResult, array_filter([
                 'photo_ok' => $photoOk,
@@ -229,6 +253,106 @@ class TelegramAlertService
             'photo_ok' => $photoOk,
             'photo_error' => $photoError,
         ]));
+    }
+
+    /**
+     * Уведомление о результате paper-сделки после settlement (WIN / LOSS / DRAW).
+     * Включается флагом config.telegram_notify_result (по умолчанию true при telegram_enabled).
+     *
+     * @return array{ok:bool,error?:string,message_id?:int}
+     */
+    public function sendTradeResultAlert(BotTrade $trade): array
+    {
+        $bot = $trade->bot;
+        if ($bot === null) {
+            return ['ok' => false, 'error' => 'bot_missing'];
+        }
+
+        /** @var array<string, mixed> $cfg */
+        $cfg = is_array($bot->config) ? $bot->config : [];
+        if (! (bool) ($cfg['telegram_enabled'] ?? false)) {
+            return ['ok' => false, 'error' => 'telegram_disabled'];
+        }
+        // Отдельный тумблер результата; по умолчанию вкл., если Telegram уже включён.
+        if (! (bool) ($cfg['telegram_notify_result'] ?? true)) {
+            return ['ok' => false, 'error' => 'telegram_result_notify_disabled'];
+        }
+        // Strong Level и др.: если «не уведомлять» вообще — не шлём и результат.
+        $notifyOn = (string) ($cfg['telegram_notify_on'] ?? 'signal_trade');
+        if ($notifyOn === 'off') {
+            return ['ok' => false, 'error' => 'telegram_notify_disabled'];
+        }
+
+        $meta = is_array($trade->meta_json) ? $trade->meta_json : [];
+        // Антидубль: settlement может ретраиться / вызываться повторно.
+        if (! empty($meta['telegram_result_notified_at'])) {
+            return ['ok' => false, 'error' => 'already_notified'];
+        }
+
+        $token = trim((string) ($cfg['telegram_bot_token'] ?? ''));
+        $recipients = TelegramChatAccess::recipientChatIds($cfg);
+        if ($token === '' || $recipients === []) {
+            return ['ok' => false, 'error' => 'telegram_token_or_chat_id_missing'];
+        }
+
+        $result = strtolower((string) $trade->result);
+        [$icon, $label] = match ($result) {
+            BotTrade::RESULT_WIN => ['✅', 'WIN'],
+            BotTrade::RESULT_LOSS => ['❌', 'LOSS'],
+            BotTrade::RESULT_DRAW => ['➖', 'DRAW'],
+            default => ['ℹ️', strtoupper($result !== '' ? $result : 'PENDING')],
+        };
+
+        $side = strtoupper((string) $trade->side);
+        $instrument = (string) $trade->instrument;
+        $entry = (float) $trade->entry_price;
+        $expiry = $trade->expiry_price !== null ? (float) $trade->expiry_price : null;
+        $pnl = $trade->pnl !== null ? (float) $trade->pnl : null;
+        $payout = $trade->payout_snapshot !== null ? (float) $trade->payout_snapshot : null;
+
+        $lines = [
+            "{$icon} <b>{$label}</b> · ".htmlspecialchars($instrument, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8')." · {$side}",
+            '',
+            'Бот: <b>'.htmlspecialchars((string) $bot->name, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8').'</b>',
+            'Вход: '.$this->formatResultPrice($entry)
+                .($expiry !== null ? ' → экспирация: '.$this->formatResultPrice($expiry) : ''),
+        ];
+        if ($pnl !== null) {
+            $pnlText = ($pnl > 0 ? '+' : '').rtrim(rtrim(number_format($pnl, 4, '.', ''), '0'), '.');
+            $lines[] = 'PnL (paper): <b>'.$pnlText.'</b>'
+                .($payout !== null && $result === BotTrade::RESULT_WIN
+                    ? ' (payout '.number_format($payout, 1, '.', '').'%)'
+                    : '');
+        }
+        // Если зеркало на PO отдало свой итог — показываем рядом с paper.
+        $poResult = isset($meta['mirror_po_result']) ? strtolower((string) $meta['mirror_po_result']) : '';
+        if ($poResult !== '' && in_array($poResult, [BotTrade::RESULT_WIN, BotTrade::RESULT_LOSS, BotTrade::RESULT_DRAW], true)) {
+            $poLabel = strtoupper($poResult);
+            $lines[] = 'PO mirror: <b>'.$poLabel.'</b>';
+        }
+        if ($trade->expiry_time !== null) {
+            $lines[] = 'Экспирация: '.$trade->expiry_time->utc()->format('d.m.Y H:i:s').' UTC';
+        }
+        $lines[] = 'Время: '.now()->utc()->format('d.m.Y H:i').' UTC';
+
+        $text = implode("\n", $lines);
+
+        $messageResult = $this->broadcastToRecipients($token, $recipients, function (string $chatId) use ($token, $text): array {
+            return $this->sendMessage($token, $chatId, $text);
+        });
+
+        if ($messageResult['ok'] ?? false) {
+            $meta['telegram_result_notified_at'] = now()->utc()->toIso8601String();
+            $trade->update(['meta_json' => $meta]);
+        }
+
+        return $messageResult;
+    }
+
+    /** Цена для текста результата: до 5 знаков без лишних нулей. */
+    private function formatResultPrice(float $price): string
+    {
+        return rtrim(rtrim(number_format($price, 5, '.', ''), '0'), '.') ?: '0';
     }
 
     /**
@@ -259,8 +383,8 @@ class TelegramAlertService
         }
 
         $token = trim((string) ($cfg['telegram_bot_token'] ?? ''));
-        $chatId = trim((string) ($cfg['telegram_chat_id'] ?? ''));
-        if ($token === '' || $chatId === '') {
+        $recipients = TelegramChatAccess::recipientChatIds($cfg);
+        if ($token === '' || $recipients === []) {
             return ['ok' => false, 'error' => 'telegram_token_or_chat_id_missing'];
         }
 
@@ -275,10 +399,12 @@ class TelegramAlertService
         $sendChartM5 = (bool) ($cfg['telegram_send_chart_m5'] ?? true);
         $photoOk = null;
         $photoError = null;
+        $m5PngPath = null;
+        $m1PngPath = null;
+        $captionBase = null;
 
         // PNG: M1 + линия уровня + зона касания + маркер входа (как у Chart Analyst).
-        // Дополнительно отправляем второй кадр M5, чтобы трейдер видел контекст старшего ТФ
-        // в том же алерте без переключения на платформу.
+        // Рендерим один раз, затем шлём всем recipients.
         if ($sendChart && $m1Candles !== [] && extension_loaded('gd')) {
             $chartLevels = app(StrongLevelTelegramChartBuilder::class)
                 ->chartLevelsFromDecision($decision, $entryPrice);
@@ -288,9 +414,6 @@ class TelegramAlertService
                 $captionBase .= ' · '.$side;
             }
 
-            // 1) Сначала отправляем старший контекст M5.
-            // Строим его из тех же M1 свечей агрегированием 5x1m -> 5m, чтобы не делать
-            // дополнительный сетевой запрос и не задерживать отправку алерта.
             $m5Candles = $this->aggregateCandlesToTimeframe($m1Candles, 300);
             if ($sendChartM5 && count($m5Candles) >= 12) {
                 $m5PngPath = app(TelegramChartImageRenderer::class)->render($instrument, $m5Candles, $chartLevels, [
@@ -303,27 +426,9 @@ class TelegramAlertService
                     'font_size_title' => 10,
                     'font_size_axis' => 8,
                     'font_size_label' => 8,
+                    'timeframe_label' => 'M5',
                 ]);
-                if ($m5PngPath !== null) {
-                    $m5PhotoResult = $this->sendPhoto($token, $chatId, $m5PngPath, $captionBase.' · M5');
-                    $m5Ok = (bool) ($m5PhotoResult['ok'] ?? false);
-                    if ($photoOk === null) {
-                        $photoOk = $m5Ok;
-                    } else {
-                        // photo_ok=true только если успешно отправлены все попытки графиков.
-                        $photoOk = $photoOk && $m5Ok;
-                    }
-                    if (! $m5Ok) {
-                        $m5Error = (string) ($m5PhotoResult['error'] ?? 'telegram_photo_failed');
-                        $photoError = $photoError !== null ? $photoError.';m5:'.$m5Error : 'm5:'.$m5Error;
-                        Log::warning('strong_level_telegram_photo_m5_failed', [
-                            'bot_id' => $bot->id,
-                            'instrument' => $instrument,
-                            'error' => $m5Error,
-                        ]);
-                    }
-                    @unlink($m5PngPath);
-                } else {
+                if ($m5PngPath === null) {
                     $photoOk = $photoOk === null ? false : $photoOk;
                     $photoError = $photoError !== null ? $photoError.';m5:render_failed' : 'm5:render_failed';
                     Log::warning('strong_level_telegram_photo_m5_skipped', [
@@ -333,8 +438,6 @@ class TelegramAlertService
                     ]);
                 }
             } elseif ($sendChartM5) {
-                // Недостаточно истории для визуально полезного M5 графика:
-                // не считаем это ошибкой отправки алерта, просто логируем skip.
                 Log::info('strong_level_telegram_photo_m5_skipped', [
                     'bot_id' => $bot->id,
                     'instrument' => $instrument,
@@ -343,28 +446,10 @@ class TelegramAlertService
                 ]);
             }
 
-            // 2) Затем отправляем базовую миниатюру M1.
-            $m1PngPath = app(TelegramChartImageRenderer::class)->render($instrument, $m1Candles, $chartLevels);
-            if ($m1PngPath !== null) {
-                $photoResult = $this->sendPhoto($token, $chatId, $m1PngPath, $captionBase.' · M1');
-                $m1Ok = (bool) ($photoResult['ok'] ?? false);
-                if ($photoOk === null) {
-                    $photoOk = $m1Ok;
-                } else {
-                    // photo_ok=true только если успешно отправлены все попытки графиков.
-                    $photoOk = $photoOk && $m1Ok;
-                }
-                if (! $m1Ok) {
-                    $m1Error = (string) ($photoResult['error'] ?? 'telegram_photo_failed');
-                    $photoError = $photoError !== null ? $photoError.';m1:'.$m1Error : 'm1:'.$m1Error;
-                    Log::warning('strong_level_telegram_photo_m1_failed', [
-                        'bot_id' => $bot->id,
-                        'instrument' => $instrument,
-                        'error' => $m1Error,
-                    ]);
-                }
-                @unlink($m1PngPath);
-            } else {
+            $m1PngPath = app(TelegramChartImageRenderer::class)->render($instrument, $m1Candles, $chartLevels, [
+                'timeframe_label' => 'M1',
+            ]);
+            if ($m1PngPath === null) {
                 $photoOk = $photoOk === null ? false : $photoOk;
                 $photoError = $photoError !== null ? $photoError.';m1:render_failed' : 'm1:render_failed';
                 Log::warning('strong_level_telegram_photo_m1_skipped', [
@@ -389,12 +474,65 @@ class TelegramAlertService
         );
 
         $llmMarkup = StrongLevelTelegramLlmButton::inlineKeyboardMarkup($cfg, $bot, $instrument);
-        if ($llmMarkup !== null) {
+        if ($llmMarkup !== null || TelegramChatAccess::autoSubscribeEnabled($cfg)) {
             app(StrongLevelTelegramProcessManager::class)->ensurePollRunning($bot->id);
         }
-        $messageResult = $llmMarkup !== null
-            ? $this->sendMessageWithMarkup($token, $chatId, $text, $llmMarkup)
-            : $this->sendMessage($token, $chatId, $text);
+
+        $messageResult = $this->broadcastToRecipients($token, $recipients, function (string $chatId) use (
+            $token,
+            $m5PngPath,
+            $m1PngPath,
+            $captionBase,
+            $text,
+            $llmMarkup,
+            $bot,
+            $instrument,
+            &$photoOk,
+            &$photoError,
+        ): array {
+            if ($m5PngPath !== null && $captionBase !== null) {
+                $m5PhotoResult = $this->sendPhoto($token, $chatId, $m5PngPath, $captionBase.' · M5');
+                $m5Ok = (bool) ($m5PhotoResult['ok'] ?? false);
+                $photoOk = $photoOk === null ? $m5Ok : ($photoOk && $m5Ok);
+                if (! $m5Ok) {
+                    $m5Error = (string) ($m5PhotoResult['error'] ?? 'telegram_photo_failed');
+                    $photoError = $photoError !== null ? $photoError.';m5:'.$m5Error : 'm5:'.$m5Error;
+                    Log::warning('strong_level_telegram_photo_m5_failed', [
+                        'bot_id' => $bot->id,
+                        'instrument' => $instrument,
+                        'chat_id' => $chatId,
+                        'error' => $m5Error,
+                    ]);
+                }
+            }
+            if ($m1PngPath !== null && $captionBase !== null) {
+                $photoResult = $this->sendPhoto($token, $chatId, $m1PngPath, $captionBase.' · M1');
+                $m1Ok = (bool) ($photoResult['ok'] ?? false);
+                $photoOk = $photoOk === null ? $m1Ok : ($photoOk && $m1Ok);
+                if (! $m1Ok) {
+                    $m1Error = (string) ($photoResult['error'] ?? 'telegram_photo_failed');
+                    $photoError = $photoError !== null ? $photoError.';m1:'.$m1Error : 'm1:'.$m1Error;
+                    Log::warning('strong_level_telegram_photo_m1_failed', [
+                        'bot_id' => $bot->id,
+                        'instrument' => $instrument,
+                        'chat_id' => $chatId,
+                        'error' => $m1Error,
+                    ]);
+                }
+            }
+
+            return $llmMarkup !== null
+                ? $this->sendMessageWithMarkup($token, $chatId, $text, $llmMarkup)
+                : $this->sendMessage($token, $chatId, $text);
+        });
+
+        if ($m5PngPath !== null) {
+            @unlink($m5PngPath);
+        }
+        if ($m1PngPath !== null) {
+            @unlink($m1PngPath);
+        }
+
         if (! ($messageResult['ok'] ?? false)) {
             return array_merge($messageResult, array_filter([
                 'photo_ok' => $photoOk,
@@ -532,18 +670,71 @@ class TelegramAlertService
     }
 
     /**
-     * Тестовое сообщение из настроек бота.
+     * Тестовое сообщение из настроек бота — всем recipients (primary + subscribers).
      */
     public function sendTestMessage(Bot $bot): array
     {
         /** @var array<string, mixed> $cfg */
         $cfg = is_array($bot->config) ? $bot->config : [];
         $token = trim((string) ($cfg['telegram_bot_token'] ?? ''));
-        $chatId = trim((string) ($cfg['telegram_chat_id'] ?? ''));
+        $recipients = TelegramChatAccess::recipientChatIds($cfg);
 
-        $text = "✅ <b>Тест Telegram</b>\n\nБот: ".htmlspecialchars($bot->name, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8')."\nВремя: ".now()->utc()->format('d.m.Y H:i').' UTC';
+        $text = "✅ <b>Тест Telegram</b>\n\nБот: ".htmlspecialchars($bot->name, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8')
+            ."\nПолучателей: ".count($recipients)
+            ."\nВремя: ".now()->utc()->format('d.m.Y H:i').' UTC';
 
-        return $this->sendMessage($token, $chatId, $text);
+        return $this->broadcastToRecipients($token, $recipients, function (string $chatId) use ($token, $text): array {
+            return $this->sendMessage($token, $chatId, $text);
+        });
+    }
+
+    /**
+     * Рассылка одного и того же действия по списку chat_id.
+     * Успех, если хотя бы один получатель принял сообщение.
+     *
+     * @param  list<string>  $recipients
+     * @param  callable(string):array{ok:bool,error?:string,message_id?:int}  $sendOne
+     * @return array{ok:bool,error?:string,message_id?:int,recipients_count?:int,ok_count?:int}
+     */
+    public function broadcastToRecipients(string $token, array $recipients, callable $sendOne): array
+    {
+        $token = trim($token);
+        $recipients = array_values(array_unique(array_filter(array_map(
+            static fn ($id) => trim((string) $id),
+            $recipients
+        ), static fn (string $id): bool => $id !== '')));
+
+        if ($token === '' || $recipients === []) {
+            return ['ok' => false, 'error' => 'telegram_token_or_chat_id_missing'];
+        }
+
+        $okCount = 0;
+        $lastOk = ['ok' => false, 'error' => 'telegram_broadcast_all_failed'];
+        foreach ($recipients as $chatId) {
+            $result = $sendOne($chatId);
+            if ($result['ok'] ?? false) {
+                $okCount++;
+                $lastOk = $result;
+            } else {
+                Log::warning('telegram_broadcast_recipient_failed', [
+                    'chat_id' => $chatId,
+                    'error' => $result['error'] ?? 'unknown',
+                ]);
+            }
+        }
+
+        if ($okCount === 0) {
+            return array_merge($lastOk, [
+                'recipients_count' => count($recipients),
+                'ok_count' => 0,
+            ]);
+        }
+
+        return array_merge($lastOk, [
+            'ok' => true,
+            'recipients_count' => count($recipients),
+            'ok_count' => $okCount,
+        ]);
     }
 
     /**

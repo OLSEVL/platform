@@ -1042,7 +1042,7 @@ class BotEngineService
             'strong_level' => 500,
             'candle_reversal_confirm' => 500,
             'openrouter_llm_analyst' => 120,
-            'strong_trend_telegram' => 30,
+            'strong_trend_telegram' => 120,
             // Wave B vola-adaptive: нужна ~1 день M1 для AdaptSoldiersHeight / AdaptSignalCandleHeight.
             'vol_adaptive_candles', 'three_soldier_vol_adaptive', 'pivot_points' => 2000,
             default => LevelBounceBotTypes::isOsEngineBinary($bot->type) ? 150 : 120,
@@ -1084,6 +1084,8 @@ class BotEngineService
         });
         $staleAfterSec = (int) ($config['stale_after_sec'] ?? (LevelBounceBotTypes::isOsEngineBinary($bot->type) ? 60 : 30));
         $streakLen = max(2, min(30, (int) ($config['streak_len'] ?? 6)));
+        // +1 бар, если ждём контр-свечу после серии (wait_opposite_then_continue).
+        $trendPatternBars = $streakLen + ((bool) ($config['wait_opposite_then_continue'] ?? false) ? 1 : 0);
         // RSI Contrtrend / PinBar: SMA length.
         $smaLen = max(2, (int) ($config['sma_length'] ?? match ($bot->type) {
             'rsi_contrtrend' => 10,
@@ -1099,7 +1101,7 @@ class BotEngineService
         $minClosedBars = match ($bot->type) {
             'smc_flow' => 80,
             'strong_level' => max(80, (int) ($config['min_closed_bars'] ?? 200)),
-            'strong_trend_telegram' => $streakLen,
+            'strong_trend_telegram' => $trendPatternBars,
             // Для MTF-разворота нужен запас истории M1 и стабильная M5-агрегация.
             'candle_reversal_confirm' => max(80, (int) ($config['min_closed_bars'] ?? 200)),
             // OsEngine: SMA length+1 и RSI length+5.

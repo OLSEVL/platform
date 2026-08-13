@@ -3,8 +3,9 @@
 namespace App\Services\Telegram;
 
 /**
- * Собирает chart_levels для миниатюры M1 в алерте Strong Trend Telegram.
- * Подсвечивает диапазон серии свечей и маркер на последнем close.
+ * Собирает chart_levels для полного M1/M5 графика в алерте Strong Trend Telegram.
+ * Подсвечивает диапазон импульсной серии, старт, опционально MA и маркер входа
+ * (в т.ч. после контр-свечи при wait_opposite_then_continue).
  */
 class StrongTrendTelegramChartBuilder
 {
@@ -17,12 +18,23 @@ class StrongTrendTelegramChartBuilder
     {
         $features = is_array($decision['features'] ?? null) ? $decision['features'] : [];
         $streakLen = max(2, (int) ($features['streak_len'] ?? 6));
-        if (count($closedCandles) < $streakLen) {
+        // При опции «контр-свеча» паттерн = N импульсных + 1 обратная.
+        $waitOpposite = (bool) ($features['wait_opposite_then_continue'] ?? false);
+        $patternLen = $waitOpposite ? $streakLen + 1 : $streakLen;
+        if (count($closedCandles) < $patternLen) {
             return ['levels' => [], 'zones' => [], 'entry' => null];
         }
 
+        // Импульсная серия (без контр-свечи) — зона и «Старт».
         /** @var list<array<string, mixed>> $streak */
-        $streak = array_slice($closedCandles, -$streakLen);
+        $streak = $waitOpposite
+            ? array_slice($closedCandles, -($streakLen + 1), $streakLen)
+            : array_slice($closedCandles, -$streakLen);
+        // Для зоны high/low при wait_opposite включаем и контр-бар — видно весь сетап.
+        /** @var list<array<string, mixed>> $zoneBars */
+        $zoneBars = $waitOpposite
+            ? array_slice($closedCandles, -$patternLen)
+            : $streak;
 
         $trend = (string) ($features['trend'] ?? $decision['trend'] ?? '');
         if (! in_array($trend, ['up', 'down'], true)) {
@@ -33,9 +45,8 @@ class StrongTrendTelegramChartBuilder
         $arrow = $trend === 'up' ? '↑' : '↓';
         $side = strtoupper((string) ($decision['side'] ?? ($trend === 'up' ? 'CALL' : 'PUT')));
 
-        // Диапазон high/low серии — полупрозрачная зона на графике (импульс).
-        $lows = array_map(static fn (array $c): float => (float) ($c['low'] ?? 0), $streak);
-        $highs = array_map(static fn (array $c): float => (float) ($c['high'] ?? 0), $streak);
+        $lows = array_map(static fn (array $c): float => (float) ($c['low'] ?? 0), $zoneBars);
+        $highs = array_map(static fn (array $c): float => (float) ($c['high'] ?? 0), $zoneBars);
         $zoneLow = min($lows);
         $zoneHigh = max($highs);
         if ($zoneHigh <= $zoneLow) {
@@ -43,13 +54,14 @@ class StrongTrendTelegramChartBuilder
         }
 
         $first = $streak[0];
-        $last = $streak[array_key_last($streak)];
+        // Точка входа: close контр-свечи (если ждём её) либо close N-й свечи серии.
+        $entryBar = $closedCandles[array_key_last($closedCandles)];
         $startOpen = (float) ($first['open'] ?? 0);
-        $lastClose = (float) ($last['close'] ?? 0);
+        $entryClose = (float) ($entryBar['close'] ?? 0);
 
         $levels = [];
         if ($startOpen > 0.0) {
-            // Пунктир — open первой свечи серии (откуда начался импульс).
+            // Пунктир — open первой свечи импульса (откуда началась серия).
             $levels[] = [
                 'price' => $startOpen,
                 'label' => sprintf('Старт %d×%s', $streakLen, $arrow),
@@ -59,12 +71,30 @@ class StrongTrendTelegramChartBuilder
             ];
         }
 
+        // Если стратегия считала MA на входе — рисуем её как уровень контекста (как у Level-ботов).
+        $maAtEntry = isset($features['pullback_ma_at_entry']) ? (float) $features['pullback_ma_at_entry'] : 0.0;
+        if ($maAtEntry > 0.0) {
+            $maType = strtoupper((string) ($features['pullback_ma_type'] ?? 'ema'));
+            $maLen = (int) ($features['pullback_ma_length'] ?? 0);
+            $maLabel = $maLen > 0 ? sprintf('%s(%d)', $maType, $maLen) : $maType;
+            $levels[] = [
+                'price' => $maAtEntry,
+                'label' => $maLabel,
+                'timeframe' => 'M1',
+                'style' => 'solid',
+                'kind' => 'neutral',
+            ];
+        }
+
         $entry = null;
-        if ($lastClose > 0.0) {
+        if ($entryClose > 0.0) {
+            $entryLabel = $waitOpposite
+                ? sprintf('%d×%s + контр → %s', $streakLen, $arrow, $side !== '' ? $side : 'вход')
+                : sprintf('%d×%s', $streakLen, $arrow);
             $entry = [
-                'price' => $lastClose,
+                'price' => $entryClose,
                 'side' => $side,
-                'label' => sprintf('%d×%s', $streakLen, $arrow),
+                'label' => $entryLabel,
             ];
         }
 

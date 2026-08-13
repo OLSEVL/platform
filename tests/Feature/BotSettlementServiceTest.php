@@ -264,6 +264,147 @@ class BotSettlementServiceTest extends TestCase
         $this->assertSame(1, $step);
     }
 
+    public function test_settlement_sends_win_result_to_telegram_when_enabled(): void
+    {
+        Http::fake([
+            'api.telegram.org/*' => Http::response(['ok' => true, 'result' => ['message_id' => 42]], 200),
+        ]);
+
+        $user = User::factory()->create();
+        $bot = Bot::query()->create([
+            'user_id' => $user->id,
+            'name' => 'Strong Trend Telegram',
+            'type' => 'strong_trend_telegram',
+            'is_active' => true,
+            'config' => [
+                'telegram_enabled' => true,
+                'telegram_notify_result' => true,
+                'telegram_bot_token' => '123:ABC',
+                'telegram_chat_id' => '999001',
+                'execution_mode' => 'signal_trade',
+            ],
+        ]);
+
+        $expiryAt = now()->subSeconds(5);
+        $expiryTs = $expiryAt->timestamp;
+        $minuteBucketTs = $expiryTs - ($expiryTs % 60);
+
+        $signal = BotSignal::query()->create([
+            'bot_id' => $bot->id,
+            'instrument' => 'EURUSD_otc',
+            'side' => 'CALL',
+            'signal_at' => now()->subMinutes(2),
+            'expiry_time' => $expiryAt,
+            'dedupe_key' => uniqid('tg-result:', true),
+        ]);
+
+        $trade = BotTrade::query()->create([
+            'bot_id' => $bot->id,
+            'bot_signal_id' => $signal->id,
+            'instrument' => 'EURUSD_otc',
+            'side' => 'CALL',
+            'status' => BotTrade::STATUS_OPEN,
+            'result' => BotTrade::RESULT_PENDING,
+            'entry_time' => now()->subMinutes(2),
+            'expiry_time' => $expiryAt,
+            'entry_price' => 1.10000,
+            'payout_snapshot' => 85.0,
+        ]);
+
+        InstrumentCandle::query()->create([
+            'instrument' => $trade->instrument,
+            'timeframe' => 1,
+            'time' => $minuteBucketTs,
+            'open' => 1.10100,
+            'high' => 1.10200,
+            'low' => 1.09900,
+            'close' => 1.09950,
+            'volume' => 1,
+        ]);
+
+        $res = app(BotSettlementService::class)->settleDueTrades($bot->id);
+        $trade->refresh();
+
+        $this->assertSame(1, $res['settled']);
+        $this->assertSame(BotTrade::RESULT_WIN, $trade->result);
+        $this->assertNotEmpty($trade->meta_json['telegram_result_notified_at'] ?? null);
+
+        Http::assertSent(function ($request) {
+            if (! str_contains($request->url(), 'sendMessage')) {
+                return false;
+            }
+            $data = $request->data();
+
+            return ($data['chat_id'] ?? null) === '999001'
+                && str_contains((string) ($data['text'] ?? ''), 'WIN');
+        });
+    }
+
+    public function test_settlement_skips_telegram_result_when_notify_result_disabled(): void
+    {
+        Http::fake([
+            'api.telegram.org/*' => Http::response(['ok' => true, 'result' => ['message_id' => 1]], 200),
+        ]);
+
+        $user = User::factory()->create();
+        $bot = Bot::query()->create([
+            'user_id' => $user->id,
+            'name' => 'Trend no result',
+            'type' => 'strong_trend_telegram',
+            'is_active' => true,
+            'config' => [
+                'telegram_enabled' => true,
+                'telegram_notify_result' => false,
+                'telegram_bot_token' => '123:ABC',
+                'telegram_chat_id' => '999002',
+            ],
+        ]);
+
+        $expiryAt = now()->subSeconds(5);
+        $expiryTs = $expiryAt->timestamp;
+        $minuteBucketTs = $expiryTs - ($expiryTs % 60);
+
+        $signal = BotSignal::query()->create([
+            'bot_id' => $bot->id,
+            'instrument' => 'EURUSD_otc',
+            'side' => 'PUT',
+            'signal_at' => now()->subMinutes(2),
+            'expiry_time' => $expiryAt,
+            'dedupe_key' => uniqid('tg-result-off:', true),
+        ]);
+
+        $trade = BotTrade::query()->create([
+            'bot_id' => $bot->id,
+            'bot_signal_id' => $signal->id,
+            'instrument' => 'EURUSD_otc',
+            'side' => 'PUT',
+            'status' => BotTrade::STATUS_OPEN,
+            'result' => BotTrade::RESULT_PENDING,
+            'entry_time' => now()->subMinutes(2),
+            'expiry_time' => $expiryAt,
+            'entry_price' => 1.10000,
+            'payout_snapshot' => 80.0,
+        ]);
+
+        InstrumentCandle::query()->create([
+            'instrument' => $trade->instrument,
+            'timeframe' => 1,
+            'time' => $minuteBucketTs,
+            'open' => 1.09900,
+            'high' => 1.10000,
+            'low' => 1.09800,
+            'close' => 1.09850,
+            'volume' => 1,
+        ]);
+
+        app(BotSettlementService::class)->settleDueTrades($bot->id);
+        $trade->refresh();
+
+        $this->assertSame(BotTrade::RESULT_WIN, $trade->result);
+        $this->assertArrayNotHasKey('telegram_result_notified_at', $trade->meta_json ?? []);
+        Http::assertNothingSent();
+    }
+
     /**
      * @param  array<string,mixed>  $overrides
      */

@@ -10,6 +10,10 @@
             @checked(old('telegram_enabled', $cfg['telegram_enabled'] ?? false))>
         <span class="text-sm font-medium text-zinc-300">Включить Telegram</span>
     </label>
+    @include('bots._telegram-notify-result-field', [
+        'cfg' => $cfg,
+        'telegramNotifyResultId' => 'telegram_notify_result_bb',
+    ])
     <div class="grid gap-4 sm:grid-cols-2">
         <div class="space-y-1">
             <label for="telegram_notify_on_bb" class="block text-xs font-medium text-zinc-400">Когда уведомлять</label>
@@ -90,6 +94,10 @@
                 placeholder="123456789"
                 class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 font-mono">
         </div>
+                @include('bots._telegram-auto-subscribe-field', [
+            'cfg' => $cfg,
+            'telegramAutoSubscribeId' => 'telegram_auto_subscribe_bb',
+        ])
         <div class="space-y-1 flex flex-col justify-end gap-2">
             <button type="button" id="telegram-discover-btn-bb"
                 class="rounded border border-zinc-600 bg-zinc-800 px-3 py-2 text-xs font-medium text-zinc-200 hover:bg-zinc-700">Получить chat_id</button>

@@ -145,6 +145,8 @@
             <div id="price-action-overlay" class="absolute inset-0 z-[7] pointer-events-none overflow-visible hidden"></div>
             {{-- SMC Flow (UT Bot): поверх DGT, отдельный слой — не смешиваем с Price Action. --}}
             <div id="smc-flow-overlay" class="absolute inset-0 z-[8] pointer-events-none overflow-visible hidden"></div>
+            {{-- PO-стиль: горизонтальные лучи открытых сделок (точка входа + линия до экспирации). --}}
+            <div id="po-open-trades-overlay" class="absolute inset-0 z-[8] pointer-events-none overflow-hidden hidden"></div>
             {{-- Названия включённых индикаторов (оверлеи на основной pane + лейблы осцилляторов). --}}
             <div id="classic-indicator-labels" class="absolute inset-0 z-[9] pointer-events-none overflow-hidden hidden"></div>
             <div id="candle-timer-overlay"
@@ -561,6 +563,8 @@
     const chartPlaceholder = document.getElementById('chart-placeholder');
     const chartWrapper = document.getElementById('chart-wrapper');
     const structureOverlay = document.getElementById('structure-overlay');
+    // PO-лучи открытых сделок (точка входа + горизонталь до экспирации).
+    const poOpenTradesOverlay = document.getElementById('po-open-trades-overlay');
     const candleTimerOverlay = document.getElementById('candle-timer-overlay');
     const chartTitle = document.getElementById('chart-title');
     const chartLoading = document.getElementById('chart-loading');
@@ -1665,6 +1669,28 @@
         if (typeof PCM.applyMarkers === 'function') {
             PCM.applyMarkers(candlestickMarkers, all);
         }
+        // Параллельно маркерам — горизонтальные лучи как на Pocket Option.
+        renderPoOpenTradeRaysOverlay();
+    }
+
+    /**
+     * Рисует/прячет PO-лучи открытых сделок на DOM-оверлее графика.
+     * Пересчитывается при pan/zoom, смене ТФ и тике таймера раз в секунду.
+     */
+    function renderPoOpenTradeRaysOverlay() {
+        const PCM = window.PlatformChartMarkers;
+        if (!PCM || typeof PCM.renderPoOpenTradeRays !== 'function') return;
+        PCM.renderPoOpenTradeRays({
+            overlayEl: poOpenTradesOverlay,
+            chart,
+            series: candlestickSeries,
+            candleData: allChartData,
+            trades: lastOpenTrades,
+            instrument: currentInstrument,
+            barSec: timeframeSeconds(currentTimeframeMinutes),
+            nowSec: Math.floor(Date.now() / 1000),
+            show: !!showTrades,
+        });
     }
 
     /** Включён ли хотя бы один classic-слой OsEngine. */
@@ -5018,6 +5044,12 @@
             } catch (e) {
                 console.error('[chart] dom overlay sync', e);
             }
+            try {
+                // Лучи PO привязаны к price/time координатам — синхроним с pan/zoom вместе с structure.
+                renderPoOpenTradeRaysOverlay();
+            } catch (ePo) {
+                console.error('[chart] po open trade rays sync', ePo);
+            }
             requestAnimationFrame(() => {
                 try {
                     positionCandleTimerOverlay();
@@ -5140,6 +5172,7 @@
             redrawStructureOverlay();
             requestAnimationFrame(redrawPriceActionOverlay);
             requestAnimationFrame(positionCandleTimerOverlay);
+            requestAnimationFrame(renderPoOpenTradeRaysOverlay);
         });
     }
 
@@ -5577,6 +5610,9 @@
     sidebarTimerInterval = setInterval(() => {
         tickSidebarTradeTimers();
         tickCandleCloseTimer();
+        // Обновляем только текст таймеров на лучах (полный recalculate не нужен каждый кадр,
+        // но координаты могли сдвинуться из‑за live-свечи — перерисовываем раз в секунду).
+        renderPoOpenTradeRaysOverlay();
     }, 1000);
     tickSidebarTradeTimers();
     // Правая панель CALL/PUT: слушатели + первичный расчёт выплаты.
@@ -6015,6 +6051,10 @@
                     // Сразу обновить ленту Сделки PO (paper+mirror уже в БД).
                     if (typeof window.refreshDashPoTrades === 'function') {
                         window.refreshDashPoTrades();
+                    }
+                    // Сразу подтянуть open_trades → лучи/маркеры на графике (не ждать poll).
+                    if (typeof fetchChartTrades === 'function') {
+                        fetchChartTrades();
                     }
                 } else {
                     let err = data.error || data.message || '';

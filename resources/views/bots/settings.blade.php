@@ -1600,6 +1600,10 @@
                             <span class="mt-0.5 block text-[11px] font-normal text-zinc-500">Интерактивное меню пар + запрос анализа по кнопке. Без галочки polling не стартует даже при сохранённом token.</span>
                         </span>
                     </label>
+                    @include('bots._telegram-notify-result-field', [
+                        'cfg' => $cfg,
+                        'telegramNotifyResultId' => 'telegram_notify_result_analyst',
+                    ])
                     <label class="flex items-start gap-2">
                         <input type="checkbox" name="telegram_skip_user_question" id="telegram_skip_user_question_analyst" value="1"
                             class="mt-0.5 rounded border-zinc-600 bg-zinc-800 text-blue-500"
@@ -1626,6 +1630,10 @@
                             @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('telegram_chat_id')])
                         @error('telegram_chat_id')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                         </div>
+                        @include('bots._telegram-auto-subscribe-field', [
+                            'cfg' => $cfg,
+                            'telegramAutoSubscribeId' => 'telegram_auto_subscribe_analyst',
+                        ])
                         <div class="space-y-1 flex flex-col justify-end gap-2">
                             <button type="button" id="telegram-discover-btn-analyst"
                                 class="rounded border border-zinc-600 bg-zinc-800 px-3 py-2 text-xs font-medium text-zinc-200 hover:bg-zinc-700">
@@ -2064,6 +2072,10 @@
                             <span class="mt-0.5 block text-[11px] font-normal text-zinc-500">Без галочки сделки создаются в платформе, но сообщения в Telegram не уходят.</span>
                         </span>
                     </label>
+                    @include('bots._telegram-notify-result-field', [
+                        'cfg' => $cfg,
+                        'telegramNotifyResultId' => 'telegram_notify_result_strong_level',
+                    ])
                     <div class="grid gap-4 sm:grid-cols-2">
                         <div class="space-y-1">
                             <label for="telegram_notify_on" class="block text-xs font-medium text-zinc-400">Когда уведомлять</label>
@@ -2181,6 +2193,10 @@
                             @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('telegram_chat_id')])
                         @error('telegram_chat_id')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                         </div>
+                        @include('bots._telegram-auto-subscribe-field', [
+                            'cfg' => $cfg,
+                            'telegramAutoSubscribeId' => 'telegram_auto_subscribe_strong_level',
+                        ])
                         <div class="space-y-1 flex flex-col justify-end gap-2">
                             <button type="button" id="telegram-discover-btn-strong-level"
                                 class="rounded border border-zinc-600 bg-zinc-800 px-3 py-2 text-xs font-medium text-zinc-200 hover:bg-zinc-700">
@@ -2340,6 +2356,7 @@
                         Режим исполнения задаётся в настройке ниже: <code class="text-zinc-400">Только алерты</code>
                         или <code class="text-zinc-400">Сделки + алерты</code>.
                         CALL = серия бычьих свечей (тренд вверх), PUT = медвежья серия.
+                        Опционально можно ждать одну контр-свечу и входить в продолжение.
                     </p>
                 </div>
 
@@ -2360,7 +2377,7 @@
                     <div class="space-y-1">
                         <label for="count" class="block text-xs font-medium text-zinc-400">Свечей в выборке (count)</label>
                         <input type="number" name="count" id="count" min="10" max="5000" required
-                            value="{{ old('count', $cfg['count'] ?? 30) }}"
+                            value="{{ old('count', $cfg['count'] ?? 120) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
 
                         @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('count')])
@@ -2452,6 +2469,25 @@
                     </div>
                 </div>
 
+                <p class="text-xs font-semibold uppercase tracking-wide text-zinc-500">Контр-свеча и продолжение</p>
+                <div class="space-y-3 rounded border border-zinc-800 bg-zinc-900/40 p-4">
+                    <input type="hidden" name="wait_opposite_then_continue" value="0">
+                    <label class="flex items-start gap-2">
+                        <input type="checkbox" name="wait_opposite_then_continue" id="wait_opposite_then_continue" value="1"
+                            class="mt-0.5 rounded border-zinc-600 bg-zinc-800 text-blue-500"
+                            @checked(old('wait_opposite_then_continue', $cfg['wait_opposite_then_continue'] ?? false))>
+                        <span>
+                            <span class="text-sm font-medium text-zinc-200">Ждать контр-свечу, входить в продолжение</span>
+                            <span class="mt-0.5 block text-[11px] font-normal text-zinc-500">
+                                После серии из N свечей одного цвета ждём ещё одну свечу <em>в обратную</em> сторону,
+                                затем сигнал в сторону исходного импульса (6↑ + 1↓ → CALL; 6↓ + 1↑ → PUT).
+                                Без галочки — вход сразу на N-й свече серии, как раньше.
+                            </span>
+                        </span>
+                    </label>
+                    @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('wait_opposite_then_continue')])
+                </div>
+
                 <p class="text-xs font-semibold uppercase tracking-wide text-zinc-500">Откат к EMA/HMA (не входить на голой N-й свече)</p>
                 <div class="space-y-3 rounded border border-zinc-800 bg-zinc-900/40 p-4">
                     <input type="hidden" name="require_pullback_to_ma" value="0">
@@ -2530,6 +2566,10 @@
                             <span class="mt-0.5 block text-[11px] font-normal text-zinc-500">Без галочки сигналы пишутся в БД, но сообщения в Telegram не уходят.</span>
                         </span>
                     </label>
+                    @include('bots._telegram-notify-result-field', [
+                        'cfg' => $cfg,
+                        'telegramNotifyResultId' => 'telegram_notify_result_trend',
+                    ])
                     <div class="grid gap-4 sm:grid-cols-2">
                         <div class="space-y-1 sm:col-span-2">
                             <label class="flex items-start gap-2">
@@ -2621,6 +2661,10 @@
                             @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('telegram_chat_id')])
                         @error('telegram_chat_id')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                         </div>
+                        @include('bots._telegram-auto-subscribe-field', [
+                            'cfg' => $cfg,
+                            'telegramAutoSubscribeId' => 'telegram_auto_subscribe_trend',
+                        ])
                         <div class="space-y-1 flex flex-col justify-end gap-2">
                             <button type="button" id="telegram-discover-btn"
                                 class="rounded border border-zinc-600 bg-zinc-800 px-3 py-2 text-xs font-medium text-zinc-200 hover:bg-zinc-700">

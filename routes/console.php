@@ -601,7 +601,7 @@ Artisan::command('bots:strong-trend-telegram-bootstrap', function () {
         [
             'is_active' => false,
             'config' => [
-                'count' => 30,
+                'count' => 120,
                 'streak_len' => 6,
                 'expiry_sec' => 60,
                 'min_confidence' => 0.55,
@@ -1055,7 +1055,14 @@ Artisan::command('bots:settle {--bot_id=} {--limit=1000}', function (BotSettleme
 
 Artisan::command('telegram:ensure-analyst-services', function (
     TelegramAnalystProcessManager $processes,
+    \App\Services\Telegram\StrongLevelTelegramProcessManager $strongLevel,
 ) {
+    // UI (www-data) часто не может убить CLI-poll — cron под user o добивает restart.
+    $strongDeferred = $strongLevel->processDeferredRestartIfRequested();
+    if ($strongDeferred !== null) {
+        $this->info('strong-level deferred restart processed');
+    }
+
     $result = $processes->ensureConfiguredServices();
     $pollCount = count(array_filter($result['bots'], static fn (array $row): bool => (bool) ($row['poll_running'] ?? false)));
     $this->info(sprintf(
@@ -1156,26 +1163,37 @@ Artisan::command('telegram:analyst-poll {--bot= : ID бота openrouter_llm_ana
     }
 })->purpose('Long polling Telegram для Chart Analyst (меню инструментов → анализ)');
 
-Artisan::command('telegram:strong-level-poll {--bot= : ID бота strong_level, strong_trend_telegram или candle_reversal_confirm} {--timeout=30}', function (
+Artisan::command('telegram:strong-level-poll {--bot= : ID бота с Telegram (LLM-кнопка / автоподписка)} {--timeout=30}', function (
     TelegramAlertService $telegram,
     \App\Services\Telegram\StrongLevelTelegramHandler $handler,
 ) {
-    $supportedTypes = \App\Services\Telegram\StrongLevelTelegramLlmButton::SUPPORTED_BOT_TYPES;
     $botId = (int) ($this->option('bot') ?: 0);
     if ($botId <= 0) {
+        $supportedTypes = array_values(array_unique(array_merge(
+            \App\Services\Telegram\StrongLevelTelegramLlmButton::SUPPORTED_BOT_TYPES,
+            ['strong_trend_telegram'],
+        )));
         $bot = Bot::query()->whereIn('type', $supportedTypes)->where('is_active', true)->orderBy('id')->first();
         if ($bot === null) {
             $bot = Bot::query()->whereIn('type', $supportedTypes)->orderBy('id')->first();
         }
         if ($bot === null) {
-            $this->error('Нет бота с LLM-кнопкой (strong_level / strong_trend_telegram / candle_reversal_confirm). Укажите --bot=ID');
+            $this->error('Нет бота для Telegram poll. Укажите --bot=ID');
 
             return 1;
         }
     } else {
         $bot = Bot::query()->find($botId);
-        if ($bot === null || ! \App\Services\Telegram\StrongLevelTelegramLlmButton::supportsBotType($bot->type)) {
-            $this->error('Бот не найден или тип не поддерживает LLM-кнопку (strong_level / strong_trend_telegram / candle_reversal_confirm)');
+        if ($bot === null) {
+            $this->error('Бот не найден');
+
+            return 1;
+        }
+        // Poll принимает любой бот с token: /start подписка + LLM callback при поддержке типа.
+        /** @var array<string, mixed> $cfgCheck */
+        $cfgCheck = is_array($bot->config) ? $bot->config : [];
+        if (trim((string) ($cfgCheck['telegram_bot_token'] ?? '')) === '') {
+            $this->error('В config бота не задан telegram_bot_token');
 
             return 1;
         }

@@ -253,6 +253,50 @@ class TelegramAnalystServicesTest extends TestCase
         $this->assertStringContainsString('6×↑', (string) $chart['entry']['label']);
     }
 
+    public function test_strong_trend_chart_builder_wait_opposite_and_ma(): void
+    {
+        $builder = app(StrongTrendTelegramChartBuilder::class);
+        $candles = [];
+        $price = 1.1000;
+        for ($i = 0; $i < 6; $i++) {
+            $open = $price;
+            $close = $price + 0.0004;
+            $candles[] = [
+                'open' => $open,
+                'high' => $close + 0.00005,
+                'low' => $open - 0.00003,
+                'close' => $close,
+            ];
+            $price = $close;
+        }
+        $candles[] = [
+            'open' => $price,
+            'high' => $price + 0.00005,
+            'low' => $price - 0.00035,
+            'close' => $price - 0.00025,
+        ];
+
+        $decision = [
+            'side' => 'CALL',
+            'trend' => 'up',
+            'features' => [
+                'streak_len' => 6,
+                'trend' => 'up',
+                'wait_opposite_then_continue' => true,
+                'pullback_ma_at_entry' => 1.1012,
+                'pullback_ma_type' => 'ema',
+                'pullback_ma_length' => 9,
+            ],
+        ];
+
+        $chart = $builder->chartLevelsFromDecision($decision, $candles);
+        $this->assertCount(2, $chart['levels']);
+        $this->assertStringContainsString('EMA(9)', (string) $chart['levels'][1]['label']);
+        $this->assertStringContainsString('контр', (string) $chart['entry']['label']);
+        $this->assertSame('CALL', $chart['entry']['side']);
+        $this->assertEqualsWithDelta($candles[6]['close'], $chart['entry']['price'], 1e-9);
+    }
+
     public function test_chart_renderer_produces_png_when_gd_available(): void
     {
         if (! extension_loaded('gd')) {

@@ -8,7 +8,8 @@ namespace App\Services\Bots\Strategies;
  *
  * Доп. фильтры качества (по статистике ~50% WR без них):
  * - min/max доля тела в диапазоне свечи (отсекает доджи и «перетянутые» late-entry свечи);
- * - опциональный вход только после отката к EMA/HMA (не на голой N-й свече импульса).
+ * - опциональный вход только после отката к EMA/HMA (не на голой N-й свече импульса);
+ * - опционально: после серии N ждать одну контр-свечу и входить в продолжение импульса.
  */
 class StrongTrendTelegramStrategy implements BotStrategyInterface
 {
@@ -35,11 +36,14 @@ class StrongTrendTelegramStrategy implements BotStrategyInterface
         }
         $maLength = max(2, min(100, (int) ($cfg['pullback_ma_length'] ?? 9)));
         $touchAtrMult = max(0.05, min(2.0, (float) ($cfg['pullback_touch_atr_mult'] ?? 0.35)));
+        // После N одноцветных свечей ждём одну обратную, затем CALL/PUT по направлению серии.
+        $waitOpposite = (bool) ($cfg['wait_opposite_then_continue'] ?? false);
 
-        // Импульс + окно отката + входная свеча.
+        // Импульс (+ контр-свеча) + окно отката к MA.
+        $patternBars = $waitOpposite ? $streakLen + 1 : $streakLen;
         $needBars = $requirePullback
-            ? max($streakLen + 1, $maLength + 5, 20)
-            : $streakLen;
+            ? max($patternBars, $maLength + 5, 20)
+            : $patternBars;
         if (count($closedCandles) < $needBars) {
             return null;
         }
@@ -50,31 +54,56 @@ class StrongTrendTelegramStrategy implements BotStrategyInterface
         $pullbackTouched = null;
         $extensionAtr = null;
 
-        // Базовый детектор: N последних свечей в одну сторону (как раньше).
-        /** @var list<array<string, mixed>> $last */
-        $last = array_slice($closedCandles, -$streakLen);
-        if ($this->allBull($last, $strictness)) {
-            $direction = 'up';
-        } elseif ($this->allBear($last, $strictness)) {
-            $direction = 'down';
+        if ($waitOpposite) {
+            // Паттерн: [N свечей тренда] + [1 контр-свеча]. Вход в продолжение серии, не против неё.
+            /** @var list<array<string, mixed>> $streak */
+            $streak = array_slice($closedCandles, -($streakLen + 1), $streakLen);
+            $counter = $closedCandles[$n - 1];
+            if ($this->allBull($streak, $strictness) && $this->isBear($counter, $strictness)) {
+                $direction = 'up';
+            } elseif ($this->allBear($streak, $strictness) && $this->isBull($counter, $strictness)) {
+                $direction = 'down';
+            }
+            if ($direction === null) {
+                return null;
+            }
+            $bodyCandles = $streak;
+            // Для MA-фильтра смотрим качество импульса на последней свече серии (до контр-бара).
+            $impulseBar = $closedCandles[$n - 2];
+            $entryBar = $counter;
+            $streakStart = $n - $streakLen - 1;
+            $streakEndExclusive = $n - 1;
+        } else {
+            // Базовый детектор: N последних свечей в одну сторону (как раньше).
+            /** @var list<array<string, mixed>> $last */
+            $last = array_slice($closedCandles, -$streakLen);
+            if ($this->allBull($last, $strictness)) {
+                $direction = 'up';
+            } elseif ($this->allBear($last, $strictness)) {
+                $direction = 'down';
+            }
+            if ($direction === null) {
+                return null;
+            }
+            $bodyCandles = $last;
+            $impulseBar = $closedCandles[$n - 1];
+            $entryBar = $impulseBar;
+            $streakStart = $n - $streakLen;
+            $streakEndExclusive = $n;
         }
-        if ($direction === null) {
-            return null;
-        }
-
-        $bodyCandles = $last;
-        $entryBar = $closedCandles[$n - 1];
 
         if ($requirePullback) {
             // Мягкий фильтр late-entry (не отдельная фаза «импульс→откат→вход», которая почти
             // никогда не срабатывала на M1 OTC):
             // 1) в серии хотя бы одно касание зоны MA (откат внутри импульса), ИЛИ
-            // 2) последняя цена не улетела дальше max_extension × ATR от MA.
+            // 2) цена импульса не улетела дальше max_extension × ATR от MA.
+            // При wait_opposite контр-свеча уже даёт откат — MA считаем по импульсу, не по контр-бару.
             $closes = array_map(static fn (array $c): float => (float) $c['close'], $closedCandles);
             $maSeries = $maType === 'hma'
                 ? $this->hmaSeries($closes, $maLength)
                 : $this->emaSeries($closes, $maLength);
-            $maAtEntry = $maSeries[$n - 1] ?? null;
+            $maIdx = $waitOpposite ? $n - 2 : $n - 1;
+            $maAtEntry = $maSeries[$maIdx] ?? null;
             if ($maAtEntry === null || ! is_finite($maAtEntry)) {
                 return null;
             }
@@ -84,11 +113,10 @@ class StrongTrendTelegramStrategy implements BotStrategyInterface
             // Насколько далеко от MA ещё допустим вход (по умолчанию 1.8×ATR).
             $maxExtMult = max(0.5, min(5.0, (float) ($cfg['pullback_max_extension_atr'] ?? 1.8)));
             $maxExt = max($atr * $maxExtMult, $touchDist);
-            $extensionAtr = $atr > 0 ? abs((float) $entryBar['close'] - $maAtEntry) / $atr : null;
+            $extensionAtr = $atr > 0 ? abs((float) $impulseBar['close'] - $maAtEntry) / $atr : null;
 
             $pullbackTouched = false;
-            $streakStart = $n - $streakLen;
-            for ($i = $streakStart; $i < $n; $i++) {
+            for ($i = $streakStart; $i < $streakEndExclusive; $i++) {
                 $ma = $maSeries[$i] ?? null;
                 if ($ma === null || ! is_finite($ma)) {
                     continue;
@@ -105,9 +133,9 @@ class StrongTrendTelegramStrategy implements BotStrategyInterface
                 }
             }
 
-            $close = (float) $entryBar['close'];
+            $close = (float) $impulseBar['close'];
             $notOverextended = abs($close - $maAtEntry) <= $maxExt;
-            // Нужно: касание MA в серии ИЛИ цена ещё недалеко от MA; плюс close по сторону тренда.
+            // Нужно: касание MA в серии ИЛИ цена ещё недалеко от MA; плюс close импульса по сторону тренда.
             if (! $pullbackTouched && ! $notOverextended) {
                 return null;
             }
@@ -135,6 +163,10 @@ class StrongTrendTelegramStrategy implements BotStrategyInterface
         if ($requirePullback && $pullbackTouched) {
             $confidence = min(1.0, round($confidence + 0.03, 4));
         }
+        // Контр-свеча = уже состоявшийся микро-откат → чуть выше уверенность продолжения.
+        if ($waitOpposite) {
+            $confidence = min(1.0, round($confidence + 0.02, 4));
+        }
 
         $strictnessLabel = $strictness === 'with_doji' ? 'с доджи' : 'строго';
         $reasons = [
@@ -146,6 +178,9 @@ class StrongTrendTelegramStrategy implements BotStrategyInterface
             ),
             sprintf('Средняя доля тела в диапазоне: %.0f%%', $avgBody * 100),
         ];
+        if ($waitOpposite) {
+            $reasons[] = 'После серии — контр-свеча; вход в продолжение движения.';
+        }
         if ($requirePullback) {
             $reasons[] = sprintf(
                 'Фильтр %s(%d): %s, dist=%.2f×ATR.',
@@ -159,7 +194,7 @@ class StrongTrendTelegramStrategy implements BotStrategyInterface
             $reasons[] = sprintf('Payout: %.0f%%', $payout);
         }
 
-        // side в БД: CALL = восходящий тренд, PUT = нисходящий.
+        // side в БД: CALL = восходящий тренд, PUT = нисходящий (направление серии, не контр-свечи).
         $side = $direction === 'up' ? 'CALL' : 'PUT';
         $executionMode = (string) ($cfg['execution_mode'] ?? ((bool) ($cfg['notify_only'] ?? true) ? 'alert_only' : 'signal_trade'));
 
@@ -170,10 +205,11 @@ class StrongTrendTelegramStrategy implements BotStrategyInterface
             'notify_only' => $executionMode === 'alert_only',
             'reasons_short' => $reasons,
             'analysis_text' => sprintf(
-                'strong_trend_telegram: %d×%s; strictness=%s; pullback=%s; confidence=%.2f.',
+                'strong_trend_telegram: %d×%s; strictness=%s; wait_opposite=%s; pullback=%s; confidence=%.2f.',
                 $streakLen,
                 $direction,
                 $strictness,
+                $waitOpposite ? 'on' : 'off',
                 $requirePullback ? 'soft' : 'off',
                 $confidence
             ),
@@ -184,6 +220,7 @@ class StrongTrendTelegramStrategy implements BotStrategyInterface
                 'min_body_to_range_ratio' => $minBodyRatio,
                 'max_body_to_range_ratio' => $maxBodyRatio,
                 'avg_body_to_range' => round($avgBody, 4),
+                'wait_opposite_then_continue' => $waitOpposite,
                 'require_pullback_to_ma' => $requirePullback,
                 'pullback_mode' => $requirePullback ? 'soft_near_ma' : null,
                 'pullback_bars' => $requirePullback ? $pullbackBars : null,
@@ -194,9 +231,35 @@ class StrongTrendTelegramStrategy implements BotStrategyInterface
                 'pullback_extension_atr' => $extensionAtr !== null ? round($extensionAtr, 4) : null,
                 'payout' => $payout,
                 'partial_present' => $partialCandle !== null,
+                // Закрытая свеча, на которой сработал сигнал (контр-бар или N-я серии).
+                'entry_bar_close' => round((float) $entryBar['close'], 8),
             ],
-            'decision_version' => 'strong_trend_telegram_v2',
+            'decision_version' => 'strong_trend_telegram_v3',
         ];
+    }
+
+    /** Бычья свеча с учётом строгости (strict / with_doji). */
+    private function isBull(array $c, string $strictness): bool
+    {
+        $open = (float) $c['open'];
+        $close = (float) $c['close'];
+        if ($strictness === 'with_doji') {
+            return $close >= $open;
+        }
+
+        return $close > $open;
+    }
+
+    /** Медвежья свеча с учётом строгости (strict / with_doji). */
+    private function isBear(array $c, string $strictness): bool
+    {
+        $open = (float) $c['open'];
+        $close = (float) $c['close'];
+        if ($strictness === 'with_doji') {
+            return $close <= $open;
+        }
+
+        return $close < $open;
     }
 
     /**

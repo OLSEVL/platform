@@ -19,6 +19,10 @@
             @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('telegram_enabled')])
         </span>
     </label>
+    @include('bots._telegram-notify-result-field', [
+        'cfg' => $cfg,
+        'telegramNotifyResultId' => 'telegram_notify_result_ose',
+    ])
     <div class="grid gap-4 sm:grid-cols-2">
         <div class="space-y-1">
             <label for="telegram_notify_on_ose" class="block text-xs font-medium text-zinc-400">Когда уведомлять</label>
@@ -109,6 +113,10 @@
                 class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 font-mono">
             @include('partials.field-hint', ['text' => 'Номер чата, куда слать сообщения (ваш личный chat id или id группы). Можно получить кнопкой «Получить chat_id» ниже, написав боту в Telegram.'])
         </div>
+                @include('bots._telegram-auto-subscribe-field', [
+            'cfg' => $cfg,
+            'telegramAutoSubscribeId' => 'telegram_auto_subscribe_ose',
+        ])
         <div class="space-y-1 flex flex-col justify-end gap-2">
             <button type="button" id="telegram-discover-btn-ose"
                 class="rounded border border-zinc-600 bg-zinc-800 px-3 py-2 text-xs font-medium text-zinc-200 hover:bg-zinc-700">Получить chat_id</button>

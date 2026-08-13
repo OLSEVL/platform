@@ -42,7 +42,9 @@ class StrongLevelTelegramLlmButton
 
     public static function supportsBotType(string $type): bool
     {
-        return in_array($type, self::SUPPORTED_BOT_TYPES, true);
+        // strong_trend_telegram шлёт LLM-кнопку, но не входит в CARD_AND_TELEGRAM (level-bounce).
+        return $type === 'strong_trend_telegram'
+            || in_array($type, self::SUPPORTED_BOT_TYPES, true);
     }
 
     /**

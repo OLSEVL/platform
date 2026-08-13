@@ -245,6 +245,8 @@
                 <div id="price-action-overlay" class="chart-dom-overlay absolute inset-0 pointer-events-none overflow-visible hidden"></div>
                 <div id="smc-flow-overlay" class="chart-dom-overlay absolute inset-0 pointer-events-none overflow-visible hidden"></div>
                 <div id="llm-levels-overlay" class="chart-dom-overlay absolute inset-0 pointer-events-none overflow-visible hidden"></div>
+                {{-- PO-стиль: горизонтальные лучи открытых сделок (точка входа + линия до экспирации). --}}
+                <div id="po-open-trades-overlay" class="chart-dom-overlay absolute inset-0 pointer-events-none overflow-hidden hidden"></div>
                 {{-- Названия включённых индикаторов (оверлеи + лейблы pane осцилляторов). --}}
                 <div id="classic-indicator-labels" class="chart-dom-overlay absolute inset-0 pointer-events-none overflow-hidden hidden"></div>
                 {{-- Кроссхейр поверх всех DOM-оверлеев: линии + подписи цены/времени не перекрываются уровнями LLM. --}}
@@ -473,6 +475,8 @@
     const priceActionOverlay = document.getElementById('price-action-overlay');
     const smcFlowOverlay = document.getElementById('smc-flow-overlay');
     const llmLevelsOverlay = document.getElementById('llm-levels-overlay');
+    // PO-лучи открытых сделок на графике бота.
+    const poOpenTradesOverlay = document.getElementById('po-open-trades-overlay');
     const classicIndicatorLabelsEl = document.getElementById('classic-indicator-labels');
     const botCrosshairOverlay = document.getElementById('bot-crosshair-overlay');
     const botCrosshairHLine = document.getElementById('bot-crosshair-hline');
@@ -4650,7 +4654,29 @@
             candlestickMarkers.setMarkers(all);
         }
         renderTradeDurationOverlay();
+        // Горизонтальные лучи в стиле Pocket Option (точка + линия до expiry).
+        renderPoOpenTradeRaysOverlay();
     }
+
+    /**
+     * Рисует PO-лучи открытых сделок на DOM-оверлее (синхронно с маркерами/полосками).
+     */
+    function renderPoOpenTradeRaysOverlay() {
+        const PCM = window.PlatformChartMarkers;
+        if (!PCM || typeof PCM.renderPoOpenTradeRays !== 'function') return;
+        PCM.renderPoOpenTradeRays({
+            overlayEl: poOpenTradesOverlay,
+            chart,
+            series: candlestickSeries,
+            candleData: allChartData,
+            trades: openTrades,
+            instrument: currentInstrument,
+            barSec: timeframeSeconds(currentTimeframeMinutes),
+            nowSec: Math.floor(Date.now() / 1000),
+            show: true,
+        });
+    }
+
     /**
      * Формируем интервалы сделок (entry -> expiry) для текущего инструмента.
      * Это используется для "полосы времени" сделки на графике истории.
@@ -6141,6 +6167,8 @@
                 redrawStructureOverlay();
                 redrawPriceActionOverlay();
                 redrawLlmLevelsOverlay();
+                // Лучи PO пересчитываем вместе с остальными DOM-оверлеями при zoom/pan по цене.
+                renderPoOpenTradeRaysOverlay();
             } catch (e) {
                 console.error('[bot chart] dom overlay sync', e);
             }
@@ -6447,6 +6475,7 @@
                 if (range && !loadingMore && oldestLoadedTime != null && range.from < 2) loadMoreCandles();
                 redrawStructureOverlay();
                 requestAnimationFrame(positionCandleTimerOverlay);
+                requestAnimationFrame(renderPoOpenTradeRaysOverlay);
             } catch (e) {
                 console.error('[chart] visible range handler', e);
             }
@@ -6872,6 +6901,8 @@
         updateSidebarActiveTradePanel();
         tickSidebarTradeTimers();
         tickCandleCloseTimer();
+        // Обновление таймеров/позиции лучей PO раз в секунду (live-свеча двигает X).
+        renderPoOpenTradeRaysOverlay();
         renderTimeDebugPanel();
     }, 1000);
     renderOpenTradesOverlay();

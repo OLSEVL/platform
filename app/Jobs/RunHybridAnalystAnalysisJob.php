@@ -135,9 +135,11 @@ class RunHybridAnalystAnalysisJob implements ShouldQueue, ShouldBeUnique
 
         $creds = $telegram->analystTelegramCredentials($bot);
         $token = $creds['token'];
-        // Для исходящих гибрид-алертов достаточно token+chat_id (polling/меню — отдельный флаг telegram_enabled).
-        $chatId = trim((string) ($creds['chat_id'] !== '' ? $creds['chat_id'] : (($bot->config ?? [])['telegram_chat_id'] ?? '')));
-        if ($token === '' || $chatId === '') {
+        /** @var array<string, mixed> $botCfg */
+        $botCfg = is_array($bot->config) ? $bot->config : [];
+        // Гибрид-алерты — всем подписчикам Chart Analyst (primary + telegram_subscribers).
+        $recipients = \App\Services\Telegram\TelegramChatAccess::recipientChatIds($botCfg);
+        if ($token === '' || $recipients === []) {
             Log::info('hybrid_analyst_telegram_skipped_no_creds', [
                 'analyst_bot_id' => $bot->id,
                 'instrument' => $this->instrument,
@@ -157,15 +159,6 @@ class RunHybridAnalystAnalysisJob implements ShouldQueue, ShouldBeUnique
             }
         }
 
-        if ($pngPath !== null) {
-            $caption = '🔀 <b>Гибрид</b> · '.htmlspecialchars($this->instrument, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8')
-                .' · LLM '.$llmSide
-                .' · source: '.htmlspecialchars($sourceName, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8')
-                .' '.$sourceSide;
-            $telegram->sendPhoto($token, $chatId, $pngPath, $caption);
-            @unlink($pngPath);
-        }
-
         $tradeNote = '';
         if ($tradeResult['ok'] ?? false) {
             $tradeNote = "\n📈 Paper #".(int) ($tradeResult['trade_id'] ?? 0)
@@ -181,7 +174,6 @@ class RunHybridAnalystAnalysisJob implements ShouldQueue, ShouldBeUnique
         // После LLM — исходный ответ/decision source (уже был в payload гибрида).
         $sourceReply = HybridAnalystConfig::formatSourceReplyForTelegram($this->sourceSignal);
         $sourceBlock = "\n\n————\n".htmlspecialchars($sourceReply, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
-        $telegram->sendLongMessage($token, $chatId, $header.$body.$sourceBlock);
 
         $billingLabel = trim((string) ($analysis['billing_label'] ?? ''));
         $levelsText = $telegram->formatChartLevelsText($chartLevels);
@@ -191,19 +183,53 @@ class RunHybridAnalystAnalysisJob implements ShouldQueue, ShouldBeUnique
         ]);
         // Inline-кнопка: независимый LLM без hybrid_source_signal (как у source-ботов).
         $llmMarkup = StrongLevelTelegramLlmButton::inlineKeyboardMarkupForAnalystSelf($bot, $this->instrument, $cfg);
-        if ($footerParts !== []) {
-            if ($llmMarkup !== null) {
-                $telegram->sendMessageWithMarkup($token, $chatId, implode("\n\n", $footerParts), $llmMarkup);
-            } else {
-                $telegram->sendMessage($token, $chatId, implode("\n\n", $footerParts));
+
+        $telegram->broadcastToRecipients($token, $recipients, function (string $chatId) use (
+            $telegram,
+            $token,
+            $pngPath,
+            $llmSide,
+            $sourceName,
+            $sourceSide,
+            $header,
+            $body,
+            $sourceBlock,
+            $footerParts,
+            $llmMarkup,
+        ): array {
+            $instrumentEsc = htmlspecialchars($this->instrument, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+            if ($pngPath !== null) {
+                $caption = '🔀 <b>Гибрид</b> · '.$instrumentEsc
+                    .' · LLM '.$llmSide
+                    .' · source: '.htmlspecialchars($sourceName, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8')
+                    .' '.$sourceSide;
+                $telegram->sendPhoto($token, $chatId, $pngPath, $caption);
             }
-        } elseif ($llmMarkup !== null) {
-            $telegram->sendMessageWithMarkup(
-                $token,
-                $chatId,
-                '📊 Независимый анализ по этой паре (без гибрида):',
-                $llmMarkup
-            );
+
+            $telegram->sendLongMessage($token, $chatId, $header.$body.$sourceBlock);
+
+            if ($footerParts !== []) {
+                if ($llmMarkup !== null) {
+                    return $telegram->sendMessageWithMarkup($token, $chatId, implode("\n\n", $footerParts), $llmMarkup);
+                }
+
+                return $telegram->sendMessage($token, $chatId, implode("\n\n", $footerParts));
+            }
+
+            if ($llmMarkup !== null) {
+                return $telegram->sendMessageWithMarkup(
+                    $token,
+                    $chatId,
+                    '📊 Независимый анализ по этой паре (без гибрида):',
+                    $llmMarkup
+                );
+            }
+
+            return ['ok' => true];
+        });
+
+        if ($pngPath !== null) {
+            @unlink($pngPath);
         }
     }
 }

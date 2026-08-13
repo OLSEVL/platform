@@ -7,7 +7,9 @@ use App\Models\InstrumentCandle;
 use App\Services\CandleService;
 use App\Services\Mirror\MirrorPoResultService;
 use App\Services\Mirror\UserMartingaleService;
+use App\Services\Telegram\TelegramAlertService;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 class BotSettlementService
 {
@@ -24,6 +26,7 @@ class BotSettlementService
     public function settleDueTrades(?int $botId = null, int $limit = 1000): array
     {
         $q = BotTrade::query()
+            ->with('bot')
             ->where('status', BotTrade::STATUS_OPEN)
             ->where('expiry_time', '<=', now())
             ->orderBy('expiry_time')
@@ -149,6 +152,9 @@ class BotSettlementService
             if ($usedEntryFallback) {
                 $settledFallback++;
             }
+
+            // После commit: WIN/LOSS в Telegram (ошибка отправки не откатывает settlement).
+            $this->notifyTelegramTradeResult($trade);
         }
 
         return [
@@ -158,6 +164,41 @@ class BotSettlementService
             'awaiting_po' => $awaitingPo,
             'settled_fallback' => $settledFallback,
         ];
+    }
+
+    /**
+     * Шлёт WIN/LOSS/DRAW в Telegram, если у бота включены telegram + notify_result.
+     * Сбой сети/токена только логируем — сделка уже settled.
+     */
+    private function notifyTelegramTradeResult(BotTrade $trade): void
+    {
+        try {
+            $result = app(TelegramAlertService::class)->sendTradeResultAlert($trade);
+            if (! ($result['ok'] ?? false)) {
+                $error = (string) ($result['error'] ?? 'unknown');
+                // Тихие «выкл.» не засоряем warning.
+                if (! in_array($error, [
+                    'telegram_disabled',
+                    'telegram_result_notify_disabled',
+                    'telegram_notify_disabled',
+                    'telegram_token_or_chat_id_missing',
+                    'already_notified',
+                    'bot_missing',
+                ], true)) {
+                    Log::warning('telegram_trade_result_failed', [
+                        'trade_id' => $trade->id,
+                        'bot_id' => $trade->bot_id,
+                        'error' => $error,
+                    ]);
+                }
+            }
+        } catch (\Throwable $e) {
+            Log::warning('telegram_trade_result_exception', [
+                'trade_id' => $trade->id,
+                'bot_id' => $trade->bot_id,
+                'error' => $e->getMessage(),
+            ]);
+        }
     }
 
     /**

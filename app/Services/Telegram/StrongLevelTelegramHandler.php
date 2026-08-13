@@ -7,7 +7,7 @@ use App\Models\Bot;
 use Illuminate\Support\Facades\Log;
 
 /**
- * Обработчик callback_query для Strong Level / Strong Trend Telegram: кнопка LLM → Chart Analyst.
+ * Long-poll handler: /start|/stop (подписка) + callback LLM-кнопки → Chart Analyst.
  */
 class StrongLevelTelegramHandler
 {
@@ -18,14 +18,21 @@ class StrongLevelTelegramHandler
 
     public function handleUpdate(Bot $bot, array $update): void
     {
-        if (! StrongLevelTelegramLlmButton::supportsBotType($bot->type)) {
-            return;
-        }
-
         /** @var array<string, mixed> $cfg */
         $cfg = is_array($bot->config) ? $bot->config : [];
         $token = trim((string) ($cfg['telegram_bot_token'] ?? ''));
         if ($token === '') {
+            return;
+        }
+
+        // /start и /stop обрабатываем для любого бота с token (автоподписка).
+        if (isset($update['message']) && is_array($update['message'])) {
+            $this->handleMessage($bot, $token, $update['message']);
+
+            return;
+        }
+
+        if (! StrongLevelTelegramLlmButton::supportsBotType($bot->type)) {
             return;
         }
 
@@ -34,6 +41,57 @@ class StrongLevelTelegramHandler
         }
 
         $this->handleCallback($bot, $token, $cfg, $update['callback_query']);
+    }
+
+    /**
+     * @param  array<string, mixed>  $message
+     */
+    private function handleMessage(Bot $bot, string $token, array $message): void
+    {
+        $chat = is_array($message['chat'] ?? null) ? $message['chat'] : [];
+        $chatId = isset($chat['id']) ? (string) $chat['id'] : '';
+        if ($chatId === '') {
+            return;
+        }
+
+        $text = trim((string) ($message['text'] ?? ''));
+        $command = strtolower(explode('@', explode(' ', $text)[0] ?? '')[0] ?? '');
+
+        if ($command === '/stop') {
+            // Отписка даже если автоподписка выключена (пользователь сам уходит).
+            TelegramChatAccess::unsubscribe($bot, $chatId);
+            $this->telegram->sendMessage(
+                $token,
+                $chatId,
+                '🔕 Подписка отключена. Алерты больше не будут приходить в этот чат '
+                .'(если chat_id не указан вручную в настройках бота как основной).'
+            );
+
+            return;
+        }
+
+        if ($command === '/start' || $text !== '') {
+            if (! TelegramChatAccess::authorizeIncoming($bot, $chatId)) {
+                // Автоподписка выключена и чат не в списке — молча или короткий отказ.
+                if ($command === '/start') {
+                    $this->telegram->sendMessage(
+                        $token,
+                        $chatId,
+                        '🔒 Автоподписка выключена. Добавьте этот chat_id в настройках бота на платформе.'
+                    );
+                }
+
+                return;
+            }
+
+            if ($command === '/start') {
+                $this->telegram->sendMessage(
+                    $token,
+                    $chatId,
+                    '✅ Подписка активна. Вы будете получать алерты этого бота. /stop — отписаться.'
+                );
+            }
+        }
     }
 
     /**
@@ -48,18 +106,22 @@ class StrongLevelTelegramHandler
         $chat = is_array($message['chat'] ?? null) ? $message['chat'] : [];
         $chatId = isset($chat['id']) ? (string) $chat['id'] : '';
 
-        if ($chatId === '' || ! $this->isChatAllowed($cfg, $chatId)) {
+        // Кнопки: тот же whitelist / автоподписка, что и для /start.
+        if ($chatId === '' || ! TelegramChatAccess::authorizeIncoming($bot, $chatId)) {
+            $bot->refresh();
+            /** @var array<string, mixed> $freshCfg */
+            $freshCfg = is_array($bot->config) ? $bot->config : [];
             Log::warning('telegram_llm_callback_chat_denied', [
                 'bot_id' => $bot->id,
                 'chat_id' => $chatId,
-                'allowed' => trim((string) ($cfg['telegram_chat_id'] ?? '')),
+                'recipients' => TelegramChatAccess::recipientChatIds($freshCfg),
+                'auto_subscribe' => TelegramChatAccess::autoSubscribeEnabled($freshCfg),
                 'data' => $data,
             ]);
             if ($callbackId !== '') {
-                $botLabel = self::settingsLabelForBotType($bot->type);
-                $hint = trim((string) ($cfg['telegram_chat_id'] ?? '')) !== ''
-                    ? 'Чат не совпадает с chat_id в настройках '.$botLabel
-                    : 'Доступ запрещён';
+                $hint = TelegramChatAccess::autoSubscribeEnabled($freshCfg)
+                    ? 'Нет доступа к кнопке'
+                    : 'Чат не в списке подписчиков (автоподписка выкл.)';
                 $this->telegram->answerCallbackQuery($token, $callbackId, $hint);
             }
 
@@ -137,19 +199,6 @@ class StrongLevelTelegramHandler
             '⏳ Запущен LLM-анализ <b>'.htmlspecialchars($instrument, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8')."</b>.\n".
             'Ответ придёт от Chart Analyst SMC Flow (обычно 1–3 мин).'
         );
-    }
-
-    /**
-     * @param  array<string, mixed>  $cfg
-     */
-    private function isChatAllowed(array $cfg, string $chatId): bool
-    {
-        $allowedChat = trim((string) ($cfg['telegram_chat_id'] ?? ''));
-        if ($allowedChat === '') {
-            return true;
-        }
-
-        return $allowedChat === $chatId;
     }
 
     public static function settingsLabelForBotType(string $type): string

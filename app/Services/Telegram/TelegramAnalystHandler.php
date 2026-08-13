@@ -50,12 +50,39 @@ class TelegramAnalystHandler
     {
         $chat = is_array($message['chat'] ?? null) ? $message['chat'] : [];
         $chatId = isset($chat['id']) ? (string) $chat['id'] : '';
-        if ($chatId === '' || ! $this->isChatAllowed($bot, $chatId)) {
+        if ($chatId === '') {
             return;
         }
 
         $text = trim((string) ($message['text'] ?? ''));
         if ($text === '') {
+            return;
+        }
+
+        $command = strtolower(explode('@', explode(' ', $text)[0] ?? '')[0] ?? '');
+        // /stop — отписка от алертов Chart Analyst (даже при выключенной автоподписке).
+        if ($command === '/stop') {
+            TelegramChatAccess::unsubscribe($bot, $chatId);
+            $this->sendReplyText(
+                $token,
+                $chatId,
+                '🔕 Подписка отключена. /start — подписаться снова (если автоподписка включена).',
+                TelegramAnalystReplyKeyboard::mainMarkup()
+            );
+
+            return;
+        }
+
+        if (! TelegramChatAccess::authorizeIncoming($bot, $chatId)) {
+            if ($command === '/start' || TelegramAnalystReplyKeyboard::isMenuTrigger($text)) {
+                $this->sendReplyText(
+                    $token,
+                    $chatId,
+                    '🔒 Автоподписка выключена. Добавьте этот chat_id в настройках бота на платформе.',
+                    TelegramAnalystReplyKeyboard::mainMarkup()
+                );
+            }
+
             return;
         }
 
@@ -105,9 +132,10 @@ class TelegramAnalystHandler
         $chat = is_array($message['chat'] ?? null) ? $message['chat'] : [];
         $chatId = isset($chat['id']) ? (string) $chat['id'] : '';
 
-        if ($chatId === '' || ! $this->isChatAllowed($bot, $chatId)) {
+        // Inline-кнопки меню/инструментов — только для подписчиков (или с автоподпиской).
+        if ($chatId === '' || ! TelegramChatAccess::authorizeIncoming($bot, $chatId)) {
             if ($callbackId !== '') {
-                $this->telegram->answerCallbackQuery($token, $callbackId);
+                $this->telegram->answerCallbackQuery($token, $callbackId, 'Нет доступа');
             }
 
             return;
@@ -353,15 +381,4 @@ class TelegramAnalystHandler
         return $rows;
     }
 
-    private function isChatAllowed(Bot $bot, string $chatId): bool
-    {
-        /** @var array<string, mixed> $cfg */
-        $cfg = is_array($bot->config) ? $bot->config : [];
-        $allowedChat = trim((string) ($cfg['telegram_chat_id'] ?? ''));
-        if ($allowedChat === '') {
-            return true;
-        }
-
-        return $allowedChat === $chatId;
-    }
 }

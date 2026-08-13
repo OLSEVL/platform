@@ -1225,10 +1225,16 @@ class DashboardController extends Controller
             ->where('instrument', $instrument)
             ->whereHas('bot', static fn ($q) => $q->where('user_id', $userId));
 
-        // Открытые позиции — для маркеров ● OPEN.
+        // Открытые позиции — для маркеров ● OPEN и PO-лучей.
+        // Важно: не режем строго по "expiry_time > now()".
+        // На практике между экспирацией и финальным settlement есть короткий лаг
+        // (запрос closeOrder/обновление result/status). Если отрезать строго по now(),
+        // луч и таймер "исчезают" на графике раньше, чем сделка реально доезжает до settled.
+        // Держим небольшой grace-window, чтобы UI не мигал и совпадал с поведением PO.
+        $openTradeGraceSec = 30;
         $openTrades = (clone $base)
             ->where('status', BotTrade::STATUS_OPEN)
-            ->where('expiry_time', '>', now())
+            ->where('expiry_time', '>', now()->subSeconds($openTradeGraceSec))
             ->orderBy('expiry_time')
             ->limit(50)
             ->get([
@@ -1240,15 +1246,18 @@ class DashboardController extends Controller
                 'expiry_time',
                 'status',
                 'result',
+                'meta_json',
             ]);
 
         // История для ВВЕРХ/ВНИЗ + WIN/LOSE: открытые + закрытые за сутки.
+        // Для открытых используем тот же grace-window, чтобы OPEN-маркер не пропадал
+        // мгновенно на секунде экспирации до фиксации итогового результата.
         $historyTrades = (clone $base)
             ->with('signal')
             ->where(function ($q) {
                 $q->where(function ($open) {
                     $open->where('status', BotTrade::STATUS_OPEN)
-                        ->where('expiry_time', '>', now());
+                        ->where('expiry_time', '>', now()->subSeconds(30));
                 })->orWhere(function ($settled) {
                     $settled->where('status', BotTrade::STATUS_SETTLED)
                         ->where('entry_time', '>=', now()->subDay());
@@ -1279,14 +1288,22 @@ class DashboardController extends Controller
             ];
         })->values()->all();
 
-        $openPayload = $openTrades->map(static fn (BotTrade $t): array => [
-            'id' => (int) $t->id,
-            'instrument' => (string) $t->instrument,
-            'side' => (string) $t->side,
-            'entry_price' => $t->entry_price !== null ? (float) $t->entry_price : null,
-            'entry_ts' => optional($t->entry_time)?->timestamp,
-            'expiry_ts' => optional($t->expiry_time)?->timestamp,
-        ])->values()->all();
+        $openPayload = $openTrades->map(static function (BotTrade $t): array {
+            $meta = is_array($t->meta_json) ? $t->meta_json : [];
+            $amount = BotTrade::mirrorAmountFromMeta($meta);
+
+            return [
+                'id' => (int) $t->id,
+                'instrument' => (string) $t->instrument,
+                'side' => (string) $t->side,
+                'entry_price' => $t->entry_price !== null ? (float) $t->entry_price : null,
+                'entry_ts' => optional($t->entry_time)?->timestamp,
+                'expiry_ts' => optional($t->expiry_time)?->timestamp,
+                // Сумма для бейджа как на PO ($N); null → «—».
+                'amount' => $amount,
+                'amount_label' => BotTrade::formatMirrorAmountLabel($amount),
+            ];
+        })->values()->all();
 
         return response()->json([
             'signals' => $signals,

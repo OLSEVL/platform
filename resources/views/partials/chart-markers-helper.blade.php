@@ -468,6 +468,276 @@
         container.classList.remove('hidden');
     }
 
+    /**
+     * Оверлей открытых сделок в стиле Pocket Option:
+     * белая точка входа + зелёная/красная горизонталь до экспирации + бейдж (стрелка/$/таймер)
+     * + вертикаль «Время закрытия».
+     *
+     * ctx = {
+     *   overlayEl, chart, series, candleData, trades, instrument, barSec,
+     *   nowSec?, show?
+     * }
+     */
+    function renderPoOpenTradeRays(ctx) {
+        const overlay = ctx && ctx.overlayEl;
+        if (!overlay) return;
+        const chart = ctx.chart;
+        const series = ctx.series;
+        const data = Array.isArray(ctx.candleData) ? ctx.candleData : [];
+        const instrument = ctx.instrument;
+        const show = ctx.show !== false;
+        const trades = Array.isArray(ctx.trades) ? ctx.trades : [];
+        const barSec = (Number.isFinite(Number(ctx.barSec)) && Number(ctx.barSec) > 0)
+            ? Number(ctx.barSec)
+            : 60;
+        const nowSec = Number.isFinite(Number(ctx.nowSec))
+            ? Number(ctx.nowSec)
+            : Math.floor(Date.now() / 1000);
+
+        if (!show || !chart || !series || !instrument || !data.length) {
+            overlay.innerHTML = '';
+            overlay.classList.add('hidden');
+            return;
+        }
+
+        const ts = chart.timeScale();
+        if (!ts) {
+            overlay.innerHTML = '';
+            overlay.classList.add('hidden');
+            return;
+        }
+
+        // Дублируем backend-grace на фронте: если один из ответов API прилетел
+        // "на границе" экспирации, не скрываем луч мгновенно в этот же тик.
+        // Это убирает визуальное мигание и даёт времени settlement обновить статус.
+        const openTradeGraceSec = 30;
+        const rows = trades.filter((t) => {
+            if (!t || t.instrument !== instrument) return false;
+            const exp = toUnixSec(t.expiry_ts);
+            return Number.isFinite(exp) && exp > (nowSec - openTradeGraceSec);
+        });
+
+        if (!rows.length) {
+            overlay.innerHTML = '';
+            overlay.classList.add('hidden');
+            return;
+        }
+
+        const lastBar = data[data.length - 1];
+        const lastBarTime = Number(lastBar && lastBar.time);
+        let lastBarX = ts.timeToCoordinate(lastBarTime);
+        if ((lastBarX == null || Number.isNaN(lastBarX)) && typeof ts.logicalToCoordinate === 'function') {
+            lastBarX = ts.logicalToCoordinate(data.length - 1);
+        }
+        const spacing = (typeof ts.barSpacing === 'function') ? Number(ts.barSpacing()) : 8;
+
+        function timeToX(unixTs) {
+            if (!Number.isFinite(unixTs)) return null;
+            let x = ts.timeToCoordinate(unixTs);
+            if (x != null && !Number.isNaN(x)) return x;
+
+            // Будущее правее последней свечи — экстраполяция по barSpacing.
+            if (Number.isFinite(lastBarTime) && unixTs > lastBarTime
+                && lastBarX != null && !Number.isNaN(lastBarX)
+                && Number.isFinite(spacing) && spacing > 0) {
+                return lastBarX + ((unixTs - lastBarTime) / barSec) * spacing;
+            }
+
+            // Внутри истории: интерполяция между соседними барами (вход не всегда = open бара).
+            let idx = data.findIndex((c) => Number(c.time) >= unixTs);
+            if (idx < 0) idx = data.length - 1;
+            if (idx > 0 && Number(data[idx].time) > unixTs) {
+                const t0 = Number(data[idx - 1].time);
+                const t1 = Number(data[idx].time);
+                const x0 = ts.timeToCoordinate(t0);
+                const x1c = ts.timeToCoordinate(t1);
+                if (x0 != null && x1c != null && !Number.isNaN(x0) && !Number.isNaN(x1c) && t1 > t0) {
+                    return x0 + (x1c - x0) * ((unixTs - t0) / (t1 - t0));
+                }
+            }
+            const snapped = ts.timeToCoordinate(Number(data[idx].time));
+            return (snapped != null && !Number.isNaN(snapped)) ? snapped : null;
+        }
+
+        function formatMmSs(total) {
+            const s = Math.max(0, Math.floor(total));
+            const m = Math.floor(s / 60);
+            const r = s % 60;
+            return String(m).padStart(2, '0') + ':' + String(r).padStart(2, '0');
+        }
+
+        function formatClockHms(unixTs) {
+            const d = new Date(unixTs * 1000);
+            if (Number.isNaN(d.getTime())) return '';
+            return String(d.getHours()).padStart(2, '0') + ':'
+                + String(d.getMinutes()).padStart(2, '0') + ':'
+                + String(d.getSeconds()).padStart(2, '0');
+        }
+
+        const frag = document.createDocumentFragment();
+        rows.forEach((t) => {
+            const entryTs = toUnixSec(t.entry_ts);
+            const expiryTs = toUnixSec(t.expiry_ts);
+            if (!Number.isFinite(entryTs) || !Number.isFinite(expiryTs)) return;
+
+            let entryPrice = (t.entry_price != null && t.entry_price !== '')
+                ? Number(t.entry_price)
+                : NaN;
+            if (!Number.isFinite(entryPrice)) {
+                // Фоллбек: close ближайшей свечи к входу.
+                let idx = data.findIndex((c) => Number(c.time) >= entryTs);
+                if (idx < 0) idx = data.length - 1;
+                entryPrice = Number(data[idx] && data[idx].close);
+            }
+            if (!Number.isFinite(entryPrice)) return;
+
+            const y = series.priceToCoordinate(entryPrice);
+            if (y == null || Number.isNaN(y)) return;
+
+            const x1 = timeToX(entryTs);
+            const x2 = timeToX(expiryTs);
+            if (x1 == null || x2 == null || Number.isNaN(x1) || Number.isNaN(x2)) return;
+            if (x2 <= x1 + 2) return;
+
+            const side = String(t.side || '').toUpperCase();
+            const isCall = side === 'CALL';
+            const color = isCall ? '#22c55e' : '#ef4444';
+            const left = Math.min(x1, x2);
+            const width = Math.abs(x2 - x1);
+            const leftSec = Math.max(0, expiryTs - nowSec);
+            const amountLabel = (t.amount_label && String(t.amount_label))
+                || (Number.isFinite(Number(t.amount)) ? ('$' + Number(t.amount)) : '—');
+
+            // Горизонтальная «черточка» entry → expiry.
+            const ray = document.createElement('div');
+            ray.setAttribute('data-po-ray', String(t.id || ''));
+            ray.style.cssText = [
+                'position:absolute',
+                `left:${left}px`,
+                `top:${y}px`,
+                `width:${width}px`,
+                'height:0',
+                `border-top:2px solid ${color}`,
+                'box-shadow:0 0 6px rgba(0,0,0,0.35)',
+                'pointer-events:none',
+                'z-index:2',
+            ].join(';');
+            frag.appendChild(ray);
+
+            // Белая точка входа (как на PO).
+            const dot = document.createElement('div');
+            dot.style.cssText = [
+                'position:absolute',
+                `left:${x1 - 4}px`,
+                `top:${y - 4}px`,
+                'width:8px',
+                'height:8px',
+                'border-radius:999px',
+                'background:#fff',
+                `box-shadow:0 0 0 2px ${color}`,
+                'pointer-events:none',
+                'z-index:3',
+            ].join(';');
+            frag.appendChild(dot);
+
+            // Бейдж слева от входа: стрелка+сумма сверху, таймер снизу (как на PO).
+            const badge = document.createElement('div');
+            badge.style.cssText = [
+                'position:absolute',
+                `left:${Math.max(4, x1 - 72)}px`,
+                `top:${y - 22}px`,
+                'display:flex',
+                'flex-direction:column',
+                'align-items:flex-start',
+                'gap:2px',
+                'padding:4px 8px',
+                'border-radius:6px',
+                `background:${color}`,
+                'color:#fff',
+                'font-size:11px',
+                'font-weight:700',
+                'line-height:1.15',
+                'white-space:nowrap',
+                'box-shadow:0 2px 8px rgba(0,0,0,0.35)',
+                'pointer-events:none',
+                'z-index:4',
+                'font-family:ui-sans-serif,system-ui,sans-serif',
+            ].join(';');
+            const topRow = document.createElement('div');
+            topRow.style.cssText = 'display:inline-flex;align-items:center;gap:5px';
+            const arrow = document.createElement('span');
+            arrow.setAttribute('aria-hidden', 'true');
+            arrow.textContent = isCall ? '▲' : '▼';
+            const amt = document.createElement('span');
+            amt.className = 'tabular-nums';
+            amt.textContent = amountLabel;
+            topRow.appendChild(arrow);
+            topRow.appendChild(amt);
+            const timer = document.createElement('span');
+            timer.className = 'tabular-nums';
+            timer.setAttribute('data-po-timer', '1');
+            timer.style.fontFamily = 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace';
+            timer.style.fontWeight = '600';
+            timer.style.fontSize = '10px';
+            timer.textContent = formatMmSs(leftSec);
+            badge.appendChild(topRow);
+            badge.appendChild(timer);
+            frag.appendChild(badge);
+
+            // Вертикаль экспирации.
+            const vline = document.createElement('div');
+            vline.style.cssText = [
+                'position:absolute',
+                `left:${x2}px`,
+                'top:0',
+                'bottom:0',
+                'width:0',
+                'border-left:1px dashed rgba(96,165,250,0.85)',
+                'pointer-events:none',
+                'z-index:1',
+            ].join(';');
+            frag.appendChild(vline);
+
+            // Подпись «Время закрытия» над вертикалью (две строки, как на PO).
+            const closeLbl = document.createElement('div');
+            closeLbl.style.cssText = [
+                'position:absolute',
+                `left:${x2 + 4}px`,
+                'top:6px',
+                'color:rgba(147,197,253,0.95)',
+                'font-size:10px',
+                'font-weight:600',
+                'line-height:1.25',
+                'white-space:nowrap',
+                'text-shadow:0 1px 2px rgba(0,0,0,0.8)',
+                'pointer-events:none',
+                'z-index:4',
+            ].join(';');
+            closeLbl.innerHTML = 'Время закрытия<br>' + formatClockHms(expiryTs);
+            frag.appendChild(closeLbl);
+
+            // Маленький таймер у правого конца линии.
+            const endTimer = document.createElement('div');
+            endTimer.style.cssText = [
+                'position:absolute',
+                `left:${x2 + 4}px`,
+                `top:${y + 6}px`,
+                'color:rgba(226,232,240,0.9)',
+                'font-size:10px',
+                'font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+                'font-variant-numeric:tabular-nums',
+                'pointer-events:none',
+                'z-index:4',
+            ].join(';');
+            endTimer.setAttribute('data-po-timer', '1');
+            endTimer.textContent = formatMmSs(leftSec);
+            frag.appendChild(endTimer);
+        });
+
+        overlay.replaceChildren(frag);
+        overlay.classList.remove('hidden');
+    }
+
     global.PlatformChartMarkers = {
         formatMarkerPrice,
         markerPriceSuffix,
@@ -481,6 +751,7 @@
         createPaneSolidBackdrop,
         attachRsiLevelLines,
         renderIndicatorNameLabels,
+        renderPoOpenTradeRays,
     };
 })(window);
 </script>

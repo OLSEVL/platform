@@ -8,7 +8,7 @@
 
 <div class="space-y-3 rounded border border-zinc-800 bg-zinc-900/40 p-4">
     <p class="text-sm font-medium text-zinc-300">Telegram</p>
-    <p class="text-[11px] text-zinc-500">Push при новом сигнале и paper-сделке (cron <code class="text-zinc-400">bots:scan</code>). Token и chat_id — как у других ботов, один получатель.</p>
+    <p class="text-[11px] text-zinc-500">Push при новом сигнале и paper-сделке (cron <code class="text-zinc-400">bots:scan</code>). Получатели: chat_id из настроек + подписчики по /start (если автоподписка включена).</p>
     <label class="flex items-start gap-2">
         <input type="checkbox" name="telegram_enabled" id="telegram_enabled_{{ $telegramUiKey }}" value="1"
             class="mt-0.5 rounded border-zinc-600 bg-zinc-800 text-blue-500"
@@ -18,6 +18,10 @@
             <span class="mt-0.5 block text-[11px] font-normal text-zinc-500">Без галочки сделки создаются в платформе, но сообщения в Telegram не уходят.</span>
         </span>
     </label>
+    @include('bots._telegram-notify-result-field', [
+        'cfg' => $cfg,
+        'telegramNotifyResultId' => 'telegram_notify_result_'.$telegramUiKey,
+    ])
     <div class="grid gap-4 sm:grid-cols-2">
         <div class="space-y-1">
             <label for="telegram_notify_on_{{ $telegramUiKey }}" class="block text-xs font-medium text-zinc-400">Когда уведомлять</label>
@@ -106,9 +110,13 @@
                 value="{{ old('telegram_chat_id', $cfg['telegram_chat_id'] ?? '') }}"
                 placeholder="123456789"
                 class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 font-mono">
-            <p class="text-[11px] text-zinc-500">Один chat_id — личный чат, группа или канал.</p>
+            <p class="text-[11px] text-zinc-500">Основной chat_id (личный / группа). Дополнительно — подписчики по /start.</p>
             @error('telegram_chat_id')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
         </div>
+        @include('bots._telegram-auto-subscribe-field', [
+            'cfg' => $cfg,
+            'telegramAutoSubscribeId' => 'telegram_auto_subscribe_'.$telegramUiKey,
+        ])
         <div class="space-y-1 flex flex-col justify-end gap-2">
             <button type="button" id="telegram-discover-btn-{{ $telegramUiKey }}"
                 class="rounded border border-zinc-600 bg-zinc-800 px-3 py-2 text-xs font-medium text-zinc-200 hover:bg-zinc-700">
