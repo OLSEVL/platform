@@ -1062,17 +1062,9 @@ class BotEngineService
             'candle_reversal_confirm' => (int) ($config['expiry_sec'] ?? 300),
             default => (int) ($config['expiry_sec'] ?? (LevelBounceBotTypes::isOsEngineBinary($bot->type) ? 180 : 300)),
         };
-        // Разные типы ботов имеют разные дефолтные пороги confidence:
-        // - openrouter_llm: чуть выше порог по умолчанию, чтобы отсеять "неуверенные" ответы модели;
-        // - остальные: базовый порог.
-        $minConfidence = (float) ($config['min_confidence'] ?? match ($bot->type) {
-            'smc_flow' => 0.58,
-            'strong_level' => 0.58,
-            'openrouter_llm' => 0.65,
-            'candle_reversal_confirm' => 0.58,
-            'strong_trend_telegram' => 0.55,
-            default => LevelBounceBotTypes::isOsEngineBinary($bot->type) ? 0.56 : 0.55,
-        });
+        // 0 = не резать по уверенности: все сетапы стратегии проходят этот фильтр.
+        // Порог можно поднять в настройках бота, если снова понадобится отсев.
+        $minConfidence = (float) ($config['min_confidence'] ?? 0.0);
         // Минимальный payout как экономический фильтр качества входа.
         // Для LLM-бота ставим умеренный дефолтный порог, чтобы не брать пары с совсем слабой выплатой.
         $minPayout = (float) ($config['min_payout'] ?? match ($bot->type) {

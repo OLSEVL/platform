@@ -507,14 +507,10 @@
             return;
         }
 
-        // Дублируем backend-grace на фронте: если один из ответов API прилетел
-        // "на границе" экспирации, не скрываем луч мгновенно в этот же тик.
-        // Это убирает визуальное мигание и даёт времени settlement обновить статус.
-        const openTradeGraceSec = 30;
         const rows = trades.filter((t) => {
             if (!t || t.instrument !== instrument) return false;
             const exp = toUnixSec(t.expiry_ts);
-            return Number.isFinite(exp) && exp > (nowSec - openTradeGraceSec);
+            return Number.isFinite(exp) && exp > nowSec;
         });
 
         if (!rows.length) {

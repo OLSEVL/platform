@@ -1225,16 +1225,10 @@ class DashboardController extends Controller
             ->where('instrument', $instrument)
             ->whereHas('bot', static fn ($q) => $q->where('user_id', $userId));
 
-        // Открытые позиции — для маркеров ● OPEN и PO-лучей.
-        // Важно: не режем строго по "expiry_time > now()".
-        // На практике между экспирацией и финальным settlement есть короткий лаг
-        // (запрос closeOrder/обновление result/status). Если отрезать строго по now(),
-        // луч и таймер "исчезают" на графике раньше, чем сделка реально доезжает до settled.
-        // Держим небольшой grace-window, чтобы UI не мигал и совпадал с поведением PO.
-        $openTradeGraceSec = 30;
+        // Открытые позиции — для маркеров ● OPEN.
         $openTrades = (clone $base)
             ->where('status', BotTrade::STATUS_OPEN)
-            ->where('expiry_time', '>', now()->subSeconds($openTradeGraceSec))
+            ->where('expiry_time', '>', now())
             ->orderBy('expiry_time')
             ->limit(50)
             ->get([
@@ -1250,14 +1244,12 @@ class DashboardController extends Controller
             ]);
 
         // История для ВВЕРХ/ВНИЗ + WIN/LOSE: открытые + закрытые за сутки.
-        // Для открытых используем тот же grace-window, чтобы OPEN-маркер не пропадал
-        // мгновенно на секунде экспирации до фиксации итогового результата.
         $historyTrades = (clone $base)
             ->with('signal')
             ->where(function ($q) {
                 $q->where(function ($open) {
                     $open->where('status', BotTrade::STATUS_OPEN)
-                        ->where('expiry_time', '>', now()->subSeconds(30));
+                        ->where('expiry_time', '>', now());
                 })->orWhere(function ($settled) {
                     $settled->where('status', BotTrade::STATUS_SETTLED)
                         ->where('entry_time', '>=', now()->subDay());

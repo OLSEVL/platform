@@ -2436,13 +2436,9 @@ class BotController extends Controller
 
         $instrument = (string) $request->input('instrument', '');
 
-        // Не скрываем сделку в ту же секунду после expiry_time:
-        // settlement результата может прийти с задержкой, и без окна терпимости
-        // луч/таймер на графике исчезают "раньше времени".
-        $openTradeGraceSec = 30;
         $q = $bot->trades()
             ->where('status', BotTrade::STATUS_OPEN)
-            ->where('expiry_time', '>', now()->subSeconds($openTradeGraceSec))
+            ->where('expiry_time', '>', now())
             ->orderBy('expiry_time');
 
         if ($instrument !== '') {

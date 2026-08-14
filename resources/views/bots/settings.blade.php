@@ -269,7 +269,7 @@
                     <div class="space-y-1">
                         <label for="min_confidence" class="block text-xs font-medium text-zinc-400">Мин. confidence (0–1)</label>
                         <input type="number" name="min_confidence" id="min_confidence" min="0" max="1" step="0.01" required
-                            value="{{ old('min_confidence', $cfg['min_confidence'] ?? 0.55) }}"
+                            value="{{ old('min_confidence', $cfg['min_confidence'] ?? 0) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
 
                         @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('min_confidence', $bot->type)])
@@ -404,7 +404,7 @@
                     <div class="space-y-1">
                         <label for="min_confidence" class="block text-xs font-medium text-zinc-400">Мин. confidence (0–1)</label>
                         <input type="number" name="min_confidence" id="min_confidence" min="0" max="1" step="0.01" required
-                            value="{{ old('min_confidence', $cfg['min_confidence'] ?? 0.56) }}"
+                            value="{{ old('min_confidence', $cfg['min_confidence'] ?? 0) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
                         @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('min_confidence', $bot->type)])
                         @error('min_confidence')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
@@ -483,7 +483,7 @@
                     <div class="space-y-1">
                         <label for="min_confidence" class="block text-xs font-medium text-zinc-400">Мин. confidence (0–1)</label>
                         <input type="number" name="min_confidence" id="min_confidence" min="0" max="1" step="0.01" required
-                            value="{{ old('min_confidence', $cfg['min_confidence'] ?? 0.56) }}"
+                            value="{{ old('min_confidence', $cfg['min_confidence'] ?? 0) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
                         @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('min_confidence', $bot->type)])
                         @error('min_confidence')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
@@ -546,7 +546,7 @@
                     <div class="space-y-1">
                         <label for="min_confidence" class="block text-xs font-medium text-zinc-400">Мин. confidence</label>
                         <input type="number" name="min_confidence" id="min_confidence" min="0" max="1" step="0.01" required
-                            value="{{ old('min_confidence', $cfg['min_confidence'] ?? 0.56) }}"
+                            value="{{ old('min_confidence', $cfg['min_confidence'] ?? 0) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
                         @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('min_confidence', $bot->type)])
                         @error('min_confidence')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
@@ -636,7 +636,7 @@
                     <div class="space-y-1">
                         <label for="min_confidence" class="block text-xs font-medium text-zinc-400">Мин. confidence</label>
                         <input type="number" name="min_confidence" id="min_confidence" min="0" max="1" step="0.01" required
-                            value="{{ old('min_confidence', $cfg['min_confidence'] ?? 0.60) }}"
+                            value="{{ old('min_confidence', $cfg['min_confidence'] ?? 0) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
                         @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('min_confidence', $bot->type)])
                         @error('min_confidence')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
@@ -705,7 +705,7 @@
                     <div class="space-y-1">
                         <label for="min_confidence" class="block text-xs font-medium text-zinc-400">Мин. confidence</label>
                         <input type="number" name="min_confidence" id="min_confidence" min="0" max="1" step="0.01" required
-                            value="{{ old('min_confidence', $cfg['min_confidence'] ?? 0.56) }}"
+                            value="{{ old('min_confidence', $cfg['min_confidence'] ?? 0) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
                         @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('min_confidence', $bot->type)])
                         @error('min_confidence')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
@@ -782,7 +782,7 @@
                     <div class="space-y-1">
                         <label for="min_confidence" class="block text-xs font-medium text-zinc-400">Мин. confidence</label>
                         <input type="number" name="min_confidence" id="min_confidence" min="0" max="1" step="0.01" required
-                            value="{{ old('min_confidence', $cfg['min_confidence'] ?? 0.56) }}"
+                            value="{{ old('min_confidence', $cfg['min_confidence'] ?? 0) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
                         @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('min_confidence', $bot->type)])
                         @error('min_confidence')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
@@ -859,7 +859,7 @@
                     <div class="space-y-1">
                         <label for="min_confidence" class="block text-xs font-medium text-zinc-400">Мин. confidence</label>
                         <input type="number" name="min_confidence" id="min_confidence" min="0" max="1" step="0.01" required
-                            value="{{ old('min_confidence', $cfg['min_confidence'] ?? 0.56) }}"
+                            value="{{ old('min_confidence', $cfg['min_confidence'] ?? 0) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
                         @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('min_confidence', $bot->type)])
                         @error('min_confidence')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
@@ -940,7 +940,7 @@
                     <div class="space-y-1">
                         <label for="min_confidence" class="block text-xs font-medium text-zinc-400">Мин. confidence</label>
                         <input type="number" name="min_confidence" id="min_confidence" min="0" max="1" step="0.01" required
-                            value="{{ old('min_confidence', $cfg['min_confidence'] ?? 0.60) }}"
+                            value="{{ old('min_confidence', $cfg['min_confidence'] ?? 0) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
                         @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('min_confidence', $bot->type)])
                         @error('min_confidence')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
@@ -1002,7 +1002,7 @@
                     <div class="space-y-1">
                         <label for="min_confidence" class="block text-xs font-medium text-zinc-400">Мин. confidence (0–1)</label>
                         <input type="number" name="min_confidence" id="min_confidence" min="0" max="1" step="0.01" required
-                            value="{{ old('min_confidence', $cfg['min_confidence'] ?? 0.58) }}"
+                            value="{{ old('min_confidence', $cfg['min_confidence'] ?? 0) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
 
                         @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('min_confidence', $bot->type)])
@@ -1161,7 +1161,7 @@
                     <div class="space-y-1">
                         <label for="min_confidence" class="block text-xs font-medium text-zinc-400">Мин. confidence (0–1)</label>
                         <input type="number" name="min_confidence" id="min_confidence" min="0" max="1" step="0.01" required
-                            value="{{ old('min_confidence', $cfg['min_confidence'] ?? 0.65) }}"
+                            value="{{ old('min_confidence', $cfg['min_confidence'] ?? 0) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
 
                         @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('min_confidence', $bot->type)])
@@ -1872,7 +1872,7 @@
                     <div class="space-y-1">
                         <label for="min_confidence" class="block text-xs font-medium text-zinc-400">Мин. confidence (0–1)</label>
                         <input type="number" name="min_confidence" id="min_confidence" min="0" max="1" step="0.01" required
-                            value="{{ old('min_confidence', $cfg['min_confidence'] ?? 0.58) }}"
+                            value="{{ old('min_confidence', $cfg['min_confidence'] ?? 0) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
 
                         @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('min_confidence', $bot->type)])
@@ -2404,7 +2404,7 @@
                     <div class="space-y-1">
                         <label for="min_confidence" class="block text-xs font-medium text-zinc-400">Мин. confidence (0–1)</label>
                         <input type="number" name="min_confidence" id="min_confidence" min="0" max="1" step="0.01" required
-                            value="{{ old('min_confidence', $cfg['min_confidence'] ?? 0.55) }}"
+                            value="{{ old('min_confidence', $cfg['min_confidence'] ?? 0) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
 
                         @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('min_confidence', $bot->type)])

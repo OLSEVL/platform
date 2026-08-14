@@ -215,7 +215,7 @@
         <div class="space-y-1">
             <label for="min_confidence" class="block text-xs font-medium text-zinc-400">Мин. confidence</label>
             <input type="number" name="min_confidence" id="min_confidence" min="0" max="1" step="0.01" required
-                value="{{ old('min_confidence', $cfg['min_confidence'] ?? 0.56) }}"
+                value="{{ old('min_confidence', $cfg['min_confidence'] ?? 0) }}"
                 class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
             @include('partials.field-hint', ['text' => SettingsFieldHints::bot('min_confidence', $bot->type)])
         </div>

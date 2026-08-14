@@ -61,7 +61,7 @@ final class OsEngineWaveBBotConfig
         $shared = [
             'count' => $needsLongHistory ? 2000 : 200,
             'expiry_sec' => 180,
-            'min_confidence' => 0.56,
+            'min_confidence' => 0.0,
             'min_payout' => 75.0,
             'stale_after_sec' => 60,
             'telegram_enabled' => false,
