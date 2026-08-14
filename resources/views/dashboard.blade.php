@@ -4603,6 +4603,30 @@
     }
 
     /**
+     * Pocket Option считает свечу растущей только при close > open.
+     * Lightweight Charts использует close >= open, поэтому точный доджи без явного
+     * per-bar цвета становится зелёным. Для равных OHLC задаём красный цвет явно,
+     * чтобы dashboard совпадал с правилом и визуальным результатом PO.
+     *
+     * Функция возвращает исходный объект для обычных свечей: это сохраняет штатную
+     * бычью/медвежью окраску библиотеки и не создаёт лишние объекты на каждом poll.
+     */
+    function paintPocketOptionDoji(bar) {
+        if (!bar) return bar;
+        const open = Number(bar.open);
+        const close = Number(bar.close);
+        if (!Number.isFinite(open) || !Number.isFinite(close) || open !== close) {
+            return bar;
+        }
+        return {
+            ...bar,
+            color: '#ef5350',
+            borderColor: '#ef5350',
+            wickColor: '#ef5350',
+        };
+    }
+
+    /**
      * Окраска свечей DGT. На poll НЕ делаем setData всего ряда — только update хвоста;
      * иначе каждые 500ms LightweightCharts пересобирает серию и появляются «ломаные» бары.
      * fullResync: true — при первой загрузке, смене TF и выключении слоя PA.
@@ -4614,9 +4638,11 @@
         if (!candlestickSeries || !allChartData.length) return;
         const plainBar = (c) => {
             const src = candleSmooth ? candleSmooth.visualFor(c) : c;
-            return { time: src.time, open: src.open, high: src.high, low: src.low, close: src.close };
+            return paintPocketOptionDoji({
+                time: src.time, open: src.open, high: src.high, low: src.low, close: src.close,
+            });
         };
-        const plain = allChartData.map((c) => ({
+        const plain = allChartData.map((c) => paintPocketOptionDoji({
             time: c.time, open: c.open, high: c.high, low: c.low, close: c.close,
         }));
         const bc = lastPaPayload && lastPaPayload.bar_colors ? lastPaPayload.bar_colors : null;
@@ -4635,7 +4661,9 @@
             const src = candleSmooth ? candleSmooth.visualFor(c) : c;
             const o = bc[String(c.time)];
             if (!o) {
-                return { time: src.time, open: src.open, high: src.high, low: src.low, close: src.close };
+                return paintPocketOptionDoji({
+                    time: src.time, open: src.open, high: src.high, low: src.low, close: src.close,
+                });
             }
             return {
                 time: src.time, open: src.open, high: src.high, low: src.low, close: src.close,
@@ -4674,11 +4702,15 @@
         const bc = lastPaPayload && lastPaPayload.bar_colors ? lastPaPayload.bar_colors : null;
         const paOn = layerPa && layerPa.checked && bc && Object.keys(bc).length > 0;
         if (!paOn) {
-            return { time: bar.time, open: bar.open, high: bar.high, low: bar.low, close: bar.close };
+            return paintPocketOptionDoji({
+                time: bar.time, open: bar.open, high: bar.high, low: bar.low, close: bar.close,
+            });
         }
         const o = bc[String(bar.time)];
         if (!o) {
-            return { time: bar.time, open: bar.open, high: bar.high, low: bar.low, close: bar.close };
+            return paintPocketOptionDoji({
+                time: bar.time, open: bar.open, high: bar.high, low: bar.low, close: bar.close,
+            });
         }
         return {
             time: bar.time, open: bar.open, high: bar.high, low: bar.low, close: bar.close,
@@ -4959,7 +4991,7 @@
             allChartData = newData;
             oldestLoadedTime = Math.min(...allChartData.map(c => c.time));
             if (candleSmooth) candleSmooth.reset();
-            candlestickSeries.setData(allChartData);
+            candlestickSeries.setData(allChartData.map(paintPocketOptionDoji));
             // Зафиксировать стартовую точку tween на последнем баре.
             if (candleSmooth && allChartData.length) {
                 candleSmooth.snap(allChartData[allChartData.length - 1]);
@@ -4992,7 +5024,7 @@
                     // Тот же или новый хвост: toward сам сделает snap при смене time.
                     candleSmooth.toward(c);
                 } else {
-                    candlestickSeries.update(c);
+                    candlestickSeries.update(paintPocketOptionDoji(c));
                 }
             } catch (e) {
                 updateFailed = true;
@@ -5007,7 +5039,7 @@
 
         if (prependedOlder || updateFailed) {
             if (candleSmooth) candleSmooth.reset();
-            candlestickSeries.setData(allChartData);
+            candlestickSeries.setData(allChartData.map(paintPocketOptionDoji));
             if (candleSmooth && allChartData.length) {
                 candleSmooth.snap(allChartData[allChartData.length - 1]);
             }
@@ -5196,7 +5228,7 @@
                 allChartData = [...toAdd, ...allChartData].sort((a, b) => a.time - b.time);
                 oldestLoadedTime = Math.min(...allChartData.map(c => c.time));
                 if (candleSmooth) candleSmooth.cancel();
-                candlestickSeries.setData(allChartData);
+                candlestickSeries.setData(allChartData.map(paintPocketOptionDoji));
                 if (candleSmooth && allChartData.length) {
                     candleSmooth.snap(allChartData[allChartData.length - 1]);
                 }
@@ -5225,7 +5257,7 @@
                 if (allChartData.length) {
                     oldestLoadedTime = Math.min(...allChartData.map(c => c.time));
                     if (candleSmooth) candleSmooth.reset();
-                    candlestickSeries.setData(allChartData);
+                    candlestickSeries.setData(allChartData.map(paintPocketOptionDoji));
                     if (candleSmooth) candleSmooth.snap(allChartData[allChartData.length - 1]);
                     applyDefaultChartViewport();
                     fetchStructures();
@@ -5342,7 +5374,7 @@
                 if (allChartData.length) {
                     oldestLoadedTime = Math.min(...allChartData.map(c => c.time));
                     if (candleSmooth) candleSmooth.reset();
-                    candlestickSeries.setData(allChartData);
+                    candlestickSeries.setData(allChartData.map(paintPocketOptionDoji));
                     if (candleSmooth) candleSmooth.snap(allChartData[allChartData.length - 1]);
                     applyDefaultChartViewport();
                     // startAutoRefresh внутри уже стартует и медленный таймер оверлеев.

@@ -4347,6 +4347,30 @@
         }
     }
 
+    /**
+     * Pocket Option считает свечу растущей только при close > open.
+     * Lightweight Charts использует close >= open, поэтому точный доджи без явного
+     * per-bar цвета становится зелёным. Для равных OHLC задаём красный цвет явно,
+     * чтобы график бота совпадал с правилом и визуальным результатом PO.
+     *
+     * Обычные свечи возвращаем без копирования: их штатные up/down цвета остаются
+     * под управлением Lightweight Charts, а лишняя работа на частом poll не возникает.
+     */
+    function paintPocketOptionDoji(bar) {
+        if (!bar) return bar;
+        const open = Number(bar.open);
+        const close = Number(bar.close);
+        if (!Number.isFinite(open) || !Number.isFinite(close) || open !== close) {
+            return bar;
+        }
+        return {
+            ...bar,
+            color: '#ef5350',
+            borderColor: '#ef5350',
+            wickColor: '#ef5350',
+        };
+    }
+
     /** Окраска свечей DGT; на poll — только update хвоста (см. applyIncrementalChartUpdate).
      *  Последний бар во время tween — через candleSmooth.visualFor, иначе PA снэпает close. */
     function applyPaBarColors(opts = {}) {
@@ -4354,9 +4378,11 @@
         if (!candlestickSeries || !allChartData.length) return;
         const plainBar = (c) => {
             const src = candleSmooth ? candleSmooth.visualFor(c) : c;
-            return { time: src.time, open: src.open, high: src.high, low: src.low, close: src.close };
+            return paintPocketOptionDoji({
+                time: src.time, open: src.open, high: src.high, low: src.low, close: src.close,
+            });
         };
-        const plain = allChartData.map((c) => ({
+        const plain = allChartData.map((c) => paintPocketOptionDoji({
             time: c.time, open: c.open, high: c.high, low: c.low, close: c.close,
         }));
         const bc = lastPaPayload && lastPaPayload.bar_colors ? lastPaPayload.bar_colors : null;
@@ -4375,7 +4401,9 @@
             const src = candleSmooth ? candleSmooth.visualFor(c) : c;
             const o = bc[String(c.time)];
             if (!o) {
-                return { time: src.time, open: src.open, high: src.high, low: src.low, close: src.close };
+                return paintPocketOptionDoji({
+                    time: src.time, open: src.open, high: src.high, low: src.low, close: src.close,
+                });
             }
             return {
                 time: src.time, open: src.open, high: src.high, low: src.low, close: src.close,
@@ -4414,11 +4442,15 @@
         const bc = lastPaPayload && lastPaPayload.bar_colors ? lastPaPayload.bar_colors : null;
         const paOn = layerPa && layerPa.checked && bc && Object.keys(bc).length > 0;
         if (!paOn) {
-            return { time: bar.time, open: bar.open, high: bar.high, low: bar.low, close: bar.close };
+            return paintPocketOptionDoji({
+                time: bar.time, open: bar.open, high: bar.high, low: bar.low, close: bar.close,
+            });
         }
         const o = bc[String(bar.time)];
         if (!o) {
-            return { time: bar.time, open: bar.open, high: bar.high, low: bar.low, close: bar.close };
+            return paintPocketOptionDoji({
+                time: bar.time, open: bar.open, high: bar.high, low: bar.low, close: bar.close,
+            });
         }
         return {
             time: bar.time, open: bar.open, high: bar.high, low: bar.low, close: bar.close,
@@ -6092,7 +6124,7 @@
             allChartData = newData;
             oldestLoadedTime = Math.min(...allChartData.map(c => c.time));
             if (candleSmooth) candleSmooth.reset();
-            candlestickSeries.setData(allChartData);
+            candlestickSeries.setData(allChartData.map(paintPocketOptionDoji));
             if (candleSmooth && allChartData.length) {
                 candleSmooth.snap(allChartData[allChartData.length - 1]);
             }
@@ -6122,7 +6154,7 @@
                 if (c.time === newestTime && candleSmooth) {
                     candleSmooth.toward(c);
                 } else {
-                    candlestickSeries.update(c);
+                    candlestickSeries.update(paintPocketOptionDoji(c));
                 }
             } catch (e) {
                 updateFailed = true;
@@ -6137,7 +6169,7 @@
 
         if (prependedOlder || updateFailed) {
             if (candleSmooth) candleSmooth.reset();
-            candlestickSeries.setData(allChartData);
+            candlestickSeries.setData(allChartData.map(paintPocketOptionDoji));
             if (candleSmooth && allChartData.length) {
                 candleSmooth.snap(allChartData[allChartData.length - 1]);
             }
@@ -6502,7 +6534,7 @@
             allChartData = [...toAdd, ...allChartData].sort((a, b) => a.time - b.time);
             oldestLoadedTime = Math.min(...allChartData.map(c => c.time));
             if (candleSmooth) candleSmooth.cancel();
-            candlestickSeries.setData(allChartData);
+            candlestickSeries.setData(allChartData.map(paintPocketOptionDoji));
             if (candleSmooth && allChartData.length) {
                 candleSmooth.snap(allChartData[allChartData.length - 1]);
             }
@@ -6585,7 +6617,7 @@
             if (allChartData.length) {
                 oldestLoadedTime = Math.min(...allChartData.map(c => c.time));
                 if (candleSmooth) candleSmooth.reset();
-                candlestickSeries.setData(allChartData);
+                candlestickSeries.setData(allChartData.map(paintPocketOptionDoji));
                 if (candleSmooth) candleSmooth.snap(allChartData[allChartData.length - 1]);
                 renderChartMarkers();
                 renderEntryPriceLines();
@@ -6680,7 +6712,7 @@
             if (allChartData.length) {
                 oldestLoadedTime = Math.min(...allChartData.map(c => c.time));
                 if (candleSmooth) candleSmooth.reset();
-                candlestickSeries.setData(allChartData);
+                candlestickSeries.setData(allChartData.map(paintPocketOptionDoji));
                 if (candleSmooth) candleSmooth.snap(allChartData[allChartData.length - 1]);
                 renderChartMarkers();
                 renderEntryPriceLines();
