@@ -10,8 +10,17 @@ use Illuminate\Support\Carbon;
 
 class PocketInstrument extends Model
 {
+    /** Валютные пары (forex / FX OTC). */
+    public const TYPE_CURRENCY = 1;
+
+    /** Криптовалюты (crypto OTC / spot). */
+    public const TYPE_CRYPTO = 2;
+
+    /** Акции (stock OTC / spot). */
+    public const TYPE_STOCK = 3;
+
     protected $fillable = [
-        'instrument', 'display_name', 'priority',
+        'instrument', 'display_name', 'type', 'priority',
         'session_token', 'uid', 'is_demo', 'is_active', 'proxy_endpoint_id',
         'current_payout', 'last_payout_at', 'last_payout_event_at', 'payout_is_stale', 'payout_source',
         'last_ws_connected_at', 'last_ws_error', 'last_ws_error_at',
@@ -20,6 +29,7 @@ class PocketInstrument extends Model
     protected function casts(): array
     {
         return [
+            'type' => 'integer',
             'is_demo' => 'boolean',
             'is_active' => 'boolean',
             'priority' => 'integer',
@@ -92,6 +102,24 @@ class PocketInstrument extends Model
     public function scopeActive($query)
     {
         return $query->where('is_active', true);
+    }
+
+    /** Только валютные пары (type = 1). */
+    public function scopeCurrency($query)
+    {
+        return $query->where('type', self::TYPE_CURRENCY);
+    }
+
+    /** Только криптовалюты (type = 2). */
+    public function scopeCrypto($query)
+    {
+        return $query->where('type', self::TYPE_CRYPTO);
+    }
+
+    /** Только акции (type = 3). */
+    public function scopeStock($query)
+    {
+        return $query->where('type', self::TYPE_STOCK);
     }
 
     public function scopeOrderByPriority($query)

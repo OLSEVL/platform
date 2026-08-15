@@ -11,17 +11,18 @@ use App\Services\Bots\BotSettlementService;
 use App\Services\Bots\OpenRouterClient;
 use App\Services\DataCleanupService;
 use App\Services\ProxyDeadProbeService;
+use App\Services\ProxyRotationService;
 use App\Services\Telegram\TelegramAlertService;
 use App\Services\Telegram\TelegramAnalystHandler;
 use App\Services\Telegram\TelegramAnalystProcessManager;
+use App\Services\WebshareProxyRefreshService;
 use App\Support\BotScanCoordinator;
 use App\Support\OpenRouterChartLevelsParser;
 use App\Support\OpenRouterLlmConfig;
+use App\Support\WebshareProxyRefreshSettings;
 use Illuminate\Foundation\Inspiring;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Cache;
-use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Schema;
 
 /**
  * Реальный процесс scan: читаем cmdline PHP, а не pgrep по всей строке bash/cursor.
@@ -48,6 +49,81 @@ Artisan::command('data:auto-cleanup', function (DataCleanupService $dataCleanup)
     $result = $dataCleanup->purgeOlderThan($hours);
     $this->info($dataCleanup->formatResultMessage($result));
 })->purpose('Авто-удаление данных по расписанию (настройка /settings → Очистка данных)');
+
+Artisan::command('proxies:refresh-webshare', function (WebshareProxyRefreshService $webshareRefresh) {
+    // Команду запускает scheduler в 00:00, но она также доступна для безопасной
+    // проверки вручную. Настройка читается во время запуска, поэтому переключатель
+    // из /settings применяется без рестарта schedule:work или cron.
+    if (! WebshareProxyRefreshSettings::isEnabled()) {
+        $this->info('Ежедневное обновление Webshare выключено в /settings — пропуск.');
+
+        return 0;
+    }
+
+    try {
+        $result = $webshareRefresh->refresh();
+    } catch (\RuntimeException $exception) {
+        // Ненулевой exit code позволяет cron/systemd зафиксировать сбой запроса
+        // и отличить его от штатного отключения настройки выше.
+        $this->error('Обновление Webshare не выполнено: '.$exception->getMessage());
+
+        return 1;
+    }
+
+    $this->info(sprintf(
+        'Webshare обновлён: %d прокси в пуле, назначено %d активным инструментам.',
+        $result['proxy_count'],
+        $result['assigned'],
+    ));
+
+    return 0;
+})->purpose('Полностью обновить пул прокси из Webshare (кнопка /settings и ежедневное расписание)');
+
+Artisan::command('proxies:refresh-webshare-if-exhausted', function (
+    WebshareProxyRefreshService $webshareRefresh,
+    ProxyRotationService $proxyRotation,
+) {
+    // Почасовой fallback: не трогаем Webshare, пока в пуле ещё есть свободные слоты.
+    // Критерий совпадает с баннером «Пул прокси исчерпан» на /settings (is_exhausted).
+    if (! WebshareProxyRefreshSettings::isHourlyOnExhaustedEnabled()) {
+        $this->info('Почасовое обновление Webshare при исчерпании пула выключено в /settings — пропуск.');
+
+        return 0;
+    }
+
+    $capacity = $proxyRotation->getPoolCapacitySummary();
+    if (! ($capacity['is_exhausted'] ?? false)) {
+        $this->info(sprintf(
+            'Пул не исчерпан (free_slots=%d, ready=%d) — обновление Webshare не требуется.',
+            (int) ($capacity['free_slots'] ?? 0),
+            (int) ($capacity['ready_proxies'] ?? 0),
+        ));
+
+        return 0;
+    }
+
+    $this->warn(sprintf(
+        'Пул исчерпан (free_slots=0, active=%d, on_dead=%d) — запрос списка Webshare…',
+        (int) ($capacity['active_instruments'] ?? 0),
+        (int) ($capacity['instruments_on_dead_proxy'] ?? 0),
+    ));
+
+    try {
+        $result = $webshareRefresh->refresh();
+    } catch (\RuntimeException $exception) {
+        $this->error('Обновление Webshare не выполнено: '.$exception->getMessage());
+
+        return 1;
+    }
+
+    $this->info(sprintf(
+        'Webshare обновлён после исчерпания пула: %d прокси, назначено %d активным инструментам.',
+        $result['proxy_count'],
+        $result['assigned'],
+    ));
+
+    return 0;
+})->purpose('Обновить Webshare только если пул прокси исчерпан (hourly, настройка /settings)');
 
 Artisan::command('candles:prune-old', function (DataCleanupService $dataCleanup) {
     // Обратная совместимость: делегируем в data:auto-cleanup с теми же настройками из БД.
@@ -553,7 +629,7 @@ Artisan::command('bots:reversal-confirm-bootstrap', function () {
         }
         $bot->config = array_merge($defaultConfig, $preserved);
         $bot->save();
-        $this->info("Конфиг обновлён до v3 (Telegram-настройки сохранены).");
+        $this->info('Конфиг обновлён до v3 (Telegram-настройки сохранены).');
     }
 
     $this->info("Бот отбития от уровня: #{$bot->id} {$bot->name} ({$bot->type}) — при необходимости включите в настройках.");

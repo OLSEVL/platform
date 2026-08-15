@@ -241,6 +241,8 @@ Route::middleware('auth')->group(function () {
     Route::post('/settings/processes/{key}/restart', [PlatformDiagnosticsController::class, 'restart'])->name('settings.processes.restart');
     Route::get('/settings', [SettingsController::class, 'index'])->name('settings.index');
     Route::post('/settings/proxies/refresh', [SettingsController::class, 'refreshProxies'])->name('settings.proxies.refresh');
+    Route::post('/settings/proxies/daily-refresh', [SettingsController::class, 'updateWebshareDailyProxyRefresh'])
+        ->name('settings.proxies.daily-refresh');
     Route::post('/settings/proxies/auto-rotation', [SettingsController::class, 'updateProxyRotation'])->name('settings.proxies.auto-rotation');
     Route::post('/settings/proxies/{proxy}/reactivate', [SettingsController::class, 'reactivateProxy'])->name('settings.proxies.reactivate');
     Route::post('/settings/proxies/{proxy}/mark-dead', [SettingsController::class, 'markProxyDead'])->name('settings.proxies.mark-dead');
@@ -250,6 +252,7 @@ Route::middleware('auth')->group(function () {
     Route::get('/settings/proxies/{proxy}/health-row-ajax', [SettingsController::class, 'proxyHealthRowAjax'])->name('settings.proxies.health-row-ajax');
     Route::get('/settings/proxies/health-live-ajax', [SettingsController::class, 'proxyHealthLiveAjax'])->name('settings.proxies.health-live-ajax');
     Route::post('/settings/payout/monitoring', [SettingsController::class, 'updatePayoutMonitoring'])->name('settings.payout.monitoring');
+    Route::post('/settings/ui/time-debug-panel', [SettingsController::class, 'updateTimeDebugPanel'])->name('settings.ui.time-debug-panel');
     Route::post('/settings/data/purge', [SettingsController::class, 'purgeOldData'])->name('settings.data.purge');
     Route::post('/settings/data/auto-cleanup', [SettingsController::class, 'updateDataAutoCleanup'])->name('settings.data.auto-cleanup');
     Route::post('/settings/bots/scan-watchdog', [SettingsController::class, 'updateScanWatchdog'])->name('settings.bots.scan-watchdog');

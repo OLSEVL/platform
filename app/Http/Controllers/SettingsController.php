@@ -4,23 +4,29 @@ namespace App\Http\Controllers;
 
 use App\Models\PocketInstrument;
 use App\Models\ProxyEndpoint;
-use App\Services\CurrentCandleCacheService;
 use App\Services\DataCleanupService;
 use App\Services\ProxyDiagnosticsService;
 use App\Services\ProxyRotationService;
+use App\Services\WebshareProxyRefreshService;
 use App\Support\BotScanCoordinator;
+use App\Support\TimeDebugPanelSettings;
+use App\Support\WebshareProxyRefreshSettings;
 use Illuminate\Http\JsonResponse;
-use Illuminate\Http\Client\RequestException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 
 class SettingsController extends Controller
 {
     private const SETTING_PAYOUT_STALE_MINUTES_THRESHOLD = 'payout_stale_minutes_threshold';
+
     private const SETTING_PROXY_REACTIVATION_PROBE_INSTRUMENT = 'proxy_reactivation_probe_instrument';
+
     private const SETTING_PROXY_AUTO_TEST_ENABLED = 'proxy_auto_test_enabled';
+
     private const SETTING_PROXY_AUTO_TEST_ALL_ENABLED = 'proxy_auto_test_all_enabled';
+
     private const SETTING_PROXY_PROBE_WINDOW_SEC = 'proxy_probe_window_sec';
+
     private const DEFAULT_PAYOUT_STALE_MINUTES_THRESHOLD = 5;
 
     public function index(
@@ -62,119 +68,77 @@ class SettingsController extends Controller
             'scanWatchdogMaxElapsedSec' => BotScanCoordinator::getScanMaxElapsedSec(),
             'scanWatchdogAllowedElapsedSec' => BotScanCoordinator::ALLOWED_WATCHDOG_MAX_ELAPSED_SEC,
             'scanWatchdogRunning' => BotScanCoordinator::runningScanStatusRows(),
+            // Диагностическая плашка времени на bots/show (раньше APP_TIME_DEBUG_PANEL в .env).
+            'timeDebugPanelEnabled' => TimeDebugPanelSettings::isEnabled(),
+            // Отсутствующая запись означает "включено", поэтому текущие установки
+            // автоматически получают ночное/почасовое обновление после выкладки этой версии.
+            'webshareDailyProxyRefreshEnabled' => WebshareProxyRefreshSettings::isEnabled(),
+            'webshareHourlyExhaustedProxyRefreshEnabled' => WebshareProxyRefreshSettings::isHourlyOnExhaustedEnabled(),
         ]);
     }
 
-    public function refreshProxies(
-        ProxyRotationService $proxyRotation,
-        CurrentCandleCacheService $currentCandleCache,
-    )
+    /**
+     * Вкл/выкл плашки отладки времени на графике бота.
+     * Значение лежит в app_settings, чтобы не трогать .env при расследовании рассинхрона.
+     */
+    public function updateTimeDebugPanel(\Illuminate\Http\Request $request)
     {
-        $apiKey = (string) config('services.webshare.api_key', '');
-        if ($apiKey === '') {
-            return back()->with('error', 'WEBSHARE_API_KEY не задан в .env');
-        }
+        $enabled = $request->boolean('time_debug_panel_enabled');
+        TimeDebugPanelSettings::setEnabled($enabled);
 
-        try {
-            $response = Http::timeout(20)
-                ->acceptJson()
-                ->withHeaders([
-                    'Authorization' => "Token {$apiKey}",
-                ])
-                ->get('https://proxy.webshare.io/api/v2/proxy/list/', [
-                    'mode' => 'direct',
-                    'page' => 1,
-                    'page_size' => 1000,
-                ]);
-
-            $response->throw();
-        } catch (RequestException $e) {
-            return back()->with('error', 'Ошибка запроса к Webshare API: '.$e->getMessage());
-        }
-
-        $rows = $response->json('results');
-        if (! is_array($rows) || count($rows) === 0) {
-            return back()->with('error', 'Webshare вернул пустой список прокси.');
-        }
-
-        $proxyPool = [];
-        foreach ($rows as $row) {
-            if (! is_array($row)) {
-                continue;
-            }
-
-            $username = $row['username'] ?? null;
-            $password = $row['password'] ?? null;
-            $address = $row['proxy_address'] ?? null;
-            $port = $row['port'] ?? null;
-            $isValid = $row['valid'] ?? true;
-
-            if (! $isValid || ! $username || ! $password || ! $address || ! $port) {
-                continue;
-            }
-
-            $proxyPool[] = sprintf(
-                'http://%s:%s@%s:%s',
-                rawurlencode((string) $username),
-                rawurlencode((string) $password),
-                (string) $address,
-                (string) $port,
-            );
-        }
-
-        if (count($proxyPool) === 0) {
-            return back()->with('error', 'Нет валидных прокси для назначения.');
-        }
-
-        $activeInstrumentsCount = PocketInstrument::query()->active()->count();
-        if ($activeInstrumentsCount === 0) {
-            return back()->with('error', 'Нет активных инструментов.');
-        }
-
-        $proxyCount = count($proxyPool);
-        DB::transaction(function () use ($proxyPool): void {
-            // Полная замена пула: старые endpoint удаляются из БД (у инструментов proxy_endpoint_id → NULL).
-            ProxyEndpoint::query()->delete();
-
-            $now = now();
-            foreach ($proxyPool as $url) {
-                ProxyEndpoint::query()->create([
-                    'url' => $url,
-                    'status' => ProxyEndpoint::STATUS_ACTIVE,
-                    'failure_count' => 0,
-                    'last_error' => null,
-                    'last_failed_at' => null,
-                    'last_success_at' => null,
-                    'last_http_check_at' => null,
-                    'last_http_status' => null,
-                    'last_http_latency_ms' => null,
-                    'last_http_check_result' => null,
-                    'last_http_check_mode' => null,
-                    'created_at' => $now,
-                    'updated_at' => $now,
-                ]);
-            }
-        });
-
-        $assigned = $proxyRotation->assignRoundRobinToActiveInstruments();
-
-        // Сигнал ingest: немедленно перечитать proxy_url и перезапустить WebSocket-воркеры.
-        $proxyRotation->markPoolRefreshed();
-
-        // Сбрасываем partial-свечи в Redis — иначе график ещё ~3 мин показывает старый хвост
-        // от прежних прокси, пока не истечёт TTL current_candle:*.
-        $currentCandleCache->clearAllPartials(
-            PocketInstrument::query()->active()->pluck('instrument')->all()
+        return back()->with(
+            'success',
+            $enabled
+                ? 'Панель отладки времени включена (видна на странице графика бота).'
+                : 'Панель отладки времени выключена.'
         );
+    }
+
+    /**
+     * Ручное обновление использует тот же сервис, что и ночное расписание.
+     */
+    public function refreshProxies(WebshareProxyRefreshService $webshareRefresh)
+    {
+        try {
+            $result = $webshareRefresh->refresh();
+        } catch (\RuntimeException $exception) {
+            return back()->with('error', $exception->getMessage());
+        }
 
         return back()->with(
             'success',
             sprintf(
                 'Прокси полностью обновлены: назначено %d активным инструментам из %d прокси в новом пуле. '
                 .'Ingest подхватит новые endpoint в течение ~15 с; partial-кэш свечей сброшен.',
-                $assigned,
-                $proxyCount,
+                $result['assigned'],
+                $result['proxy_count'],
             )
+        );
+    }
+
+    /**
+     * Вкл/выкл расписаний обновления Webshare (ночное + почасовое при исчерпании).
+     */
+    public function updateWebshareDailyProxyRefresh(\Illuminate\Http\Request $request)
+    {
+        $dailyEnabled = $request->boolean('webshare_daily_proxy_refresh_enabled');
+        $hourlyOnExhaustedEnabled = $request->boolean('webshare_hourly_exhausted_proxy_refresh_enabled');
+
+        WebshareProxyRefreshSettings::setEnabled($dailyEnabled);
+        WebshareProxyRefreshSettings::setHourlyOnExhaustedEnabled($hourlyOnExhaustedEnabled);
+
+        $parts = [
+            $dailyEnabled
+                ? 'ежедневно в 00:00 — вкл.'
+                : 'ежедневно в 00:00 — выкл.',
+            $hourlyOnExhaustedEnabled
+                ? 'каждый час при исчерпании пула — вкл.'
+                : 'каждый час при исчерпании пула — выкл.',
+        ];
+
+        return back()->with(
+            'success',
+            'Расписание обновления прокси Webshare сохранено: '.implode('; ', $parts)
         );
     }
 
@@ -508,8 +472,7 @@ class SettingsController extends Controller
         int $durationSec,
         int $requestTimeoutSec,
         string $mode,
-    ): JsonResponse
-    {
+    ): JsonResponse {
         $durationSec = max(1, $durationSec);
         $requestTimeoutSec = max(1, $requestTimeoutSec);
         $startedAt = microtime(true);
@@ -618,7 +581,7 @@ class SettingsController extends Controller
     }
 
     /**
-     * @param array<string, mixed> $row
+     * @param  array<string, mixed>  $row
      * @return array<string, mixed>
      */
     private function serializeHealthRow(array $row): array

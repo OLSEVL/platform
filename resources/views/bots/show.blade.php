@@ -217,9 +217,9 @@
                     @endunless
                 </div>
             </div>
-        @if(config('app.time_debug_panel'))
-            {{-- Отладочная плашка времени: помогает быстро увидеть рассинхрон между серверным временем,
-                 локальными часами браузера и "временем платформы" (последний маркер/событие на графике). --}}
+        @if(\App\Support\TimeDebugPanelSettings::isEnabled())
+            {{-- Отладочная плашка времени: включается на /settings (app_settings), не через .env.
+                 Помогает увидеть рассинхрон сервер / браузер / feed / маркеры на графике. --}}
             <div id="time-debug-panel" class="border-b border-zinc-800 bg-zinc-950/80 px-3 py-1.5 text-[11px] text-zinc-400">
                 <span class="font-medium text-zinc-300">Панель отладки времени:</span>
                 <span id="time-debug-server" class="ml-2">Серверное время (по последнему ответу API): —</span>

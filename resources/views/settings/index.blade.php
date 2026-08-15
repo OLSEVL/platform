@@ -79,6 +79,43 @@
                 Обновить прокси
             </button>
         </form>
+        <form action="{{ route('settings.proxies.daily-refresh') }}" method="POST" class="mt-4 flex flex-col items-start gap-4">
+            @csrf
+            <div class="flex flex-col items-start gap-1">
+                <label class="inline-flex items-center gap-2 text-sm text-zinc-200 cursor-pointer">
+                    <input
+                        type="checkbox"
+                        name="webshare_daily_proxy_refresh_enabled"
+                        value="1"
+                        class="rounded border-zinc-600 bg-zinc-950 text-blue-600 focus:ring-blue-600"
+                        @checked($webshareDailyProxyRefreshEnabled ?? true)
+                    >
+                    <span>Ежедневно обновлять прокси Webshare в 00:00</span>
+                </label>
+                <p class="pl-6 text-xs text-zinc-500">
+                    Запускает тот же полный запрос списка и переназначение прокси, что и кнопка «Обновить прокси».
+                </p>
+            </div>
+            <div class="flex flex-col items-start gap-1">
+                <label class="inline-flex items-center gap-2 text-sm text-zinc-200 cursor-pointer">
+                    <input
+                        type="checkbox"
+                        name="webshare_hourly_exhausted_proxy_refresh_enabled"
+                        value="1"
+                        class="rounded border-zinc-600 bg-zinc-950 text-blue-600 focus:ring-blue-600"
+                        @checked($webshareHourlyExhaustedProxyRefreshEnabled ?? true)
+                    >
+                    <span>Каждый час обновлять прокси, если пул исчерпан</span>
+                </label>
+                <p class="pl-6 text-xs text-zinc-500">
+                    Раз в час проверяет свободные слоты ready-прокси; при 0 свободных слотов
+                    (активные инструменты есть) выполняет то же обновление, что и кнопка «Обновить прокси».
+                </p>
+            </div>
+            <button type="submit" class="inline-flex items-center justify-center px-4 py-2 rounded bg-indigo-600 hover:bg-indigo-500 text-white font-medium">
+                Сохранить расписание
+            </button>
+        </form>
     </div>
 
     <div class="bg-zinc-900 border border-zinc-800 rounded-lg shadow-lg shadow-black/20 p-5 mt-6">
@@ -803,6 +840,31 @@
                 <a href="{{ route('settings.processes.index') }}" class="text-indigo-400 hover:text-indigo-300">Процессы</a>
             </p>
         </div>
+    </div>
+
+    <div class="bg-zinc-900 border border-zinc-800 rounded-lg shadow-lg shadow-black/20 p-5 mt-6">
+        <h2 class="text-lg font-semibold text-zinc-100 mb-2">Диагностика времени</h2>
+        <p class="text-sm text-zinc-400 mb-4">
+            Плашка над графиком бота: серверное / клиентское время, feed (raw / effective / ingest),
+            последняя закрытая свеча и маркеры. Нужна при расследовании рассинхрона часов;
+            на обычной работе держите выключенной.
+        </p>
+        <form action="{{ route('settings.ui.time-debug-panel') }}" method="POST" class="flex flex-col items-start gap-3">
+            @csrf
+            <label class="inline-flex items-center gap-2 text-sm text-zinc-200 cursor-pointer">
+                <input
+                    type="checkbox"
+                    name="time_debug_panel_enabled"
+                    value="1"
+                    class="rounded border-zinc-600 bg-zinc-950 text-indigo-600 focus:ring-indigo-600"
+                    @checked(! empty($timeDebugPanelEnabled))
+                >
+                <span>Показывать панель отладки времени на странице бота</span>
+            </label>
+            <button type="submit" class="inline-flex items-center justify-center px-4 py-2 rounded bg-indigo-600 hover:bg-indigo-500 text-white font-medium">
+                Сохранить
+            </button>
+        </form>
     </div>
 
     <div class="bg-zinc-900 border border-zinc-800 rounded-lg shadow-lg shadow-black/20 p-5 mt-6">

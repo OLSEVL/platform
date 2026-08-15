@@ -51,6 +51,12 @@ class InstrumentController extends Controller
         $rules = [
             'instrument' => 'required|string|max:63|unique:pocket_instruments,instrument',
             'display_name' => 'nullable|string|max:255',
+            // 1 = валютные пары, 2 = криптовалюты.
+            'type' => ['required', 'integer', Rule::in([
+                PocketInstrument::TYPE_CURRENCY,
+                PocketInstrument::TYPE_CRYPTO,
+                PocketInstrument::TYPE_STOCK,
+            ])],
             'priority' => 'nullable|integer',
             'session_token' => 'nullable|string|max:4096',
             'uid' => 'nullable|string|max:63',
@@ -65,6 +71,7 @@ class InstrumentController extends Controller
         PocketInstrument::create([
             'instrument' => $v['instrument'],
             'display_name' => $v['display_name'] ?? null,
+            'type' => (int) $v['type'],
             'priority' => (int) ($v['priority'] ?? 0),
             'session_token' => $v['session_token'] ?? null,
             'uid' => $v['uid'] ?? null,
@@ -92,6 +99,11 @@ class InstrumentController extends Controller
         $rules = [
             'instrument' => ['required', 'string', 'max:63', Rule::unique('pocket_instruments', 'instrument')->ignore($instrument->id)],
             'display_name' => 'nullable|string|max:255',
+            'type' => ['required', 'integer', Rule::in([
+                PocketInstrument::TYPE_CURRENCY,
+                PocketInstrument::TYPE_CRYPTO,
+                PocketInstrument::TYPE_STOCK,
+            ])],
             'priority' => 'nullable|integer',
             'session_token' => 'nullable|string|max:4096',
             'uid' => 'nullable|string|max:63',
@@ -106,6 +118,7 @@ class InstrumentController extends Controller
         $data = [
             'instrument' => $v['instrument'],
             'display_name' => $v['display_name'] ?? null,
+            'type' => (int) $v['type'],
             'priority' => (int) ($v['priority'] ?? 0),
             'is_demo' => $request->boolean('is_demo'),
             'is_active' => $request->boolean('is_active'),

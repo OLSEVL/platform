@@ -29,49 +29,50 @@
         <thead class="bg-zinc-800/80">
             <tr>
                 {{-- Порядковый номер строки в списке (как в таблице оператора): удобно ссылаться на «3-й инструмент» без поиска по коду. --}}
-                <th class="w-14 px-3 py-3 text-center text-xs font-medium text-zinc-400 uppercase">№</th>
-                <th class="px-6 py-3 text-left text-xs font-medium text-zinc-400 uppercase">Инструмент</th>
-                <th class="px-6 py-3 text-left text-xs font-medium text-zinc-400 uppercase">Название</th>
-                <th class="px-6 py-3 text-left text-xs font-medium text-zinc-400 uppercase">Приоритет</th>
-                <th class="px-6 py-3 text-left text-xs font-medium text-zinc-400 uppercase">Статус</th>
-                <th class="px-6 py-3 text-left text-xs font-medium text-zinc-400 uppercase">Свои auth</th>
-                <th class="px-6 py-3 text-left text-xs font-medium text-zinc-400 uppercase">Прокси</th>
+                <th class="w-10 px-1 py-2 text-center text-xs font-medium text-zinc-400 uppercase">№</th>
+                <th class="px-1 py-2 text-left text-xs font-medium text-zinc-400 uppercase">Инструмент</th>
+                <th class="px-1 py-2 text-left text-xs font-medium text-zinc-400 uppercase">Название</th>
+                <th class="px-1 py-2 text-left text-xs font-medium text-zinc-400 uppercase">Тип</th>
+                <th class="px-1 py-2 text-left text-xs font-medium text-zinc-400 uppercase">Приоритет</th>
+                <th class="px-1 py-2 text-left text-xs font-medium text-zinc-400 uppercase">Статус</th>
+                <th class="px-1 py-2 text-left text-xs font-medium text-zinc-400 uppercase">Свои auth</th>
+                <th class="px-1 py-2 text-left text-xs font-medium text-zinc-400 uppercase">Прокси</th>
                 <th
-                    class="px-6 py-3 text-left align-bottom min-w-[5.5rem]"
+                    class="px-1 py-2 text-left align-bottom min-w-[4.5rem]"
                     title="Процент выплаты (current_payout), последнее известное значение от ingest. Не означает, что PO только что прислал обновление."
                 >
                     <span class="block text-xs font-medium text-zinc-300">Payout %</span>
                     <span class="block text-[10px] font-normal text-zinc-500 leading-snug mt-0.5">значение в БД</span>
                 </th>
                 <th
-                    class="px-6 py-3 text-left align-bottom min-w-[6rem]"
+                    class="px-1 py-2 text-left align-bottom min-w-[5rem]"
                     title="Откуда пришло последнее значение payout: payout_update (WebSocket-событие PO) или json_data (поле в ответе по активу)."
                 >
                     <span class="block text-xs font-medium text-zinc-300">Источник</span>
                     <span class="block text-[10px] font-normal text-zinc-500 leading-snug mt-0.5">канал от PO</span>
                 </th>
                 <th
-                    class="px-6 py-3 text-left align-bottom min-w-[9rem]"
+                    class="px-1 py-2 text-left align-bottom min-w-[7rem]"
                     title="last_payout_event_at — когда Pocket Options в последний раз прислал payout_update или payout в json_data. Красное = давно нет события от брокера (порог в Настройках) или payout_is_stale. Не путать с POST ingest."
                 >
                     <span class="block text-xs font-medium text-zinc-300">Событие PO</span>
                     <span class="block text-[10px] font-normal text-zinc-500 leading-snug mt-0.5">когда брокер прислал payout</span>
                 </th>
                 <th
-                    class="px-6 py-3 text-left align-bottom min-w-[9rem]"
+                    class="px-1 py-2 text-left align-bottom min-w-[7rem]"
                     title="last_payout_at — когда ingest в последний раз успешно вызвал POST /api/ingest-payout (heartbeat ~30 с). Жёлтое «нет POST» = для активного инструмента нет POST &gt; 2 мин (воркер/связь). Свежий POST при stale PO — норма."
                 >
                     <span class="block text-xs font-medium text-zinc-300">POST ingest</span>
                     <span class="block text-[10px] font-normal text-zinc-500 leading-snug mt-0.5">когда ingest записал в БД</span>
                 </th>
-                <th class="px-6 py-3 text-right text-xs font-medium text-zinc-400 uppercase">Действия</th>
+                <th class="px-1 py-2 text-right text-xs font-medium text-zinc-400 uppercase">Действия</th>
             </tr>
         </thead>
         <tbody class="divide-y divide-zinc-800 text-zinc-200">
             @forelse($instruments as $i)
             <tr class="hover:bg-zinc-800/50">
-                <td class="px-3 py-4 text-center text-sm tabular-nums text-zinc-500">{{ $loop->iteration }}</td>
-                <td class="px-6 py-4 font-mono">
+                <td class="px-1 py-2 text-center text-sm tabular-nums text-zinc-500">{{ $loop->iteration }}</td>
+                <td class="px-1 py-2 font-mono text-sm whitespace-nowrap">
                     {{-- Ссылка на главную: JS графика читает ?instrument= и открывает соответствующую пару. --}}
                     <a
                         href="{{ route('dashboard', ['instrument' => $i->instrument]) }}"
@@ -79,9 +80,18 @@
                         title="Открыть график на главной"
                     >{{ $i->instrument }}</a>
                 </td>
-                <td class="px-6 py-4">{{ $i->display_name ?? '—' }}</td>
-                <td class="px-6 py-4">{{ $i->priority }}</td>
-                <td class="px-6 py-4">
+                <td class="px-1 py-2 text-sm">{{ $i->display_name ?? '—' }}</td>
+                <td class="px-1 py-2 text-sm text-zinc-300 whitespace-nowrap">
+                    @if((int) $i->type === \App\Models\PocketInstrument::TYPE_CRYPTO)
+                        <span class="text-amber-300">2 · Крипто</span>
+                    @elseif((int) $i->type === \App\Models\PocketInstrument::TYPE_STOCK)
+                        <span class="text-violet-300">3 · Акции</span>
+                    @else
+                        <span class="text-sky-300">1 · Валюта</span>
+                    @endif
+                </td>
+                <td class="px-1 py-2 text-sm">{{ $i->priority }}</td>
+                <td class="px-1 py-2 text-sm">
                     <div class="text-zinc-200">{{ $i->is_active ? 'Вкл' : 'Выкл' }}</div>
                     <form action="{{ route('instruments.toggle-active', $i) }}" method="POST" class="mt-2">
                         @csrf
@@ -96,8 +106,8 @@
                         </button>
                     </form>
                 </td>
-                <td class="px-6 py-4">{{ $i->session_token ? 'Да' : 'Нет' }}</td>
-                <td class="px-6 py-4">
+                <td class="px-1 py-2 text-sm">{{ $i->session_token ? 'Да' : 'Нет' }}</td>
+                <td class="px-1 py-2 text-sm">
                     @if($i->proxyEndpoint)
                         @php
                             $proxyStatusClass = match($i->proxyEndpoint->status) {
@@ -144,7 +154,7 @@
                         </form>
                     </div>
                 </td>
-                <td class="px-6 py-4">
+                <td class="px-1 py-2 text-sm">
                     @if($i->current_payout !== null)
                         @php
                             $payout = (float) $i->current_payout;
@@ -157,8 +167,8 @@
                         <span class="text-zinc-500">—</span>
                     @endif
                 </td>
-                <td class="px-6 py-4">{{ $i->payout_source ?? '—' }}</td>
-                <td class="px-6 py-4">
+                <td class="px-1 py-2 text-sm">{{ $i->payout_source ?? '—' }}</td>
+                <td class="px-1 py-2 text-sm">
                     @php
                         // Колонка отражает последнее событие payout от Pocket Options, не heartbeat ingest.
                         $payoutEventAt = $i->last_payout_event_at ?? $i->last_payout_at;
@@ -184,7 +194,7 @@
                         <span class="text-zinc-500">—</span>
                     @endif
                 </td>
-                <td class="px-6 py-4">
+                <td class="px-1 py-2 text-sm">
                     @if($i->last_payout_at)
                         @php
                             // Heartbeat ingest: при живом воркере POST payout приходит примерно раз в 30 с.
@@ -208,7 +218,7 @@
                         <span class="text-zinc-500">—</span>
                     @endif
                 </td>
-                <td class="px-6 py-4 text-right">
+                <td class="px-1 py-2 text-sm text-right">
                     @php
                         // Единый базовый стиль для всех action-кнопок:
                         // так "Изменить / Заменить / Удалить" выглядят как единый UI-контрол,
@@ -226,7 +236,7 @@
                 </td>
             </tr>
             @empty
-            <tr><td colspan="12" class="px-6 py-8 text-center text-zinc-500">Нет инструментов. <a href="{{ route('instruments.create') }}" class="text-blue-400 hover:underline">Добавить</a></td></tr>
+            <tr><td colspan="12" class="px-1 py-6 text-center text-zinc-500">Нет инструментов. <a href="{{ route('instruments.create') }}" class="text-blue-400 hover:underline">Добавить</a></td></tr>
             @endforelse
         </tbody>
     </table>

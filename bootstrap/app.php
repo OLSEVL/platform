@@ -17,6 +17,12 @@ return Application::configure(basePath: dirname(__DIR__))
     })
     ->withSchedule(function (Schedule $schedule): void {
         $schedule->command('data:auto-cleanup')->hourly();
+        // Сервис ниже использует ровно тот же код, что кнопка "Обновить прокси"
+        // в /settings. Внутри команды проверяется пользовательский переключатель;
+        // withoutOverlapping не допускает параллельную замену одного и того же пула.
+        $schedule->command('proxies:refresh-webshare')->dailyAt('00:00')->withoutOverlapping(60);
+        // При free_slots=0 раз в час тянем свежий список Webshare (та же кнопка «Обновить прокси»).
+        $schedule->command('proxies:refresh-webshare-if-exhausted')->hourly()->withoutOverlapping(30);
         // Per-bot scan: диспетчер каждую минуту поднимает отдельный bots:scan --bot_id=N (параллельно).
         $schedule->command('bots:scan-dispatch')->everyMinute()->withoutOverlapping(2);
         // Зависший scan (живой PID) блокирует dispatch навсегда — reap по wall-time.

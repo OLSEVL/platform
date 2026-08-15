@@ -19,6 +19,15 @@
                 <input type="text" name="display_name" value="{{ old('display_name', $instrument?->display_name) }}" class="w-full px-3 py-2 rounded bg-zinc-950 border border-zinc-600 text-zinc-100 focus:ring-2 focus:ring-blue-600 focus:border-transparent">
             </div>
             <div>
+                <label class="block text-sm font-medium text-zinc-300 mb-1">Тип *</label>
+                <select name="type" class="w-full px-3 py-2 rounded bg-zinc-950 border border-zinc-600 text-zinc-100 focus:ring-2 focus:ring-blue-600 focus:border-transparent" required>
+                    @php $typeVal = (int) old('type', $instrument?->type ?? \App\Models\PocketInstrument::TYPE_CURRENCY); @endphp
+                    <option value="{{ \App\Models\PocketInstrument::TYPE_CURRENCY }}" @selected($typeVal === \App\Models\PocketInstrument::TYPE_CURRENCY)>1 — Валютные пары</option>
+                    <option value="{{ \App\Models\PocketInstrument::TYPE_CRYPTO }}" @selected($typeVal === \App\Models\PocketInstrument::TYPE_CRYPTO)>2 — Криптовалюты</option>
+                    <option value="{{ \App\Models\PocketInstrument::TYPE_STOCK }}" @selected($typeVal === \App\Models\PocketInstrument::TYPE_STOCK)>3 — Акции</option>
+                </select>
+            </div>
+            <div>
                 <label class="block text-sm font-medium text-zinc-300 mb-1">Приоритет</label>
                 <input type="number" name="priority" value="{{ old('priority', $instrument?->priority ?? 0) }}" class="w-full px-3 py-2 rounded bg-zinc-950 border border-zinc-600 text-zinc-100 focus:ring-2 focus:ring-blue-600 focus:border-transparent">
             </div>
