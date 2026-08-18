@@ -7,8 +7,18 @@
     <title>@yield('title', 'Платформа')</title>
     <script src="https://cdn.tailwindcss.com"></script>
 </head>
-<body class="bg-[#1c202e] text-slate-100 h-dvh min-h-dvh flex flex-col overflow-hidden antialiased">
-    <nav class="bg-[#23283a] border-b border-[#31384e] shadow-lg shadow-black/20 shrink-0">
+<body @class([
+    'bg-[#1c202e] text-slate-100 h-dvh min-h-dvh flex flex-col antialiased',
+    'overflow-hidden' => ! request()->boolean('embed'),
+    'overflow-y-auto' => request()->boolean('embed'),
+]) @if (request()->boolean('embed')) data-indicator-settings-embed="1" @endif>
+    {{-- Режим embed используется единым модальным окном настроек индикаторов.
+         Скрываем только глобальную навигацию: сами формы остаются теми же, с
+         их CSRF-токенами, правилами валидации и страницей ошибок Laravel. --}}
+    <nav @class([
+        'bg-[#23283a] border-b border-[#31384e] shadow-lg shadow-black/20 shrink-0',
+        'hidden' => request()->boolean('embed'),
+    ])>
         {{-- Три колонки flex-1 / auto / flex-1: пункты меню по центру экрана, «Выход» у правого края. --}}
         <div class="w-full px-4 py-2 flex items-center">
             <div class="flex-1" aria-hidden="true"></div>
@@ -31,7 +41,12 @@
         </div>
     </nav>
     {{-- Базовый контейнер контента: во всю ширину экрана, с небольшими боковыми отступами для читаемости. --}}
-    <main class="@yield('main_class', 'w-full max-w-none flex-1 min-h-0 overflow-y-auto py-8 px-3 sm:px-4')">
+    {{-- Обычная страница обязана сохранить свой @section('main_class'):
+         графики задают здесь flex/overflow, от которых зависит высота canvas.
+         Только iframe-настройки получают компактный независимый контейнер. --}}
+    <main class="{{ request()->boolean('embed')
+        ? 'w-full max-w-none flex-1 min-h-0 overflow-y-auto py-4 px-3 sm:px-4'
+        : trim($__env->yieldContent('main_class', 'w-full max-w-none flex-1 min-h-0 overflow-y-auto py-8 px-3 sm:px-4')) }}">
         @yield('content')
     </main>
 </body>

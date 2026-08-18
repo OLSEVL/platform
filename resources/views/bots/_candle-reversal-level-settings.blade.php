@@ -260,7 +260,7 @@
         <div class="space-y-1">
             <label for="h1_take" class="block text-xs font-medium text-zinc-400">Свечей H1</label>
             <input type="number" name="h1_take" id="h1_take" min="10" max="200" required
-                value="{{ old('h1_take', $cfg['h1_take'] ?? 48) }}"
+                value="{{ old('h1_take', $cfg['h1_take'] ?? 12) }}"
                 class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
             <p class="text-[11px] text-zinc-500">Swing H1 + H1 bias.</p>
             @error('h1_take')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror

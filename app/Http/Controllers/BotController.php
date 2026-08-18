@@ -18,6 +18,7 @@ use App\Services\Indicators\AtrIndicatorService;
 use App\Services\Indicators\BollingerIndicatorService;
 use App\Services\Indicators\EmaIndicatorService;
 use App\Services\Indicators\LiquiditySwingsIndicatorService;
+use App\Services\Indicators\SweepRaidLiquidityIndicatorService;
 use App\Services\Indicators\MacdIndicatorService;
 use App\Services\Indicators\PriceActionDgtIndicatorService;
 use App\Services\Indicators\RsiIndicatorService;
@@ -91,6 +92,7 @@ use App\Services\Telegram\StrongLevelTelegramLlmButton;
 use App\Services\Telegram\StrongLevelTelegramProcessManager;
 use App\Services\Telegram\TelegramAlertService;
 use App\Services\Telegram\TelegramAnalystProcessManager;
+use App\Support\TelegramBotConfigFields;
 use App\Support\BotScanProgress;
 use App\Support\LevelBounceBotTypes;
 use App\Support\OsEngineWaveABotConfig;
@@ -1571,6 +1573,49 @@ class BotController extends Controller
                     'm1_reversal_enabled' => 'Включите хотя бы одно подтверждение: M5 rejection или M1 разворот. Иначе бот не даст ни одного сигнала.',
                 ]);
             }
+        } elseif ($bot->type === 'sweep_raid_liquidity') {
+            // Стратегия использует только закрытые M1: свип/рейд не должен меняться
+            // внутри незакрытой свечи, иначе сигнал на PO будет перерисовываться.
+            $extra = $request->validate([
+                'count' => ['required', 'integer', 'min:30', 'max:5000'],
+                'expiry_sec' => ['required', 'integer', 'min:60', 'max:900'],
+                'min_confidence' => ['required', 'numeric', 'min:0', 'max:1'],
+                'min_payout' => ['required', 'numeric', 'min:0', 'max:100'],
+                'stale_after_sec' => ['required', 'integer', 'min:5', 'max:600'],
+                'srl_pivot_length' => ['required', 'integer', 'min:1', 'max:100'],
+                'srl_enter_sweep' => ['sometimes', 'boolean'],
+                'srl_enter_pullback' => ['sometimes', 'boolean'],
+                'telegram_enabled' => ['sometimes', 'boolean'],
+                'telegram_notify_result' => ['sometimes', 'boolean'],
+                'telegram_notify_on' => ['required', 'string', Rule::in(['signal_trade', 'off'])],
+                'telegram_bot_token' => ['nullable', 'string', 'max:128'],
+                'telegram_chat_id' => ['nullable', 'string', 'max:64'],
+            ] + TelegramBotConfigFields::validationRules());
+            if (! $request->boolean('srl_enter_sweep') && ! $request->boolean('srl_enter_pullback')) {
+                throw ValidationException::withMessages([
+                    'srl_enter_sweep' => 'Включите хотя бы один путь входа: на свипе или на первой откатной.',
+                ]);
+            }
+            $existingToken = trim((string) (($bot->config ?? [])['telegram_bot_token'] ?? ''));
+            $tokenInput = trim((string) ($extra['telegram_bot_token'] ?? ''));
+            $config = array_merge($bot->config ?? [], [
+                'count' => (int) $extra['count'],
+                'expiry_sec' => (int) $extra['expiry_sec'],
+                'min_confidence' => (float) $extra['min_confidence'],
+                'min_payout' => (float) $extra['min_payout'],
+                'stale_after_sec' => (int) $extra['stale_after_sec'],
+                'srl_pivot_length' => (int) $extra['srl_pivot_length'],
+                'srl_enter_sweep' => $request->boolean('srl_enter_sweep'),
+                'srl_enter_pullback' => $request->boolean('srl_enter_pullback'),
+                'telegram_enabled' => $request->boolean('telegram_enabled'),
+                'telegram_notify_result' => $request->boolean('telegram_notify_result'),
+                'telegram_notify_on' => (string) $extra['telegram_notify_on'],
+                // Пустое поле на форме не затирает уже сохранённый токен.
+                'telegram_bot_token' => $tokenInput !== '' ? $tokenInput : $existingToken,
+                'telegram_chat_id' => trim((string) ($extra['telegram_chat_id'] ?? '')),
+                'version' => 'sweep_raid_liquidity_v1',
+            ]);
+            $config = TelegramBotConfigFields::mergeFromRequest($request, $config, $bot->config ?? []);
         } elseif ($bot->type === 'smc_flow') {
             // SMC Flow: UT flip + 3BR confirm + LuxAlgo OB filter; экспирация по умолчанию 3 мин.
             $extra = $request->validate([
@@ -1596,6 +1641,63 @@ class BotController extends Controller
                 'smc_ob_touch_max_bars' => (int) ($extra['smc_ob_touch_max_bars'] ?? $request->input('smc_ob_touch_max_bars', 3)),
                 'version' => 'smc_flow_ut_3br_ob_v1',
             ]);
+        } elseif ($bot->type === 'strong_trend_demarker') {
+            // Новый бот: выход DeMarker из зоны, опционально серия свечей (0 = выкл.).
+            // Контр-свеча, MA и Telegram-режим исходного Strong Trend сюда не входят.
+            $extra = $request->validate([
+                'count' => ['required', 'integer', 'min:10', 'max:5000'],
+                'timeframe' => ['required', 'integer', Rule::in([CandleService::TF_S30, 1])],
+                // 0 = не требовать серию свечей, только выход DeMarker из зоны.
+                'streak_len' => ['required', 'integer', 'min:0', 'max:30'],
+                'demarker_period' => ['required', 'integer', 'min:1', 'max:500'],
+                // В интерфейсе храним проценты, а стратегия переводит их в 0..1.
+                'demarker_oversold' => ['required', 'numeric', 'min:0', 'max:49.99'],
+                'demarker_overbought' => ['required', 'numeric', 'min:50.01', 'max:100'],
+                // 0 = сразу paper-сделка; иначе N виртуальных LOSS подряд по паре.
+                'losses_before_entry' => ['required', 'integer', 'min:0', 'max:20'],
+                // Как у Strong Trend Telegram: строгость цвета свечи и мин. доля тела.
+                'candle_strictness' => ['required', 'string', Rule::in(['strict', 'with_doji'])],
+                'min_body_to_range_ratio' => ['required', 'numeric', 'min:0', 'max:1'],
+                'expiry_sec' => ['required', 'integer', 'min:30', 'max:86400'],
+                'min_confidence' => ['required', 'numeric', 'min:0', 'max:1'],
+                'min_payout' => ['required', 'numeric', 'min:0', 'max:100'],
+                'stale_after_sec' => ['required', 'integer', 'min:5', 'max:600'],
+                'dedupe_bucket_sec' => ['required', 'integer', 'min:30', 'max:3600'],
+                'telegram_enabled' => ['sometimes', 'boolean'],
+                'telegram_notify_result' => ['sometimes', 'boolean'],
+                'telegram_notify_on' => ['required', 'string', Rule::in(['signal_trade', 'off'])],
+                'telegram_bot_token' => ['nullable', 'string', 'max:128'],
+                'telegram_chat_id' => ['nullable', 'string', 'max:64'],
+            ] + TelegramBotConfigFields::validationRules());
+            $timeframe = (int) $extra['timeframe'];
+            // Экспирация всегда равна длине бара: S30 → 30 с, M1 → 60 с.
+            // Не принимаем независимое значение, чтобы виртуальная и реальная сделки совпадали по ТЗ.
+            $expirySec = $timeframe === CandleService::TF_S30 ? 30 : 60;
+            $existingToken = trim((string) (($bot->config ?? [])['telegram_bot_token'] ?? ''));
+            $tokenInput = trim((string) ($extra['telegram_bot_token'] ?? ''));
+            $config = array_merge($bot->config ?? [], [
+                'count' => (int) $extra['count'],
+                'timeframe' => $timeframe,
+                'streak_len' => (int) $extra['streak_len'],
+                'demarker_period' => (int) $extra['demarker_period'],
+                'demarker_oversold' => (float) $extra['demarker_oversold'],
+                'demarker_overbought' => (float) $extra['demarker_overbought'],
+                'losses_before_entry' => (int) $extra['losses_before_entry'],
+                'candle_strictness' => (string) $extra['candle_strictness'],
+                'min_body_to_range_ratio' => (float) $extra['min_body_to_range_ratio'],
+                'expiry_sec' => $expirySec,
+                'min_confidence' => (float) $extra['min_confidence'],
+                'min_payout' => (float) $extra['min_payout'],
+                'stale_after_sec' => (int) $extra['stale_after_sec'],
+                'dedupe_bucket_sec' => (int) $extra['dedupe_bucket_sec'],
+                'telegram_enabled' => $request->boolean('telegram_enabled'),
+                'telegram_notify_result' => $request->boolean('telegram_notify_result'),
+                'telegram_notify_on' => (string) $extra['telegram_notify_on'],
+                'telegram_bot_token' => $tokenInput !== '' ? $tokenInput : $existingToken,
+                'telegram_chat_id' => trim((string) ($extra['telegram_chat_id'] ?? '')),
+                'version' => 'strong_trend_demarker_v1',
+            ]);
+            $config = TelegramBotConfigFields::mergeFromRequest($request, $config, $bot->config ?? []);
         } elseif ($bot->type === 'strong_trend_telegram') {
             // Strong Trend Telegram: режим configurable
             // - alert_only: только Telegram-алерты,
@@ -1988,7 +2090,7 @@ class BotController extends Controller
                         'message' => $restart['message'] ?? null,
                     ]);
                 }
-            } elseif (StrongLevelTelegramLlmButton::supportsBotType($bot->type)) {
+            } elseif (StrongLevelTelegramProcessManager::pollSupported($bot->type)) {
                 $cfgAfter = is_array($bot->config) ? $bot->config : [];
                 if (trim((string) ($cfgAfter['telegram_bot_token'] ?? '')) !== '') {
                     $restart = app(StrongLevelTelegramProcessManager::class)->restart($bot);
@@ -2021,14 +2123,14 @@ class BotController extends Controller
     }
 
     /**
-     * Тестовое сообщение в Telegram из настроек бота (strong_trend_telegram, strong_level, analyst).
+     * Тестовое сообщение в Telegram из настроек бота.
      */
     public function telegramTest(Bot $bot, TelegramAlertService $telegram): JsonResponse
     {
         $this->ensureBotOwner($bot);
         $telegramAllowedTypes = array_merge(
             LevelBounceBotTypes::CARD_AND_TELEGRAM,
-            ['strong_trend_telegram', 'openrouter_llm_analyst']
+            ['strong_trend_telegram', 'strong_trend_demarker', 'sweep_raid_liquidity', 'openrouter_llm_analyst']
         );
         if (! in_array($bot->type, $telegramAllowedTypes, true)) {
             return response()->json(['ok' => false, 'error' => 'unsupported_bot_type'], 422);
@@ -2047,7 +2149,7 @@ class BotController extends Controller
         $this->ensureBotOwner($bot);
         $telegramAllowedTypes = array_merge(
             LevelBounceBotTypes::CARD_AND_TELEGRAM,
-            ['strong_trend_telegram', 'openrouter_llm_analyst']
+            ['strong_trend_telegram', 'strong_trend_demarker', 'sweep_raid_liquidity', 'openrouter_llm_analyst']
         );
         if (! in_array($bot->type, $telegramAllowedTypes, true)) {
             return response()->json(['ok' => false, 'error' => 'unsupported_bot_type'], 422);
@@ -2064,7 +2166,7 @@ class BotController extends Controller
         }
 
         // Фоновый poll забирает getUpdates — на время discover останавливаем его.
-        if (StrongLevelTelegramLlmButton::supportsBotType($bot->type)) {
+        if (StrongLevelTelegramProcessManager::pollSupported($bot->type)) {
             app(StrongLevelTelegramProcessManager::class)->stopPoll($bot->id);
         }
         if ($bot->type === 'openrouter_llm_analyst') {
@@ -2078,6 +2180,10 @@ class BotController extends Controller
         }
 
         $chats = $result['chats'] ?? [];
+        // Discover сам забирает getUpdates; без повторного старта /start больше не попадёт в подписчики.
+        if (StrongLevelTelegramProcessManager::pollSupported($bot->type)) {
+            app(StrongLevelTelegramProcessManager::class)->ensurePollRunning($bot->id);
+        }
         $botUsernameHint = match ($bot->type) {
             'strong_level' => '@strong_level_bot',
             'candle_reversal_confirm',
@@ -2102,6 +2208,8 @@ class BotController extends Controller
             'three_soldier_vol_adaptive',
             'custom_candles_impulse' => '@candle_reversal_confirm_bot',
             'openrouter_llm_analyst' => '@chart_analyct_smc_flow_bot',
+            'strong_trend_demarker' => '@strong_DeMarker_bot',
+            'sweep_raid_liquidity' => 'боту Sweep из сохранённого token (не @trend1123_bot)',
             default => '@trend1123_bot',
         };
         if ($chats === []) {
@@ -2152,7 +2260,7 @@ class BotController extends Controller
     public function telegramStrongLevelStatus(Bot $bot, StrongLevelTelegramProcessManager $processes): JsonResponse
     {
         $this->ensureBotOwner($bot);
-        if (! StrongLevelTelegramLlmButton::supportsBotType($bot->type)) {
+        if (! StrongLevelTelegramProcessManager::pollSupported($bot->type)) {
             return response()->json(['ok' => false, 'error' => 'unsupported_bot_type'], 422);
         }
 
@@ -2165,7 +2273,7 @@ class BotController extends Controller
     public function telegramStrongLevelRestart(Bot $bot, StrongLevelTelegramProcessManager $processes): JsonResponse
     {
         $this->ensureBotOwner($bot);
-        if (! StrongLevelTelegramLlmButton::supportsBotType($bot->type)) {
+        if (! StrongLevelTelegramProcessManager::pollSupported($bot->type)) {
             return response()->json(['ok' => false, 'error' => 'unsupported_bot_type'], 422);
         }
 
@@ -2853,6 +2961,7 @@ class BotController extends Controller
         CandleService $candleService,
         PriceActionDgtIndicatorService $pa,
         LiquiditySwingsIndicatorService $liquiditySwings,
+        SweepRaidLiquidityIndicatorService $sweepRaidLiquidity,
         SmcFlowIndicatorService $smcFlow,
         BollingerIndicatorService $bollinger,
         RsiIndicatorService $rsi,
@@ -2931,7 +3040,7 @@ class BotController extends Controller
             'instrument' => ['required', 'string', 'max:64'],
             'timeframe' => ['nullable', 'integer', Rule::in(CandleService::DASHBOARD_TIMEFRAMES)],
             'layers' => ['nullable', 'array'],
-            'layers.*' => ['string', Rule::in(['pa', 'ls', 'smc', 'bollinger', 'rsi', 'sma', 'ema', 'vwma', 'atr', 'macd', 'stochastic', 'cci', 'keltner', 'envelops', 'parabolic_sar', 'supertrend', 'adx', 'williams', 'ao', 'alligator', 'ichimoku', 'price_channel', 'nrtr', 'hma', 'aroon', 'momentum', 'roc', 'osma', 'trix', 'cmo', 'demarker', 'rvi', 'ultimate', 'smi', 'stddev', 'sma_channel', 'ivashov', 'linreg', 'linreg_channel', 'kalman', 'fractal', 'donchian', 'stoch_rsi', 'ac', 'bulls_power', 'bears_power', 'dpo', 'qstick', 'vh_filter', 'efficiency_ratio', 'ravi', 'cog', 'pivot_floor', 'mass_index', 'nrtr_watr', 'price_channel_adaptive', 'price_channel_offset', 'parabolic_bollinger', 'parabolic_price_channel', 'atr_channel', 'offset_sma', 'offset_ema', 'offset_ssma', 'volatility_average', 'volatility_average_channel', 'price_oscillator', 'dynamic_trend_detector', 'adaptive_look_back', 'linreg_channel_fast', 'volatility_candles', 'zigzag', 'volatility_average_twice', 'volatility_stages_aw'])],
+            'layers.*' => ['string', Rule::in(['pa', 'ls', 'srl', 'smc', 'bollinger', 'rsi', 'sma', 'ema', 'vwma', 'atr', 'macd', 'stochastic', 'cci', 'keltner', 'envelops', 'parabolic_sar', 'supertrend', 'adx', 'williams', 'ao', 'alligator', 'ichimoku', 'price_channel', 'nrtr', 'hma', 'aroon', 'momentum', 'roc', 'osma', 'trix', 'cmo', 'demarker', 'rvi', 'ultimate', 'smi', 'stddev', 'sma_channel', 'ivashov', 'linreg', 'linreg_channel', 'kalman', 'fractal', 'donchian', 'stoch_rsi', 'ac', 'bulls_power', 'bears_power', 'dpo', 'qstick', 'vh_filter', 'efficiency_ratio', 'ravi', 'cog', 'pivot_floor', 'mass_index', 'nrtr_watr', 'price_channel_adaptive', 'price_channel_offset', 'parabolic_bollinger', 'parabolic_price_channel', 'atr_channel', 'offset_sma', 'offset_ema', 'offset_ssma', 'volatility_average', 'volatility_average_channel', 'price_oscillator', 'dynamic_trend_detector', 'adaptive_look_back', 'linreg_channel_fast', 'volatility_candles', 'zigzag', 'volatility_average_twice', 'volatility_stages_aw'])],
         ]);
 
         $instrument = (string) $validated['instrument'];
@@ -2959,6 +3068,9 @@ class BotController extends Controller
         }
         if (! empty($want['ls'])) {
             $json['liquidity_swings'] = $liquiditySwings->compute($rows, IndicatorSetting::mergedLiquiditySwingsParams($bot));
+        }
+        if (! empty($want['srl'])) {
+            $json['sweep_raid_liquidity'] = $sweepRaidLiquidity->compute($rows, IndicatorSetting::mergedSweepRaidLiquidityParams($bot));
         }
         if (! empty($want['smc'])) {
             $json['smc_flow'] = $smcFlow->compute($rows, IndicatorSetting::mergedSmcFlowParams($bot));

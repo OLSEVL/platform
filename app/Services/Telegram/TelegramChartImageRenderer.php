@@ -39,7 +39,7 @@ class TelegramChartImageRenderer
 
     /**
      * @param  list<array<string,mixed>>  $candles
-     * @param  array{levels?:list<array<string,mixed>>,zones?:list<array<string,mixed>>,entry?:?array<string,mixed>}  $chartLevels
+     * @param  array{levels?:list<array<string,mixed>>,zones?:list<array<string,mixed>>,entry?:?array<string,mixed>,oscillator?:?array<string,mixed>}  $chartLevels
      * @param  array{width?:int,height?:int,margin_left?:int,margin_right?:int,margin_top?:int,margin_bottom?:int,max_bars?:int,timeframe_label?:string,font_size_title?:float,font_size_axis?:float,font_size_label?:float}  $options
      */
     public function render(string $instrument, array $candles, array $chartLevels, array $options = []): ?string
@@ -50,6 +50,10 @@ class TelegramChartImageRenderer
 
         $width = max(160, (int) ($options['width'] ?? self::WIDTH));
         $height = max(120, (int) ($options['height'] ?? self::HEIGHT));
+        // С панелью DeMarker чуть выше, чтобы свечи не сжимались.
+        if (! isset($options['height']) && is_array($chartLevels['oscillator'] ?? null)) {
+            $height = 620;
+        }
         $marginLeft = max(8, (int) ($options['margin_left'] ?? self::MARGIN_LEFT));
         $marginRight = max(4, (int) ($options['margin_right'] ?? self::MARGIN_RIGHT));
         $marginTop = max(8, (int) ($options['margin_top'] ?? self::MARGIN_TOP));
@@ -67,8 +71,14 @@ class TelegramChartImageRenderer
             return null;
         }
 
+        $oscillator = is_array($chartLevels['oscillator'] ?? null) ? $chartLevels['oscillator'] : null;
+        $oscValues = is_array($oscillator['values'] ?? null) ? $oscillator['values'] : [];
+
         if (count($series) > $maxBars) {
             $series = array_slice($series, -$maxBars);
+            if ($oscValues !== []) {
+                $oscValues = array_slice($oscValues, -$maxBars);
+            }
         }
 
         $levels = is_array($chartLevels['levels'] ?? null) ? $chartLevels['levels'] : [];
@@ -119,6 +129,12 @@ class TelegramChartImageRenderer
         $plotH = $height - $marginTop - $marginBottom;
         $plotX0 = $marginLeft;
         $plotY0 = $marginTop;
+        // Нижняя панель осциллятора (DeMarker и т.п.): свечи сверху, линия 0..1 снизу.
+        $hasOscillator = $oscillator !== null && $oscValues !== [];
+        $oscGap = $hasOscillator ? 14 : 0;
+        $oscH = $hasOscillator ? max(72, (int) round($plotH * 0.28)) : 0;
+        $candleH = $hasOscillator ? max(80, $plotH - $oscH - $oscGap) : $plotH;
+        $oscY0 = $plotY0 + $candleH + $oscGap;
 
         $title = $instrument.' · '.$timeframeLabel.' · '.now()->utc()->format('d.m.Y H:i').' UTC';
         $this->drawText($img, $fontPath, $fontTitle, $plotX0, max(14, (int) round($marginTop * 0.5)), $text, $title);
@@ -126,7 +142,7 @@ class TelegramChartImageRenderer
         for ($i = 0; $i <= 5; $i++) {
             $ratio = $i / 5;
             $price = $priceMax - ($priceMax - $priceMin) * $ratio;
-            $y = (int) round($plotY0 + $plotH * $ratio);
+            $y = (int) round($plotY0 + $candleH * $ratio);
             imageline($img, $plotX0, $y, $width - $marginRight, $y, $grid);
             $this->drawText($img, $fontPath, $fontAxis, 4, $y + 4, $text, $this->formatPrice($price));
         }
@@ -140,8 +156,8 @@ class TelegramChartImageRenderer
             if ($high <= $low) {
                 continue;
             }
-            $yTop = $this->priceToY($high, $priceMin, $priceMax, $plotY0, $plotH);
-            $yBot = $this->priceToY($low, $priceMin, $priceMax, $plotY0, $plotH);
+            $yTop = $this->priceToY($high, $priceMin, $priceMax, $plotY0, $candleH);
+            $yBot = $this->priceToY($low, $priceMin, $priceMax, $plotY0, $candleH);
             $zoneColor = imagecolorallocatealpha($img, 59, 130, 246, 100);
             imagefilledrectangle($img, $plotX0, min($yTop, $yBot), $width - $marginRight, max($yTop, $yBot), $zoneColor);
         }
@@ -153,10 +169,10 @@ class TelegramChartImageRenderer
             $l = (float) $bar['low'];
             $c = (float) $bar['close'];
             $color = $c >= $o ? $bull : $bear;
-            $yO = $this->priceToY($o, $priceMin, $priceMax, $plotY0, $plotH);
-            $yC = $this->priceToY($c, $priceMin, $priceMax, $plotY0, $plotH);
-            $yH = $this->priceToY($h, $priceMin, $priceMax, $plotY0, $plotH);
-            $yL = $this->priceToY($l, $priceMin, $priceMax, $plotY0, $plotH);
+            $yO = $this->priceToY($o, $priceMin, $priceMax, $plotY0, $candleH);
+            $yC = $this->priceToY($c, $priceMin, $priceMax, $plotY0, $candleH);
+            $yH = $this->priceToY($h, $priceMin, $priceMax, $plotY0, $candleH);
+            $yL = $this->priceToY($l, $priceMin, $priceMax, $plotY0, $candleH);
             imageline($img, $cx, $yH, $cx, $yL, $color);
             $bodyTop = min($yO, $yC);
             $bodyH = max(1, abs($yC - $yO));
@@ -170,7 +186,7 @@ class TelegramChartImageRenderer
                 continue;
             }
             $price = (float) $lvl['price'];
-            $y = $this->priceToY($price, $priceMin, $priceMax, $plotY0, $plotH);
+            $y = $this->priceToY($price, $priceMin, $priceMax, $plotY0, $candleH);
             $lineColor = $this->levelColor($img, (string) ($lvl['timeframe'] ?? ''));
             $style = strtolower((string) ($lvl['style'] ?? 'solid'));
             if ($style === 'dashed') {
@@ -187,7 +203,7 @@ class TelegramChartImageRenderer
 
         if ($entry && isset($entry['price']) && is_numeric($entry['price'])) {
             $price = (float) $entry['price'];
-            $y = $this->priceToY($price, $priceMin, $priceMax, $plotY0, $plotH);
+            $y = $this->priceToY($price, $priceMin, $priceMax, $plotY0, $candleH);
             $side = strtoupper((string) ($entry['side'] ?? ''));
             $entryColor = $side === 'PUT' ? $bear : $bull;
             $xMid = (int) round($plotX0 + $plotW * 0.85);
@@ -197,6 +213,25 @@ class TelegramChartImageRenderer
                 $entryLabel = $side !== '' ? 'Вход '.$side : 'Вход';
             }
             $this->drawText($img, $fontPath, $fontLabel, $xMid + 12, $y + 4, $entryColor, mb_substr($entryLabel, 0, 40));
+        }
+
+        if ($hasOscillator) {
+            $this->drawOscillatorPane(
+                $img,
+                $fontPath,
+                $fontAxis,
+                $fontLabel,
+                $oscillator,
+                $oscValues,
+                $plotX0,
+                $oscY0,
+                $plotW,
+                $oscH,
+                $width,
+                $marginRight,
+                $text,
+                $grid,
+            );
         }
 
         $dir = storage_path('app/card-charts/tmp');
@@ -217,6 +252,81 @@ class TelegramChartImageRenderer
         }
 
         return $path;
+    }
+
+    /**
+     * Нижняя панель осциллятора: зоны oversold/overbought и линия значений 0..1.
+     *
+     * @param  \GdImage  $img
+     * @param  array<string, mixed>  $oscillator
+     * @param  list<mixed>  $values
+     */
+    private function drawOscillatorPane(
+        $img,
+        ?string $fontPath,
+        float $fontAxis,
+        float $fontLabel,
+        array $oscillator,
+        array $values,
+        int $plotX0,
+        int $oscY0,
+        int $plotW,
+        int $oscH,
+        int $width,
+        int $marginRight,
+        int $textColor,
+        int $gridColor,
+    ): void {
+        $oscMin = (float) ($oscillator['min'] ?? 0.0);
+        $oscMax = (float) ($oscillator['max'] ?? 1.0);
+        if ($oscMax <= $oscMin) {
+            $oscMax = $oscMin + 1.0;
+        }
+        $oversold = (float) ($oscillator['oversold'] ?? 0.3);
+        $overbought = (float) ($oscillator['overbought'] ?? 0.7);
+        $label = mb_substr((string) ($oscillator['label'] ?? 'Osc'), 0, 24);
+        $barCount = count($values);
+        $slotW = $plotW / max(1, $barCount);
+        $rightX = $width - $marginRight;
+
+        $oversoldFill = imagecolorallocatealpha($img, 34, 197, 94, 110);
+        $overboughtFill = imagecolorallocatealpha($img, 239, 68, 68, 110);
+        $lineColor = imagecolorallocate($img, 0, 255, 255);
+        $lastDot = imagecolorallocate($img, 250, 204, 21);
+
+        $yTop = $this->priceToY($oscMax, $oscMin, $oscMax, $oscY0, $oscH);
+        $yBot = $this->priceToY($oscMin, $oscMin, $oscMax, $oscY0, $oscH);
+        imageline($img, $plotX0, $yTop, $rightX, $yTop, $gridColor);
+        imageline($img, $plotX0, $yBot, $rightX, $yBot, $gridColor);
+
+        $yOs = $this->priceToY($oversold, $oscMin, $oscMax, $oscY0, $oscH);
+        $yOb = $this->priceToY($overbought, $oscMin, $oscMax, $oscY0, $oscH);
+        imagefilledrectangle($img, $plotX0, $yOs, $rightX, $yBot, $oversoldFill);
+        imagefilledrectangle($img, $plotX0, $yTop, $rightX, $yOb, $overboughtFill);
+        imageline($img, $plotX0, $yOs, $rightX, $yOs, imagecolorallocate($img, 34, 197, 94));
+        imageline($img, $plotX0, $yOb, $rightX, $yOb, imagecolorallocate($img, 239, 68, 68));
+
+        $this->drawText($img, $fontPath, $fontLabel, $plotX0 + 4, $oscY0 + 12, $textColor, $label);
+        $this->drawText($img, $fontPath, $fontAxis, 4, $yOb + 4, $textColor, number_format($overbought * 100, 0).'%');
+        $this->drawText($img, $fontPath, $fontAxis, 4, $yOs + 4, $textColor, number_format($oversold * 100, 0).'%');
+
+        $prevX = null;
+        $prevY = null;
+        $lastX = $plotX0;
+        $lastY = $yBot;
+        foreach ($values as $idx => $raw) {
+            $value = is_numeric($raw) ? (float) $raw : 0.0;
+            $x = (int) round($plotX0 + ($idx + 0.5) * $slotW);
+            $y = $this->priceToY($value, $oscMin, $oscMax, $oscY0, $oscH);
+            if ($prevX !== null && $prevY !== null) {
+                imageline($img, $prevX, $prevY, $x, $y, $lineColor);
+            }
+            $prevX = $x;
+            $prevY = $y;
+            $lastX = $x;
+            $lastY = $y;
+        }
+        imagefilledellipse($img, $lastX, $lastY, 8, 8, $lastDot);
     }
 
     /**

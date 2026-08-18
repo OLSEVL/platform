@@ -51,8 +51,10 @@ final class BotAlgorithmSummary
             'rsi_trade' => 'RSI Trade',
             'rvi_trade' => 'RVI Trade',
             'smc_flow' => 'SMC Flow',
+            'sweep_raid_liquidity' => 'Sweep / Raid Liquidity',
             'strong_level' => 'Strong Level',
             'strong_trend_telegram' => 'Strong Trend Telegram',
+            'strong_trend_demarker' => 'Strong Trend + DeMarker',
             'openrouter_llm' => 'OpenRouter LLM',
             'openrouter_llm_analyst' => 'OpenRouter Chart Analyst',
             default => $type,
@@ -65,6 +67,7 @@ final class BotAlgorithmSummary
         return match ($type) {
             'three_candles_in_row' => 'counter_three',
             'strong_trend_telegram', 'custom_candles_impulse', 'three_soldier', 'three_soldier_vol_adaptive' => 'impulse_three',
+            'strong_trend_demarker' => 'oscillator_zones',
             'pinbar_trade' => 'pinbar',
             'bollinger_contrtrend' => 'bb_reversion',
             'rsi_contrtrend', 'rsi_trade', 'williams_range_trade', 'cci_trade' => 'oscillator_zones',
@@ -75,6 +78,7 @@ final class BotAlgorithmSummary
             'vol_adaptive_candles' => 'thick_candle',
             'strong_level', 'candle_reversal_confirm' => 'level_bounce',
             'smc_flow' => 'smc_flow',
+            'sweep_raid_liquidity' => 'level_bounce',
             'openrouter_llm', 'openrouter_llm_analyst' => 'llm',
             default => 'generic',
         };
@@ -159,6 +163,10 @@ final class BotAlgorithmSummary
                 ."Бычья серия → CALL, медвежья → PUT (streak).\n"
                 ."Опция: после серии ждать контр-свечу и входить в продолжение.\n"
                 .'Режим: только Telegram-алерт или сделки + алерты.',
+            'strong_trend_demarker' => "N закрытых S30/M1 подряд одного цвета (0 = выкл.) + выход DeMarker из зоны.\n"
+                ."Строгость свечей и мин. доля тела — как в Strong Trend Telegram.\n"
+                ."Неотработок до сделки: 0 = сразу вход; иначе N виртуальных LOSS по паре, затем paper-сделка.\n"
+                .'Виртуальный WIN или DRAW сбрасывает серию пары.',
             'openrouter_llm' => "Решение CALL/PUT принимает LLM (OpenRouter) по JSON.\n"
                 ."В промпт идут свечи M1 и опционально M5/M15/H1.\n"
                 .'Классические индикаторные правила не используются.',
@@ -190,6 +198,14 @@ final class BotAlgorithmSummary
                 $s('Когда PUT', 'Серия из N медвежьих. С контр-свечой: после серии бычья, вход PUT.'),
                 $s('Пример', 'N=6 без опции: шесть зелёных → CALL. С опцией: шесть зелёных + одна красная → CALL на закрытии красной.'),
                 $s('Важно', 'Режим execution_mode: alert_only или signal_trade. wait_opposite_then_continue по умолчанию выкл.'),
+            ],
+            'strong_trend_demarker' => [
+                $s('Идея', 'Фильтр импульса: выход DeMarker из экстремальной зоны. Опционально его подтверждают N одноцветных закрытых S30/M1.'),
+                $s('Когда CALL', 'DeMarker выходит вверх из нижней зоны (по умолчанию 10). Если серия включена — ещё N бычьих свечей подряд.'),
+                $s('Когда PUT', 'DeMarker выходит вниз из верхней зоны (по умолчанию 90). Если серия включена — ещё N медвежьих свечей подряд.'),
+                $s('Свечи', 'Свечей подряд: 0 = выкл. Строгость: strict (close >/< open) или with_doji (≥/≤). Мин. доля тела в диапазоне отсекает слабые серии (0 = выкл.).'),
+                $s('Виртуальная серия', '0 = выкл., сразу paper-сделка. Иначе первые валидные сигналы по каждой паре проверяются виртуально (S30 = 30 с, M1 = 60 с). После N виртуальных LOSS следующий сигнал становится сделкой.'),
+                $s('Сброс', 'WIN или DRAW сбрасывает последовательность пары; LOSS увеличивает её. Поэтому пары считаются строго независимо друг от друга.'),
             ],
             'three_soldier', 'three_soldier_vol_adaptive' => [
                 $s('Идея', 'Классический паттерн «три солдата»: три сильные свечи одного цвета. Vol-adaptive дополнительно подстраивает минимальную высоту тел под дневную волатильность OTC.'),

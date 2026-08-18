@@ -8,6 +8,7 @@ use App\Models\PocketInstrument;
 use App\Models\User;
 use App\Services\Bots\BotEngineService;
 use App\Services\Bots\BotSettlementService;
+use App\Services\Bots\BotVirtualTradeSettlementService;
 use App\Services\Bots\OpenRouterClient;
 use App\Services\DataCleanupService;
 use App\Services\ProxyDeadProbeService;
@@ -600,7 +601,7 @@ Artisan::command('bots:reversal-confirm-bootstrap', function () {
         'require_h1_alignment' => false,
         'm5_take' => 120,
         'm15_take' => 80,
-        'h1_take' => 48,
+        'h1_take' => 12,
         'version' => 'candle_reversal_confirm_v3_level_bounce',
     ];
 
@@ -664,6 +665,44 @@ Artisan::command('bots:smc-flow-bootstrap', function () {
     $this->info("SMC Flow бот: #{$bot->id} {$bot->name} ({$bot->type}) — настройте SMC Flow индикатор и включите бота.");
 })->purpose('Создать бота SMC Flow (UT + 3BR + OB, 3 мин)');
 
+Artisan::command('bots:sweep-raid-liquidity-bootstrap', function () {
+    $user = \App\Models\User::query()->orderBy('id')->first();
+    if (! $user) {
+        $this->error('Нет пользователей. Сначала зарегистрируйте пользователя.');
+
+        return;
+    }
+
+    // Бот создаётся выключенным: сначала проверьте метки SWEEP/RAID/PB
+    // на графике и настройки payout на paper-сделках.
+    $bot = Bot::query()->firstOrCreate(
+        ['user_id' => $user->id, 'name' => 'Sweep / Raid Liquidity', 'type' => 'sweep_raid_liquidity'],
+        [
+            'is_active' => false,
+            'config' => [
+                'count' => 500,
+                'expiry_sec' => 60,
+                'min_confidence' => 0.0,
+                'min_payout' => 80.0,
+                'stale_after_sec' => 60,
+                'srl_pivot_length' => 2,
+                'srl_enter_sweep' => true,
+                'srl_enter_pullback' => true,
+                // Telegram выключен до явной настройки token и Chat ID.
+                'telegram_enabled' => false,
+                'telegram_notify_result' => true,
+                'telegram_notify_on' => 'signal_trade',
+                'telegram_chat_id' => '',
+                // /start в отдельный Telegram-бот добавляет чат в получатели алертов.
+                'telegram_auto_subscribe' => true,
+                'version' => 'sweep_raid_liquidity_v1',
+            ],
+        ],
+    );
+
+    $this->info("Sweep / Raid Liquidity: #{$bot->id} {$bot->name} ({$bot->type}) — сначала проверьте paper-режим.");
+})->purpose('Создать выключенного M1-бота Sweep / Raid Liquidity (60 сек)');
+
 Artisan::command('bots:strong-trend-telegram-bootstrap', function () {
     $user = User::query()->orderBy('id')->first();
     if (! $user) {
@@ -702,6 +741,49 @@ Artisan::command('bots:strong-trend-telegram-bootstrap', function () {
     $this->comment('3) Включите бота и убедитесь, что работает schedule:run / bots:scan');
 })->purpose('Создать бота «Сильный тренд M1 → Telegram»');
 
+Artisan::command('bots:strong-trend-demarker-bootstrap', function () {
+    $user = User::query()->orderBy('id')->first();
+    if (! $user) {
+        $this->error('Нет пользователей. Сначала зарегистрируйте пользователя.');
+
+        return;
+    }
+
+    // Бот создаётся выключенным: сначала проверяются S30-свечи, виртуальные
+    // сделки и соответствие фактической экспирации правилам стратегии.
+    $bot = Bot::query()->firstOrCreate(
+        ['user_id' => $user->id, 'name' => 'Strong Trend + DeMarker', 'type' => 'strong_trend_demarker'],
+        [
+            'is_active' => false,
+            'config' => [
+                'count' => 120,
+                'timeframe' => \App\Services\CandleService::TF_S30,
+                'streak_len' => 6,
+                'demarker_period' => 6,
+                'demarker_oversold' => 10.0,
+                'demarker_overbought' => 90.0,
+                'losses_before_entry' => 2,
+                'candle_strictness' => 'strict',
+                'min_body_to_range_ratio' => 0.0,
+                'expiry_sec' => 30,
+                'min_confidence' => 0.0,
+                'min_payout' => 80.0,
+                'stale_after_sec' => 30,
+                'dedupe_bucket_sec' => 30,
+                'telegram_enabled' => false,
+                'telegram_notify_result' => true,
+                'telegram_notify_on' => 'signal_trade',
+                'telegram_chat_id' => '',
+                // /start в @strong_DeMarker_bot добавляет чат в получатели алертов.
+                'telegram_auto_subscribe' => true,
+                'version' => 'strong_trend_demarker_v1',
+            ],
+        ],
+    );
+
+    $this->info("Strong Trend + DeMarker: #{$bot->id} {$bot->name} ({$bot->type}) — выключен для первичной проверки.");
+})->purpose('Создать выключенного S30-бота Strong Trend + DeMarker');
+
 Artisan::command('bots:strong-level-bootstrap', function () {
     $user = User::query()->orderBy('id')->first();
     if (! $user) {
@@ -732,7 +814,7 @@ Artisan::command('bots:strong-level-bootstrap', function () {
                 'expiry_sec_breakout' => 300,
                 'm5_take' => 120,
                 'm15_take' => 80,
-                'h1_take' => 48,
+                'h1_take' => 12,
                 'require_h1_alignment' => false,
                 'breakout_require_retest' => false,
                 'breakout_vol_above_sma' => false,
@@ -1116,18 +1198,25 @@ Artisan::command('bots:scan-watchdog {--max-elapsed= : Секунды wall-time 
     $this->info(trim(Artisan::output()));
 })->purpose('Убить зависшие bots:scan (wall-time) и перезапустить dispatch');
 
-Artisan::command('bots:settle {--bot_id=} {--limit=1000}', function (BotSettlementService $settlement) {
+Artisan::command('bots:settle {--bot_id=} {--limit=1000}', function (
+    BotSettlementService $settlement,
+    BotVirtualTradeSettlementService $virtualSettlement,
+) {
     $botId = $this->option('bot_id') ? (int) $this->option('bot_id') : null;
     $limit = max(1, (int) $this->option('limit'));
     $res = $settlement->settleDueTrades($botId, $limit);
+    $virtual = $virtualSettlement->settleDueVirtualTrades($botId, $limit);
     $this->info(sprintf(
-        'checked=%d settled=%d skipped=%d fallback=%d',
+        'paper: checked=%d settled=%d skipped=%d fallback=%d; virtual: checked=%d settled=%d skipped=%d',
         $res['checked'],
         $res['settled'],
         $res['skipped'],
-        $res['settled_fallback'] ?? 0
+        $res['settled_fallback'] ?? 0,
+        $virtual['checked'],
+        $virtual['settled'],
+        $virtual['skipped'],
     ));
-})->purpose('Закрыть просроченные paper-сделки ботов');
+})->purpose('Закрыть просроченные paper- и виртуальные сделки ботов');
 
 Artisan::command('telegram:ensure-analyst-services', function (
     TelegramAnalystProcessManager $processes,
@@ -1247,7 +1336,7 @@ Artisan::command('telegram:strong-level-poll {--bot= : ID бота с Telegram (
     if ($botId <= 0) {
         $supportedTypes = array_values(array_unique(array_merge(
             \App\Services\Telegram\StrongLevelTelegramLlmButton::SUPPORTED_BOT_TYPES,
-            ['strong_trend_telegram'],
+            ['strong_trend_telegram', 'strong_trend_demarker', 'sweep_raid_liquidity'],
         )));
         $bot = Bot::query()->whereIn('type', $supportedTypes)->where('is_active', true)->orderBy('id')->first();
         if ($bot === null) {

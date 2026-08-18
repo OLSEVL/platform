@@ -23,11 +23,13 @@ use App\Services\Indicators\PriceActionDgtIndicatorService;
 use App\Services\Indicators\RsiIndicatorService;
 use App\Services\Indicators\SmaIndicatorService;
 use App\Services\Indicators\SmcFlowIndicatorService;
+use App\Services\Indicators\SweepRaidLiquidityIndicatorService;
 use App\Support\LiquiditySwingsSettingsForm;
 use App\Support\PriceActionDgtSettingsForm;
 use App\Support\RsiSettingsForm;
 use App\Support\SmaSettingsForm;
 use App\Support\SmcFlowSettingsForm;
+use App\Support\SweepRaidLiquiditySettingsForm;
 use App\Support\VwmaSettingsForm;
 use App\Services\Indicators\VwmaIndicatorService;
 use App\Support\KeltnerSettingsForm;
@@ -283,6 +285,35 @@ class BotChartIndicatorController extends Controller
 
         return redirect()->route('bots.indicators.liquidity-swings.edit', $bot)
             ->with('status', 'Настройки Liquidity Swings сохранены.');
+    }
+
+    public function editSweepRaidLiquidity(Bot $bot): View
+    {
+        $this->ensureBotOwner($bot);
+
+        return view('bots.indicators.sweep-raid-liquidity', [
+            'bot' => $bot,
+            'srl' => IndicatorSetting::mergedSweepRaidLiquidityParams($bot),
+        ]);
+    }
+
+    public function updateSweepRaidLiquidity(Request $request, Bot $bot): RedirectResponse
+    {
+        $this->ensureBotOwner($bot);
+        $params = SweepRaidLiquiditySettingsForm::buildFromRequest($request);
+        IndicatorSetting::updateOrCreate(
+            ['bot_id' => $bot->id, 'indicator_key' => IndicatorSetting::KEY_SWEEP_RAID_LIQUIDITY],
+            ['settings' => $params],
+        );
+
+        // Удаляем только legacy-настройку индикатора, не касаясь торговых
+        // параметров стратегии (srl_enter_sweep / srl_enter_pullback).
+        $config = is_array($bot->config) ? $bot->config : [];
+        unset($config[IndicatorSetting::KEY_SWEEP_RAID_LIQUIDITY]);
+        $bot->update(['config' => $config]);
+
+        return redirect()->route('bots.indicators.sweep-raid-liquidity.edit', $bot)
+            ->with('status', 'Настройки Sweep / Raid Liquidity сохранены.');
     }
 
     public function editSmcFlow(Bot $bot): View
@@ -1413,6 +1444,32 @@ class BotChartIndicatorController extends Controller
 
         return redirect()->route($redirectRoute, $bot)
             ->with('status', "Настройки {$label} сохранены.");
+    }
+
+    /**
+     * Удаляет пользовательское переопределение, поэтому при следующем расчёте
+     * IndicatorSetting::merged* возвращает defaults самого сервиса индикатора.
+     * Белый список защищает от удаления произвольных записей по ключу из URL.
+     */
+    public function resetToDefaults(Request $request, Bot $bot, string $indicatorKey): RedirectResponse
+    {
+        $this->ensureBotOwner($bot);
+        $allowedKeys = array_values(array_filter(
+            (new \ReflectionClass(IndicatorSetting::class))->getConstants(),
+            static fn (mixed $value, string $name): bool => str_starts_with($name, 'KEY_') && is_string($value),
+            ARRAY_FILTER_USE_BOTH,
+        ));
+        abort_unless(in_array($indicatorKey, $allowedKeys, true), 404);
+
+        IndicatorSetting::query()
+            ->where('bot_id', $bot->id)
+            ->where('indicator_key', $indicatorKey)
+            ->delete();
+        $config = is_array($bot->config) ? $bot->config : [];
+        unset($config[$indicatorKey]);
+        $bot->update(['config' => $config]);
+
+        return back()->with('status', 'Настройки индикатора сброшены к значениям по умолчанию.');
     }
 
     private function ensureBotOwner(Bot $bot): void

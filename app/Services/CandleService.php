@@ -42,6 +42,76 @@ class CandleService
     }
 
     /**
+     * Длина бара в секундах для dashboard-TF (1 = M1, 5 = M5, 4030 = S30).
+     */
+    public static function periodSecondsForDashboardTf(int $timeframe): ?int
+    {
+        return match ($timeframe) {
+            self::TF_S5 => 5,
+            self::TF_S15 => 15,
+            self::TF_S30 => 30,
+            default => in_array($timeframe, self::DASHBOARD_MINUTE_TIMEFRAMES, true)
+                ? max(60, $timeframe * 60)
+                : null,
+        };
+    }
+
+    /**
+     * Несколько ТФ из одной выборки S5: Strong Level / CRC больше не ходят в БД 4 раза на пару.
+     * H1=48 баров из S5 потребовал бы ~34k рядов — оставляем потолок 15000 (~20 ч ≈ 20 H1).
+     *
+     * @param  array<int, int>  $tfToMaxBars  ключ — dashboard TF, значение — сколько баров
+     * @return array<string, list<array{time:int,open:float,high:float,low:float,close:float,volume:float}>>
+     */
+    public function seriesBundle(string $instrument, array $tfToMaxBars): array
+    {
+        $normalized = [];
+        $s5Limit = 0;
+        foreach ($tfToMaxBars as $tf => $maxBars) {
+            $tf = (int) $tf;
+            $maxBars = (int) $maxBars;
+            $period = self::periodSecondsForDashboardTf($tf);
+            if ($period === null || $maxBars <= 0) {
+                continue;
+            }
+            $normalized[$tf] = $maxBars;
+            $s5Limit = max($s5Limit, $this->s5FetchLimit($period, $maxBars));
+        }
+        if ($normalized === []) {
+            return [];
+        }
+
+        $s5Rows = $this->fetchRecentS5($instrument, null, null, $s5Limit, true);
+        $remapped = $s5Rows->isNotEmpty()
+            ? $this->remapS5RowsForAggregation($s5Rows)
+            : [];
+
+        $legacyM1 = null;
+        $out = [];
+        foreach ($normalized as $tf => $maxBars) {
+            $period = self::periodSecondsForDashboardTf($tf);
+            if ($period === null) {
+                continue;
+            }
+            if ($remapped !== []) {
+                $agg = $this->aggregateBySecondsCollection($remapped, $period);
+            } else {
+                // Нет S5 — собираем минутные ТФ из legacy timeframe=1.
+                $legacyM1 ??= $this->m1SeriesFromLegacyTimeframe($instrument, null, null, null);
+                $agg = $tf === 1
+                    ? $legacyM1
+                    : ($period >= 60 ? $this->aggregateM1Array($legacyM1, intdiv($period, 60)) : []);
+            }
+            if (count($agg) > $maxBars) {
+                $agg = array_slice($agg, -$maxBars);
+            }
+            $out[(string) $tf] = $agg;
+        }
+
+        return $out;
+    }
+
+    /**
      * Свечи для графика: M1 строится из S5 (fallback: legacy timeframe=1),
      * остальные минутные TF агрегируются из M1-источника.
      *
@@ -63,22 +133,14 @@ class CandleService
         // S15/S30: агрегируем из S5, чтобы не дублировать хранение в БД.
         if (in_array($timeframeMinutes, [self::TF_S15, self::TF_S30], true)) {
             $periodSeconds = $timeframeMinutes === self::TF_S15 ? 15 : 30;
-            $s5Rows = InstrumentCandle::forInstrument($instrument)->forTimeframe(self::TF_S5);
-            if ($sinceUnix !== null) {
-                $s5Rows->where('time', '>=', $sinceUnix);
-            }
-            if ($beforeUnix !== null) {
-                $s5Rows->where('time', '<', $beforeUnix);
-            }
-            // Критично: для построения "живого" графика нужны ПОСЛЕДНИЕ S5 свечи,
-            // а не самые ранние в таблице. Поэтому берём desc + limit и затем
-            // разворачиваем в возрастающий порядок времени перед агрегацией.
-            $rows = $s5Rows
-                ->orderByDesc('time')
-                ->limit(15000)
-                ->get(['time', 'open', 'high', 'low', 'close', 'volume'])
-                ->reverse()
-                ->values();
+            // Берём только столько последних S5, сколько нужно для maxBars — не 15000 моделей.
+            $rows = $this->fetchRecentS5(
+                $instrument,
+                $sinceUnix,
+                $beforeUnix,
+                $this->s5FetchLimit($periodSeconds, $maxBars),
+                false,
+            );
             $agg = $this->aggregateBySecondsCollection(
                 $this->remapS5RowsForAggregation($rows),
                 $periodSeconds,
@@ -90,9 +152,12 @@ class CandleService
             return $agg;
         }
 
-        // Все минутные TF теперь считаем от унифицированного M1-источника,
-        // чтобы график, боты и API работали по одному и тому же ряду.
-        $m1 = $this->m1SeriesForDashboard($instrument, $sinceUnix, $beforeUnix, null);
+        // Все минутные TF считаем от одного M1-источника (график, боты, API).
+        // maxBars прокидываем внутрь, иначе M1 всё равно строится из 15000 S5 и режется уже после.
+        $m1Needed = $timeframeMinutes === 1
+            ? $maxBars
+            : ($maxBars !== null ? $maxBars * max(1, $timeframeMinutes) : null);
+        $m1 = $this->m1SeriesForDashboard($instrument, $sinceUnix, $beforeUnix, $m1Needed);
         if ($timeframeMinutes === 1) {
             $agg = $m1;
         } else {
@@ -103,6 +168,65 @@ class CandleService
         }
 
         return $agg;
+    }
+
+    /**
+     * Сколько последних S5 взять из БД, чтобы после агрегации набрать $maxBars.
+     * Запас 240 баров закрывает неполный крайний бакет. Потолок 15000 — для графика без maxBars.
+     */
+    public function s5FetchLimit(int $periodSeconds, ?int $maxBars): int
+    {
+        $hardCap = 15000;
+        if ($maxBars === null || $maxBars <= 0) {
+            return $hardCap;
+        }
+
+        $s5PerBar = max(1, intdiv(max(1, $periodSeconds), 5));
+
+        // Один UTC-поток S5 (дубль +2h в таблице сейчас пуст). Запас 240 баров —
+        // неполные бакеты и редкий remap. Потолок 15000 оставляем для графика без maxBars.
+        return max(120, min($hardCap, ($maxBars * $s5PerBar) + 240));
+    }
+
+    /**
+     * Последние S5 без гидрации Eloquent-моделей (stdClass).
+     * Scan бота раньше грузил 15000 моделей на каждую пару (~3 с) даже при count=120.
+     *
+     * @return Collection<int, object>
+     */
+    private function fetchRecentS5(
+        string $instrument,
+        ?int $sinceUnix,
+        ?int $beforeUnix,
+        int $limit,
+        bool $includeCorrectionWindow,
+    ): Collection {
+        $query = InstrumentCandle::query()
+            ->toBase()
+            ->where('instrument', $instrument)
+            ->where('timeframe', self::TF_S5);
+
+        if ($sinceUnix !== null) {
+            $correction = $includeCorrectionWindow ? FeedTimeNormalizer::correctionSec() : 0;
+            $query->where(function ($inner) use ($sinceUnix, $correction): void {
+                $inner->where('time', '>=', $sinceUnix);
+                // Параллельный поток S5 без коррекции лежит на +|correction| сек.
+                if ($correction < 0) {
+                    $inner->orWhere('time', '>=', $sinceUnix - $correction);
+                }
+            });
+        }
+        if ($beforeUnix !== null) {
+            $query->where('time', '<', $beforeUnix);
+        }
+
+        // desc + limit — нужны последние бары, не самые ранние в таблице.
+        return $query
+            ->orderByDesc('time')
+            ->limit(max(1, $limit))
+            ->get(['time', 'open', 'high', 'low', 'close', 'volume'])
+            ->reverse()
+            ->values();
     }
 
     /**
@@ -150,28 +274,14 @@ class CandleService
         ?int $beforeUnix,
         ?int $maxBars,
     ): array {
-        // M1 приоритетно строим из S5.
-        $s5Rows = InstrumentCandle::forInstrument($instrument)->forTimeframe(self::TF_S5);
-        if ($sinceUnix !== null) {
-            $correction = FeedTimeNormalizer::correctionSec();
-            $s5Rows->where(function ($query) use ($sinceUnix, $correction): void {
-                $query->where('time', '>=', $sinceUnix);
-                // Параллельный поток S5 без коррекции лежит на +|correction| сек — подтягиваем для remap.
-                if ($correction < 0) {
-                    $query->orWhere('time', '>=', $sinceUnix - $correction);
-                }
-            });
-        }
-        if ($beforeUnix !== null) {
-            $s5Rows->where('time', '<', $beforeUnix);
-        }
-        // Аналогично: M1 собираем из самых новых S5, чтобы серия совпадала с площадкой.
-        $s5Rows = $s5Rows
-            ->orderByDesc('time')
-            ->limit(15000)
-            ->get(['time', 'open', 'high', 'low', 'close', 'volume'])
-            ->reverse()
-            ->values();
+        // M1 приоритетно строим из последних S5 (лимит зависит от maxBars, не фиксированные 15000).
+        $s5Rows = $this->fetchRecentS5(
+            $instrument,
+            $sinceUnix,
+            $beforeUnix,
+            $this->s5FetchLimit(self::M1_SECONDS, $maxBars),
+            true,
+        );
         if ($s5Rows->isNotEmpty()) {
             $m1 = $this->aggregateBySecondsCollection(
                 $this->remapS5RowsForAggregation($s5Rows),

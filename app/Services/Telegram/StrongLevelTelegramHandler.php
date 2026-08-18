@@ -205,6 +205,8 @@ class StrongLevelTelegramHandler
     {
         return match ($type) {
             'strong_trend_telegram' => 'Strong Trend Telegram',
+            'strong_trend_demarker' => 'Strong Trend + DeMarker',
+            'sweep_raid_liquidity' => 'Sweep / Raid Liquidity',
             'candle_reversal_confirm' => 'Candle Reversal + Confirm',
             default => 'Strong Level',
         };

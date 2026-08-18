@@ -242,6 +242,7 @@
                 <div id="trade-duration-overlay" class="chart-dom-overlay absolute inset-0 pointer-events-none overflow-hidden hidden"></div>
                 <div id="structure-overlay" class="chart-dom-overlay absolute inset-0 pointer-events-none overflow-visible hidden"></div>
                 <div id="liquidity-swings-overlay" class="chart-dom-overlay absolute inset-0 pointer-events-none overflow-visible hidden"></div>
+                <div id="sweep-raid-liquidity-overlay" class="chart-dom-overlay absolute inset-0 pointer-events-none overflow-visible hidden"></div>
                 <div id="price-action-overlay" class="chart-dom-overlay absolute inset-0 pointer-events-none overflow-visible hidden"></div>
                 <div id="smc-flow-overlay" class="chart-dom-overlay absolute inset-0 pointer-events-none overflow-visible hidden"></div>
                 <div id="llm-levels-overlay" class="chart-dom-overlay absolute inset-0 pointer-events-none overflow-visible hidden"></div>
@@ -472,6 +473,7 @@
     const tradeDurationOverlay = document.getElementById('trade-duration-overlay');
     const structureOverlay = document.getElementById('structure-overlay');
     const liquiditySwingsOverlay = document.getElementById('liquidity-swings-overlay');
+    const sweepRaidLiquidityOverlay = document.getElementById('sweep-raid-liquidity-overlay');
     const priceActionOverlay = document.getElementById('price-action-overlay');
     const smcFlowOverlay = document.getElementById('smc-flow-overlay');
     const llmLevelsOverlay = document.getElementById('llm-levels-overlay');
@@ -499,6 +501,7 @@
     const layerFvg = document.getElementById('layer-fvg');
     const layerPa = document.getElementById('layer-pa-dgt');
     const layerLiquidity = document.getElementById('layer-liquidity-swings');
+    const layerSweepRaidLiquidity = document.getElementById('layer-sweep-raid-liquidity');
     const layerSmc = document.getElementById('layer-smc-flow');
     const layerBollinger = document.getElementById('layer-bollinger');
     const layerRsi = document.getElementById('layer-rsi');
@@ -602,6 +605,7 @@
     const LAYER_PREFS_KEY = 'platform.bot.show.chartLayers.v7.bot.{{ $bot->id }}';
     let lastPaPayload = null;
     let lastLsPayload = null;
+    let lastSrlPayload = null;
     let lastSmcPayload = null;
     let lastBollingerPayload = null;
     let lastRsiPayload = null;
@@ -851,6 +855,7 @@
             if (typeof obj.imbalances === 'boolean') layerFvg.checked = obj.imbalances;
             if (layerPa && typeof obj.paDgt === 'boolean') layerPa.checked = obj.paDgt;
             if (layerLiquidity && typeof obj.liquiditySwings === 'boolean') layerLiquidity.checked = obj.liquiditySwings;
+            if (layerSweepRaidLiquidity && typeof obj.sweepRaidLiquidity === 'boolean') layerSweepRaidLiquidity.checked = obj.sweepRaidLiquidity;
             // Классический Chart Analyst без SMC в LLM — слой SMC не включаем из сохранённых prefs.
             if (layerSmc && typeof obj.smcFlow === 'boolean') {
                 layerSmc.checked = (BOT_IS_CHART_ANALYST && !BOT_ANALYST_SMC_FLOW_ENABLED) ? false : obj.smcFlow;
@@ -936,6 +941,7 @@
                 imbalances: layerFvg.checked,
                 paDgt: layerPa ? layerPa.checked : false,
                 liquiditySwings: layerLiquidity ? layerLiquidity.checked : false,
+                sweepRaidLiquidity: layerSweepRaidLiquidity ? layerSweepRaidLiquidity.checked : false,
                 smcFlow: layerSmc ? layerSmc.checked : false,
                 bollinger: layerBollinger ? layerBollinger.checked : false,
                 rsi: layerRsi ? layerRsi.checked : false,
@@ -1244,6 +1250,7 @@
         lastIndicatorFetchAt = now;
         const wantPa = layerPa && layerPa.checked;
         const wantLs = layerLiquidity && layerLiquidity.checked;
+        const wantSrl = layerSweepRaidLiquidity && layerSweepRaidLiquidity.checked;
         const wantSmc = layerSmc && layerSmc.checked;
         const wantBb = layerBollinger && layerBollinger.checked;
         const wantRsi = layerRsi && layerRsi.checked;
@@ -1315,11 +1322,12 @@
         const wantZigZag = layerZigZag && layerZigZag.checked;
         const wantVolatilityAverageTwice = layerVolatilityAverageTwice && layerVolatilityAverageTwice.checked;
         const wantVolatilityStagesAw = layerVolatilityStagesAw && layerVolatilityStagesAw.checked;
-        if (!wantPa && !wantLs && !wantSmc && !wantBb && !wantRsi && !wantSma && !wantEma && !wantVwma && !wantAtr && !wantMacd && !wantStochastic && !wantCci && !wantKeltner && !wantEnvelops && !wantParabolicSar && !wantSuperTrend && !wantAdx && !wantWilliams && !wantAo && !wantAlligator && !wantIchimoku && !wantPriceChannel && !wantNrtr && !wantHma && !wantAroon
+        if (!wantPa && !wantLs && !wantSrl && !wantSmc && !wantBb && !wantRsi && !wantSma && !wantEma && !wantVwma && !wantAtr && !wantMacd && !wantStochastic && !wantCci && !wantKeltner && !wantEnvelops && !wantParabolicSar && !wantSuperTrend && !wantAdx && !wantWilliams && !wantAo && !wantAlligator && !wantIchimoku && !wantPriceChannel && !wantNrtr && !wantHma && !wantAroon
             && !wantMomentum && !wantRoc && !wantOsma && !wantTrix && !wantCmo && !wantDemarker && !wantRvi && !wantUltimate && !wantSmi && !wantStdDev && !wantSmaChannel && !wantIvashov && !wantLinReg && !wantLinRegChannel && !wantKalman && !wantFractal
             && !wantDonchian && !wantStochRsi && !wantAc && !wantBullsPower && !wantBearsPower && !wantDpo && !wantQstick && !wantVhFilter && !wantEfficiencyRatio && !wantRavi && !wantCog && !wantPivotFloor && !wantMassIndex && !wantNrtrWatr && !wantPriceChannelAdaptive && !wantPriceChannelOffset && !wantParabolicBollinger && !wantParabolicPriceChannel && !wantAtrChannel && !wantOffsetSma && !wantOffsetEma && !wantOffsetSsma && !wantVolatilityAverage && !wantVolatilityAverageChannel && !wantPriceOscillator && !wantDynamicTrendDetector && !wantAdaptiveLookBack && !wantLinRegChannelFast && !wantVolatilityCandles && !wantZigZag && !wantVolatilityAverageTwice && !wantVolatilityStagesAw) {
             lastPaPayload = null;
             lastLsPayload = null;
+            lastSrlPayload = null;
             lastSmcPayload = null;
             lastBollingerPayload = null;
             lastRsiPayload = null;
@@ -1402,6 +1410,7 @@
         const layers = [];
         if (wantPa) layers.push('pa');
         if (wantLs) layers.push('ls');
+        if (wantSrl) layers.push('srl');
         if (wantSmc) layers.push('smc');
         if (wantBb) layers.push('bollinger');
         if (wantRsi) layers.push('rsi');
@@ -1490,6 +1499,7 @@
                 try {
                     lastPaPayload = wantPa && d && d.indicator ? d.indicator : null;
                     lastLsPayload = wantLs && d && d.liquidity_swings ? d.liquidity_swings : null;
+                    lastSrlPayload = wantSrl && d && d.sweep_raid_liquidity ? d.sweep_raid_liquidity : null;
                     lastSmcPayload = wantSmc && d && d.smc_flow ? d.smc_flow : null;
                     lastBollingerPayload = wantBb && d && d.bollinger ? d.bollinger : null;
                     lastRsiPayload = wantRsi && d && d.rsi ? d.rsi : null;
@@ -1569,6 +1579,7 @@
                     console.error('[indicators] apply', e);
                     lastPaPayload = null;
                     lastLsPayload = null;
+                    lastSrlPayload = null;
                     lastSmcPayload = null;
                     lastBollingerPayload = null;
                     lastRsiPayload = null;
@@ -1676,6 +1687,9 @@
         add('layer-fvg', 'Имбалансы');
         add('layer-pa-dgt', 'Price Action (DGT)');
         add('layer-liquidity-swings', 'Liquidity Swings');
+        add('layer-sweep-raid-liquidity', 'Sweep / Raid Liquidity', {
+            settingsUrl: @json(route('bots.indicators.sweep-raid-liquidity.edit', $bot)),
+        });
         add('layer-smc-flow', 'SMC Flow');
         if (BOT_IS_CHART_ANALYST) add('layer-llm-levels', 'Уровни LLM');
         return out;
@@ -3845,6 +3859,7 @@
         return !!(
             (layerPa && layerPa.checked) ||
             (layerLiquidity && layerLiquidity.checked) ||
+            (layerSweepRaidLiquidity && layerSweepRaidLiquidity.checked) ||
             (layerSmc && layerSmc.checked) ||
             (layerBollinger && layerBollinger.checked) ||
             (layerRsi && layerRsi.checked) ||
@@ -3928,14 +3943,14 @@
     }
 
     /** Оверлей Liquidity Swings (зоны, пунктиры, подписи объёма). */
-    function redrawLiquiditySwingsOverlay() {
-        if (!liquiditySwingsOverlay || !chart || !candlestickSeries) return;
-        liquiditySwingsOverlay.innerHTML = '';
-        if (!layerLiquidity || !layerLiquidity.checked || !lastLsPayload || !allChartData.length) return;
+    function redrawLiquiditySwingsOverlay(overlay = liquiditySwingsOverlay, layer = layerLiquidity, payload = lastLsPayload) {
+        if (!overlay || !chart || !candlestickSeries) return;
+        overlay.innerHTML = '';
+        if (!layer || !layer.checked || !payload || !allChartData.length) return;
         const ts = chart.timeScale();
         const lastBarTime = allChartData[allChartData.length - 1].time;
         try {
-            const boxes = Array.isArray(lastLsPayload.boxes) ? lastLsPayload.boxes : [];
+            const boxes = Array.isArray(payload.boxes) ? payload.boxes : [];
             boxes.forEach((z) => {
                 if (!z || lastBarTime < z.time_start) return;
                 const tEnd = Math.min(lastBarTime, z.time_end);
@@ -3954,9 +3969,9 @@
                 div.style.height = Math.max(1, Math.abs(y2 - y1)) + 'px';
                 div.style.background = z.fill || 'rgba(239,68,68,0.25)';
                 div.style.border = z.border && z.border !== 'none' ? z.border : 'none';
-                liquiditySwingsOverlay.appendChild(div);
+                overlay.appendChild(div);
             });
-            const lines = Array.isArray(lastLsPayload.lines) ? lastLsPayload.lines : [];
+            const lines = Array.isArray(payload.lines) ? payload.lines : [];
             lines.forEach((ln) => {
                 if (!ln || typeof ln !== 'object') return;
                 const x1 = ts.timeToCoordinate(Number(ln.time_start));
@@ -3982,9 +3997,9 @@
                 } else {
                     div.style.background = col;
                 }
-                liquiditySwingsOverlay.appendChild(div);
+                overlay.appendChild(div);
             });
-            const labels = Array.isArray(lastLsPayload.labels) ? lastLsPayload.labels : [];
+            const labels = Array.isArray(payload.labels) ? payload.labels : [];
             labels.forEach((lb) => {
                 if (!lb || typeof lb !== 'object') return;
                 const x = ts.timeToCoordinate(Number(lb.time));
@@ -3998,13 +4013,13 @@
                 span.style.transform = (lb.position === 'below')
                     ? 'translate(-50%, 6px)'
                     : 'translate(-50%, calc(-100% - 4px))';
-                span.style.fontSize = lsLabelFontPx(lastLsPayload.label_size);
+                span.style.fontSize = lsLabelFontPx(payload.label_size);
                 span.style.fontWeight = '600';
                 span.style.lineHeight = '1';
                 span.style.color = paCssColor(lb.color);
                 span.style.pointerEvents = 'none';
                 span.style.whiteSpace = 'nowrap';
-                liquiditySwingsOverlay.appendChild(span);
+                overlay.appendChild(span);
             });
         } catch (e) {
             console.error('[Liquidity Swings] bot redraw', e);
@@ -4169,6 +4184,7 @@
     /** Рисует линии и зоны индикатора поверх графика (HTML-оверлей, как ордерблоки). */
     function redrawPriceActionOverlay() {
         redrawLiquiditySwingsOverlay();
+        redrawLiquiditySwingsOverlay(sweepRaidLiquidityOverlay, layerSweepRaidLiquidity, lastSrlPayload);
         // SMC Flow должен жить отдельно от DGT: обновляем его даже когда PA слой выключен.
         redrawSmcFlowOverlay();
         try {
@@ -6380,6 +6396,10 @@
         chartWrapper.classList.remove('hidden');
         structureOverlay.classList.remove('hidden');
         if (liquiditySwingsOverlay) liquiditySwingsOverlay.classList.remove('hidden');
+        // Самостоятельный Sweep / Raid оверлей создаётся скрытым вместе с
+        // остальными DOM-слоями. После инициализации графика обязательно
+        // раскрываем контейнер, иначе API отдаёт метки, но они не видны.
+        if (sweepRaidLiquidityOverlay) sweepRaidLiquidityOverlay.classList.remove('hidden');
         if (priceActionOverlay) priceActionOverlay.classList.remove('hidden');
         if (smcFlowOverlay) smcFlowOverlay.classList.remove('hidden');
         if (BOT_IS_CHART_ANALYST && llmLevelsOverlay) llmLevelsOverlay.classList.remove('hidden');
@@ -6646,6 +6666,20 @@
             setLoading(false);
         });
     }
+
+    /**
+     * Единое событие приходит из iframe-модали после успешного сохранения или
+     * сброса настроек. Force-режим обходит throttle и coalescing, чтобы новая
+     * линия/параметры DeMarker (и всех остальных включённых слоёв) появились
+     * на графике сразу, без полной перезагрузки страницы.
+     */
+    window.addEventListener('platform:indicator-settings-saved', function () {
+        if (window.PlatformChartFetch) {
+            window.PlatformChartFetch.invalidate('bot-indicators');
+        }
+        fetchPriceActionIndicator({ force: true });
+    });
+
     function selectInstrument(instrument, displayName) {
         if (currentInstrument === instrument) return;
         if (refreshInterval) {
@@ -6774,6 +6808,14 @@
         layerLiquidity.addEventListener('change', () => {
             saveLayerPrefs();
             if (!layerLiquidity.checked) lastLsPayload = null;
+            fetchPriceActionIndicator({ force: true });
+            redrawStructureOverlay();
+        });
+    }
+    if (layerSweepRaidLiquidity) {
+        layerSweepRaidLiquidity.addEventListener('change', () => {
+            saveLayerPrefs();
+            if (!layerSweepRaidLiquidity.checked) lastSrlPayload = null;
             fetchPriceActionIndicator({ force: true });
             redrawStructureOverlay();
         });

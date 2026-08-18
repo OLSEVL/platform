@@ -23,11 +23,13 @@ return Application::configure(basePath: dirname(__DIR__))
         $schedule->command('proxies:refresh-webshare')->dailyAt('00:00')->withoutOverlapping(60);
         // При free_slots=0 раз в час тянем свежий список Webshare (та же кнопка «Обновить прокси»).
         $schedule->command('proxies:refresh-webshare-if-exhausted')->hourly()->withoutOverlapping(30);
-        // Per-bot scan: диспетчер каждую минуту поднимает отдельный bots:scan --bot_id=N (параллельно).
-        $schedule->command('bots:scan-dispatch')->everyMinute()->withoutOverlapping(2);
+        // S30-боту нужен scan на границе каждого 30-секундного бара. Команда
+        // только диспетчеризирует отдельные jobs, поэтому не блокирует sub-minute scheduler.
+        $schedule->command('bots:scan-dispatch')->everyThirtySeconds()->withoutOverlapping(2);
         // Зависший scan (живой PID) блокирует dispatch навсегда — reap по wall-time.
         $schedule->command('bots:scan-watchdog')->everyFiveMinutes()->withoutOverlapping(5);
-        $schedule->command('bots:settle')->everyMinute()->withoutOverlapping(10);
+        // Виртуальные S30-сделки должны быть рассчитаны до следующего scan той же пары.
+        $schedule->command('bots:settle')->everyThirtySeconds()->withoutOverlapping(10);
         // Sticky warm pool: после рестарта proxy и при обрыве WS — догрев зеркальных сессий.
         $schedule->command('mirror:warm-pool')->everyMinute()->withoutOverlapping(5);
         // Chart Analyst: /menu и inline-список пар требуют long polling + queue worker.

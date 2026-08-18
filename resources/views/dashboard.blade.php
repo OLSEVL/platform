@@ -141,6 +141,8 @@
             <div id="structure-overlay" class="absolute inset-0 z-[5] pointer-events-none overflow-visible hidden"></div>
             {{-- Liquidity Swings: между OB/FVG и DGT (как на референсе TradingView / Screenshot_4). --}}
             <div id="liquidity-swings-overlay" class="absolute inset-0 z-[6] pointer-events-none overflow-visible hidden"></div>
+            {{-- Автономный dashboard-слой событий Sweep / Raid; не смешиваем его с Liquidity Swings. --}}
+            <div id="sweep-raid-liquidity-overlay" class="absolute inset-0 z-[6] pointer-events-none overflow-visible hidden"></div>
             {{-- Оверлей индикатора DGT выше зон OB/FVG (как на странице бота). --}}
             <div id="price-action-overlay" class="absolute inset-0 z-[7] pointer-events-none overflow-visible hidden"></div>
             {{-- SMC Flow (UT Bot): поверх DGT, отдельный слой — не смешиваем с Price Action. --}}
@@ -579,6 +581,7 @@
     const layerFvg = document.getElementById('layer-fvg');
     const layerPa = document.getElementById('layer-pa-dgt');
     const layerLiquidity = document.getElementById('layer-liquidity-swings');
+    const layerSweepRaid = document.getElementById('layer-sweep-raid-liquidity');
     const layerSmc = document.getElementById('layer-smc-flow');
     const layerBollinger = document.getElementById('layer-bollinger');
     const layerRsi = document.getElementById('layer-rsi');
@@ -655,6 +658,7 @@
     const layerVolatilityStagesAw = document.getElementById('layer-volatility-stages-aw');
     const priceActionOverlay = document.getElementById('price-action-overlay');
     const liquiditySwingsOverlay = document.getElementById('liquidity-swings-overlay');
+    const sweepRaidLiquidityOverlay = document.getElementById('sweep-raid-liquidity-overlay');
     const smcFlowOverlay = document.getElementById('smc-flow-overlay');
     const classicIndicatorLabelsEl = document.getElementById('classic-indicator-labels');
     const instrumentSearchInput = document.getElementById('instrument-search');
@@ -814,6 +818,7 @@
             if (typeof o.imbalances === 'boolean') layerFvg.checked = o.imbalances;
             if (layerPa && typeof o.paDgt === 'boolean') layerPa.checked = o.paDgt;
             if (layerLiquidity && typeof o.liquiditySwings === 'boolean') layerLiquidity.checked = o.liquiditySwings;
+            if (layerSweepRaid && typeof o.sweepRaidLiquidity === 'boolean') layerSweepRaid.checked = o.sweepRaidLiquidity;
             if (layerSmc && typeof o.smcFlow === 'boolean') layerSmc.checked = o.smcFlow;
             if (layerBollinger && typeof o.bollinger === 'boolean') layerBollinger.checked = o.bollinger;
             if (layerRsi && typeof o.rsi === 'boolean') layerRsi.checked = o.rsi;
@@ -899,6 +904,8 @@
                 imbalances: layerFvg.checked,
                 paDgt: layerPa ? layerPa.checked : false,
                 liquiditySwings: layerLiquidity ? layerLiquidity.checked : false,
+                // Отдельный ключ не связывает видимость Sweep / Raid с похожим Liquidity Swings.
+                sweepRaidLiquidity: layerSweepRaid ? layerSweepRaid.checked : false,
                 smcFlow: layerSmc ? layerSmc.checked : false,
                 bollinger: layerBollinger ? layerBollinger.checked : false,
                 rsi: layerRsi ? layerRsi.checked : false,
@@ -1013,6 +1020,8 @@
     let lastPaPayload = null;
     /** JSON с сервера: boxes / lines / labels для Liquidity Swings. */
     let lastLsPayload = null;
+    /** События общего детектора: sweep/raid и первые pullback-входы. */
+    let lastSweepRaidPayload = null;
     let lastSmcPayload = null;
     /** Сигналы/сделки для маркеров (формат как на bots/show). */
     let lastChartSignals = [];
@@ -1117,6 +1126,7 @@
         add('layer-fvg', 'Имбалансы');
         add('layer-pa-dgt', 'Price Action (DGT)');
         add('layer-liquidity-swings', 'Liquidity Swings');
+        add('layer-sweep-raid-liquidity', 'Sweep / Raid Liquidity');
         add('layer-smc-flow', 'SMC Flow');
         return out;
     }
@@ -1456,11 +1466,13 @@
         if (!chart || !candlestickSeries || !structureOverlay) return;
         if (!allChartData.length) {
             structureOverlay.innerHTML = '';
+            redrawSweepRaidLiquidityOverlay();
             requestAnimationFrame(redrawPriceActionOverlay);
             return;
         }
         if (lastZones.length === 0) {
             structureOverlay.innerHTML = '';
+            redrawSweepRaidLiquidityOverlay();
             requestAnimationFrame(redrawPriceActionOverlay);
             return;
         }
@@ -1537,7 +1549,62 @@
             appendOrderBlockLabel(div, z);
             structureOverlay.appendChild(div);
         });
+        redrawSweepRaidLiquidityOverlay();
         requestAnimationFrame(redrawPriceActionOverlay);
+    }
+
+    /**
+     * Рисует Sweep / Raid независимо от Liquidity Swings:
+     * lines отмечают снятые pivot-уровни, labels — фракталы, события и pullback-входы.
+     * Цвета и видимость элементов уже нормализованы indicator-service на backend.
+     */
+    function redrawSweepRaidLiquidityOverlay() {
+        if (!sweepRaidLiquidityOverlay || !chart || !candlestickSeries) return;
+        sweepRaidLiquidityOverlay.innerHTML = '';
+        if (!layerSweepRaid || !layerSweepRaid.checked || !lastSweepRaidPayload || !allChartData.length) return;
+
+        const timeScale = chart.timeScale();
+        const lines = Array.isArray(lastSweepRaidPayload.lines) ? lastSweepRaidPayload.lines : [];
+        const labels = Array.isArray(lastSweepRaidPayload.labels) ? lastSweepRaidPayload.labels : [];
+        const fontSize = { tiny: '8px', small: '9px', normal: '11px' }[lastSweepRaidPayload.label_size] || '9px';
+
+        lines.forEach((item) => {
+            const x1 = timeScale.timeToCoordinate(Number(item.time_start));
+            const x2 = timeScale.timeToCoordinate(Number(item.time_end));
+            const y = candlestickSeries.priceToCoordinate(Number(item.price));
+            if (![x1, x2, y].every(Number.isFinite)) return;
+
+            const line = document.createElement('div');
+            line.style.position = 'absolute';
+            line.style.left = Math.min(x1, x2) + 'px';
+            line.style.top = y + 'px';
+            line.style.width = Math.max(1, Math.abs(x2 - x1)) + 'px';
+            line.style.borderTop = Math.max(1, Number(item.width) || 1)
+                + 'px ' + (String(item.style).toLowerCase() === 'dotted' ? 'dotted ' : 'dashed ')
+                + paCssColor(item.color);
+            line.style.opacity = '0.85';
+            sweepRaidLiquidityOverlay.appendChild(line);
+        });
+
+        labels.forEach((item) => {
+            const x = timeScale.timeToCoordinate(Number(item.time));
+            const y = candlestickSeries.priceToCoordinate(Number(item.price));
+            if (![x, y].every(Number.isFinite)) return;
+            const below = String(item.position).toLowerCase() === 'below';
+            const label = document.createElement('span');
+            label.textContent = String(item.text || '');
+            label.style.position = 'absolute';
+            label.style.left = (x + 4) + 'px';
+            label.style.top = (y + (below ? 5 : -18)) + 'px';
+            label.style.padding = '2px 4px';
+            label.style.borderRadius = '3px';
+            label.style.background = 'rgba(15,23,42,0.88)';
+            label.style.color = paCssColor(item.color);
+            label.style.fontSize = fontSize;
+            label.style.fontWeight = '700';
+            label.style.whiteSpace = 'nowrap';
+            sweepRaidLiquidityOverlay.appendChild(label);
+        });
     }
 
     function paCssColor(c) {
@@ -4781,11 +4848,17 @@
             instrument: currentInstrument,
             timeframe: String(currentTimeframeMinutes)
         });
+        const wantSweepRaid = !!(layerSweepRaid && layerSweepRaid.checked);
+        if (wantSweepRaid) params.set('include_sweep_raid', '1');
         PlatformChartFetch.requestJson('structures', {
-            key: currentInstrument + '|' + String(currentTimeframeMinutes),
+            // Флаг входит в key: включение слоя не должно приклеиться к in-flight ответу без событий.
+            key: currentInstrument + '|' + String(currentTimeframeMinutes) + '|' + (wantSweepRaid ? 'srl' : 'plain'),
             url: STRUCTURES_URL + '?' + params.toString(),
             apply: (data) => {
                 lastZones = data.zones || [];
+                lastSweepRaidPayload = wantSweepRaid && data && data.sweep_raid_liquidity
+                    ? data.sweep_raid_liquidity
+                    : null;
                 requestAnimationFrame(redrawStructureOverlay);
             },
         });
@@ -5123,6 +5196,7 @@
         chartWrapper.classList.remove('hidden');
         structureOverlay.classList.remove('hidden');
         if (liquiditySwingsOverlay) liquiditySwingsOverlay.classList.remove('hidden');
+        if (sweepRaidLiquidityOverlay) sweepRaidLiquidityOverlay.classList.remove('hidden');
         if (priceActionOverlay) priceActionOverlay.classList.remove('hidden');
         if (smcFlowOverlay) smcFlowOverlay.classList.remove('hidden');
         if (classicIndicatorLabelsEl) classicIndicatorLabelsEl.classList.remove('hidden');
@@ -5273,6 +5347,7 @@
                     structureOverlay.innerHTML = '';
                     lastPaPayload = null;
                     lastLsPayload = null;
+                    lastSweepRaidPayload = null;
                     lastSmcPayload = null;
                     lastChartSignals = [];
                     lastOpenTrades = [];
@@ -5300,6 +5375,7 @@
                     lastAroonPayload = null;
                     if (priceActionOverlay) priceActionOverlay.innerHTML = '';
                     if (liquiditySwingsOverlay) liquiditySwingsOverlay.innerHTML = '';
+                    if (sweepRaidLiquidityOverlay) sweepRaidLiquidityOverlay.innerHTML = '';
                     if (smcFlowOverlay) smcFlowOverlay.innerHTML = '';
                     renderChartMarkers();
                     applyClassicOsEngineSeries();
@@ -5314,6 +5390,19 @@
                 tickCandleCloseTimer();
             });
     }
+
+    /**
+     * Сохранение или сброс параметров в iframe-модали не должен делать F5.
+     * Сбрасываем coalescing старых запросов и перезагружаем данные текущего
+     * графика: reloadChartData() сам запрашивает все включённые classic и
+     * overlay-индикаторы, включая DeMarker.
+     */
+    window.addEventListener('platform:indicator-settings-saved', function () {
+        if (window.PlatformChartFetch) {
+            window.PlatformChartFetch.invalidateAll();
+        }
+        reloadChartData();
+    });
 
     function selectInstrument(instrument, displayName) {
         if (currentInstrument === instrument) return;
@@ -5330,6 +5419,7 @@
         structureOverlay.innerHTML = '';
         lastPaPayload = null;
         lastLsPayload = null;
+        lastSweepRaidPayload = null;
         lastSmcPayload = null;
         lastChartSignals = [];
         lastOpenTrades = [];
@@ -5357,6 +5447,7 @@
         lastAroonPayload = null;
         if (priceActionOverlay) priceActionOverlay.innerHTML = '';
         if (liquiditySwingsOverlay) liquiditySwingsOverlay.innerHTML = '';
+        if (sweepRaidLiquidityOverlay) sweepRaidLiquidityOverlay.innerHTML = '';
         if (smcFlowOverlay) smcFlowOverlay.innerHTML = '';
         updateChartTitle();
         updateTfOptionStyles();
@@ -5464,6 +5555,18 @@
             if (!layerLiquidity.checked) lastLsPayload = null;
             fetchLiquiditySwingsIndicator();
             requestAnimationFrame(redrawStructureOverlay);
+        });
+    }
+    if (layerSweepRaid) {
+        layerSweepRaid.addEventListener('change', () => {
+            saveLayerPrefs();
+            if (!layerSweepRaid.checked) {
+                lastSweepRaidPayload = null;
+                redrawSweepRaidLiquidityOverlay();
+            }
+            // Повторно используем structures endpoint: он условно добавляет только payload этого слоя.
+            fetchStructures();
+            renderAllIndicatorNameLabels();
         });
     }
     if (layerSmc) {

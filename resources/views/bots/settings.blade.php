@@ -34,6 +34,8 @@
                 class="inline-flex items-center rounded border border-zinc-600 bg-zinc-800 px-2.5 py-1 text-xs font-medium text-zinc-200 shadow-sm transition-colors hover:bg-zinc-700 hover:border-zinc-500 hover:text-zinc-50 focus:outline-none focus:ring-2 focus:ring-blue-500/50">Price Action</a>
             <a href="{{ route('bots.indicators.liquidity-swings.edit', $bot) }}"
                 class="inline-flex items-center rounded border border-zinc-600 bg-zinc-800 px-2.5 py-1 text-xs font-medium text-zinc-200 shadow-sm transition-colors hover:bg-zinc-700 hover:border-zinc-500 hover:text-zinc-50 focus:outline-none focus:ring-2 focus:ring-blue-500/50">Liquidity Swings</a>
+            <a href="{{ route('bots.indicators.sweep-raid-liquidity.edit', $bot) }}"
+                class="inline-flex items-center rounded border border-zinc-600 bg-zinc-800 px-2.5 py-1 text-xs font-medium text-zinc-200 shadow-sm transition-colors hover:bg-zinc-700 hover:border-zinc-500 hover:text-zinc-50 focus:outline-none focus:ring-2 focus:ring-blue-500/50">Sweep / Raid Liquidity</a>
             <a href="{{ route('bots.indicators.smc-flow.edit', $bot) }}"
                 class="inline-flex items-center rounded border border-zinc-600 bg-zinc-800 px-2.5 py-1 text-xs font-medium text-zinc-200 shadow-sm transition-colors hover:bg-zinc-700 hover:border-zinc-500 hover:text-zinc-50 focus:outline-none focus:ring-2 focus:ring-blue-500/50">SMC Flow</a>
             <a href="{{ route('bots.indicators.bollinger.edit', $bot) }}"
@@ -174,7 +176,7 @@
                 @checked(old('is_active', $bot->is_active))>
             <label for="is_active" class="text-sm text-zinc-300">
                 <span class="font-medium text-zinc-200">Бот активен</span>
-                <span class="mt-0.5 block text-[11px] font-normal text-zinc-500">Участвует в плановом <code class="text-zinc-400">bots:scan</code> (cron каждую минуту). Выключенный бот не анализирует пары и не создаёт сигналы/сделки.</span>
+                <span class="mt-0.5 block text-[11px] font-normal text-zinc-500">Участвует в плановом <code class="text-zinc-400">bots:scan</code>. Выключенный бот не анализирует пары и не создаёт сигналы/сделки.</span>
             </label>
         </div>
 
@@ -966,6 +968,69 @@
             </div>
         @elseif ($bot->type === 'candle_reversal_confirm')
             @include('bots._candle-reversal-level-settings')
+        @elseif ($bot->type === 'sweep_raid_liquidity')
+            <div class="space-y-5 border-t border-zinc-800 pt-4">
+                <div class="space-y-2 text-sm text-zinc-400">
+                    <p>
+                        <strong class="text-zinc-300">Свип / рейд ликвидности</strong> — бот ищет подтверждённый фрактальный
+                        максимум или минимум, снятие ликвидности и вход на закрытой M1.
+                    </p>
+                    <p class="text-[11px] text-zinc-500">
+                        Для одинаковой визуализации и исполнения используйте слой
+                        <a href="{{ route('bots.indicators.sweep-raid-liquidity.edit', $bot) }}" class="text-blue-400 hover:underline">Sweep / Raid Liquidity</a>.
+                        Экспирация по умолчанию — 60 секунд.
+                    </p>
+                </div>
+                <div class="grid gap-4 sm:grid-cols-2">
+                    <div class="space-y-1">
+                        <label for="count" class="block text-xs font-medium text-zinc-400">Свечей M1 (count)</label>
+                        <input type="number" name="count" id="count" min="30" max="5000" required value="{{ old('count', $cfg['count'] ?? 500) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                    </div>
+                    <div class="space-y-1">
+                        <label for="expiry_sec" class="block text-xs font-medium text-zinc-400">Экспирация (сек)</label>
+                        <input type="number" name="expiry_sec" id="expiry_sec" min="60" max="900" required value="{{ old('expiry_sec', $cfg['expiry_sec'] ?? 60) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                    </div>
+                    <div class="space-y-1">
+                        <label for="srl_pivot_length" class="block text-xs font-medium text-zinc-400">Фрактал: баров слева/справа</label>
+                        <input type="number" name="srl_pivot_length" id="srl_pivot_length" min="1" max="100" required value="{{ old('srl_pivot_length', $cfg['srl_pivot_length'] ?? 2) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        <p class="text-[11px] text-zinc-500">Меньше значение — больше уровней и сигналов; 2 — стандартный фрактал.</p>
+                    </div>
+                    <div class="space-y-1">
+                        <label for="min_payout" class="block text-xs font-medium text-zinc-400">Мин. payout (%)</label>
+                        <input type="number" name="min_payout" id="min_payout" min="0" max="100" step="0.1" required value="{{ old('min_payout', $cfg['min_payout'] ?? 80) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                    </div>
+                    <div class="space-y-1">
+                        <label for="min_confidence" class="block text-xs font-medium text-zinc-400">Мин. confidence (0–1)</label>
+                        <input type="number" name="min_confidence" id="min_confidence" min="0" max="1" step="0.01" required value="{{ old('min_confidence', $cfg['min_confidence'] ?? 0) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                    </div>
+                    <div class="space-y-1">
+                        <label for="stale_after_sec" class="block text-xs font-medium text-zinc-400">Свежесть текущей свечи (сек)</label>
+                        <input type="number" name="stale_after_sec" id="stale_after_sec" min="5" max="600" required value="{{ old('stale_after_sec', $cfg['stale_after_sec'] ?? 60) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                    </div>
+                </div>
+                <div class="space-y-3 rounded border border-zinc-800 bg-zinc-900/40 p-4">
+                    <p class="text-xs font-semibold uppercase tracking-wide text-zinc-500">Пути входа</p>
+                    <input type="hidden" name="srl_enter_sweep" value="0">
+                    <label class="flex items-start gap-2">
+                        <input type="checkbox" name="srl_enter_sweep" value="1" @checked(old('srl_enter_sweep', $cfg['srl_enter_sweep'] ?? true))
+                            class="mt-0.5 rounded border-zinc-600 bg-zinc-900 text-blue-500">
+                        <span><span class="text-sm font-medium text-zinc-200">Вход на свипе</span><span class="mt-0.5 block text-[11px] text-zinc-500">Зелёный свип хая → PUT; красный свип лоу → CALL.</span></span>
+                    </label>
+                    <input type="hidden" name="srl_enter_pullback" value="0">
+                    <label class="flex items-start gap-2">
+                        <input type="checkbox" name="srl_enter_pullback" value="1" @checked(old('srl_enter_pullback', $cfg['srl_enter_pullback'] ?? true))
+                            class="mt-0.5 rounded border-zinc-600 bg-zinc-900 text-blue-500">
+                        <span><span class="text-sm font-medium text-zinc-200">Вход на первой откатной</span><span class="mt-0.5 block text-[11px] text-zinc-500">После свипа или рейда: сверху первая зелёная → PUT; снизу первая красная → CALL.</span></span>
+                    </label>
+                </div>
+                @include('bots._strategy-telegram-settings', ['bot' => $bot, 'cfg' => $cfg])
+            </div>
         @elseif ($bot->type === 'smc_flow')
             <div class="space-y-5 border-t border-zinc-800 pt-4">
                 <div class="space-y-2 text-sm text-zinc-400">
@@ -2052,7 +2117,7 @@
                     <div class="space-y-1">
                         <label for="h1_take" class="block text-xs font-medium text-zinc-400">Свечей H1</label>
                         <input type="number" name="h1_take" id="h1_take" min="10" max="200" required
-                            value="{{ old('h1_take', $cfg['h1_take'] ?? 48) }}"
+                            value="{{ old('h1_take', $cfg['h1_take'] ?? 12) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
 
                         @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('h1_take')])
@@ -2345,6 +2410,135 @@
                 }
             })();
             </script>
+        @elseif ($bot->type === 'strong_trend_demarker')
+            <div class="space-y-5 border-t border-zinc-800 pt-4">
+                <div class="space-y-2 text-sm text-zinc-400">
+                    <p>
+                        <strong class="text-zinc-300">Strong Trend + DeMarker</strong> — серия одноцветных свечей
+                        подтверждается выходом DeMarker из зоны.
+                    </p>
+                    <p class="text-[11px] text-zinc-500">
+                        Если «Неотработок до сделки» &gt; 0, бот сначала проверяет сигналы виртуально по каждой паре.
+                        После N подряд LOSS следующий сигнал открывает paper-сделку. 0 — сразу вход.
+                        Виртуальный WIN или DRAW сбрасывает счётчик этой пары.
+                    </p>
+                </div>
+
+                <div class="grid gap-4 sm:grid-cols-2">
+                    <div class="space-y-1">
+                        <label for="timeframe" class="block text-xs font-medium text-zinc-400">Таймфрейм</label>
+                        @php $demarkerTimeframe = (int) old('timeframe', $cfg['timeframe'] ?? \App\Services\CandleService::TF_S30); @endphp
+                        <select name="timeframe" id="timeframe" required
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                            <option value="{{ \App\Services\CandleService::TF_S30 }}" @selected($demarkerTimeframe === \App\Services\CandleService::TF_S30)>S30 — сделка 30 сек</option>
+                            <option value="1" @selected($demarkerTimeframe === 1)>M1 — сделка 60 сек</option>
+                        </select>
+                        @error('timeframe')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                    <div class="space-y-1">
+                        <label for="count" class="block text-xs font-medium text-zinc-400">Свечей в выборке</label>
+                        <input type="number" name="count" id="count" min="10" max="5000" required
+                            value="{{ old('count', $cfg['count'] ?? 120) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @error('count')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                    <div class="space-y-1">
+                        <label for="streak_len" class="block text-xs font-medium text-zinc-400">Свечей подряд (0 = выкл.)</label>
+                        <input type="number" name="streak_len" id="streak_len" min="0" max="30" required
+                            value="{{ old('streak_len', $cfg['streak_len'] ?? 6) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        <p class="text-[11px] text-zinc-500">0 — только выход DeMarker из зоны. 1–30 — ещё N одноцветных закрытых свечей.</p>
+                        @error('streak_len')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                    <div class="space-y-1">
+                        <label for="losses_before_entry" class="block text-xs font-medium text-zinc-400">Неотработок до сделки (0 = выкл.)</label>
+                        <input type="number" name="losses_before_entry" id="losses_before_entry" min="0" max="20" required
+                            value="{{ old('losses_before_entry', $cfg['losses_before_entry'] ?? 2) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        <p class="text-[11px] text-zinc-500">0 — сразу paper-сделка. 2: первые два убытка виртуальные, на следующем валидном сигнале — вход.</p>
+                        @error('losses_before_entry')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                    <div class="space-y-1">
+                        <label for="candle_strictness" class="block text-xs font-medium text-zinc-400">Строгость свечей</label>
+                        @php $demarkerStrictness = old('candle_strictness', $cfg['candle_strictness'] ?? 'strict'); @endphp
+                        <select name="candle_strictness" id="candle_strictness" required
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                            <option value="strict" @selected($demarkerStrictness === 'strict')>Строго (close &gt; open / close &lt; open)</option>
+                            <option value="with_doji" @selected($demarkerStrictness === 'with_doji')>С доджи (close ≥ open / close ≤ open)</option>
+                        </select>
+                        <p class="text-[11px] text-zinc-500">Как в Strong Trend Telegram: влияет на определение бычьей/медвежьей серии.</p>
+                        @error('candle_strictness')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                    <div class="space-y-1">
+                        <label for="min_body_to_range_ratio" class="block text-xs font-medium text-zinc-400">Мин. доля тела в диапазоне (0 = выкл.)</label>
+                        <input type="number" name="min_body_to_range_ratio" id="min_body_to_range_ratio" min="0" max="1" step="0.01" required
+                            value="{{ old('min_body_to_range_ratio', $cfg['min_body_to_range_ratio'] ?? 0) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        <p class="text-[11px] text-zinc-500">Средняя |close−open| / (high−low) по серии должна быть не ниже порога.</p>
+                        @error('min_body_to_range_ratio')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                </div>
+
+                <p class="text-xs font-semibold uppercase tracking-wide text-zinc-500">DeMarker: выход из зоны</p>
+                <div class="grid gap-4 rounded border border-zinc-800 bg-zinc-900/40 p-4 sm:grid-cols-3">
+                    <div class="space-y-1">
+                        <label for="demarker_period" class="block text-xs font-medium text-zinc-400">Период</label>
+                        <input type="number" name="demarker_period" id="demarker_period" min="1" max="500" required
+                            value="{{ old('demarker_period', $cfg['demarker_period'] ?? 6) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @error('demarker_period')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                    <div class="space-y-1">
+                        <label for="demarker_oversold" class="block text-xs font-medium text-zinc-400">Нижняя зона (%)</label>
+                        <input type="number" name="demarker_oversold" id="demarker_oversold" min="0" max="49.99" step="0.01" required
+                            value="{{ old('demarker_oversold', $cfg['demarker_oversold'] ?? 10) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        <p class="text-[11px] text-zinc-500">Выход вверх из зоны + бычья серия → CALL.</p>
+                        @error('demarker_oversold')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                    <div class="space-y-1">
+                        <label for="demarker_overbought" class="block text-xs font-medium text-zinc-400">Верхняя зона (%)</label>
+                        <input type="number" name="demarker_overbought" id="demarker_overbought" min="50.01" max="100" step="0.01" required
+                            value="{{ old('demarker_overbought', $cfg['demarker_overbought'] ?? 90) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        <p class="text-[11px] text-zinc-500">Выход вниз из зоны + медвежья серия → PUT.</p>
+                        @error('demarker_overbought')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                </div>
+
+                <div class="grid gap-4 sm:grid-cols-2">
+                    <input type="hidden" name="expiry_sec" value="{{ $demarkerTimeframe === \App\Services\CandleService::TF_S30 ? 30 : 60 }}">
+                    <div class="space-y-1">
+                        <label for="min_confidence" class="block text-xs font-medium text-zinc-400">Мин. confidence (0–1)</label>
+                        <input type="number" name="min_confidence" id="min_confidence" min="0" max="1" step="0.01" required
+                            value="{{ old('min_confidence', $cfg['min_confidence'] ?? 0) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @error('min_confidence')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                    <div class="space-y-1">
+                        <label for="min_payout" class="block text-xs font-medium text-zinc-400">Мин. payout (%)</label>
+                        <input type="number" name="min_payout" id="min_payout" min="0" max="100" step="0.1" required
+                            value="{{ old('min_payout', $cfg['min_payout'] ?? 80) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @error('min_payout')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                    <div class="space-y-1">
+                        <label for="stale_after_sec" class="block text-xs font-medium text-zinc-400">Свежесть текущей свечи (сек)</label>
+                        <input type="number" name="stale_after_sec" id="stale_after_sec" min="5" max="600" required
+                            value="{{ old('stale_after_sec', $cfg['stale_after_sec'] ?? 30) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @error('stale_after_sec')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                    <div class="space-y-1">
+                        <label for="dedupe_bucket_sec" class="block text-xs font-medium text-zinc-400">Защита от дубля (сек)</label>
+                        <input type="number" name="dedupe_bucket_sec" id="dedupe_bucket_sec" min="30" max="3600" required
+                            value="{{ old('dedupe_bucket_sec', $cfg['dedupe_bucket_sec'] ?? ($demarkerTimeframe === \App\Services\CandleService::TF_S30 ? 30 : 60)) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @error('dedupe_bucket_sec')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                </div>
+                @include('bots._strategy-telegram-settings', ['bot' => $bot, 'cfg' => $cfg])
+            </div>
         @elseif ($bot->type === 'strong_trend_telegram')
             <div class="space-y-5 border-t border-zinc-800 pt-4">
                 <div class="space-y-2 text-sm text-zinc-400">

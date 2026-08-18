@@ -19,6 +19,7 @@ use App\Services\Indicators\PriceActionDgtIndicatorService;
 use App\Services\Indicators\RsiIndicatorService;
 use App\Services\Indicators\SmaIndicatorService;
 use App\Services\Indicators\SmcFlowIndicatorService;
+use App\Services\Indicators\SweepRaidLiquidityIndicatorService;
 use App\Services\Indicators\CciIndicatorService;
 use App\Services\Indicators\StochasticIndicatorService;
 use App\Services\Indicators\VwmaIndicatorService;
@@ -390,14 +391,22 @@ class DashboardController extends Controller
         ]);
     }
 
-    public function structures(Request $request, CandleStructureZoneDetector $detector, CandleService $candleService): JsonResponse
+    public function structures(
+        Request $request,
+        CandleStructureZoneDetector $detector,
+        CandleService $candleService,
+        SweepRaidLiquidityIndicatorService $sweepRaidLiquidity,
+    ): JsonResponse
     {
-        $request->validate([
+        $validated = $request->validate([
             'instrument' => 'required|string|max:63',
             'timeframe' => ['nullable', 'integer', Rule::in(CandleService::DASHBOARD_TIMEFRAMES)],
+            // Расчёт Sweep / Raid запускаем только по запросу включённого dashboard-слоя,
+            // чтобы обычное обновление OB/FVG не выполняло лишний проход по свечам.
+            'include_sweep_raid' => ['nullable', 'boolean'],
         ]);
-        $instrument = $request->input('instrument');
-        $timeframe = (int) ($request->input('timeframe') ?? 1);
+        $instrument = (string) $validated['instrument'];
+        $timeframe = (int) ($validated['timeframe'] ?? 1);
         [$since, $maxBars] = $this->overlayHistoryWindow($timeframe);
 
         // Структуры должны использовать ту же временную ось, что и candles endpoint:
@@ -411,7 +420,17 @@ class DashboardController extends Controller
 
         $zones = $detector->activeZones($rows, $obParams);
 
-        return response()->json(['zones' => $zones]);
+        $json = ['zones' => $zones];
+        if ((bool) ($validated['include_sweep_raid'] ?? false)) {
+            // Сервис внутри использует общий с торговой стратегией детектор. Параметры
+            // берём с того же якорного бота, что OB/FVG; без бота работают безопасные defaults.
+            $sweepRaidParams = $anchorBot !== null
+                ? IndicatorSetting::mergedSweepRaidLiquidityParams($anchorBot)
+                : SweepRaidLiquidityIndicatorService::defaultParams();
+            $json['sweep_raid_liquidity'] = $sweepRaidLiquidity->compute($rows, $sweepRaidParams);
+        }
+
+        return response()->json($json);
     }
 
     /**

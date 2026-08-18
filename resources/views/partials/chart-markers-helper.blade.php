@@ -313,15 +313,29 @@
     function renderIndicatorNameLabels(opts) {
         const container = opts && opts.container;
         if (!container) return;
-        // Полная перерисовка: проще и надёжнее точечных update при смене слоёв.
-        container.innerHTML = '';
-        container.classList.add('hidden');
+
+        /**
+         * Очищаем подписи только тогда, когда их действительно больше нельзя показать.
+         * Важно также удалить ключ последнего рендера: после повторного создания графика
+         * те же данные должны заново сформировать DOM-элементы.
+         */
+        const clearLabels = () => {
+            if (container.childElementCount) container.innerHTML = '';
+            delete container.dataset.indicatorLabelsRenderKey;
+            container.classList.add('hidden');
+        };
 
         const chart = opts && opts.chart;
         const mainLabels = Array.isArray(opts.mainLabels) ? opts.mainLabels.filter((x) => x && x.name) : [];
         const oscLabels = Array.isArray(opts.oscLabels) ? opts.oscLabels.filter((x) => x && x.name) : [];
-        if (!chart || typeof chart.panes !== 'function') return;
-        if (!mainLabels.length && !oscLabels.length) return;
+        if (!chart || typeof chart.panes !== 'function') {
+            clearLabels();
+            return;
+        }
+        if (!mainLabels.length && !oscLabels.length) {
+            clearLabels();
+            return;
+        }
 
         let panes = [];
         try {
@@ -329,7 +343,10 @@
         } catch (_) {
             panes = [];
         }
-        if (!panes.length) return;
+        if (!panes.length) {
+            clearLabels();
+            return;
+        }
 
         const paneHeight = (pane, fallbackRatio, totalH) => {
             if (pane && typeof pane.getHeight === 'function') {
@@ -363,8 +380,9 @@
             el.style.display = 'inline-flex';
             el.style.alignItems = 'center';
             el.style.justifyContent = 'center';
-            el.style.width = '14px';
-            el.style.height = '14px';
+            // SVG остаётся компактным (11×11), а зона попадания мышью становится больше.
+            el.style.width = '18px';
+            el.style.height = '18px';
             el.style.padding = '0';
             el.style.margin = '0';
             el.style.border = '0';
@@ -411,8 +429,10 @@
             if (settingsUrl) {
                 const a = document.createElement('a');
                 a.href = settingsUrl;
-                a.target = '_blank';
-                a.rel = 'noopener noreferrer';
+                // Тот же data-атрибут, что у ⚙ в списке индикаторов:
+                // делегированный обработчик открывает любую форму в единой модали.
+                a.dataset.indicatorSettingsModal = '';
+                a.dataset.indicatorSettingsTitle = String(item.name);
                 a.title = 'Настройки индикатора';
                 a.setAttribute('aria-label', `Настройки: ${item.name}`);
                 a.innerHTML = svgPencil;
@@ -446,11 +466,12 @@
         const mainH = paneHeight(panes[0], (panes[0] && typeof panes[0].getStretchFactor === 'function'
             ? Number(panes[0].getStretchFactor()) || 1
             : 1) / stretchSum, hostH);
+        const placements = [];
         let mainTop = 4;
         mainLabels.forEach((lb) => {
-            if (mainTop + 16 > mainH - 2) return;
-            makeLabel(lb, mainTop);
-            mainTop += 16;
+            if (mainTop + 18 > mainH - 2) return;
+            placements.push({ item: lb, top: mainTop });
+            mainTop += 18;
         });
 
         let offsetY = mainH;
@@ -461,10 +482,31 @@
                 ? (Number(pane.getStretchFactor()) || 0.28)
                 : 0.28;
             const h = paneHeight(pane, sf / stretchSum, hostH);
-            makeLabel(oscLabels[i], offsetY + 3);
+            placements.push({ item: oscLabels[i], top: offsetY + 3 });
             offsetY += h;
         }
 
+        /**
+         * Частые обновления свечей и canvas-оверлеев могут вызывать эту функцию много
+         * раз в секунду. Если состав подписей и их координаты не изменились, сохраняем
+         * существующие ссылки и кнопки в DOM. Иначе удаление элемента прямо во время
+         * hover/click вызывает mouseleave, визуальное мигание и потерю клика.
+         */
+        const renderKey = JSON.stringify(placements.map(({ item, top }) => ({
+            name: String(item.name),
+            layerId: item.layerId ? String(item.layerId) : '',
+            settingsUrl: item.settingsUrl ? String(item.settingsUrl) : '',
+            top: Math.max(0, Math.round(top)),
+        })));
+        if (container.dataset.indicatorLabelsRenderKey === renderKey
+            && container.childElementCount === placements.length) {
+            container.classList.remove('hidden');
+            return;
+        }
+
+        container.innerHTML = '';
+        placements.forEach(({ item, top }) => makeLabel(item, top));
+        container.dataset.indicatorLabelsRenderKey = renderKey;
         container.classList.remove('hidden');
     }
 

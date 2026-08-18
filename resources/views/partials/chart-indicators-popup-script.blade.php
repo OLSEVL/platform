@@ -9,6 +9,9 @@
     const layersPanelEl = document.getElementById('layers-dropdown-panel');
     const helpModal = document.getElementById('indicator-help-modal');
     const helpCatalogEl = document.getElementById('indicator-help-catalog');
+    const settingsModal = document.getElementById('indicator-settings-modal');
+    const settingsFrame = document.getElementById('indicator-settings-frame');
+    const settingsTitle = document.getElementById('indicator-settings-title');
     let helpCatalog = {};
     try {
         helpCatalog = helpCatalogEl ? JSON.parse(helpCatalogEl.textContent || '{}') : {};
@@ -134,6 +137,70 @@
                 '<text x="36" y="148" fill="#34d399" font-size="11">зелёные ↑</text>' +
                 '<text x="140" y="148" fill="#f87171" font-size="11">красные ↓</text>' +
                 '<text x="220" y="148" fill="#a1a1aa" font-size="11">смена цвета = смена сил</text>'
+            );
+        },
+        // Учебные схемы нового индикатора: повторяют терминологию и цвет
+        // меток на графике, чтобы пользователь видел связь с реальным слоем.
+        sweep_high: function () {
+            return svgFrame(
+                '<text x="12" y="18" fill="#a1a1aa" font-size="11">SWEEP H: прокол фрактального максимума и возврат под него</text>' +
+                '<path d="M20 54 H300" stroke="#ef4444" stroke-width="1.5" stroke-dasharray="4 3"/>' +
+                '<text x="242" y="48" fill="#fca5a5" font-size="10">FH / ликвидность</text>' +
+                candles([
+                    {x: 50, o: 110, c: 92, h: 86, l: 118},
+                    {x: 95, o: 94, c: 76, h: 70, l: 102},
+                    {x: 140, o: 78, c: 88, h: 72, l: 96},
+                    {x: 190, o: 86, c: 72, h: 66, l: 94},
+                    // Зелёное тело, но тень вышла над FH и close вернулся ниже.
+                    {x: 245, o: 82, c: 64, h: 36, l: 90},
+                    {x: 285, o: 66, c: 84, h: 60, l: 90}
+                ]) +
+                '<path d="M245 28 l-7 10 h14 Z" fill="#f59e0b"/>' +
+                '<text x="205" y="28" fill="#fbbf24" font-size="10">▼ SWEEP H · PUT</text>' +
+                '<path d="M260 100 L292 116" stroke="#f87171" stroke-width="2"/>' +
+                '<text x="36" y="148" fill="#fbbf24" font-size="11">После закрытия свипа — вход PUT на следующую минуту</text>'
+            );
+        },
+        raid_low: function () {
+            return svgFrame(
+                '<text x="12" y="18" fill="#a1a1aa" font-size="11">RAID L: закрепление ниже FL и возврат обратно выше</text>' +
+                '<path d="M20 108 H300" stroke="#14b8a6" stroke-width="1.5" stroke-dasharray="4 3"/>' +
+                '<text x="242" y="123" fill="#5eead4" font-size="10">FL / ликвидность</text>' +
+                candles([
+                    {x: 50, o: 54, c: 70, h: 48, l: 78},
+                    {x: 95, o: 68, c: 82, h: 62, l: 90},
+                    {x: 140, o: 80, c: 92, h: 74, l: 100},
+                    // Первое тело закрепилось ниже FL.
+                    {x: 190, o: 88, c: 126, h: 82, l: 134},
+                    // Возврат выше FL.
+                    {x: 240, o: 124, c: 86, h: 78, l: 132},
+                    {x: 285, o: 88, c: 70, h: 64, l: 96}
+                ]) +
+                '<path d="M240 140 l-7 -10 h14 Z" fill="#a78bfa"/>' +
+                '<text x="184" y="52" fill="#c4b5fd" font-size="10">▲ RAID L · CALL</text>' +
+                '<text x="38" y="148" fill="#c4b5fd" font-size="11">Возврат над FL отменяет пробой и создаёт контекст CALL</text>'
+            );
+        },
+        pullback_entry: function () {
+            return svgFrame(
+                '<text x="12" y="18" fill="#a1a1aa" font-size="11">PB: первая откатная после захвата верхней ликвидности</text>' +
+                '<path d="M20 54 H300" stroke="#ef4444" stroke-width="1.5" stroke-dasharray="4 3"/>' +
+                '<text x="244" y="48" fill="#fca5a5" font-size="10">FH</text>' +
+                candles([
+                    {x: 50, o: 110, c: 92, h: 86, l: 118},
+                    {x: 100, o: 94, c: 76, h: 70, l: 102},
+                    // Свип.
+                    {x: 150, o: 84, c: 66, h: 38, l: 92},
+                    // Импульс вниз.
+                    {x: 200, o: 68, c: 92, h: 62, l: 98},
+                    // Первая зелёная откатная — PB.
+                    {x: 245, o: 88, c: 72, h: 66, l: 96},
+                    {x: 285, o: 74, c: 98, h: 68, l: 104}
+                ]) +
+                '<text x="122" y="30" fill="#fbbf24" font-size="10">SWEEP H</text>' +
+                '<path d="M245 42 l-7 10 h14 Z" fill="#22c55e"/>' +
+                '<text x="210" y="30" fill="#86efac" font-size="10">▼ PB · PUT</text>' +
+                '<text x="34" y="148" fill="#86efac" font-size="11">PB — первая зелёная откатная; вход PUT после её закрытия</text>'
             );
         },
         order_block: function () {
@@ -296,6 +363,41 @@
         });
     }
 
+    /**
+     * Рендерит легенду только для индикаторов, которые передали glossary.
+     * Текст добавляется через textContent, чтобы значения из PHP-каталога
+     * оставались обычным текстом и не могли превратиться в HTML-разметку.
+     */
+    function renderGlossary(glossary) {
+        const wrap = document.getElementById('indicator-help-glossary-wrap');
+        const body = document.getElementById('indicator-help-glossary');
+        if (!wrap || !body) return;
+
+        body.innerHTML = '';
+        const rows = Array.isArray(glossary) ? glossary : [];
+        if (!rows.length) {
+            wrap.classList.add('hidden');
+            return;
+        }
+
+        rows.forEach(function (row) {
+            const tr = document.createElement('tr');
+            const label = document.createElement('th');
+            const meaning = document.createElement('td');
+
+            label.scope = 'row';
+            label.className = 'whitespace-nowrap px-3 py-2 font-semibold text-sky-300';
+            meaning.className = 'px-3 py-2 leading-relaxed text-zinc-200';
+            label.textContent = (row && row.label) || '';
+            meaning.textContent = (row && row.meaning) || '';
+
+            tr.appendChild(label);
+            tr.appendChild(meaning);
+            body.appendChild(tr);
+        });
+        wrap.classList.remove('hidden');
+    }
+
     function openLayersPopup() {
         if (!layersPanelEl) return;
         layersPanelEl.classList.remove('hidden');
@@ -330,6 +432,7 @@
                 examplesEl.appendChild(li);
             });
         }
+        renderGlossary(item.glossary || []);
         renderDiagrams(item.diagrams || []);
         helpModal.classList.remove('hidden');
         document.documentElement.classList.add('overflow-hidden');
@@ -343,11 +446,147 @@
         }
     }
 
+    /**
+     * Открывает существующую страницу настроек в iframe-модали. Параметр embed
+     * скрывает глобальное меню в layouts.app, но оставляет исходную Blade-форму:
+     * это едино для всех индикаторов, включая будущие, без копирования форм.
+     */
+    function openSettings(url, title) {
+        if (!settingsModal || !settingsFrame || !url) return;
+        const embeddedUrl = new URL(url, window.location.origin);
+        embeddedUrl.searchParams.set('embed', '1');
+
+        settingsFrame.dataset.submitting = '0';
+        settingsFrame.dataset.loaded = '0';
+        if (settingsTitle) settingsTitle.textContent = title || 'Настройки индикатора';
+        settingsFrame.src = embeddedUrl.toString();
+        settingsModal.classList.remove('hidden');
+        document.documentElement.classList.add('overflow-hidden');
+    }
+
+    function closeSettings() {
+        if (!settingsModal || !settingsFrame) return;
+        settingsModal.classList.add('hidden');
+        // Сбрасываем документ формы, чтобы он не оставался в DOM со старыми
+        // значениями и сообщениями об ошибках при открытии другого индикатора.
+        settingsFrame.src = 'about:blank';
+        if ((!layersPanelEl || layersPanelEl.classList.contains('hidden'))
+            && (!helpModal || helpModal.classList.contains('hidden'))) {
+            document.documentElement.classList.remove('overflow-hidden');
+        }
+    }
+
+    function bindEmbeddedSettingsDocument() {
+        if (!settingsFrame) return;
+        let doc;
+        try {
+            doc = settingsFrame.contentDocument;
+        } catch (_) {
+            return;
+        }
+        if (!doc || !doc.body || !doc.body.dataset.indicatorSettingsEmbed) return;
+
+        // При сохранении Laravel перенаправляет обратно на edit-страницу.
+        // Ошибки остаются внутри модали; успешное сохранение закрывает её и
+        // обновляет родительский график, чтобы новый слой применился сразу.
+        if (settingsFrame.dataset.loaded === '1' && settingsFrame.dataset.submitting === '1') {
+            const hasValidationErrors = Boolean(doc.querySelector('.text-rose-200'));
+            if (!hasValidationErrors) {
+                closeSettings();
+                // Не перезагружаем всю страницу: график сохраняет выбранный
+                // инструмент, таймфрейм и состояние панелей. Родительская
+                // страница ловит событие и заново запрашивает включённые слои,
+                // поэтому DeMarker и любой другой индикатор меняется сразу.
+                window.dispatchEvent(new CustomEvent('platform:indicator-settings-saved'));
+                return;
+            }
+            settingsFrame.dataset.submitting = '0';
+        }
+        settingsFrame.dataset.loaded = '1';
+
+        doc.querySelectorAll('form').forEach(function (form) {
+            form.addEventListener('submit', function () {
+                settingsFrame.dataset.submitting = '1';
+            }, { once: true });
+        });
+
+        // Все формы настроек используют один modal, но большинство Blade-шаблонов
+        // не содержат собственной «Отмена». Поэтому создаём общую панель действий
+        // прямо в iframe: у каждого редактируемого индикатора будут «Сбросить» и
+        // «Отмена» без копирования разметки в 80+ файлов.
+        //
+        // DELETE удаляет пользовательский override: следующий расчёт возьмёт
+        // defaultParams() сервиса конкретного индикатора.
+        const indicatorForm = doc.querySelector('form[action*="/indicators/"]');
+        if (indicatorForm && !indicatorForm.querySelector('[data-indicator-modal-actions]')) {
+            const actions = doc.createElement('div');
+            actions.dataset.indicatorModalActions = '';
+            actions.className = 'flex flex-wrap items-center gap-2 pt-1';
+
+            const reset = doc.createElement('button');
+            reset.type = 'button';
+            reset.dataset.resetIndicatorDefaults = '';
+            reset.className = 'rounded border border-amber-700/70 px-4 py-2 text-sm text-amber-200 hover:bg-amber-950/50';
+            reset.textContent = 'Сбросить по умолчанию';
+            reset.addEventListener('click', function () {
+                if (!window.confirm('Сбросить все настройки этого индикатора к значениям по умолчанию?')) return;
+                const resetForm = doc.createElement('form');
+                resetForm.method = 'post';
+                resetForm.action = doc.location.pathname.replace(/\/$/, '') + '/settings';
+                const csrf = indicatorForm.querySelector('input[name="_token"]');
+                resetForm.innerHTML = (csrf ? csrf.outerHTML : '') + '<input type="hidden" name="_method" value="DELETE">';
+                doc.body.appendChild(resetForm);
+                settingsFrame.dataset.submitting = '1';
+                resetForm.submit();
+            });
+
+            const cancel = doc.createElement('button');
+            cancel.type = 'button';
+            cancel.className = 'rounded border border-zinc-600 px-4 py-2 text-sm text-zinc-300 hover:bg-zinc-800';
+            cancel.textContent = 'Отмена';
+            cancel.addEventListener('click', closeSettings);
+
+            actions.appendChild(reset);
+            actions.appendChild(cancel);
+            indicatorForm.appendChild(actions);
+        }
+
+        // «Отмена» внутри любой существующей формы закрывает modal вместо
+        // загрузки страницы бота в iframe. Ссылки на другие settings-страницы
+        // не используются в embed-режиме: навигация _nav скрыта на сервере.
+        doc.addEventListener('click', function (event) {
+            const link = event.target.closest('a[href]');
+            if (!link) return;
+            const target = new URL(link.href, window.location.origin);
+            if (/^\/bots\/\d+\/?$/.test(target.pathname)) {
+                event.preventDefault();
+                closeSettings();
+            }
+        });
+    }
+
+    if (settingsFrame) {
+        settingsFrame.addEventListener('load', bindEmbeddedSettingsDocument);
+    }
+    // Capture-фаза нужна потому, что у некоторых chart-overlays есть свои
+    // click-обработчики с stopPropagation(). Мы перехватываем ⚙ раньше них.
+    document.addEventListener('click', function (event) {
+        const trigger = event.target.closest('[data-indicator-settings-modal]');
+        if (!trigger) return;
+        event.preventDefault();
+        openSettings(trigger.href, trigger.dataset.indicatorSettingsTitle || trigger.title);
+    }, true);
+    document.querySelectorAll('[data-indicator-settings-close]').forEach(function (button) {
+        button.addEventListener('click', closeSettings);
+    });
+
     window.PlatformIndicatorsPopup = {
         open: openLayersPopup,
         close: closeLayersPopup,
         openHelp,
         closeHelp,
+        openSettings,
+        closeSettings,
         isOpen: function () { return layersPanelEl && !layersPanelEl.classList.contains('hidden'); },
     };
 

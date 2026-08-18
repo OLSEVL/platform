@@ -349,6 +349,147 @@ class TelegramAlertService
         return $messageResult;
     }
 
+    /**
+     * Универсальный текстовый алерт для стратегий без «сильного уровня».
+     * Его используют Sweep / Raid и Strong Trend + DeMarker: данные их сетапов
+     * различаются, поэтому не подставляем в сообщение несуществующий level_price.
+     * Для DeMarker при наличии свечей дополнительно шлётся PNG со свечами и панелью осциллятора.
+     *
+     * @param  array<string, mixed>  $decision
+     * @param  list<array<string, mixed>>  $closedCandles
+     * @return array{ok:bool,error?:string,message_id?:int,photo_ok?:bool,photo_error?:string}
+     */
+    public function sendStrategyAlert(
+        Bot $bot,
+        string $instrument,
+        array $decision,
+        ?float $payout,
+        int $expirySec,
+        ?float $entryPrice = null,
+        array $closedCandles = [],
+    ): array {
+        /** @var array<string, mixed> $config */
+        $config = is_array($bot->config) ? $bot->config : [];
+        if (! (bool) ($config['telegram_enabled'] ?? false)) {
+            return ['ok' => false, 'error' => 'telegram_disabled'];
+        }
+        if ((string) ($config['telegram_notify_on'] ?? 'signal_trade') !== 'signal_trade') {
+            return ['ok' => false, 'error' => 'telegram_notify_disabled'];
+        }
+
+        $token = trim((string) ($config['telegram_bot_token'] ?? ''));
+        $recipients = TelegramChatAccess::recipientChatIds($config);
+        if ($token === '' || $recipients === []) {
+            return ['ok' => false, 'error' => 'telegram_token_or_chat_id_missing'];
+        }
+
+        // Poll getUpdates нужен, чтобы /start новых чатов попадал в telegram_subscribers.
+        if (TelegramChatAccess::autoSubscribeEnabled($config)) {
+            app(StrongLevelTelegramProcessManager::class)->ensurePollRunning($bot->id);
+        }
+
+        $side = strtoupper((string) ($decision['side'] ?? ''));
+        $sideLabel = $side === 'CALL' ? 'CALL ▲' : ($side === 'PUT' ? 'PUT ▼' : $side);
+        $reasons = $this->normalizeAlertReasons($decision['reasons_short'] ?? []);
+        $timeframeLabel = (int) ($config['timeframe'] ?? 1) === 4030 ? 'S30' : 'M1';
+        $lines = [
+            '📣 <b>'.htmlspecialchars((string) $bot->name, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8').'</b> · '.$sideLabel,
+            '',
+            'Пара: <b>'.htmlspecialchars($instrument, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8').'</b>',
+            'Таймфрейм: '.$timeframeLabel.' · экспирация '.$expirySec.' сек',
+        ];
+        if ($entryPrice !== null) {
+            $lines[] = 'Вход: '.$this->formatResultPrice($entryPrice);
+        }
+        if ($payout !== null) {
+            $lines[] = 'Payout: '.number_format($payout, 1, '.', '').'%';
+        }
+        if ($reasons !== []) {
+            $lines[] = '';
+            $lines[] = '<b>Условия:</b>';
+            foreach ($reasons as $reason) {
+                $lines[] = '• '.htmlspecialchars($reason, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+            }
+        }
+        $lines[] = 'Время: '.now()->utc()->format('d.m.Y H:i').' UTC';
+
+        $pngPath = null;
+        $caption = null;
+        $photoOk = null;
+        $photoError = null;
+        $sendChart = (bool) ($config['telegram_send_chart'] ?? true);
+        if ($sendChart && $bot->type === 'strong_trend_demarker' && $closedCandles !== [] && extension_loaded('gd')) {
+            $chartLevels = app(StrongTrendDemarkerChartBuilder::class)
+                ->chartLevelsFromDecision($decision, $closedCandles);
+            $pngPath = app(TelegramChartImageRenderer::class)->render($instrument, $closedCandles, $chartLevels, [
+                'timeframe_label' => $timeframeLabel,
+            ]);
+            if ($pngPath === null) {
+                $photoOk = false;
+                $photoError = 'render_failed';
+                Log::warning('strong_trend_demarker_photo_skipped', [
+                    'bot_id' => $bot->id,
+                    'instrument' => $instrument,
+                    'reason' => 'render_returned_null',
+                ]);
+            } else {
+                $caption = '📣 <b>'.htmlspecialchars($instrument, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8').'</b>';
+                if ($side !== '') {
+                    $caption .= ' · '.$side;
+                }
+                $caption .= ' · '.$timeframeLabel;
+            }
+        } elseif ($sendChart && $bot->type === 'strong_trend_demarker' && ! extension_loaded('gd')) {
+            $photoOk = false;
+            $photoError = 'gd_extension_missing';
+        }
+
+        $messageResult = $this->broadcastToRecipients($token, $recipients, function (string $chatId) use (
+            $token,
+            $pngPath,
+            $caption,
+            $lines,
+            $bot,
+            $instrument,
+            &$photoOk,
+            &$photoError,
+        ): array {
+            if ($pngPath !== null && $caption !== null) {
+                $photoResult = $this->sendPhoto($token, $chatId, $pngPath, $caption);
+                $ok = (bool) ($photoResult['ok'] ?? false);
+                $photoOk = $photoOk === null ? $ok : ($photoOk && $ok);
+                if (! $ok) {
+                    $err = (string) ($photoResult['error'] ?? 'telegram_photo_failed');
+                    $photoError = $photoError !== null ? $photoError.';'.$err : $err;
+                    Log::warning('strong_trend_demarker_photo_failed', [
+                        'bot_id' => $bot->id,
+                        'instrument' => $instrument,
+                        'chat_id' => $chatId,
+                        'error' => $err,
+                    ]);
+                }
+            }
+
+            return $this->sendMessage($token, $chatId, implode("\n", $lines));
+        });
+
+        if ($pngPath !== null) {
+            @unlink($pngPath);
+        }
+
+        if (! ($messageResult['ok'] ?? false)) {
+            return array_merge($messageResult, array_filter([
+                'photo_ok' => $photoOk,
+                'photo_error' => $photoError,
+            ]));
+        }
+
+        return array_merge($messageResult, array_filter([
+            'photo_ok' => $photoOk,
+            'photo_error' => $photoError,
+        ]));
+    }
+
     /** Цена для текста результата: до 5 знаков без лишних нулей. */
     private function formatResultPrice(float $price): string
     {

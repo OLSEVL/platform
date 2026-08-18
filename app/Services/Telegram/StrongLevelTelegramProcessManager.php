@@ -8,11 +8,21 @@ use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Log;
 
 /**
- * Long polling getUpdates для Strong Level / Strong Trend Telegram (inline-кнопка LLM-анализа).
+ * Long polling getUpdates: LLM-кнопки Strong Level и /start автоподписка
+ * (в том числе Sweep / Raid и Strong Trend + DeMarker).
  */
 class StrongLevelTelegramProcessManager
 {
     public const RESTART_FLAG_RELATIVE = 'framework/telegram-strong-level-restart.flag';
+
+    /**
+     * Poll getUpdates нужен для LLM-кнопок и для /start автоподписки.
+     */
+    public static function pollSupported(string $botType): bool
+    {
+        return StrongLevelTelegramLlmButton::supportsBotType($botType)
+            || in_array($botType, ['strong_trend_demarker', 'sweep_raid_liquidity'], true);
+    }
 
     /**
      * @return array{ok:bool,poll_running:bool,poll_pids:list<int>,queue_running:bool,queue_pids:list<int>}
@@ -65,17 +75,20 @@ class StrongLevelTelegramProcessManager
 
         // Poll нужен и для LLM-кнопок, и для /start автоподписки на любом Telegram-боте.
         if (
-            ! StrongLevelTelegramLlmButton::supportsBotType($bot->type)
+            ! self::pollSupported($bot->type)
             && ! TelegramChatAccess::autoSubscribeEnabled($cfg)
             && ! (bool) ($cfg['telegram_enabled'] ?? false)
         ) {
             return ['ok' => false, 'error' => 'unsupported_bot_type'];
         }
 
+        $needsAnalystQueue = StrongLevelTelegramLlmButton::supportsBotType($bot->type);
         $analystQueue = app(TelegramAnalystProcessManager::class);
         $beforePoll = $this->pollPids($bot->id);
         $this->stopProcessesHard($beforePoll);
-        $analystQueue->stopQueueWorker();
+        if ($needsAnalystQueue) {
+            $analystQueue->stopQueueWorker();
+        }
         usleep(400_000);
 
         // php-fpm (www-data) не может убить poll, запущенный от CLI (user o) —
@@ -83,7 +96,9 @@ class StrongLevelTelegramProcessManager
         $stillPoll = $this->pollPids($bot->id);
         if ($stillPoll !== []) {
             $this->requestDeferredRestart($bot->id);
-            $analystQueue->requestDeferredRestart($bot->id);
+            if ($needsAnalystQueue) {
+                $analystQueue->requestDeferredRestart($bot->id);
+            }
 
             return [
                 'ok' => true,
@@ -95,14 +110,16 @@ class StrongLevelTelegramProcessManager
             ];
         }
 
-        $queueStarted = $analystQueue->startQueueWorker();
+        $queueStarted = $needsAnalystQueue ? $analystQueue->startQueueWorker() : true;
         $pollStarted = $this->startPoll($bot->id);
         // Chart Analyst poll (/menu) общий для LLM-кнопок — после перезапуска queue поднимаем и его.
-        $analystQueue->ensureConfiguredServices();
+        if ($needsAnalystQueue) {
+            $analystQueue->ensureConfiguredServices();
+        }
         usleep(300_000);
         $status = $this->status($bot->id);
 
-        if (! ($status['poll_running'] && $queueStarted)) {
+        if (! $status['poll_running'] || ($needsAnalystQueue && ! $queueStarted)) {
             return [
                 'ok' => false,
                 'error' => 'start_failed',
@@ -118,7 +135,9 @@ class StrongLevelTelegramProcessManager
         return [
             'ok' => true,
             'status' => $status,
-            'message' => 'Poll '.$botLabel.' и queue telegram-analyst перезапущены.',
+            'message' => $needsAnalystQueue
+                ? 'Poll '.$botLabel.' и queue telegram-analyst перезапущены.'
+                : 'Poll '.$botLabel.' перезапущен — /start будет добавлять чаты в подписчики.',
         ];
     }
 
@@ -262,6 +281,8 @@ class StrongLevelTelegramProcessManager
     {
         return match ($type) {
             'strong_trend_telegram' => 'Strong Trend Telegram',
+            'strong_trend_demarker' => 'Strong Trend + DeMarker',
+            'sweep_raid_liquidity' => 'Sweep / Raid Liquidity',
             'candle_reversal_confirm' => 'Candle Reversal + Confirm',
             'rsi_contrtrend' => 'RSI Contrtrend',
             'bollinger_contrtrend' => 'Bollinger Contrtrend',

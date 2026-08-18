@@ -7,6 +7,7 @@ use App\Models\BotAnalysisRun;
 use App\Models\BotLlmLog;
 use App\Models\BotSignal;
 use App\Models\BotTrade;
+use App\Models\BotVirtualTrade;
 use App\Models\IndicatorSetting;
 use App\Models\PocketInstrument;
 use App\Services\Bots\Strategies\BotStrategyInterface;
@@ -23,7 +24,9 @@ use App\Services\Bots\Strategies\OpenRouterLlmAnalystStrategy;
 use App\Services\Bots\Strategies\OpenRouterLlmStrategy;
 use App\Services\Bots\Strategies\SmcFlowStrategy;
 use App\Services\Bots\Strategies\StrongLevelStrategy;
+use App\Services\Bots\Strategies\StrongTrendDemarkerStrategy;
 use App\Services\Bots\Strategies\StrongTrendTelegramStrategy;
+use App\Services\Bots\Strategies\SweepRaidLiquidityStrategy;
 use App\Services\Bots\Strategies\ThreeCandlesInRowStrategy;
 use App\Services\Bots\Strategies\EnvelopTrendStrategy;
 use App\Services\Bots\Strategies\PriceChannelTradeStrategy;
@@ -40,6 +43,7 @@ use App\Services\Bots\Strategies\CustomCandlesImpulseStrategy;
 use App\Services\CandleService;
 use App\Services\Indicators\SmcFlowBotSignalAnalyzer;
 use App\Services\Indicators\SmcFlowIndicatorService;
+use App\Services\Indicators\DemarkerIndicatorService;
 use App\Services\Mirror\MirrorTradeDispatcher;
 use App\Services\Telegram\TelegramAlertService;
 use App\Support\BotScanProgress;
@@ -56,6 +60,8 @@ class BotEngineService
         private readonly BotDataService $botDataService,
         private readonly OpenRouterClient $openRouterClient,
         private readonly SmcFlowBotSignalAnalyzer $smcFlowBotSignalAnalyzer,
+        private readonly BotVirtualTradeSettlementService $virtualSettlement,
+        private readonly BotInstrumentLossStateService $lossState,
     ) {}
 
     public function scanBot(Bot $bot): array
@@ -67,6 +73,12 @@ class BotEngineService
 
         if (! $bot->is_active) {
             return ['processed' => 0, 'signals' => 0, 'trades' => 0];
+        }
+
+        // До нового scan закрываем законченные виртуальные сделки. Иначе следующий
+        // сигнал той же пары увидел бы устаревший счётчик «неотработок».
+        if ($bot->type === BotInstrumentLossStateService::BOT_TYPE) {
+            $this->virtualSettlement->settleDueVirtualTrades($bot->id);
         }
 
         $runtime = $this->runtimeSettings($bot);
@@ -173,7 +185,26 @@ class BotEngineService
                         ],
                     ]) : null;
                     $seriesTimeframe = (int) ($runtime['series_timeframe'] ?? 1);
-                    $series = $this->botDataService->series($instrument, $count, true, $staleAfterSec, $seriesTimeframe);
+                    $mtf = [];
+                    // Strong Level / CRC: M1+M5+M15+H1 из одной выборки S5, а не 4 похода в candles.
+                    if ($bot->type === 'candle_reversal_confirm' || $bot->type === 'strong_level') {
+                        $packed = $this->botDataService->seriesWithMtf(
+                            $instrument,
+                            $count,
+                            [
+                                5 => (int) ($config['m5_take'] ?? 120),
+                                15 => (int) ($config['m15_take'] ?? 80),
+                                60 => (int) ($config['h1_take'] ?? 12),
+                            ],
+                            true,
+                            $staleAfterSec,
+                            $seriesTimeframe,
+                        );
+                        $series = $packed;
+                        $mtf = $packed['mtf'];
+                    } else {
+                        $series = $this->botDataService->series($instrument, $count, true, $staleAfterSec, $seriesTimeframe);
+                    }
                     $closed = $series['closed'];
                     if (count($closed) < $minClosedBars) {
                         $this->finishAnalysisRun($analysisRun, BotAnalysisRun::STATUS_SKIPPED, 'not_enough_bars', [
@@ -184,15 +215,7 @@ class BotEngineService
                         continue;
                     }
                     $partial = $series['partial'];
-                    $mtf = [];
-                    if ($bot->type === 'candle_reversal_confirm' || $bot->type === 'strong_level') {
-                        // Strong Level: M5/M15/H1 для bias и swing-уровней; M1 — тайминг входа.
-                        $mtf = $this->botDataService->mtfSeries($instrument, [
-                            5 => (int) ($config['m5_take'] ?? 120),
-                            15 => (int) ($config['m15_take'] ?? 80),
-                            60 => (int) ($config['h1_take'] ?? 48),
-                        ]);
-                    } elseif ($bot->type === 'openrouter_llm' || $bot->type === 'openrouter_llm_analyst') {
+                    if ($bot->type === 'openrouter_llm' || $bot->type === 'openrouter_llm_analyst') {
                         // OpenRouter: MTF-контекст из настроек (для analyst — M1/M5/M15/H1).
                         $mtf = $this->openRouterMtfSeries($instrument, $config, $bot->type === 'openrouter_llm_analyst');
                     }
@@ -227,6 +250,9 @@ class BotEngineService
                     $decisionExpirySec = $expirySec;
                     if (in_array($bot->type, ['smc_flow', 'strong_level', 'candle_reversal_confirm'], true) && isset($decision['expiry_sec'])) {
                         $decisionExpirySec = max(120, min(600, (int) $decision['expiry_sec']));
+                    } elseif ($bot->type === 'sweep_raid_liquidity' && isset($decision['expiry_sec'])) {
+                        // Свип/рейд на M1 допускает стандартную минутную экспирацию.
+                        $decisionExpirySec = max(60, min(900, (int) $decision['expiry_sec']));
                     }
 
                     $confidence = (float) ($decision['confidence'] ?? 0);
@@ -266,13 +292,62 @@ class BotEngineService
                     };
                     $dedupeKey = sprintf('%d:%s:%d:%s', $bot->id, $instrument, $bucket, $dedupeSuffix);
 
-                    if (BotSignal::query()->where('dedupe_key', $dedupeKey)->exists()) {
+                    $isVirtualDuplicate = $bot->type === BotInstrumentLossStateService::BOT_TYPE
+                        && BotVirtualTrade::query()->where('dedupe_key', $dedupeKey)->exists();
+                    if (BotSignal::query()->where('dedupe_key', $dedupeKey)->exists() || $isVirtualDuplicate) {
                         $this->finishAnalysisRun($analysisRun, BotAnalysisRun::STATUS_SKIPPED, 'dedupe', [
                             'dedupe_key' => $dedupeKey,
                             'decision' => $decision,
                         ]);
 
                         continue;
+                    }
+
+                    if ($bot->type === BotInstrumentLossStateService::BOT_TYPE) {
+                        // 0 = виртуальная серия выкл.: сразу paper-сделка. Иначе ждём N LOSS подряд по паре.
+                        $lossesBeforeEntry = max(0, min(20, (int) ($config['losses_before_entry'] ?? 2)));
+                        if ($lossesBeforeEntry > 0) {
+                            $hasOpenVirtualTrade = BotVirtualTrade::query()
+                                ->where('bot_id', $bot->id)
+                                ->where('instrument', $instrument)
+                                ->where('status', BotVirtualTrade::STATUS_OPEN)
+                                ->exists();
+                            if ($hasOpenVirtualTrade) {
+                                // Не открываем вторую виртуальную сделку, пока не известен
+                                // итог первой: серия должна состоять из последовательных результатов.
+                                $this->finishAnalysisRun($analysisRun, BotAnalysisRun::STATUS_SKIPPED, 'virtual_trade_pending', [
+                                    'decision' => $decision,
+                                ]);
+
+                                continue;
+                            }
+
+                            $currentLosses = $this->lossState->consecutiveLosses($bot, $instrument);
+                            if ($currentLosses < $lossesBeforeEntry) {
+                                // Виртуальный вход берёт ту же цену и ту же экспирацию, что
+                                // будущая реальная сделка. Его результат обновит счётчик пары.
+                                $virtualEntryAt = now();
+                                $virtualEntryPrice = (float) (($partial['close'] ?? null) ?? end($closed)['close']);
+                                BotVirtualTrade::query()->create([
+                                    'bot_id' => $bot->id,
+                                    'instrument' => $instrument,
+                                    'side' => $side,
+                                    'status' => BotVirtualTrade::STATUS_OPEN,
+                                    'result' => BotVirtualTrade::RESULT_PENDING,
+                                    'entry_time' => $virtualEntryAt,
+                                    'expiry_time' => $virtualEntryAt->copy()->addSeconds($decisionExpirySec),
+                                    'entry_price' => $virtualEntryPrice,
+                                    'dedupe_key' => $dedupeKey,
+                                ]);
+                                $this->finishAnalysisRun($analysisRun, BotAnalysisRun::STATUS_SKIPPED, 'virtual_signal_recorded', [
+                                    'decision' => $decision,
+                                    'virtual_losses' => $currentLosses,
+                                    'losses_before_entry' => $lossesBeforeEntry,
+                                ]);
+
+                                continue;
+                            }
+                        }
                     }
 
                     // Режим alert-only: пишем сигнал + Telegram, но не создаём paper-сделку.
@@ -487,9 +562,29 @@ class BotEngineService
                         );
                     }
 
-                    // Strong Level / Candle Reversal / RSI Contrtrend: push в Telegram после paper-сделки.
+                    // Telegram только после настоящей paper-сделки: виртуальные проверки
+                    // Strong Trend + DeMarker не должны создавать торговые уведомления.
                     $telegramResult = null;
-                    if (LevelBounceBotTypes::supportsCards($bot->type)) {
+                    if (in_array($bot->type, ['strong_trend_demarker', 'sweep_raid_liquidity'], true)) {
+                        $telegramResult = app(TelegramAlertService::class)->sendStrategyAlert(
+                            $bot,
+                            $instrument,
+                            $decision,
+                            $payoutSnapshot,
+                            $decisionExpirySec,
+                            $entryPrice,
+                            $closed,
+                        );
+                        if (! ($telegramResult['ok'] ?? false)
+                            && ! in_array($telegramResult['error'] ?? '', ['telegram_disabled', 'telegram_notify_disabled'], true)) {
+                            Log::warning('strategy_telegram_alert_failed', [
+                                'bot_id' => $bot->id,
+                                'bot_type' => $bot->type,
+                                'instrument' => $instrument,
+                                'error' => $telegramResult['error'] ?? 'unknown',
+                            ]);
+                        }
+                    } elseif (LevelBounceBotTypes::supportsCards($bot->type)) {
                         $telegramResult = app(TelegramAlertService::class)->sendStrongLevelAlert(
                             $bot,
                             $instrument,
@@ -833,12 +928,30 @@ class BotEngineService
             ];
         }
 
-        $series = $this->botDataService->series(
-            $instrument,
-            $runtime['count'],
-            true,
-            $runtime['stale_after_sec']
-        );
+        $mtf = [];
+        if ($bot->type === 'candle_reversal_confirm' || $bot->type === 'strong_level') {
+            $cfg = $runtime['config'];
+            $packed = $this->botDataService->seriesWithMtf(
+                $instrument,
+                $runtime['count'],
+                [
+                    5 => (int) ($cfg['m5_take'] ?? 120),
+                    15 => (int) ($cfg['m15_take'] ?? 80),
+                    60 => (int) ($cfg['h1_take'] ?? 12),
+                ],
+                true,
+                $runtime['stale_after_sec'],
+            );
+            $series = $packed;
+            $mtf = $packed['mtf'];
+        } else {
+            $series = $this->botDataService->series(
+                $instrument,
+                $runtime['count'],
+                true,
+                $runtime['stale_after_sec']
+            );
+        }
         $closed = $series['closed'];
         if (count($closed) < $runtime['min_closed_bars']) {
             return [
@@ -857,15 +970,7 @@ class BotEngineService
             ];
         }
 
-        $mtf = [];
-        if ($bot->type === 'candle_reversal_confirm' || $bot->type === 'strong_level') {
-            $cfg = $runtime['config'];
-            $mtf = $this->botDataService->mtfSeries($instrument, [
-                5 => (int) ($cfg['m5_take'] ?? 120),
-                15 => (int) ($cfg['m15_take'] ?? 80),
-                60 => (int) ($cfg['h1_take'] ?? 48),
-            ]);
-        } elseif ($bot->type === 'openrouter_llm' || $bot->type === 'openrouter_llm_analyst') {
+        if ($bot->type === 'openrouter_llm' || $bot->type === 'openrouter_llm_analyst') {
             $mtf = $this->openRouterMtfSeries($instrument, $runtime['config'], $bot->type === 'openrouter_llm_analyst');
         }
 
@@ -1039,10 +1144,13 @@ class BotEngineService
         $config = is_array($bot->config) ? $bot->config : [];
         $defaultCount = match ($bot->type) {
             'smc_flow' => 500,
+            // Длинная история нужна для подтверждённых фракталов и активных уровней ликвидности.
+            'sweep_raid_liquidity' => 500,
             'strong_level' => 500,
             'candle_reversal_confirm' => 500,
             'openrouter_llm_analyst' => 120,
             'strong_trend_telegram' => 120,
+            'strong_trend_demarker' => 120,
             // Wave B vola-adaptive: нужна ~1 день M1 для AdaptSoldiersHeight / AdaptSignalCandleHeight.
             'vol_adaptive_candles', 'three_soldier_vol_adaptive', 'pivot_points' => 2000,
             default => LevelBounceBotTypes::isOsEngineBinary($bot->type) ? 150 : 120,
@@ -1056,7 +1164,9 @@ class BotEngineService
         $expirySec = match ($bot->type) {
             'three_candles_in_row' => (int) ($config['expiry_sec'] ?? 60),
             'smc_flow' => (int) ($config['expiry_sec'] ?? 180),
+            'sweep_raid_liquidity' => (int) ($config['expiry_sec'] ?? 60),
             'strong_trend_telegram' => (int) ($config['expiry_sec'] ?? 60),
+            'strong_trend_demarker' => (int) ($config['expiry_sec'] ?? 30),
             'strong_level' => (int) ($config['expiry_sec_bounce'] ?? 180),
             // По ТЗ для MTF-разворота вход идёт на 5 минут независимо от рыночной фазы.
             'candle_reversal_confirm' => (int) ($config['expiry_sec'] ?? 300),
@@ -1072,10 +1182,15 @@ class BotEngineService
             'candle_reversal_confirm' => 82.0,
             'three_candles_in_row' => 80.0,
             'strong_trend_telegram' => 80.0,
+            'strong_trend_demarker' => 80.0,
             default => LevelBounceBotTypes::isOsEngineBinary($bot->type) ? 75.0 : 80.0,
         });
         $staleAfterSec = (int) ($config['stale_after_sec'] ?? (LevelBounceBotTypes::isOsEngineBinary($bot->type) ? 60 : 30));
-        $streakLen = max(2, min(30, (int) ($config['streak_len'] ?? 6)));
+        // DeMarker: 0 = серия выкл.; Strong Trend Telegram: минимум 2 (сама серия и есть сигнал).
+        $streakLenRaw = (int) ($config['streak_len'] ?? 6);
+        $streakLen = $bot->type === 'strong_trend_demarker'
+            ? max(0, min(30, $streakLenRaw))
+            : max(2, min(30, $streakLenRaw));
         // +1 бар, если ждём контр-свечу после серии (wait_opposite_then_continue).
         $trendPatternBars = $streakLen + ((bool) ($config['wait_opposite_then_continue'] ?? false) ? 1 : 0);
         // RSI Contrtrend / PinBar: SMA length.
@@ -1092,8 +1207,10 @@ class BotEngineService
         $rviLen = max(2, (int) ($config['rvi_length'] ?? 10));
         $minClosedBars = match ($bot->type) {
             'smc_flow' => 80,
+            'sweep_raid_liquidity' => max(10, (int) ($config['min_closed_bars'] ?? 30)),
             'strong_level' => max(80, (int) ($config['min_closed_bars'] ?? 200)),
             'strong_trend_telegram' => $trendPatternBars,
+            'strong_trend_demarker' => max($trendPatternBars, (int) ($config['demarker_period'] ?? 6) + 2),
             // Для MTF-разворота нужен запас истории M1 и стабильная M5-агрегация.
             'candle_reversal_confirm' => max(80, (int) ($config['min_closed_bars'] ?? 200)),
             // OsEngine: SMA length+1 и RSI length+5.
@@ -1136,13 +1253,17 @@ class BotEngineService
             default => 3,
         };
         // Указываем таймфрейм входного потока для стратегии.
-        // Сейчас все поддерживаемые типы работают на M1 (timeframe=1).
+        // Strong Trend + DeMarker поддерживает S30 по умолчанию и M1 по выбору.
         $seriesTimeframe = match ($bot->type) {
+            'strong_trend_demarker' => in_array((int) ($config['timeframe'] ?? CandleService::TF_S30), [CandleService::TF_S30, 1], true)
+                ? (int) ($config['timeframe'] ?? CandleService::TF_S30)
+                : CandleService::TF_S30,
             default => 1,
         };
         $dedupeBucketSec = match ($bot->type) {
             'strong_trend_telegram' => max(60, min(3600, (int) ($config['dedupe_bucket_sec'] ?? 300))),
-            'smc_flow', 'strong_level', 'openrouter_llm', 'candle_reversal_confirm' => max(60, min(900, $expirySec)),
+            'strong_trend_demarker' => max(30, min(3600, (int) ($config['dedupe_bucket_sec'] ?? $expirySec))),
+            'smc_flow', 'strong_level', 'openrouter_llm', 'candle_reversal_confirm', 'sweep_raid_liquidity' => max(60, min(900, $expirySec)),
             default => LevelBounceBotTypes::isOsEngineBinary($bot->type)
                 ? max(60, min(900, $expirySec))
                 : max(60, min(3600, (int) ($config['dedupe_bucket_sec'] ?? 60))),
@@ -1213,8 +1334,10 @@ class BotEngineService
             'openrouter_llm' => new OpenRouterLlmStrategy($this->openRouterClient),
             'openrouter_llm_analyst' => new OpenRouterLlmAnalystStrategy($this->openRouterClient),
             'smc_flow' => new SmcFlowStrategy($this->smcFlowBotSignalAnalyzer),
+            'sweep_raid_liquidity' => new SweepRaidLiquidityStrategy,
             'strong_level' => new StrongLevelStrategy,
             'strong_trend_telegram' => new StrongTrendTelegramStrategy,
+            'strong_trend_demarker' => new StrongTrendDemarkerStrategy(new DemarkerIndicatorService),
             default => null,
         };
     }

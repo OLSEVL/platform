@@ -141,21 +141,83 @@ class BotDataService
     }
 
     /**
-     * Агрегированные свечи для MTF-стратегий (из M1 в БД). Ключи — минуты таймфрейма.
+     * M1 (или другой входной ТФ) плюс M5/M15/H1 из одной выборки S5.
+     *
+     * @param  array<int, int>  $tfToMaxBars
+     * @return array{
+     *     closed:list<array<string,mixed>>,
+     *     partial:array<string,mixed>|null,
+     *     series:list<array<string,mixed>>,
+     *     mtf:array<string, list<array{time:int,open:float,high:float,low:float,close:float,volume:float}>>
+     * }
+     */
+    public function seriesWithMtf(
+        string $instrument,
+        int $count,
+        array $tfToMaxBars,
+        bool $includePartial = true,
+        int $staleAfterSec = 30,
+        int $timeframe = 1,
+    ): array {
+        $map = $tfToMaxBars;
+        $map[$timeframe] = $count;
+        $bundle = $this->candleService->seriesBundle($instrument, $map);
+        $rows = $bundle[(string) $timeframe] ?? [];
+
+        $closed = array_map(static fn (array $r) => [
+            'time' => (int) ($r['time'] ?? 0),
+            'open' => (float) ($r['open'] ?? 0),
+            'high' => (float) ($r['high'] ?? 0),
+            'low' => (float) ($r['low'] ?? 0),
+            'close' => (float) ($r['close'] ?? 0),
+            'volume' => (float) ($r['volume'] ?? 0),
+            'is_partial' => false,
+        ], $rows);
+
+        $partial = null;
+        if ($includePartial) {
+            $partialCandidate = $this->currentCandleCache->getPartial($instrument);
+            if ($partialCandidate && $this->currentCandleCache->isFresh($partialCandidate, $staleAfterSec)) {
+                $lastClosedTime = ! empty($closed) ? (int) end($closed)['time'] : 0;
+                if ((int) $partialCandidate['time'] > $lastClosedTime) {
+                    $partial = $partialCandidate;
+                }
+            }
+        }
+
+        $series = $closed;
+        if ($partial) {
+            $series[] = $partial;
+        }
+
+        return [
+            'closed' => $closed,
+            'partial' => $partial,
+            'series' => $series,
+            'mtf' => $this->normalizeMtfBundle($bundle),
+        ];
+    }
+
+    /**
+     * Агрегированные свечи для MTF-стратегий. Все ТФ — из одной выборки S5.
      *
      * @param  array<int, int>  $tfToMaxBars
      * @return array<string, list<array{time:int,open:float,high:float,low:float,close:float,volume:float}>>
      */
     public function mtfSeries(string $instrument, array $tfToMaxBars): array
     {
+        return $this->normalizeMtfBundle($this->candleService->seriesBundle($instrument, $tfToMaxBars));
+    }
+
+    /**
+     * @param  array<string, list<array{time:int,open:float,high:float,low:float,close:float,volume:float}>>  $bundle
+     * @return array<string, list<array{time:int,open:float,high:float,low:float,close:float,volume:float}>>
+     */
+    private function normalizeMtfBundle(array $bundle): array
+    {
         $out = [];
-        foreach ($tfToMaxBars as $minutes => $maxBars) {
-            $minutes = (int) $minutes;
-            if (! CandleService::isDashboardTimeframe($minutes)) {
-                continue;
-            }
-            $rows = $this->candleService->seriesForDashboard($instrument, $minutes, null, null, (int) $maxBars);
-            $out[(string) $minutes] = array_map(static fn (array $c) => [
+        foreach ($bundle as $tf => $rows) {
+            $out[(string) $tf] = array_map(static fn (array $c) => [
                 'time' => (int) $c['time'],
                 'open' => (float) $c['open'],
                 'high' => (float) $c['high'],

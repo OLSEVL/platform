@@ -143,4 +143,12 @@ class TelegramChatAccessTest extends TestCase
         $this->assertSame(2, $result['recipients_count']);
         Http::assertSentCount(2);
     }
+
+    public function test_new_strategy_bots_support_telegram_poll_for_auto_subscribe(): void
+    {
+        $this->assertTrue(\App\Services\Telegram\StrongLevelTelegramProcessManager::pollSupported('strong_trend_demarker'));
+        $this->assertTrue(\App\Services\Telegram\StrongLevelTelegramProcessManager::pollSupported('sweep_raid_liquidity'));
+        $this->assertTrue(\App\Services\Telegram\StrongLevelTelegramProcessManager::pollSupported('strong_trend_telegram'));
+        $this->assertFalse(\App\Services\Telegram\StrongLevelTelegramProcessManager::pollSupported('smc_flow'));
+    }
 }

@@ -147,6 +147,13 @@ class BotSettlementService
                 $trade->update($updatePayload);
                 $trade->refresh();
                 $martingale->advanceAfterSettledTrade($trade, $martingaleResult, $mirrorStatusBefore);
+                // Новый бот включает реальную сделку в ту же серию, что и
+                // виртуальные проверки: WIN/DRAW обнуляет её, LOSS продолжает.
+                app(BotInstrumentLossStateService::class)->recordResult(
+                    $trade->bot,
+                    (string) $trade->instrument,
+                    (string) $trade->result,
+                );
             });
             $settled++;
             if ($usedEntryFallback) {
@@ -242,6 +249,16 @@ class BotSettlementService
             timeframeId: 1,
             barPeriodSec: 60
         );
+    }
+
+    /**
+     * Публичный доступ к единому расчёту цены на экспирации.
+     * Виртуальные сигналы используют его, чтобы не расходиться с paper-сделками
+     * на S30/M1 из-за разных правил open/close или временного дрейфа свечей.
+     */
+    public function marketPriceAtExpiry(string $instrument, int $expiryTs): ?float
+    {
+        return $this->resolveSettlementPriceAtExpiry($instrument, $expiryTs);
     }
 
     /**

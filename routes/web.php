@@ -59,6 +59,8 @@ Route::middleware('auth')->group(function () {
         Route::get('/{bot}/indicators/fvg', [BotChartIndicatorController::class, 'editFvg'])->name('indicators.fvg.edit');
         Route::get('/{bot}/indicators/liquidity-swings', [BotChartIndicatorController::class, 'editLiquiditySwings'])->name('indicators.liquidity-swings.edit');
         Route::put('/{bot}/indicators/liquidity-swings', [BotChartIndicatorController::class, 'updateLiquiditySwings'])->name('indicators.liquidity-swings.update');
+        Route::get('/{bot}/indicators/sweep-raid-liquidity', [BotChartIndicatorController::class, 'editSweepRaidLiquidity'])->name('indicators.sweep-raid-liquidity.edit');
+        Route::put('/{bot}/indicators/sweep-raid-liquidity', [BotChartIndicatorController::class, 'updateSweepRaidLiquidity'])->name('indicators.sweep-raid-liquidity.update');
         Route::get('/{bot}/indicators/smc-flow', [BotChartIndicatorController::class, 'editSmcFlow'])->name('indicators.smc-flow.edit');
         Route::put('/{bot}/indicators/smc-flow', [BotChartIndicatorController::class, 'updateSmcFlow'])->name('indicators.smc-flow.update');
         Route::get('/{bot}/indicators/bollinger', [BotChartIndicatorController::class, 'editBollinger'])->name('indicators.bollinger.edit');
@@ -201,6 +203,8 @@ Route::middleware('auth')->group(function () {
         Route::put('/{bot}/indicators/volatility-average-twice', [BotChartIndicatorController::class, 'updateVolatilityAverageTwice'])->name('indicators.volatility-average-twice.update');
         Route::get('/{bot}/indicators/volatility-stages-aw', [BotChartIndicatorController::class, 'editVolatilityStagesAW'])->name('indicators.volatility-stages-aw.edit');
         Route::put('/{bot}/indicators/volatility-stages-aw', [BotChartIndicatorController::class, 'updateVolatilityStagesAW'])->name('indicators.volatility-stages-aw.update');
+        // Универсальный сброс: ключ совпадает с именем слоя (dash → underscore).
+        Route::delete('/{bot}/indicators/{indicatorKey}/settings', [BotChartIndicatorController::class, 'resetToDefaults'])->name('indicators.reset');
         Route::get('/{bot}/activity', [BotController::class, 'activity'])->name('activity');
         Route::get('/{bot}/cards', [BotController::class, 'cards'])->name('cards');
         Route::get('/{bot}/cards/data', [BotController::class, 'cardsData'])->name('cards.data');

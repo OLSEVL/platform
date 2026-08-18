@@ -1,4 +1,7 @@
-{{-- Общая навигация для страниц индикаторов графика бота. --}}
+{{-- Общая навигация для отдельных страниц индикаторов графика бота.
+     В iframe модального окна она не нужна: пользователь остаётся на графике,
+     поэтому показываем только саму форму и кнопку закрытия родительского modal. --}}
+@unless (request()->boolean('embed'))
 <div class="flex flex-wrap items-center gap-2 text-sm">
     <a href="{{ route('bots.show', $bot) }}"
         class="inline-flex items-center rounded border border-zinc-600 bg-zinc-800 px-2.5 py-1 text-xs font-medium text-zinc-200 shadow-sm transition-colors hover:bg-zinc-700 hover:border-zinc-500 hover:text-zinc-50 focus:outline-none focus:ring-2 focus:ring-blue-500/50">График</a>
@@ -12,6 +15,8 @@
         class="inline-flex items-center rounded border border-zinc-600 bg-zinc-800 px-2.5 py-1 text-xs font-medium text-zinc-200 shadow-sm transition-colors hover:bg-zinc-700 hover:border-zinc-500 hover:text-zinc-50 focus:outline-none focus:ring-2 focus:ring-blue-500/50">Price Action (DGT)</a>
     <a href="{{ route('bots.indicators.liquidity-swings.edit', $bot) }}"
         class="inline-flex items-center rounded border border-zinc-600 bg-zinc-800 px-2.5 py-1 text-xs font-medium text-zinc-200 shadow-sm transition-colors hover:bg-zinc-700 hover:border-zinc-500 hover:text-zinc-50 focus:outline-none focus:ring-2 focus:ring-blue-500/50">Liquidity Swings</a>
+    <a href="{{ route('bots.indicators.sweep-raid-liquidity.edit', $bot) }}"
+        class="inline-flex items-center rounded border border-zinc-600 bg-zinc-800 px-2.5 py-1 text-xs font-medium text-zinc-200 shadow-sm transition-colors hover:bg-zinc-700 hover:border-zinc-500 hover:text-zinc-50 focus:outline-none focus:ring-2 focus:ring-blue-500/50">Sweep / Raid Liquidity</a>
     <a href="{{ route('bots.indicators.smc-flow.edit', $bot) }}"
         class="inline-flex items-center rounded border border-zinc-600 bg-zinc-800 px-2.5 py-1 text-xs font-medium text-zinc-200 shadow-sm transition-colors hover:bg-zinc-700 hover:border-zinc-500 hover:text-zinc-50 focus:outline-none focus:ring-2 focus:ring-blue-500/50">SMC Flow</a>
     <a href="{{ route('bots.indicators.bollinger.edit', $bot) }}"
@@ -155,3 +160,4 @@
     <a href="{{ route('bots.indicators.volatility-stages-aw.edit', $bot) }}"
         class="inline-flex items-center rounded border border-zinc-600 bg-zinc-800 px-2.5 py-1 text-xs font-medium text-zinc-200 shadow-sm transition-colors hover:bg-zinc-700 hover:border-zinc-500 hover:text-zinc-50 focus:outline-none focus:ring-2 focus:ring-blue-500/50">Vol Stages AW</a>
 </div>
+@endunless

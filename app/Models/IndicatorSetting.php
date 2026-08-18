@@ -24,6 +24,7 @@ use App\Services\Indicators\PriceActionDgtIndicatorService;
 use App\Services\Indicators\RsiIndicatorService;
 use App\Services\Indicators\SmaIndicatorService;
 use App\Services\Indicators\SmcFlowIndicatorService;
+use App\Services\Indicators\SweepRaidLiquidityIndicatorService;
 use App\Services\Indicators\CciIndicatorService;
 use App\Services\Indicators\StochasticIndicatorService;
 use App\Services\Indicators\SuperTrendIndicatorService;
@@ -89,6 +90,9 @@ class IndicatorSetting extends Model
 
     /** SMC Flow (3.txt): UT Bot и последующие модули — ключи SmcFlowIndicatorService::defaultParams(). */
     public const KEY_SMC_FLOW = 'smc_flow';
+
+    /** Отдельный оверлей стратегии: фракталы, свипы, рейды и первая откатная. */
+    public const KEY_SWEEP_RAID_LIQUIDITY = 'sweep_raid_liquidity';
 
     /** Ордерблоки LuxAlgo (orderblock.txt) — ключи OrderBlocksIndicatorService::defaultParams(). */
     public const KEY_ORDER_BLOCKS = 'order_blocks';
@@ -359,6 +363,28 @@ class IndicatorSetting extends Model
         $row = static::query()
             ->where('bot_id', $bot->id)
             ->where('indicator_key', self::KEY_SMC_FLOW)
+            ->first();
+        $db = is_array($row?->settings) ? $row->settings : [];
+
+        return array_replace($defaults, $legacy, $db);
+    }
+
+    /**
+     * Параметры самостоятельного оверлея Sweep / Raid Liquidity.
+     *
+     * Держим legacy config для совместимости, хотя новые сохранения всегда идут
+     * в indicator_settings, отдельно от торговой конфигурации бота.
+     */
+    public static function mergedSweepRaidLiquidityParams(Bot $bot): array
+    {
+        $defaults = SweepRaidLiquidityIndicatorService::defaultParams();
+        $botConfig = is_array($bot->config) ? $bot->config : [];
+        $legacy = isset($botConfig[self::KEY_SWEEP_RAID_LIQUIDITY]) && is_array($botConfig[self::KEY_SWEEP_RAID_LIQUIDITY])
+            ? $botConfig[self::KEY_SWEEP_RAID_LIQUIDITY]
+            : [];
+        $row = static::query()
+            ->where('bot_id', $bot->id)
+            ->where('indicator_key', self::KEY_SWEEP_RAID_LIQUIDITY)
             ->first();
         $db = is_array($row?->settings) ? $row->settings : [];
 

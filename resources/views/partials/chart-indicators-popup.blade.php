@@ -18,6 +18,7 @@
         ['id' => 'layer-fvg', 'help' => 'fvg', 'route' => 'bots.indicators.fvg.edit', 'label' => 'Имбалансы', 'section' => null],
         ['id' => 'layer-pa-dgt', 'help' => 'pa-dgt', 'route' => 'bots.indicators.price-action-dgt.edit', 'label' => 'Price Action (DGT)', 'section' => null],
         ['id' => 'layer-liquidity-swings', 'help' => 'liquidity-swings', 'route' => 'bots.indicators.liquidity-swings.edit', 'label' => 'Liquidity Swings', 'section' => null],
+        ['id' => 'layer-sweep-raid-liquidity', 'help' => 'sweep-raid-liquidity', 'route' => 'bots.indicators.sweep-raid-liquidity.edit', 'label' => 'Sweep / Raid Liquidity', 'section' => null],
         ['id' => 'layer-smc-flow', 'help' => 'smc-flow', 'route' => 'bots.indicators.smc-flow.edit', 'label' => 'SMC Flow (UT Bot)', 'section' => null],
 
         ['id' => 'layer-bollinger', 'help' => 'bollinger', 'route' => 'bots.indicators.bollinger.edit', 'label' => 'Bollinger', 'section' => null],
@@ -180,6 +181,8 @@
                             @if ($settingsBot)
                                 <a href="{{ route($row['route'], $settingsBot) }}"
                                     class="inline-flex h-8 w-8 items-center justify-center rounded-md border border-zinc-700 bg-zinc-800/90 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-100"
+                                    data-indicator-settings-modal
+                                    data-indicator-settings-title="{{ $title }}"
                                     title="Настройки: {{ $title }}"
                                     aria-label="Настройки {{ $title }}">{!! $gearSvg !!}</a>
                             @else
@@ -232,6 +235,22 @@
                 <h4 class="text-xs font-semibold uppercase tracking-wider text-sky-400/90 mb-1.5">На что смотреть</h4>
                 <p id="indicator-help-how" class="leading-relaxed text-zinc-200"></p>
             </section>
+            {{-- Скрыта для остальных индикаторов; появляется только если в каталоге
+                 есть glossary — например, чтобы расшифровать метки оверлея SRL. --}}
+            <section id="indicator-help-glossary-wrap" class="hidden">
+                <h4 class="text-xs font-semibold uppercase tracking-wider text-amber-400/90 mb-2">Легенда оверлея</h4>
+                <div class="overflow-x-auto rounded-lg border border-zinc-700">
+                    <table class="w-full min-w-[32rem] text-left text-xs">
+                        <thead class="bg-zinc-800/80 text-zinc-300">
+                            <tr>
+                                <th scope="col" class="px-3 py-2 font-semibold">Метка</th>
+                                <th scope="col" class="px-3 py-2 font-semibold">Что означает</th>
+                            </tr>
+                        </thead>
+                        <tbody id="indicator-help-glossary" class="divide-y divide-zinc-800 text-zinc-200"></tbody>
+                    </table>
+                </div>
+            </section>
             {{-- Схемы-картинки (SVG), объясняют сценарий без жаргона. --}}
             <section id="indicator-help-diagrams-wrap" class="hidden">
                 <h4 class="text-xs font-semibold uppercase tracking-wider text-violet-400/90 mb-2">Картинки: что происходит</h4>
@@ -242,6 +261,32 @@
                 <ul id="indicator-help-examples" class="list-disc space-y-2 pl-5 leading-relaxed text-zinc-300"></ul>
             </section>
         </div>
+    </div>
+</div>
+
+{{-- Единый контейнер настроек: iframe открывает уже существующие формы всех
+     индикаторов. Поэтому не требуется дублировать 80+ форм, CSRF и правила
+     Laravel-валидации только ради другого способа показа. --}}
+<div id="indicator-settings-modal"
+    class="hidden fixed inset-0 z-[95] flex items-start justify-center p-2 sm:items-center sm:p-5"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="indicator-settings-title">
+    <div class="absolute inset-0 bg-black/75" data-indicator-settings-close></div>
+    <div class="relative z-[1] flex h-[min(94vh,920px)] w-full max-w-5xl flex-col overflow-hidden rounded-xl border border-zinc-600 bg-[#0f1117] shadow-2xl">
+        <div class="flex items-center justify-between gap-3 border-b border-zinc-700 bg-[#1a1d26] px-4 py-3 shrink-0">
+            <div class="min-w-0">
+                <p class="text-[10px] uppercase tracking-wider text-zinc-500">Настройки индикатора</p>
+                <h3 id="indicator-settings-title" class="truncate text-lg font-semibold text-zinc-50">Загрузка…</h3>
+            </div>
+            <button type="button"
+                class="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-zinc-600 bg-zinc-800 text-zinc-300 hover:bg-zinc-700"
+                data-indicator-settings-close
+                aria-label="Закрыть настройки">✕</button>
+        </div>
+        <iframe id="indicator-settings-frame"
+            class="min-h-0 w-full flex-1 border-0 bg-[#1c202e]"
+            title="Настройки индикатора"></iframe>
     </div>
 </div>
 
