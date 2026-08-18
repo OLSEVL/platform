@@ -1588,6 +1588,7 @@ class BotController extends Controller
                 'telegram_enabled' => ['sometimes', 'boolean'],
                 'telegram_notify_result' => ['sometimes', 'boolean'],
                 'telegram_notify_on' => ['required', 'string', Rule::in(['signal_trade', 'off'])],
+                'telegram_send_chart' => ['required', 'string', Rule::in(['1', '0'])],
                 'telegram_bot_token' => ['nullable', 'string', 'max:128'],
                 'telegram_chat_id' => ['nullable', 'string', 'max:64'],
             ] + TelegramBotConfigFields::validationRules());
@@ -1610,6 +1611,7 @@ class BotController extends Controller
                 'telegram_enabled' => $request->boolean('telegram_enabled'),
                 'telegram_notify_result' => $request->boolean('telegram_notify_result'),
                 'telegram_notify_on' => (string) $extra['telegram_notify_on'],
+                'telegram_send_chart' => ($extra['telegram_send_chart'] ?? '1') === '1',
                 // Пустое поле на форме не затирает уже сохранённый токен.
                 'telegram_bot_token' => $tokenInput !== '' ? $tokenInput : $existingToken,
                 'telegram_chat_id' => trim((string) ($extra['telegram_chat_id'] ?? '')),
@@ -1666,6 +1668,7 @@ class BotController extends Controller
                 'telegram_enabled' => ['sometimes', 'boolean'],
                 'telegram_notify_result' => ['sometimes', 'boolean'],
                 'telegram_notify_on' => ['required', 'string', Rule::in(['signal_trade', 'off'])],
+                'telegram_send_chart' => ['required', 'string', Rule::in(['1', '0'])],
                 'telegram_bot_token' => ['nullable', 'string', 'max:128'],
                 'telegram_chat_id' => ['nullable', 'string', 'max:64'],
             ] + TelegramBotConfigFields::validationRules());
@@ -1693,6 +1696,7 @@ class BotController extends Controller
                 'telegram_enabled' => $request->boolean('telegram_enabled'),
                 'telegram_notify_result' => $request->boolean('telegram_notify_result'),
                 'telegram_notify_on' => (string) $extra['telegram_notify_on'],
+                'telegram_send_chart' => ($extra['telegram_send_chart'] ?? '1') === '1',
                 'telegram_bot_token' => $tokenInput !== '' ? $tokenInput : $existingToken,
                 'telegram_chat_id' => trim((string) ($extra['telegram_chat_id'] ?? '')),
                 'version' => 'strong_trend_demarker_v1',

@@ -17,7 +17,9 @@
     <p class="text-[11px] text-zinc-500">
         Уведомление о новой paper-сделке и, при включённой опции, её результате.
         Получатели: Chat ID из настроек + чаты, которые написали <span class="font-mono">/start</span> (если автоподписка включена).
-        Сначала сохраните token. Для Strong Trend + DeMarker к алерту прикрепляется график свечей с панелью DeMarker.
+        Сначала сохраните token.
+        Для Sweep / Raid Liquidity к алерту прикрепляется график M1 с фракталами, SWEEP/RAID/PB и точкой входа.
+        Для Strong Trend + DeMarker — график свечей с панелью DeMarker.
     </p>
 
     <label class="flex items-start gap-2">
@@ -44,6 +46,16 @@
                 <option value="signal_trade" @selected($telegramNotifyOn === 'signal_trade')>Новая paper-сделка</option>
                 <option value="off" @selected($telegramNotifyOn === 'off')>Не уведомлять</option>
             </select>
+        </div>
+        <div class="space-y-1">
+            <label for="telegram_send_chart_strategy" class="block text-xs font-medium text-zinc-400">График в алерте</label>
+            @php $telegramSendChart = old('telegram_send_chart', ($cfg['telegram_send_chart'] ?? true) ? '1' : '0'); @endphp
+            <select name="telegram_send_chart" id="telegram_send_chart_strategy" required
+                class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                <option value="1" @selected($telegramSendChart === '1')>Да, PNG со свечами и метками</option>
+                <option value="0" @selected($telegramSendChart === '0')>Нет, только текст</option>
+            </select>
+            <p class="text-[11px] text-zinc-500">Sweep / Raid: FH/FL, свип, рейд, откат и точка входа. DeMarker: свечи + панель осциллятора.</p>
         </div>
         <div class="space-y-1">
             @include('bots._telegram-bot-token-field', [

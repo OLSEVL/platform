@@ -4,6 +4,7 @@ namespace App\Services\Telegram;
 
 use App\Models\Bot;
 use App\Models\BotTrade;
+use App\Models\IndicatorSetting;
 use App\Services\Bots\Levels\StrongLevelCardPresenter;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
@@ -353,7 +354,8 @@ class TelegramAlertService
      * Универсальный текстовый алерт для стратегий без «сильного уровня».
      * Его используют Sweep / Raid и Strong Trend + DeMarker: данные их сетапов
      * различаются, поэтому не подставляем в сообщение несуществующий level_price.
-     * Для DeMarker при наличии свечей дополнительно шлётся PNG со свечами и панелью осциллятора.
+     * Для DeMarker и Sweep / Raid при наличии свечей дополнительно шлётся PNG
+     * с обозначениями, по которым бот вошёл.
      *
      * @param  array<string, mixed>  $decision
      * @param  list<array<string, mixed>>  $closedCandles
@@ -418,28 +420,52 @@ class TelegramAlertService
         $photoOk = null;
         $photoError = null;
         $sendChart = (bool) ($config['telegram_send_chart'] ?? true);
-        if ($sendChart && $bot->type === 'strong_trend_demarker' && $closedCandles !== [] && extension_loaded('gd')) {
-            $chartLevels = app(StrongTrendDemarkerChartBuilder::class)
-                ->chartLevelsFromDecision($decision, $closedCandles);
-            $pngPath = app(TelegramChartImageRenderer::class)->render($instrument, $closedCandles, $chartLevels, [
-                'timeframe_label' => $timeframeLabel,
-            ]);
-            if ($pngPath === null) {
-                $photoOk = false;
-                $photoError = 'render_failed';
-                Log::warning('strong_trend_demarker_photo_skipped', [
-                    'bot_id' => $bot->id,
-                    'instrument' => $instrument,
-                    'reason' => 'render_returned_null',
-                ]);
-            } else {
-                $caption = '📣 <b>'.htmlspecialchars($instrument, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8').'</b>';
-                if ($side !== '') {
-                    $caption .= ' · '.$side;
-                }
-                $caption .= ' · '.$timeframeLabel;
+        $chartLevels = null;
+        $chartLogKey = 'strategy_telegram_photo';
+        if ($sendChart && $closedCandles !== [] && extension_loaded('gd')) {
+            if ($bot->type === 'strong_trend_demarker') {
+                $chartLogKey = 'strong_trend_demarker_photo';
+                $chartLevels = app(StrongTrendDemarkerChartBuilder::class)
+                    ->chartLevelsFromDecision($decision, $closedCandles);
+            } elseif ($bot->type === 'sweep_raid_liquidity') {
+                // Тот же индикатор, что на веб-графике: фракталы, SWEEP/RAID/PB и точка входа.
+                $chartLogKey = 'sweep_raid_liquidity_photo';
+                $chartLevels = app(SweepRaidLiquidityChartBuilder::class)
+                    ->chartLevelsFromDecision(
+                        $decision,
+                        $closedCandles,
+                        IndicatorSetting::mergedSweepRaidLiquidityParams($bot),
+                    );
             }
-        } elseif ($sendChart && $bot->type === 'strong_trend_demarker' && ! extension_loaded('gd')) {
+            if (is_array($chartLevels)) {
+                $pngPath = app(TelegramChartImageRenderer::class)->render($instrument, $closedCandles, $chartLevels, [
+                    'timeframe_label' => $timeframeLabel,
+                ]);
+                if ($pngPath === null) {
+                    $photoOk = false;
+                    $photoError = 'render_failed';
+                    Log::warning($chartLogKey.'_skipped', [
+                        'bot_id' => $bot->id,
+                        'instrument' => $instrument,
+                        'reason' => 'render_returned_null',
+                    ]);
+                } else {
+                    $caption = '📣 <b>'.htmlspecialchars($instrument, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8').'</b>';
+                    if ($side !== '') {
+                        $caption .= ' · '.$side;
+                    }
+                    $caption .= ' · '.$timeframeLabel;
+                    $setup = (string) ($decision['features']['setup'] ?? '');
+                    $entryMode = (string) ($decision['features']['entry_mode'] ?? '');
+                    if ($setup !== '') {
+                        $caption .= ' · '.htmlspecialchars($setup, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+                    }
+                    if ($entryMode !== '') {
+                        $caption .= ' · '.htmlspecialchars($entryMode, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+                    }
+                }
+            }
+        } elseif ($sendChart && in_array($bot->type, ['strong_trend_demarker', 'sweep_raid_liquidity'], true) && ! extension_loaded('gd')) {
             $photoOk = false;
             $photoError = 'gd_extension_missing';
         }
@@ -451,6 +477,7 @@ class TelegramAlertService
             $lines,
             $bot,
             $instrument,
+            $chartLogKey,
             &$photoOk,
             &$photoError,
         ): array {
@@ -461,7 +488,7 @@ class TelegramAlertService
                 if (! $ok) {
                     $err = (string) ($photoResult['error'] ?? 'telegram_photo_failed');
                     $photoError = $photoError !== null ? $photoError.';'.$err : $err;
-                    Log::warning('strong_trend_demarker_photo_failed', [
+                    Log::warning($chartLogKey.'_failed', [
                         'bot_id' => $bot->id,
                         'instrument' => $instrument,
                         'chat_id' => $chatId,

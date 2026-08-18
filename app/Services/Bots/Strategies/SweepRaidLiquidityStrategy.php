@@ -100,6 +100,9 @@ class SweepRaidLiquidityStrategy implements BotStrategyInterface
                 'level_price' => (float) $event['level_price'],
                 'level_time' => (int) $event['level_time'],
                 'event_time' => (int) $event['time'],
+                // Для входа на откате event_time — свеча PB; takedown_time — сам свип/рейд.
+                'takedown_time' => (int) ($event['takedown_time'] ?? $event['time']),
+                'takedown_price' => (float) ($event['takedown_price'] ?? $event['entry_price']),
                 'entry_price' => (float) $event['entry_price'],
                 'pivot_length' => (int) ($cfg['srl_pivot_length'] ?? 2),
                 'payout' => $payout,

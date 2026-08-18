@@ -568,7 +568,7 @@ final class SettingsFieldHints
         'telegram_notify_on' => 'Когда писать в Telegram: при новой сделке или не писать совсем.',
         'telegram_notify_result' => 'После экспирации paper-сделки отправить в Telegram ✅ WIN / ❌ LOSS / ➖ DRAW. Нужен режим со сделками (не alert_only).',
         'telegram_alert_format' => 'Насколько подробным будет текст алерта: коротко, развёрнуто или «как карточка».',
-        'telegram_send_chart' => 'Прикреплять ли картинку графика M1 к сообщению.',
+        'telegram_send_chart' => 'Прикреплять PNG графика к алерту: для Sweep / Raid — фракталы, SWEEP/RAID/PB и точка входа; для остальных — M1 со слоями стратегии.',
         'telegram_send_chart_m5' => 'Прикреплять ли ещё и график M5 (крупнее контекст).',
         'telegram_analyst_llm_enabled' => 'Добавить в Telegram кнопку запуска LLM-анализа по этой паре.',
         'telegram_analyst_bot_id' => 'Какого бота-аналитика использовать для кнопки LLM. «Авто» = первый доступный Chart Analyst.',

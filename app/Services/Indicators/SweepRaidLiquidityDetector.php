@@ -125,6 +125,9 @@ class SweepRaidLiquidityDetector
                         'bar_index' => $i,
                         'time' => (int) $candle['time'],
                         'entry_price' => $close,
+                        // Исходное снятие (свип/рейд) нужно графику: time выше перезаписывается на откат.
+                        'takedown_time' => (int) $event['time'],
+                        'takedown_price' => (float) $event['entry_price'],
                     ]);
                     break;
                 }

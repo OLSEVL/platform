@@ -692,6 +692,8 @@ Artisan::command('bots:sweep-raid-liquidity-bootstrap', function () {
                 'telegram_enabled' => false,
                 'telegram_notify_result' => true,
                 'telegram_notify_on' => 'signal_trade',
+                // PNG с метками SRL (FH/FL, SWEEP, RAID, PB) включается вместе с Telegram.
+                'telegram_send_chart' => true,
                 'telegram_chat_id' => '',
                 // /start в отдельный Telegram-бот добавляет чат в получатели алертов.
                 'telegram_auto_subscribe' => true,
