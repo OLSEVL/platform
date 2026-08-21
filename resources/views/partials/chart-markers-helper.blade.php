@@ -56,14 +56,28 @@
     }
 
     /**
-     * Привязка маркера к открытию бара (по умолчанию M1: floor к минуте).
-     * barSec позволяет выровнять под S5/S15 при необходимости.
+     * Привязка маркера к открытию бара, в котором лежит unixTs (по умолчанию M1).
+     * Для экспирации: WIN/LOSE на свече, которая шла в момент expiry_time.
      */
     function toBucketTime(unixTs, barSec) {
         const t = Number(unixTs || 0);
         const step = Number(barSec);
         const bucket = (Number.isFinite(step) && step > 0) ? step : 60;
         return t > 0 ? Math.floor(t / bucket) * bucket : null;
+    }
+
+    /**
+     * Свеча, которую стратегия уже закрыла к моменту сигнала.
+     * Scan почти всегда в +1 с нового бакета (S30: 13:35:31 → бар 13:35:00, не 13:35:30).
+     * Иначе стрелка входа сидит на следующей свече, а DeMarker там уже не в зоне.
+     */
+    function toClosedBarTime(unixTs, barSec) {
+        const t = Number(unixTs || 0);
+        const step = Number(barSec);
+        const bucket = (Number.isFinite(step) && step > 0) ? step : 60;
+        if (!(t > 0)) return null;
+        const closed = (Math.floor(t / bucket) - 1) * bucket;
+        return closed > 0 ? closed : null;
     }
 
     /**
@@ -91,7 +105,7 @@
             if (!s || s.instrument !== instrument) return;
             const tradeId = (s.trade && s.trade.id) ? Number(s.trade.id) : null;
             const isTargetTrade = targetTradeId !== null && Number.isFinite(tradeId) && tradeId === targetTradeId;
-            const signalTime = toBucketTime(toUnixSec(s.signal_at), barSec);
+            const signalTime = toClosedBarTime(toUnixSec(s.signal_at), barSec);
             if (signalTime) {
                 const isCall = s.side === 'CALL';
                 const tradeIdSuffix = Number.isFinite(tradeId) ? ` ${tradeId}` : '';
@@ -159,7 +173,7 @@
             if (!Number.isFinite(expiryTs) || expiryTs <= nowSec) return;
             const side = (t.side || '').toUpperCase();
             const isCall = side === 'CALL';
-            const entryTime = toBucketTime(toUnixSec(t.entry_ts), barSec);
+            const entryTime = toClosedBarTime(toUnixSec(t.entry_ts), barSec);
             if (!entryTime) return;
             markers.push({
                 time: entryTime,
@@ -781,6 +795,7 @@
         markerPriceSuffix,
         toUnixSec,
         toBucketTime,
+        toClosedBarTime,
         buildHistoryMarkers,
         buildOpenTradeMarkers,
         mergeMarkers,

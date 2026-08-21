@@ -153,6 +153,33 @@ final class BotScanProgress
             || $state['analyzed'] !== [];
     }
 
+    private static function lastStartCacheKey(int $botId): string
+    {
+        return "bot_scan_last_start:{$botId}";
+    }
+
+    /** Unix старта последнего scan (для интервала dispatch). Не сбрасывается в endScan. */
+    public static function markStarted(int $botId, ?int $at = null): void
+    {
+        self::cache()->put(self::lastStartCacheKey($botId), $at ?? time(), self::TTL_SECONDS);
+    }
+
+    public static function lastStartedAt(int $botId): ?int
+    {
+        $raw = self::cache()->get(self::lastStartCacheKey($botId));
+        if (! is_numeric($raw)) {
+            return null;
+        }
+        $t = (int) $raw;
+
+        return $t > 0 ? $t : null;
+    }
+
+    public static function forgetLastStarted(int $botId): void
+    {
+        self::cache()->forget(self::lastStartCacheKey($botId));
+    }
+
     /** Новый проход scan: все пары снова серые, список проверенных пуст. */
     public static function beginScan(int $botId, int $totalInstruments): string
     {
@@ -165,6 +192,9 @@ final class BotScanProgress
             'analyzed' => [],
             'total' => max(0, $totalInstruments),
         ], true);
+
+        // Запоминаем старт отдельно от progress: endScan чистит progress, интервал dispatch — нет.
+        self::markStarted($botId);
 
         return $runId;
     }

@@ -64,6 +64,7 @@ class SettingsController extends Controller
                 'dead' => ProxyEndpoint::query()->where('status', ProxyEndpoint::STATUS_DEAD)->count(),
             ],
             'dataAutoCleanupRetentionHours' => app(DataCleanupService::class)->getAutoCleanupRetentionHours(),
+            'dataAutoCleanupRetentionOptions' => DataCleanupService::autoCleanupRetentionOptions(),
             // Watchdog bots:scan — порог wall-time и снимок живых процессов.
             'scanWatchdogMaxElapsedSec' => BotScanCoordinator::getScanMaxElapsedSec(),
             'scanWatchdogAllowedElapsedSec' => BotScanCoordinator::ALLOWED_WATCHDOG_MAX_ELAPSED_SEC,
@@ -279,11 +280,11 @@ class SettingsController extends Controller
     public function updateDataAutoCleanup(\Illuminate\Http\Request $request, DataCleanupService $dataCleanup): \Illuminate\Http\RedirectResponse
     {
         $validated = $request->validate([
-            'auto_cleanup_retention_hours' => 'nullable|string|max:8',
+            'auto_cleanup_retention_hours' => 'nullable|string|max:16',
         ]);
 
         $raw = trim((string) ($validated['auto_cleanup_retention_hours'] ?? ''));
-        if ($raw !== '' && ! in_array((int) $raw, DataCleanupService::ALLOWED_AUTO_CLEANUP_RETENTION_HOURS, true)) {
+        if ($raw !== '' && ! in_array((int) $raw, DataCleanupService::allowedAutoCleanupRetentionHours(), true)) {
             return back()->with('error', 'Недопустимый период автоматической очистки.');
         }
 

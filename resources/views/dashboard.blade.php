@@ -78,11 +78,15 @@
     <div class="flex-1 flex flex-col bg-zinc-950 overflow-hidden min-w-0 min-h-0">
         <div class="p-3 border-b border-zinc-800 bg-zinc-900/80 flex items-center justify-between gap-2">
             <div class="flex items-center gap-3 min-w-0 flex-wrap">
-                <h2
-                    id="chart-title"
-                    class="font-semibold text-zinc-100 truncate cursor-pointer"
-                    title="Кликните, чтобы скопировать название инструмента"
-                >Выберите инструмент</h2>
+                <div class="flex items-center gap-2 min-w-0">
+                    <h2
+                        id="chart-title"
+                        class="font-semibold text-zinc-100 truncate cursor-pointer"
+                        title="Кликните, чтобы скопировать название инструмента"
+                    >Выберите инструмент</h2>
+                    {{-- Payout выбранной пары: те же % и цвет, что в списке слева. --}}
+                    <span id="chart-title-payout" class="hidden text-sm font-medium tabular-nums shrink-0" aria-label="Процент выплаты"></span>
+                </div>
                 <div class="relative shrink-0" id="tf-dropdown-wrap">
                     <button type="button" id="tf-dropdown-btn"
                         class="text-sm px-2 py-1 rounded border border-zinc-600 bg-zinc-800 text-zinc-200 hover:bg-zinc-700">
@@ -569,6 +573,7 @@
     const poOpenTradesOverlay = document.getElementById('po-open-trades-overlay');
     const candleTimerOverlay = document.getElementById('candle-timer-overlay');
     const chartTitle = document.getElementById('chart-title');
+    const chartTitlePayoutEl = document.getElementById('chart-title-payout');
     const chartLoading = document.getElementById('chart-loading');
     const tfBtn = document.getElementById('tf-dropdown-btn');
     const tfPanel = document.getElementById('tf-dropdown-panel');
@@ -1329,6 +1334,7 @@
                 .then((r) => r.json())
                 .then((d) => {
                     renderInstrumentSidebarRows(d.instruments || []);
+                    updateChartTitle();
                 })
                 .catch(() => {});
         }
@@ -1338,6 +1344,7 @@
             url: INSTRUMENTS_SIDEBAR_URL,
             apply: (d) => {
                 renderInstrumentSidebarRows(d.instruments || []);
+                updateChartTitle();
                 if (instrumentSearchInput) {
                     applyInstrumentFilter(instrumentSearchInput.value);
                 }
@@ -1718,12 +1725,16 @@
 
         // Сделки на графике только если пользователь не попросил «чистый» режим.
         const history = (showTrades && typeof PCM.buildHistoryMarkers === 'function')
-            ? PCM.buildHistoryMarkers(lastChartSignals, { instrument: currentInstrument })
+            ? PCM.buildHistoryMarkers(lastChartSignals, {
+                instrument: currentInstrument,
+                barSec: timeframeSeconds(currentTimeframeMinutes),
+            })
             : [];
         const open = (showTrades && typeof PCM.buildOpenTradeMarkers === 'function')
             ? PCM.buildOpenTradeMarkers(lastOpenTrades, {
                 instrument: currentInstrument,
                 nowSec: Math.floor(Date.now() / 1000),
+                barSec: timeframeSeconds(currentTimeframeMinutes),
             })
             : [];
         const paMk = (layerPa && layerPa.checked && lastPaPayload && Array.isArray(lastPaPayload.markers))
@@ -4795,14 +4806,42 @@
         if (tfLabelEl && cur) tfLabelEl.textContent = cur.dataset.label || currentTimeframeMinutes + 'м';
     }
 
+    function currentInstrumentPayoutPercent() {
+        if (!currentInstrument) return null;
+        const span = document.querySelector(
+            '.instrument-payout[data-instrument="' + CSS.escape(currentInstrument) + '"]'
+        );
+        if (!span || span.dataset.payout === '' || span.dataset.payout == null) return null;
+        const n = parseFloat(span.dataset.payout);
+        return Number.isFinite(n) ? n : null;
+    }
+    function syncChartTitlePayout() {
+        if (!chartTitlePayoutEl) return;
+        if (!currentDisplayName) {
+            chartTitlePayoutEl.textContent = '';
+            chartTitlePayoutEl.className = 'hidden text-sm font-medium tabular-nums shrink-0';
+            return;
+        }
+        const n = currentInstrumentPayoutPercent();
+        chartTitlePayoutEl.classList.remove('hidden');
+        if (n == null) {
+            chartTitlePayoutEl.textContent = '—';
+            chartTitlePayoutEl.className = 'text-sm font-medium tabular-nums shrink-0 text-zinc-500';
+            return;
+        }
+        chartTitlePayoutEl.textContent = Math.round(n) + '%';
+        chartTitlePayoutEl.className = 'text-sm font-medium tabular-nums shrink-0 ' + payoutClassByValue(n);
+    }
     function updateChartTitle() {
         if (!currentDisplayName) {
             chartTitle.textContent = 'Выберите инструмент';
+            syncChartTitlePayout();
             return;
         }
         const cur = document.querySelector('.tf-option[data-minutes="' + currentTimeframeMinutes + '"]');
         const lab = cur && cur.dataset.label ? cur.dataset.label : (currentTimeframeMinutes + 'м');
         chartTitle.textContent = currentDisplayName + ' (' + lab + ')';
+        syncChartTitlePayout();
     }
 
     function copyCurrentInstrumentName() {

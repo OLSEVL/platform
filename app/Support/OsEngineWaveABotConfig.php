@@ -102,6 +102,7 @@ final class OsEngineWaveABotConfig
             'min_confidence' => 0.0,
             'min_payout' => 75.0,
             'stale_after_sec' => 60,
+            'scan_interval_sec' => \App\Support\BotScanCoordinator::DEFAULT_SCAN_INTERVAL_SEC,
             'telegram_enabled' => false,
             'telegram_auto_subscribe' => true,
             'telegram_notify_result' => true,

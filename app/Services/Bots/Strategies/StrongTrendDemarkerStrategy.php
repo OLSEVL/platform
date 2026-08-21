@@ -5,9 +5,8 @@ namespace App\Services\Bots\Strategies;
 use App\Services\Indicators\DemarkerIndicatorService;
 
 /**
- * Сигнал: выход DeMarker из зоны. Опционально его подтверждают N одноцветных
- * свечей (streak_len=0 выключает серию). Не наследует MA и контр-свечу
- * Strong Trend Telegram, но переносит строгость свечей и долю тела.
+ * Сигнал: выход DeMarker из зоны. Серия N одноцветных свечей (streak_len=0 = выкл.)
+ * должна закрыться ДО входа осциллятора в нижнюю/верхнюю зону, а не на барах выхода.
  */
 class StrongTrendDemarkerStrategy implements BotStrategyInterface
 {
@@ -32,25 +31,40 @@ class StrongTrendDemarkerStrategy implements BotStrategyInterface
         // В форме зоны вводятся привычно в процентах (10/90), а DeMarker считает 0..1.
         $oversold = max(0.0, min(1.0, (float) ($config['demarker_oversold'] ?? 10) / 100));
         $overbought = max(0.0, min(1.0, (float) ($config['demarker_overbought'] ?? 90) / 100));
-        if ($oversold >= $overbought || count($closedCandles) < max($streakLength, $period + 2)) {
+        $needBars = $period + 2 + $streakLength;
+        if ($oversold >= $overbought || count($closedCandles) < $needBars) {
             return null;
         }
 
         $demarker = $this->demarker->computeSeries($closedCandles, ['period' => $period]);
-        $current = (float) $demarker[array_key_last($demarker)];
-        $previous = (float) $demarker[array_key_last($demarker) - 1];
+        $last = array_key_last($demarker);
+        $current = (float) $demarker[$last];
+        $previous = (float) $demarker[$last - 1];
 
-        // Выход из перепроданности → CALL, из перекупленности → PUT.
+        // Вход в сделку по-прежнему на ВЫХОДЕ из зоны; серия проверяется раньше — до входа в зону.
         $isCall = $previous <= $oversold && $current > $oversold;
         $isPut = $previous >= $overbought && $current < $overbought;
-        // array_slice(..., 0) вернул бы всю историю — при 0 серию не берём.
-        $streak = $streakLength > 0 ? array_slice($closedCandles, -$streakLength) : [];
-        if ($streakLength > 0) {
-            $isCall = $isCall && $this->allBull($streak, $strictness);
-            $isPut = $isPut && $this->allBear($streak, $strictness);
-        }
         if (! $isCall && ! $isPut) {
             return null;
+        }
+
+        $side = $isCall ? 'CALL' : 'PUT';
+        $trend = $isCall ? 'up' : 'down';
+        $streak = [];
+        $zoneEntryIndex = null;
+        if ($streakLength > 0) {
+            $zoneEntryIndex = $this->currentZoneEntryIndex($demarker, $last, $side, $oversold, $overbought);
+            if ($zoneEntryIndex === null || $zoneEntryIndex < $streakLength) {
+                return null;
+            }
+            $streakStart = $zoneEntryIndex - $streakLength;
+            $streak = array_slice($closedCandles, $streakStart, $streakLength);
+            if ($isCall && ! $this->allBull($streak, $strictness)) {
+                return null;
+            }
+            if ($isPut && ! $this->allBear($streak, $strictness)) {
+                return null;
+            }
         }
 
         // Доля тела имеет смысл только когда проверяем серию свечей.
@@ -59,18 +73,24 @@ class StrongTrendDemarkerStrategy implements BotStrategyInterface
             return null;
         }
 
-        $side = $isCall ? 'CALL' : 'PUT';
-        $trend = $isCall ? 'up' : 'down';
         $zone = $isCall ? 'перепроданности' : 'перекупленности';
         $strictnessLabel = $strictness === 'with_doji' ? 'с доджи' : 'строго';
         $streakReason = $streakLength > 0
             ? sprintf(
-                '%d закрытых свечей подряд %s (%s).',
+                '%d закрытых свечей подряд %s (%s) до входа DeMarker в зону.',
                 $streakLength,
                 $trend === 'up' ? 'вверх' : 'вниз',
                 $strictnessLabel
             )
             : 'Фильтр серии свечей выключен (0).';
+
+        $streakFromTime = ($streak !== [] && isset($streak[0]['time'])) ? (int) $streak[0]['time'] : null;
+        $streakToTime = ($streak !== [] && isset($streak[array_key_last($streak)]['time']))
+            ? (int) $streak[array_key_last($streak)]['time']
+            : null;
+        $zoneEntryTime = ($zoneEntryIndex !== null && isset($closedCandles[$zoneEntryIndex]['time']))
+            ? (int) $closedCandles[$zoneEntryIndex]['time']
+            : null;
 
         return [
             'trend' => $trend,
@@ -83,7 +103,7 @@ class StrongTrendDemarkerStrategy implements BotStrategyInterface
                 sprintf('DeMarker(%d) вышел из зоны %s: %.1f → %.1f.', $period, $zone, $previous * 100, $current * 100),
             ])),
             'analysis_text' => sprintf(
-                'strong_trend_demarker: %d×%s + DeMarker(%d) %.3f→%.3f; strictness=%s; body=%.2f; %s.',
+                'strong_trend_demarker: %d×%s до зоны + DeMarker(%d) %.3f→%.3f; strictness=%s; body=%.2f; %s.',
                 $streakLength,
                 $trend,
                 $period,
@@ -95,6 +115,10 @@ class StrongTrendDemarkerStrategy implements BotStrategyInterface
             ),
             'features' => [
                 'streak_len' => $streakLength,
+                'streak_before_zone' => $streakLength > 0,
+                'streak_from_time' => $streakFromTime,
+                'streak_to_time' => $streakToTime,
+                'zone_entry_time' => $zoneEntryTime,
                 'trend' => $trend,
                 'candle_strictness' => $strictness,
                 'min_body_to_range_ratio' => $minBodyRatio,
@@ -105,8 +129,44 @@ class StrongTrendDemarkerStrategy implements BotStrategyInterface
                 'demarker_oversold' => $oversold,
                 'demarker_overbought' => $overbought,
             ],
-            'decision_version' => 'strong_trend_demarker_v1',
+            'decision_version' => 'strong_trend_demarker_v2',
         ];
+    }
+
+    /**
+     * Индекс первого бара текущего пребывания в зоне (тот, на котором DeMarker вошёл).
+     * lastIndex — бар выхода; lastIndex-1 ещё в зоне.
+     *
+     * @param  list<float>  $demarker
+     */
+    private function currentZoneEntryIndex(
+        array $demarker,
+        int $lastIndex,
+        string $side,
+        float $oversold,
+        float $overbought,
+    ): ?int {
+        if ($lastIndex < 1) {
+            return null;
+        }
+        $prev = (float) $demarker[$lastIndex - 1];
+        $inZone = $side === 'CALL'
+            ? static fn (float $v): bool => $v <= $oversold
+            : static fn (float $v): bool => $v >= $overbought;
+        if (! $inZone($prev)) {
+            return null;
+        }
+
+        $i = $lastIndex - 1;
+        while ($i >= 0 && $inZone((float) $demarker[$i])) {
+            $i--;
+        }
+        $entry = $i + 1;
+        if ($entry < 0 || $entry >= $lastIndex) {
+            return null;
+        }
+
+        return $entry;
     }
 
     /**

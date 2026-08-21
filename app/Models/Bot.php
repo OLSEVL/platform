@@ -40,6 +40,12 @@ class Bot extends Model
         return $this->hasMany(BotAnalysisRun::class);
     }
 
+    /** Прогоны настроек по истории свечей (отдельно от live BotTrade). */
+    public function backtestRuns(): HasMany
+    {
+        return $this->hasMany(BotBacktestRun::class);
+    }
+
     public function llmLogs(): HasMany
     {
         return $this->hasMany(BotLlmLog::class);

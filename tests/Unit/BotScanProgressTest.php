@@ -13,6 +13,9 @@ class BotScanProgressTest extends TestCase
         BotScanProgress::endScan(4242);
         BotScanProgress::endScan(5252);
         BotScanProgress::endScan(6262);
+        BotScanProgress::forgetLastStarted(4242);
+        BotScanProgress::forgetLastStarted(5252);
+        BotScanProgress::forgetLastStarted(6262);
     }
 
     public function test_dot_colors_during_scan_cycle(): void

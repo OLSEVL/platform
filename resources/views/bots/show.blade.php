@@ -45,6 +45,8 @@
     #chart-wrapper {
         isolation: isolate;
     }
+    /* LWC v5: корень .tv-lightweight-charts; старые сборки могли класть table сразу в wrapper. */
+    #chart-wrapper > .tv-lightweight-charts,
     #chart-wrapper > table {
         position: relative;
         z-index: 1;
@@ -52,14 +54,19 @@
     #chart-wrapper .chart-dom-overlay {
         z-index: 2;
     }
+    /* Карандаш/× на подписях индикаторов: выше анализа, ниже кроссхейра. */
+    #chart-wrapper #classic-indicator-labels {
+        z-index: 4;
+    }
     #bot-crosshair-overlay {
-        z-index: 3;
+        z-index: 5;
     }
     #bot-crosshair-hline {
-        border-top: 1px solid #94a3b8;
+        /* Как нативный кроссхейр LWC на главной: прерывистая линия. */
+        border-top: 1px dashed #94a3b8;
     }
     #bot-crosshair-vline {
-        border-left: 1px solid #94a3b8;
+        border-left: 1px dashed #94a3b8;
     }
     .bot-crosshair-axis-label {
         font-size: 11px;
@@ -128,12 +135,18 @@
     </aside>
 
     <div class="flex-1 flex flex-col bg-zinc-950 overflow-hidden min-w-0 min-h-0">
-        <div class="p-3 border-b border-zinc-800 bg-zinc-900/80 flex items-center justify-between gap-2">
+        <div class="p-3 border-b border-zinc-800 bg-zinc-900/80 flex items-center gap-2">
             <div class="flex items-center gap-3 min-w-0 flex-wrap">
-                <h2 id="chart-title" class="font-semibold text-zinc-100 truncate">{{ $bot->name }}</h2>
+                <div class="flex items-center gap-2 min-w-0">
+                    <h2 id="chart-title" class="font-semibold text-zinc-100 truncate">{{ $bot->name }}</h2>
+                    {{-- Payout выбранной пары: те же % и цвет, что в списке инструментов слева. --}}
+                    <span id="chart-title-payout" class="hidden text-sm font-medium tabular-nums shrink-0" aria-label="Процент выплаты"></span>
+                </div>
+                {{-- Индикатор загрузки свечей: раньше стоял рядом с крупным именем бота в шапке. --}}
+                <span id="chart-loading" class="text-sm text-zinc-500 hidden">Загрузка…</span>
                 <div class="relative shrink-0" id="tf-dropdown-wrap">
                     <button type="button" id="tf-dropdown-btn" class="text-sm px-2 py-1 rounded border border-zinc-600 bg-zinc-800 text-zinc-200 hover:bg-zinc-700">
-                        <span id="tf-dropdown-label">1м</span> ▾
+                        <span id="tf-dropdown-label">{{ $tradingChartTimeframeLabel ?? '1м' }}</span> ▾
                     </button>
                     <div id="tf-dropdown-panel" class="hidden absolute left-0 top-full mt-1 z-20 bg-zinc-900 border border-zinc-700 rounded shadow-lg shadow-black/40 py-1 min-w-[5.5rem]">
                         @foreach($timeframes as $tf)
@@ -148,21 +161,13 @@
                     @include('partials.chart-indicators-popup', [
                         'indicatorBot' => $bot,
                         'showLlmLevels' => (bool) ($isChartAnalystBot ?? false),
+                        'tradingLayerIds' => $tradingChartLayerIds ?? [],
                     ])
                 </div>
+                <button type="button" id="bot-chart-preset-btn"
+                    class="text-sm px-2 py-1 rounded border border-emerald-800/70 bg-emerald-950/40 text-emerald-200 hover:bg-emerald-900/50 hover:text-emerald-50 shrink-0"
+                    title="Сбросить индикаторы и таймфрейм к тем, по которым бот входит в сделку">Сделать как у бота</button>
                 @php($isChartAnalystBot = $isChartAnalystBot ?? false)
-                @unless($isChartAnalystBot)
-                @php($scanRemaining = ($scanProgress['scan_active'] ?? false) ? ($scanProgress['scan_remaining'] ?? null) : null)
-                @php($scanMinPayoutDisplay = rtrim(rtrim(number_format((float) ($scanMinPayout ?? 80), 1, '.', ''), '0'), '.'))
-                <span
-                    id="bot-scan-remaining-wrap"
-                    class="{{ $scanRemaining === null ? 'hidden' : '' }} shrink-0 text-xs text-zinc-400 tabular-nums"
-                    aria-live="polite"
-                >
-                    Осталось для анализа пар (для payout &gt; <span id="bot-scan-min-payout" class="font-medium text-zinc-300">{{ $scanMinPayoutDisplay }}</span>%):
-                    <span id="bot-scan-remaining-count" class="font-medium text-zinc-200">{{ $scanRemaining ?? 0 }}</span>
-                </span>
-                @endunless
                 <div class="flex flex-wrap items-center gap-1.5 shrink-0">
                     @if($isChartAnalystBot)
                         <label for="bot-analysis-user-question" class="sr-only">Дополнительный вопрос к анализу</label>
@@ -172,6 +177,27 @@
                     @endif
                     <button type="button" id="bot-analysis-btn"
                         class="inline-flex items-center rounded border border-zinc-600 bg-zinc-800 px-2.5 py-1 text-xs font-medium text-zinc-200 shadow-sm transition-colors hover:bg-zinc-700 hover:border-zinc-500 hover:text-zinc-50 focus:outline-none focus:ring-2 focus:ring-blue-500/50">{{ $isChartAnalystBot ? 'Сделать анализ' : 'Анализ' }}</button>
+                    @if($backtestSupported ?? false)
+                    {{-- Отдельная вкладка /bots/{id}/backtest; маркеры BT — на этом графике (?backtest_run=). --}}
+                    <a href="{{ route('bots.backtest', $bot) }}"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        id="bot-backtest-link"
+                        class="inline-flex items-center rounded border border-cyan-800/70 bg-cyan-950/40 px-2.5 py-1 text-xs font-medium text-cyan-100 shadow-sm transition-colors hover:bg-cyan-900/50 hover:text-cyan-50 focus:outline-none focus:ring-2 focus:ring-cyan-500/40"
+                        title="Открыть страницу бэктеста в новой вкладке">Бэктест</a>
+                    <label class="inline-flex items-center gap-1 rounded border border-zinc-700 bg-zinc-900/80 px-2 py-1 text-[11px] text-zinc-300"
+                        title="Показывать маркеры сделок последнего загруженного бэктеста на текущей паре">
+                        <input type="checkbox" id="bot-backtest-show-markers" class="rounded border-zinc-600 bg-zinc-800" checked>
+                        BT
+                    </label>
+                    {{-- Выбор прогона без ухода на страницу бэктеста. --}}
+                    <select id="bot-backtest-run-select"
+                        class="max-w-[9rem] rounded border border-zinc-700 bg-zinc-900 px-1.5 py-1 text-[11px] text-zinc-200"
+                        title="Загрузить маркеры выбранного прогона">
+                        <option value="">Прогон…</option>
+                    </select>
+                    <span id="bot-backtest-markers-meta" class="hidden text-[11px] tabular-nums text-cyan-400/90"></span>
+                    @endif
                     <a href="{{ route('bots.cards', $bot) }}"
                         class="inline-flex items-center rounded border border-zinc-600 bg-zinc-800 px-2.5 py-1 text-xs font-medium text-zinc-200 shadow-sm transition-colors hover:bg-zinc-700 hover:border-zinc-500 hover:text-zinc-50 focus:outline-none focus:ring-2 focus:ring-blue-500/50">Карточки</a>
                     {{-- Activity доступна и аналитику (hybrid paper/signals могут появляться). --}}
@@ -182,10 +208,29 @@
                     <a href="{{ route('bots.settings', $bot) }}"
                         class="inline-flex items-center rounded border border-zinc-600 bg-zinc-800 px-2.5 py-1 text-xs font-medium text-zinc-200 shadow-sm transition-colors hover:bg-zinc-700 hover:border-zinc-500 hover:text-zinc-50 focus:outline-none focus:ring-2 focus:ring-blue-500/50">Настройки</a>
                 </div>
-            </div>
-            <div class="flex items-center gap-3 shrink-0">
-                <span id="bot-name-badge" class="text-2xl font-semibold text-emerald-400">{{ $bot->name }}</span>
-                <span id="chart-loading" class="text-sm text-zinc-500 hidden">Загрузка…</span>
+                {{-- Справа от кнопок: слот всегда занят (остаток пар или отсчёт до dispatch), кнопки не прыгают. --}}
+                @unless($isChartAnalystBot)
+                @php($scanRemaining = ($scanProgress['scan_active'] ?? false) ? ($scanProgress['scan_remaining'] ?? null) : null)
+                @php($scanMinPayoutDisplay = rtrim(rtrim(number_format((float) ($scanMinPayout ?? 80), 1, '.', ''), '0'), '.'))
+                @php($scanNextAt = (int) ($scanProgress['next_scan_at'] ?? 0))
+                @php($scanIdle = $scanRemaining === null)
+                @php($scanNextLeft = $scanNextAt > 0 ? max(0, $scanNextAt - time()) : null)
+                <span
+                    id="bot-scan-remaining-wrap"
+                    class="shrink-0 text-xs text-zinc-400 tabular-nums"
+                    aria-live="polite"
+                    data-next-scan-at="{{ $scanNextAt > 0 ? $scanNextAt : '' }}"
+                >
+                    <span id="bot-scan-active-msg" class="{{ $scanIdle ? 'hidden' : '' }}">
+                        Осталось для анализа пар (для payout &gt; <span id="bot-scan-min-payout" class="font-medium text-zinc-300">{{ $scanMinPayoutDisplay }}</span>%):
+                        <span id="bot-scan-remaining-count" class="font-medium text-zinc-200">{{ $scanRemaining ?? 0 }}</span>
+                    </span>
+                    <span id="bot-scan-idle-msg" class="{{ $scanIdle ? '' : 'hidden' }}">
+                        До следующего сканирования:
+                        <span id="bot-scan-next-countdown" class="font-medium font-mono text-zinc-200">@if($scanNextLeft === null)—@else{{ sprintf('%02d:%02d', intdiv($scanNextLeft, 60), $scanNextLeft % 60) }}@endif</span>
+                    </span>
+                </span>
+                @endunless
             </div>
         </div>
         {{-- Панель анализа над графиком: шапка фиксирована, тело с overflow-y (как в правом сайдбаре). --}}
@@ -273,7 +318,9 @@
 
     <aside class="w-52 shrink-0 border-l border-zinc-800 bg-zinc-950/40 overflow-hidden min-h-0 flex flex-col">
         <div class="border-b border-zinc-800 bg-zinc-900 px-2 py-2">
-            <div class="text-[10px] font-medium uppercase tracking-wide text-zinc-400">Статистика</div>
+            {{-- Имя бота над статистикой: тот же кегль, что у «Статистика», чтобы не спорило с шапкой графика. --}}
+            <div id="bot-name-badge" class="text-[10px] font-medium uppercase tracking-wide text-emerald-400 truncate" title="{{ $bot->name }}">{{ $bot->name }}</div>
+            <div class="mt-1.5 text-[10px] font-medium uppercase tracking-wide text-zinc-400">Статистика</div>
             {{-- Два режима: скользящий час vs вся история; выбор хранится в localStorage на ключ бота. --}}
             <div class="mt-1.5 flex rounded border border-zinc-700 bg-zinc-950 p-0.5 text-[10px] font-medium">
                 <button type="button" id="bot-stats-scope-hour" class="flex-1 rounded px-1 py-1 transition">Час</button>
@@ -340,8 +387,14 @@
     const SIGNALS_URL = '{{ route("bots.signals.data", $bot) }}';
     const TRADES_HISTORY_URL = '{{ route("bots.trades") }}';
     const BOT_ANALYSIS_URL = '{{ route("bots.analysis.data", $bot) }}';
+    // Бэктест: URL API сделок прогона → маркеры BT на свечах.
+    const BOT_BACKTEST_SUPPORTED = @json($backtestSupported ?? false);
+    const BOT_BACKTESTS_URL = '{{ route("bots.backtests.index", $bot) }}';
     const BOT_IS_CHART_ANALYST = @json($isChartAnalystBot ?? false);
     const BOT_ANALYST_SMC_FLOW_ENABLED = @json($analystSmcFlowEnabled ?? false);
+    // Слои и ТФ, по которым этот бот входит. Кнопка «Сделать как у бота» сбрасывает график к ним.
+    const BOT_TRADING_LAYER_IDS = @json($tradingChartLayerIds ?? []);
+    const BOT_TRADING_TIMEFRAME = {{ (int) ($tradingChartTimeframe ?? 1) }};
     const BOT_STATS_URL = '{{ route("bots.stats.data", $bot) }}';
     // Два среза для правой панели: подгружаем оба с сервера при SSR, переключатель шлёт scope= в polling.
     const STATS_SCOPE_STORAGE_KEY = 'platform.bot.show.statsScope.v1.{{ $bot->id }}';
@@ -467,6 +520,12 @@
     // targetTradeId приходит из страницы "Сигналы и сделки" (?trade_id=...).
     // Используем его, чтобы открыть правильный инструмент и визуально выделить эту сделку на графике.
     const targetTradeId = Number(new URLSearchParams(window.location.search).get('trade_id') || 0) || null;
+    // ?backtest_run= с страницы бэктеста («На графике») — подгрузить сделки прогона как маркеры BT.
+    const requestedBacktestRunId = Number(new URLSearchParams(window.location.search).get('backtest_run') || 0) || null;
+    // Сделки бэктеста (все пары прогона или отфильтрованные); на графике рисуем только currentInstrument.
+    let backtestTrades = [];
+    let backtestLoadedRunId = null;
+    let backtestMarkersFocusDone = false;
 
     const chartPlaceholder = document.getElementById('chart-placeholder');
     const chartWrapper = document.getElementById('chart-wrapper');
@@ -491,12 +550,14 @@
     const candleTfLabelEl = document.getElementById('candle-tf-label');
     const openTradesOverlay = document.getElementById('open-trades-overlay');
     const chartTitle = document.getElementById('chart-title');
+    const chartTitlePayoutEl = document.getElementById('chart-title-payout');
     const chartLoading = document.getElementById('chart-loading');
     const tfBtn = document.getElementById('tf-dropdown-btn');
     const tfPanel = document.getElementById('tf-dropdown-panel');
     const tfLabelEl = document.getElementById('tf-dropdown-label');
     const layersBtn = document.getElementById('layers-dropdown-btn');
     const layersPanel = document.getElementById('layers-dropdown-panel');
+    const botChartPresetBtn = document.getElementById('bot-chart-preset-btn');
     const layerOb = document.getElementById('layer-ob');
     const layerFvg = document.getElementById('layer-fvg');
     const layerPa = document.getElementById('layer-pa-dgt');
@@ -694,6 +755,8 @@
     let candlestickSeries = null;
     /** LWC v5: маркеры через createSeriesMarkers, не series.setMarkers. */
     let candlestickMarkers = null;
+    // Маркеры DeM на панели осциллятора: то же время, что вход, плюс число 0.12 — иначе при S30 без секунд кажется, что линия «в середине».
+    let demarkerTradeMarkers = null;
     /**
      * Плавный close последней свечи (как на dashboard): target из poll, визуал — RAF lerp.
      */
@@ -702,7 +765,8 @@
     let botChartPricePrecision = 5;
     let currentInstrument = null;
     let currentDisplayName = '';
-    let currentTimeframeMinutes = 1;
+    // До чтения prefs — ТФ бота; сохранённый выбор пользователя перезапишет в loadLayerPrefs.
+    let currentTimeframeMinutes = BOT_TRADING_TIMEFRAME;
     let oldestLoadedTime = null;
     let allChartData = [];
     let loadingMore = false;
@@ -849,7 +913,7 @@
     function loadLayerPrefs() {
         try {
             const raw = localStorage.getItem(LAYER_PREFS_KEY);
-            if (raw == null) return;
+            if (raw == null) return false;
             const obj = JSON.parse(raw);
             if (typeof obj.orderBlocks === 'boolean') layerOb.checked = obj.orderBlocks;
             if (typeof obj.imbalances === 'boolean') layerFvg.checked = obj.imbalances;
@@ -931,7 +995,53 @@
             if (layerVolatilityAverageTwice && typeof obj.volatility_average_twice === 'boolean') layerVolatilityAverageTwice.checked = obj.volatility_average_twice;
             if (layerVolatilityStagesAw && typeof obj.volatility_stages_aw === 'boolean') layerVolatilityStagesAw.checked = obj.volatility_stages_aw;
             if (BOT_IS_CHART_ANALYST && layerLlmLevels && typeof obj.llmLevels === 'boolean') layerLlmLevels.checked = obj.llmLevels;
-        } catch (_) {}
+            // Сохранённый ТФ графика (выбор пользователя) — не сбрасываем при reload.
+            if (typeof obj.timeframeMinutes === 'number' && isAllowedChartTimeframe(obj.timeframeMinutes)) {
+                currentTimeframeMinutes = obj.timeframeMinutes;
+            }
+            return true;
+        } catch (_) {
+            return false;
+        }
+    }
+
+    /** Есть ли такой пункт в выпадающем списке ТФ. */
+    function isAllowedChartTimeframe(minutes) {
+        const m = parseInt(minutes, 10);
+        return Number.isFinite(m) && !!document.querySelector('.tf-option[data-minutes="' + m + '"]');
+    }
+
+    /**
+     * Сброс к торговой картинке бота: только его индикаторы и его таймфрейм.
+     * Пользовательские слои после этого можно снова включать — они сохранятся до следующего сброса.
+     */
+    function applyBotChartPreset(opts) {
+        const reload = !!(opts && opts.reload);
+        const trading = new Set(Array.isArray(BOT_TRADING_LAYER_IDS) ? BOT_TRADING_LAYER_IDS : []);
+        document.querySelectorAll('#layers-dropdown-panel input[type="checkbox"]').forEach((el) => {
+            el.checked = trading.has(el.id);
+        });
+        const tf = parseInt(BOT_TRADING_TIMEFRAME, 10);
+        const tfChanged = isAllowedChartTimeframe(tf) && tf !== currentTimeframeMinutes;
+        if (isAllowedChartTimeframe(tf)) {
+            currentTimeframeMinutes = tf;
+        }
+        updateTfOptionStyles();
+        saveLayerPrefs();
+        if (!reload) return;
+        if (tfPanel) tfPanel.classList.add('hidden');
+        if (window.PlatformChartFetch) window.PlatformChartFetch.invalidateAll();
+        if (tfChanged && currentInstrument && candlestickSeries) {
+            reloadChartData();
+            return;
+        }
+        fetchPriceActionIndicator({ force: true });
+        applyClassicOsEngineSeries();
+        redrawStructureOverlay();
+        applyPaBarColors({ fullResync: true });
+        renderChartMarkers();
+        updateChartTitle();
+        tickCandleCloseTimer();
     }
 
     function saveLayerPrefs() {
@@ -1014,6 +1124,7 @@
                 volatility_average_twice: layerVolatilityAverageTwice ? layerVolatilityAverageTwice.checked : false,
                 volatility_stages_aw: layerVolatilityStagesAw ? layerVolatilityStagesAw.checked : false,
                 llmLevels: (BOT_IS_CHART_ANALYST && layerLlmLevels) ? layerLlmLevels.checked : false,
+                timeframeMinutes: currentTimeframeMinutes,
             }));
         } catch (_) {}
     }
@@ -1729,6 +1840,7 @@
     }
 
     function clearClassicOsEngineSeries() {
+        demarkerTradeMarkers = null;
         if (!chart) {
             classicLineSeries = {};
             rsiLevelLines = [];
@@ -2962,6 +3074,10 @@
                 }, paneIndex);
                 demLine.setData(data.map((p) => ({ time: p.time, value: p.value })));
                 classicLineSeries['demarker'] = demLine;
+                if (window.PlatformChartMarkers && typeof window.PlatformChartMarkers.createPluginForSeries === 'function') {
+                    demarkerTradeMarkers = window.PlatformChartMarkers.createPluginForSeries(demLine, []);
+                }
+                renderDemarkerTradeMarkers();
             }
             try {
                 const paneApi = demPane || (typeof chart.panes === 'function' ? chart.panes()[paneIndex] : null);
@@ -4476,7 +4592,16 @@
 
     function toBucketTime(unixTs) {
         const t = Number(unixTs || 0);
-        return t > 0 ? Math.floor(t / 60) * 60 : null;
+        const bucket = timeframeSeconds(currentTimeframeMinutes);
+        return t > 0 ? Math.floor(t / bucket) * bucket : null;
+    }
+    // Вход бота — по только что закрытому бару; signal_at обычно +1 с нового бакета.
+    function toClosedBarTime(unixTs) {
+        const t = Number(unixTs || 0);
+        const bucket = timeframeSeconds(currentTimeframeMinutes);
+        if (!(t > 0) || !(bucket > 0)) return null;
+        const closed = (Math.floor(t / bucket) - 1) * bucket;
+        return closed > 0 ? closed : null;
     }
     // Унифицированный парсер времени для всех источников (ISO, unix sec/ms, MySQL datetime).
     // ВАЖНО: timezone-преобразование выполняется только на ingest-слое (backend),
@@ -4615,6 +4740,8 @@
                 instrument,
                 targetTradeId,
                 getFrozenExpiryParams,
+                // S30/S15: иначе floor к минуте сажает маркер на соседнюю свечу — DeMarker «не совпадает» со входом.
+                barSec: timeframeSeconds(currentTimeframeMinutes),
             });
         }
         return [];
@@ -4631,20 +4758,20 @@
         if (!instrument || targetTradeId === null) return null;
         const s = findTargetSignal();
         if (s && s.instrument === instrument) {
-            // Предпочитаем маркер экспирации (итог сделки), fallback — время входа.
+            // Центрируем на свече входа: на ней смотрят DeMarker/зоны. Экспирация на S30 на 1–2 бара правее.
+            const entryTs = toClosedBarTime(toUnixSec(s.signal_at));
+            if (Number.isFinite(entryTs)) return entryTs;
             const expiryRaw = (s.trade && s.trade.expiry_time) ? s.trade.expiry_time : s.expiry_time;
             const expiryTs = toBucketTime(toUnixSec(expiryRaw));
             if (Number.isFinite(expiryTs)) return expiryTs;
-            const entryTs = toBucketTime(toUnixSec(s.signal_at));
-            if (Number.isFinite(entryTs)) return entryTs;
         }
         // Fallback: если в signals записи ещё нет (или это активная сделка), берём время из openTrades.
         const ot = (openTrades || []).find((t) => Number(t.id) === targetTradeId && t.instrument === instrument);
         if (ot) {
+            const entryTs = toClosedBarTime(toUnixSec(ot.entry_ts));
+            if (Number.isFinite(entryTs)) return entryTs;
             const expiryTs = toBucketTime(toUnixSec(ot.expiry_ts));
             if (Number.isFinite(expiryTs)) return expiryTs;
-            const entryTs = toBucketTime(toUnixSec(ot.entry_ts));
-            if (Number.isFinite(entryTs)) return entryTs;
         }
         return null;
     }
@@ -4676,12 +4803,35 @@
         });
         return minTs;
     }
+
+    /** Самый ранний сигнал бэктеста на паре — чтобы since свечей покрыл маркеры BT. */
+    function earliestBacktestTsForInstrument(instrument) {
+        if (!instrument || !Array.isArray(backtestTrades) || !backtestTrades.length) return null;
+        let minTs = null;
+        backtestTrades.forEach((t) => {
+            if (!t || t.instrument !== instrument) return;
+            const ts = Number(t.signal_ts || t.entry_ts);
+            if (!Number.isFinite(ts) || ts <= 0) return;
+            if (minTs === null || ts < minTs) minTs = ts;
+        });
+        return minTs;
+    }
+
+    /** Мин. из live-сигналов и бэктеста — единый lookback для fetchCandles. */
+    function earliestHistoryTsForInstrument(instrument) {
+        const a = earliestSignalTsForInstrument(instrument);
+        const b = earliestBacktestTsForInstrument(instrument);
+        if (a == null) return b;
+        if (b == null) return a;
+        return Math.min(a, b);
+    }
     function activeTradeMarkersForCurrentInstrument() {
         if (!currentInstrument) return [];
         if (window.PlatformChartMarkers && typeof window.PlatformChartMarkers.buildOpenTradeMarkers === 'function') {
             return window.PlatformChartMarkers.buildOpenTradeMarkers(openTrades || [], {
                 instrument: currentInstrument,
                 nowSec: Math.floor(Date.now() / 1000),
+                barSec: timeframeSeconds(currentTimeframeMinutes),
             });
         }
         return [];
@@ -4691,10 +4841,12 @@
         const base = markersForInstrument(currentInstrument);
         const active = activeTradeMarkersForCurrentInstrument();
         const paMk = (layerPa && layerPa.checked && lastPaPayload && Array.isArray(lastPaPayload.markers)) ? lastPaPayload.markers : [];
+        // Маркеры бэктеста (BT CALL/PUT + результат) — поверх live/PA, но не путаем с live WIN/LOSE.
+        const btMk = backtestMarkersForCurrentInstrument();
         const PCM = window.PlatformChartMarkers;
         const all = (PCM && typeof PCM.mergeMarkers === 'function')
-            ? PCM.mergeMarkers(base, active, paMk)
-            : [...base, ...active, ...paMk].sort((a, b) => a.time - b.time);
+            ? PCM.mergeMarkers(base, active, paMk, btMk)
+            : [...base, ...active, ...paMk, ...btMk].sort((a, b) => a.time - b.time);
         // LWC v5: setMarkers убран с series — обновляем через createSeriesMarkers plugin.
         if (PCM && typeof PCM.applyMarkers === 'function') {
             PCM.applyMarkers(candlestickMarkers, all);
@@ -4702,8 +4854,196 @@
             candlestickMarkers.setMarkers(all);
         }
         renderTradeDurationOverlay();
+        renderDemarkerTradeMarkers();
         // Горизонтальные лучи в стиле Pocket Option (точка + линия до expiry).
         renderPoOpenTradeRaysOverlay();
+        focusBacktestMarkersOnChart();
+    }
+
+    /**
+     * Стрелки/круги прогона бэктеста на текущей паре.
+     * Цвет: win=зелёный, loss=розовый, иначе cyan; подпись «BT …».
+     */
+    function backtestMarkersForCurrentInstrument() {
+        const showEl = document.getElementById('bot-backtest-show-markers');
+        if (!BOT_BACKTEST_SUPPORTED || (showEl && !showEl.checked)) return [];
+        if (!currentInstrument || !Array.isArray(backtestTrades) || !backtestTrades.length) return [];
+        const out = [];
+        backtestTrades.forEach((t) => {
+            if (!t || t.instrument !== currentInstrument) return;
+            const side = String(t.side || '').toUpperCase();
+            const isCall = side === 'CALL';
+            const result = String(t.result || '').toLowerCase();
+            // Вход — закрытый бар сигнала (как у live), иначе стрелка уезжает на соседнюю свечу.
+            const entryTs = toClosedBarTime(Number(t.signal_ts || t.entry_ts));
+            if (!Number.isFinite(entryTs)) return;
+            let color = '#22d3ee';
+            if (result === 'win') color = '#34d399';
+            else if (result === 'loss') color = '#fb7185';
+            else if (result === 'draw') color = '#a1a1aa';
+            out.push({
+                time: entryTs,
+                position: isCall ? 'belowBar' : 'aboveBar',
+                color,
+                shape: isCall ? 'arrowUp' : 'arrowDown',
+                text: `BT ${side}${result ? ' ' + result.toUpperCase() : ''}`,
+            });
+            const expiryTs = toBucketTime(Number(t.expiry_ts));
+            if (Number.isFinite(expiryTs) && expiryTs !== entryTs) {
+                out.push({
+                    time: expiryTs,
+                    position: isCall ? 'aboveBar' : 'belowBar',
+                    color,
+                    shape: 'circle',
+                    text: result ? `BT ${result.toUpperCase()}` : 'BT',
+                });
+            }
+        });
+        return out;
+    }
+
+    /** Подпись у чекбокса BT: номер прогона и сколько сделок на текущей паре. */
+    function updateBacktestMarkersMeta() {
+        const meta = document.getElementById('bot-backtest-markers-meta');
+        if (!meta) return;
+        if (!backtestLoadedRunId || !Array.isArray(backtestTrades) || !backtestTrades.length) {
+            meta.classList.add('hidden');
+            meta.textContent = '';
+            return;
+        }
+        const onPair = currentInstrument
+            ? backtestTrades.filter((t) => t && t.instrument === currentInstrument).length
+            : 0;
+        meta.textContent = `#${backtestLoadedRunId} · ${onPair} на паре`;
+        meta.classList.remove('hidden');
+    }
+
+    /** Один раз приблизить шкалу к первой сделке BT на текущей паре (после ?backtest_run=). */
+    function focusBacktestMarkersOnChart() {
+        if (backtestMarkersFocusDone || !chart || !allChartData.length || !currentInstrument) return;
+        if (!requestedBacktestRunId || !backtestLoadedRunId) return;
+        const showEl = document.getElementById('bot-backtest-show-markers');
+        if (showEl && !showEl.checked) return;
+        let minTs = null;
+        backtestTrades.forEach((t) => {
+            if (!t || t.instrument !== currentInstrument) return;
+            const ts = toClosedBarTime(Number(t.signal_ts || t.entry_ts));
+            if (!Number.isFinite(ts)) return;
+            if (minTs === null || ts < minTs) minTs = ts;
+        });
+        if (!Number.isFinite(minTs)) return;
+        const idx = allChartData.findIndex((c) => Number(c.time) >= minTs);
+        if (idx < 0) return;
+        const VISIBLE = 96;
+        const LEFT = 64;
+        const from = Math.max(0, idx - LEFT);
+        const to = Math.min(allChartData.length - 1 + CHART_RIGHT_GAP_BARS, idx + (VISIBLE - LEFT));
+        chart.timeScale().setVisibleLogicalRange({ from, to });
+        backtestMarkersFocusDone = true;
+    }
+
+    /**
+     * Загрузка сделок прогона бэктеста для маркеров на графике.
+     * Без instrument — все пары прогона (при смене пары фильтр клиентский).
+     */
+    async function loadBacktestMarkersForRun(runId) {
+        const id = Number(runId);
+        if (!BOT_BACKTEST_SUPPORTED || !Number.isFinite(id) || id <= 0) return;
+        try {
+            // Пагинация API: тянем страницами до лимита маркеров на графике.
+            const all = [];
+            let page = 1;
+            let lastPage = 1;
+            do {
+                const res = await fetch(`${BOT_BACKTESTS_URL}/${id}/trades?page=${page}&per_page=200`, {
+                    headers: { Accept: 'application/json' },
+                    credentials: 'same-origin',
+                });
+                if (!res.ok) throw new Error('HTTP ' + res.status);
+                const data = await res.json();
+                const chunk = Array.isArray(data.trades) ? data.trades : [];
+                all.push(...chunk);
+                lastPage = Number(data.last_page) || 1;
+                page += 1;
+            } while (page <= lastPage && all.length < 2000);
+
+            backtestTrades = all;
+            backtestLoadedRunId = id;
+            backtestMarkersFocusDone = false;
+            const showEl = document.getElementById('bot-backtest-show-markers');
+            if (showEl) showEl.checked = true;
+            const sel = document.getElementById('bot-backtest-run-select');
+            if (sel && String(sel.value) !== String(id)) sel.value = String(id);
+            updateBacktestMarkersMeta();
+            if (currentInstrument && typeof reloadChartData === 'function') {
+                reloadChartData();
+            } else {
+                renderChartMarkers();
+            }
+        } catch (e) {
+            console.warn('backtest markers load failed', e);
+            backtestTrades = [];
+            backtestLoadedRunId = null;
+            updateBacktestMarkersMeta();
+        }
+    }
+
+    /** Список завершённых прогонов для селекта BT на графике. */
+    async function refreshBacktestRunSelect() {
+        const sel = document.getElementById('bot-backtest-run-select');
+        if (!sel || !BOT_BACKTEST_SUPPORTED) return;
+        try {
+            const res = await fetch(BOT_BACKTESTS_URL, {
+                headers: { Accept: 'application/json' },
+                credentials: 'same-origin',
+            });
+            if (!res.ok) return;
+            const data = await res.json();
+            const runs = (Array.isArray(data.runs) ? data.runs : [])
+                .filter((r) => r.status === 'completed')
+                .slice(0, 20);
+            const prev = sel.value || (requestedBacktestRunId ? String(requestedBacktestRunId) : '');
+            sel.innerHTML = '<option value="">Прогон…</option>' + runs.map((r) => {
+                const s = r.summary_json || r.summary || {};
+                const pnl = s.pnl_units != null ? Number(s.pnl_units).toFixed(1) : '—';
+                return `<option value="${r.id}">#${r.id} · ${r.trades_total ?? 0} · ${pnl}</option>`;
+            }).join('');
+            if (prev && [...sel.options].some((o) => o.value === prev)) sel.value = prev;
+        } catch (_) {}
+    }
+
+    /**
+     * На панели DeMarker подписываем вход тем же бакетом, что и стрелка на свечах,
+     * текстом фактического значения (0.12), а не «на глаз» по сжатой линии.
+     */
+    function renderDemarkerTradeMarkers() {
+        const PCM = window.PlatformChartMarkers;
+        const line = classicLineSeries && classicLineSeries.demarker;
+        if (!line || !PCM || typeof PCM.applyMarkers !== 'function' || !demarkerTradeMarkers) return;
+        const pts = ((lastDemarkerPayload && lastDemarkerPayload.series) || {}).dem || [];
+        const byTime = new Map();
+        pts.forEach((p) => {
+            if (!p) return;
+            byTime.set(Number(p.time), Number(p.value));
+        });
+        const markers = [];
+        mergedSignals(currentInstrument).forEach((s) => {
+            if (!s || s.instrument !== currentInstrument) return;
+            const t = toClosedBarTime(toUnixSec(s.signal_at));
+            if (!Number.isFinite(t) || !byTime.has(t)) return;
+            const v = byTime.get(t);
+            if (!Number.isFinite(v)) return;
+            const tradeId = (s.trade && s.trade.id) ? Number(s.trade.id) : null;
+            const idSuffix = Number.isFinite(tradeId) ? ` ${tradeId}` : '';
+            markers.push({
+                time: t,
+                position: v <= 0.5 ? 'belowBar' : 'aboveBar',
+                color: '#facc15',
+                shape: 'circle',
+                text: `DeM${idSuffix} ${v.toFixed(2)}`,
+            });
+        });
+        PCM.applyMarkers(demarkerTradeMarkers, markers);
     }
 
     /**
@@ -4737,7 +5077,7 @@
             if (s.instrument !== instrument) return;
             // График в M1: привязываем интервалы к открытию минуты, иначе при seconds>00
             // отрезок попадает в следующую свечу (визуальный сдвиг +1 мин).
-            const entryTs = toBucketTime(toUnixSec(s.signal_at));
+            const entryTs = toClosedBarTime(toUnixSec(s.signal_at));
             const expiryRaw = (s.trade && s.trade.expiry_time) ? s.trade.expiry_time : s.expiry_time;
             const expiryTs = toBucketTime(toUnixSec(expiryRaw));
             if (!Number.isFinite(entryTs) || !Number.isFinite(expiryTs) || expiryTs <= entryTs) return;
@@ -4766,7 +5106,7 @@
         return rows
             .map((t) => {
                 // Для активных сделок та же нормализация к минутному бакету.
-                const entryTs = toBucketTime(toUnixSec(t.entry_ts));
+                const entryTs = toClosedBarTime(toUnixSec(t.entry_ts));
                 const expiryTs = toBucketTime(toUnixSec(t.expiry_ts));
                 if (!Number.isFinite(entryTs) || !Number.isFinite(expiryTs) || expiryTs <= entryTs) return null;
                 const side = (t.side || '').toUpperCase();
@@ -5035,7 +5375,7 @@
             .map((s) => {
                 const tradeId = (s.trade && s.trade.id) ? Number(s.trade.id) : null;
                 if (!Number.isFinite(tradeId) || tradeId <= 0) return null;
-                const entryTs = toBucketTime(toUnixSec(s.signal_at));
+                const entryTs = toClosedBarTime(toUnixSec(s.signal_at));
                 const expiryRaw = (s.trade && s.trade.expiry_time) ? s.trade.expiry_time : s.expiry_time;
                 const expiryTs = toBucketTime(toUnixSec(expiryRaw));
                 return {
@@ -5278,7 +5618,7 @@
         ([...(signals || []), ...syntheticClosedSignals]).forEach((s) => {
             if (s.instrument !== instrument) return;
             const signalTs = toUnixSec(s.signal_at);
-            if (Number.isFinite(signalTs) && signalTs > 0) out.push(toBucketTime(signalTs));
+            if (Number.isFinite(signalTs) && signalTs > 0) out.push(toClosedBarTime(signalTs));
             const expiryRaw = (s.trade && s.trade.expiry_time) ? s.trade.expiry_time : s.expiry_time;
             const expiryTs = toUnixSec(expiryRaw);
             if (Number.isFinite(expiryTs) && expiryTs > 0) out.push(toBucketTime(expiryTs));
@@ -5287,7 +5627,7 @@
             if (t.instrument !== instrument) return;
             const entryTs = toUnixSec(t.entry_ts);
             const expTs = toUnixSec(t.expiry_ts);
-            if (Number.isFinite(entryTs) && entryTs > 0) out.push(toBucketTime(entryTs));
+            if (Number.isFinite(entryTs) && entryTs > 0) out.push(toClosedBarTime(entryTs));
             if (Number.isFinite(expTs) && expTs > 0) out.push(toBucketTime(expTs));
         });
         return out.filter((x) => Number.isFinite(x) && x != null);
@@ -5298,36 +5638,41 @@
         const n = allChartData.length;
         const lastIdx = n - 1;
         let from = Math.max(0, lastIdx - Math.min(CHART_DEFAULT_VISIBLE_BARS, n) + 1);
-
-        // Полный исторический охват по маркерам нужен только для точечного перехода на конкретную сделку.
-        if (targetTradeId !== null) {
-            const markerTimes = markerTimesForInstrument(currentInstrument);
-            const earliestMarker = Math.min(...markerTimes);
-            if (markerTimes.length > 0) {
-                const idx = allChartData.findIndex((c) => Number(c.time) >= earliestMarker);
-                if (idx >= 0) {
-                    from = Math.max(0, idx - CHART_LEFT_GAP_BARS);
-                } else {
-                    from = 0;
-                }
-            }
-        }
         const to = lastIdx + CHART_RIGHT_GAP_BARS;
         requestAnimationFrame(() => {
             if (!chart) return;
+            // ?trade_id=: не растягивать на всю историю. Иначе этот rAF перебивает
+            // focusTargetTradeOnChart, S30 сжимается в полоску, а бейдж DeMarker справа
+            // показывает ТЕКУЩЕЕ значение (~0.8), не значение на свече входа.
+            if (targetTradeId !== null) {
+                targetTradeFocusDone = false;
+                focusTargetTradeOnChart();
+                if (targetTradeFocusDone) return;
+            }
+            // ?backtest_run=: не уводить viewport на live-хвост — иначе маркеры BT остаются вне экрана.
+            if (requestedBacktestRunId && backtestLoadedRunId && backtestTrades.length) {
+                backtestMarkersFocusDone = false;
+                focusBacktestMarkersOnChart();
+                if (backtestMarkersFocusDone) return;
+            }
             chart.timeScale().setVisibleLogicalRange({ from, to });
-            // Защита от редкого race-condition при первом рендере:
-            // иногда после setData/resize библиотека может вернуть "весь график" вместо нашего окна.
-            // Проверяем фактический span и при необходимости повторно применяем целевой диапазон.
             requestAnimationFrame(() => {
                 if (!chart) return;
+                if (targetTradeId !== null) {
+                    targetTradeFocusDone = false;
+                    focusTargetTradeOnChart();
+                    return;
+                }
+                if (requestedBacktestRunId && backtestLoadedRunId && backtestTrades.length) {
+                    backtestMarkersFocusDone = false;
+                    focusBacktestMarkersOnChart();
+                    return;
+                }
                 const range = chart.timeScale().getVisibleLogicalRange();
                 if (!range || !Number.isFinite(range.from) || !Number.isFinite(range.to)) return;
                 const span = range.to - range.from;
                 const expectedSpan = to - from;
-                // Для обычного открытия (без trade_id) не допускаем разворот на всю историю.
-                // Небольшой буфер оставляем, чтобы не "драться" с округлением библиотеки.
-                if (targetTradeId === null && span > expectedSpan + 25) {
+                if (span > expectedSpan + 25) {
                     chart.timeScale().setVisibleLogicalRange({ from, to });
                 }
             });
@@ -5444,11 +5789,45 @@
         if (!Number.isFinite(n)) return '80';
         return String(Math.round(n * 10) / 10).replace(/\.0$/, '');
     }
+    /** Unix следующего bots:scan-dispatch; тикает локально между опросами сайдбара. */
+    let scanNextAtUnix = (() => {
+        const wrap = document.getElementById('bot-scan-remaining-wrap');
+        const raw = wrap && wrap.dataset.nextScanAt ? Number.parseInt(wrap.dataset.nextScanAt, 10) : 0;
+        return Number.isFinite(raw) && raw > 0 ? raw : null;
+    })();
+    /** Смещение Date.now() относительно server_time из последнего ответа сайдбара. */
+    let scanServerOffsetMs = 0;
+    function scanUnixNow() {
+        return Math.floor((Date.now() - scanServerOffsetMs) / 1000);
+    }
+    function setScanStatusVisible(active) {
+        const activeMsg = document.getElementById('bot-scan-active-msg');
+        const idleMsg = document.getElementById('bot-scan-idle-msg');
+        if (activeMsg) activeMsg.classList.toggle('hidden', !active);
+        if (idleMsg) idleMsg.classList.toggle('hidden', active);
+    }
+    function tickScanNextCountdown() {
+        const el = document.getElementById('bot-scan-next-countdown');
+        const idleMsg = document.getElementById('bot-scan-idle-msg');
+        if (!el || !idleMsg || idleMsg.classList.contains('hidden')) return;
+        if (scanNextAtUnix == null) {
+            el.textContent = '—';
+            return;
+        }
+        // Не крутим новый 30-секундный цикл на клиенте: 00:00, пока сервер не даст next_scan_at или scan_active.
+        el.textContent = formatMmSs(Math.max(0, scanNextAtUnix - scanUnixNow()));
+    }
     function updateScanRemainingCounter(payload) {
         const wrap = document.getElementById('bot-scan-remaining-wrap');
         const countEl = document.getElementById('bot-scan-remaining-count');
         const minPayoutEl = document.getElementById('bot-scan-min-payout');
         if (!wrap || !countEl) return;
+        if (payload && payload.server_time) {
+            const parsed = Date.parse(payload.server_time);
+            if (Number.isFinite(parsed)) {
+                scanServerOffsetMs = Date.now() - parsed;
+            }
+        }
         if (minPayoutEl && payload && payload.scan_min_payout != null) {
             minPayoutEl.textContent = formatScanMinPayout(payload.scan_min_payout);
         }
@@ -5463,12 +5842,22 @@
         if (active && remaining == null && Number.isFinite(total) && total > 0) {
             remaining = Math.max(0, total - analyzed);
         }
-        if (!active || remaining == null) {
-            wrap.classList.add('hidden');
+        wrap.classList.remove('hidden');
+        if (active) {
+            // Scan идёт: останавливаем idle-таймер, даже если remaining ещё не приехал из cache.
+            scanNextAtUnix = null;
+            wrap.dataset.nextScanAt = '';
+            countEl.textContent = remaining == null
+                ? '…'
+                : String(Math.max(0, Number.parseInt(String(remaining), 10) || 0));
+            setScanStatusVisible(true);
             return;
         }
-        countEl.textContent = String(Math.max(0, Number.parseInt(String(remaining), 10) || 0));
-        wrap.classList.remove('hidden');
+        const nextRaw = payload && payload.next_scan_at != null ? Number.parseInt(String(payload.next_scan_at), 10) : NaN;
+        scanNextAtUnix = Number.isFinite(nextRaw) && nextRaw > 0 ? nextRaw : null;
+        wrap.dataset.nextScanAt = scanNextAtUnix != null ? String(scanNextAtUnix) : '';
+        setScanStatusVisible(false);
+        tickScanNextCountdown();
     }
     function refreshInstrumentSidebar() {
         if (!window.PlatformChartFetch) {
@@ -5477,6 +5866,8 @@
                 .then((d) => {
                     if (d && d.server_time) lastServerTimes.instruments = d.server_time;
                     renderInstrumentSidebarRows(d.instruments || []);
+                    updateChartTitle();
+                    updateScanRemainingCounter(d);
                 })
                 .catch(() => {});
         }
@@ -5487,6 +5878,7 @@
             apply: (d) => {
                 if (d && d.server_time) lastServerTimes.instruments = d.server_time;
                 renderInstrumentSidebarRows(d.instruments || []);
+                updateChartTitle();
                 updateScanRemainingCounter(d);
                 applyInstrumentFilter(instrumentSearchInput.value);
                 syncSearchClearButton();
@@ -5520,11 +5912,39 @@
         const cur = document.querySelector('.tf-option[data-minutes="' + currentTimeframeMinutes + '"]');
         if (tfLabelEl && cur) tfLabelEl.textContent = cur.dataset.label || (currentTimeframeMinutes + 'м');
     }
+    function currentInstrumentPayoutPercent() {
+        if (!currentInstrument) return null;
+        const sel = (window.CSS && typeof CSS.escape === 'function')
+            ? CSS.escape(currentInstrument)
+            : String(currentInstrument).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+        const span = document.querySelector('.instrument-payout[data-instrument="' + sel + '"]');
+        if (!span || span.dataset.payout === '' || span.dataset.payout == null) return null;
+        const n = parseFloat(span.dataset.payout);
+        return Number.isFinite(n) ? n : null;
+    }
+    function syncChartTitlePayout() {
+        if (!chartTitlePayoutEl) return;
+        if (!currentDisplayName) {
+            chartTitlePayoutEl.textContent = '';
+            chartTitlePayoutEl.className = 'hidden text-sm font-medium tabular-nums shrink-0';
+            return;
+        }
+        const n = currentInstrumentPayoutPercent();
+        chartTitlePayoutEl.classList.remove('hidden');
+        if (n == null) {
+            chartTitlePayoutEl.textContent = '—';
+            chartTitlePayoutEl.className = 'text-sm font-medium tabular-nums shrink-0 text-zinc-500';
+            return;
+        }
+        chartTitlePayoutEl.textContent = Math.round(n) + '%';
+        chartTitlePayoutEl.className = 'text-sm font-medium tabular-nums shrink-0 ' + payoutClassByValue(n);
+    }
     function updateChartTitle() {
-        if (!currentDisplayName) { chartTitle.textContent = 'Выберите инструмент'; return; }
+        if (!currentDisplayName) { chartTitle.textContent = 'Выберите инструмент'; syncChartTitlePayout(); return; }
         const cur = document.querySelector('.tf-option[data-minutes="' + currentTimeframeMinutes + '"]');
         const lab = cur && cur.dataset.label ? cur.dataset.label : (currentTimeframeMinutes + 'м');
         chartTitle.textContent = `${currentDisplayName} (${lab})`;
+        syncChartTitlePayout();
     }
     function formatMmSs(totalSeconds) {
         const sec = Math.max(0, Math.floor(totalSeconds));
@@ -5979,7 +6399,7 @@
         const before = opts.before ?? null;
         const kind = opts.kind || (before != null ? 'more' : 'initial');
 
-        const earliestSignalTs = earliestSignalTsForInstrument(instrument);
+        const earliestSignalTs = earliestHistoryTsForInstrument(instrument);
         let since;
         let limit;
         if (kind === 'poll') {
@@ -6250,7 +6670,7 @@
         };
     }
 
-    /** Границы области свечей (pane 0): без ценовой шкалы справа, шкалы времени и pane осцилляторов. */
+    /** Границы области графика для HTML-кроссхейра. */
     function computeChartPlotBounds() {
         const cw = chartWrapper ? chartWrapper.clientWidth : 0;
         const ch = chartWrapper ? chartWrapper.clientHeight : 0;
@@ -6268,7 +6688,8 @@
                 if (Number.isFinite(h) && h > 0) timeH = h;
             }
         } catch (_) {}
-        // Высота только основного pane (свечи), иначе кроссхейр/клип заезжают на RSI/ATR.
+        // Высота только основного pane (свечи): курсор и горизонталь живут здесь,
+        // иначе кроссхейр «теряется» на панели RSI/ATR.
         let plotH = Math.max(1, ch - timeH);
         try {
             if (chart && typeof chart.panes === 'function') {
@@ -6279,9 +6700,13 @@
                 }
             }
         } catch (_) {}
+        // Вертикаль, как на главной (нативный LWC): от верха до шкалы времени,
+        // проходя через все pane осцилляторов.
+        const vLineH = Math.max(plotH, ch - timeH);
         return {
             plotW: Math.max(1, cw - scaleW),
             plotH,
+            vLineH,
             scaleW,
             timeH,
             cw,
@@ -6309,7 +6734,36 @@
         return `${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
     }
 
-    /** Рисуем кроссхейр в HTML-слое z-3: поверх уровней LLM и других DOM-оверлеев. */
+    /**
+     * LWC v5: при hover по pane осциллятора point.y часто относительно верха ЭТОГО pane.
+     * Рисование «сырого» y на полном оверлее ставит горизонталь вверху свечного графика.
+     * Если y уже ниже старта текущего pane — считаем координату абсолютной и не сдвигаем.
+     */
+    function crosshairAbsoluteY(param) {
+        const y = Number(param && param.point ? param.point.y : NaN);
+        if (!Number.isFinite(y) || y < 0) return null;
+        const paneIndex = Number(param.paneIndex);
+        if (!Number.isFinite(paneIndex) || paneIndex <= 0 || !chart || typeof chart.panes !== 'function') {
+            return y;
+        }
+        let offsetY = 0;
+        try {
+            const panes = chart.panes() || [];
+            for (let i = 0; i < paneIndex && i < panes.length; i += 1) {
+                const h = Number(panes[i] && typeof panes[i].getHeight === 'function' ? panes[i].getHeight() : NaN);
+                if (Number.isFinite(h) && h > 0) offsetY += h;
+            }
+        } catch (_) {
+            return y;
+        }
+        // Уже абсолютная координата (ниже границы текущего pane) — не дублируем offset.
+        if (y >= offsetY - 0.5) {
+            return y;
+        }
+        return offsetY + y;
+    }
+
+    /** Рисуем кроссхейр в HTML-слое: поверх уровней LLM и других DOM-оверлеев. */
     function setupBotCrosshairOverlay() {
         if (!botCrosshairOverlay || !chart) return;
         if (!TV_CROSSHAIR_ENABLED) {
@@ -6324,65 +6778,88 @@
                 return;
             }
             const x = Number(param.point.x);
-            const y = Number(param.point.y);
-            if (!Number.isFinite(x) || !Number.isFinite(y) || x < 0 || y < 0) {
+            if (!Number.isFinite(x) || x < 0) {
                 hideBotCrosshairOverlay();
                 return;
             }
             const b = computeChartPlotBounds();
-            if (x > b.plotW || y > b.plotH) {
+            if (x > b.plotW) {
+                hideBotCrosshairOverlay();
+                return;
+            }
+            const absY = crosshairAbsoluteY(param);
+            if (absY == null || absY > b.vLineH) {
                 hideBotCrosshairOverlay();
                 return;
             }
 
-            if (botCrosshairHLine) {
-                botCrosshairHLine.classList.remove('hidden');
-                botCrosshairHLine.style.left = '0';
-                botCrosshairHLine.style.top = y + 'px';
-                botCrosshairHLine.style.width = b.plotW + 'px';
-            }
+            const paneIndex = Number(param.paneIndex);
+            const onMainPane = !Number.isFinite(paneIndex) || paneIndex <= 0;
+
+            // Вертикаль всегда до шкалы времени (как на главной).
             if (botCrosshairVLine) {
                 botCrosshairVLine.classList.remove('hidden');
                 botCrosshairVLine.style.top = '0';
                 botCrosshairVLine.style.left = x + 'px';
-                botCrosshairVLine.style.height = b.plotH + 'px';
+                botCrosshairVLine.style.height = b.vLineH + 'px';
             }
 
-            let price = null;
-            try {
-                price = candlestickSeries.coordinateToPrice(y);
-            } catch (_) {}
+            // Горизонталь — в том pane, где курсор (absY), а не «сырой» point.y.
+            if (botCrosshairHLine) {
+                botCrosshairHLine.classList.remove('hidden');
+                botCrosshairHLine.style.left = '0';
+                botCrosshairHLine.style.top = absY + 'px';
+                botCrosshairHLine.style.width = b.plotW + 'px';
+            }
+
+            // Цена свечей имеет смысл только на основном pane.
             if (botCrosshairPrice) {
-                botCrosshairPrice.classList.remove('hidden');
-                botCrosshairPrice.textContent = formatBotCrosshairPrice(price);
-                botCrosshairPrice.style.right = '0';
-                botCrosshairPrice.style.width = b.scaleW + 'px';
-                botCrosshairPrice.style.top = Math.max(0, Math.min(b.ch - 18, y - 9)) + 'px';
+                if (onMainPane && absY <= b.plotH) {
+                    let price = null;
+                    try {
+                        price = candlestickSeries.coordinateToPrice(absY);
+                    } catch (_) {}
+                    botCrosshairPrice.classList.remove('hidden');
+                    botCrosshairPrice.textContent = formatBotCrosshairPrice(price);
+                    botCrosshairPrice.style.right = '0';
+                    botCrosshairPrice.style.width = b.scaleW + 'px';
+                    botCrosshairPrice.style.top = Math.max(0, Math.min(b.ch - 18, absY - 9)) + 'px';
+                } else {
+                    botCrosshairPrice.classList.add('hidden');
+                }
             }
 
             if (botCrosshairTime) {
                 botCrosshairTime.classList.remove('hidden');
                 botCrosshairTime.textContent = formatBotCrosshairTime(param.time);
                 const labelW = 72;
-                botCrosshairTime.style.top = b.plotH + 'px';
+                botCrosshairTime.style.top = b.vLineH + 'px';
                 botCrosshairTime.style.left = Math.max(0, Math.min(b.plotW - labelW, x - labelW / 2)) + 'px';
             }
         });
     }
 
-    /** Canvas (z-1) → оверлеи анализа (z-2) → HTML-кроссхейр (z-3). */
+    /**
+     * Canvas LW Charts (z-1) → оверлеи анализа (z-2) → подписи индикаторов (z-4) → HTML-кроссхейр (z-5).
+     * Важно: в LWC v5 корень — `.tv-lightweight-charts`, а не прямой `table`.
+     * Если не опустить корень ниже оверлеев, canvas перехватывает клики по карандашу/×.
+     */
     function ensureChartLayerStack() {
         if (!chartWrapper) return;
-        const lwTable = chartWrapper.querySelector(':scope > table');
-        if (lwTable) {
-            lwTable.style.position = 'relative';
-            lwTable.style.zIndex = '1';
+        // Сначала корень библиотеки (новый DOM), затем legacy table на случай старой версии.
+        const lwRoot = chartWrapper.querySelector(':scope > .tv-lightweight-charts')
+            || chartWrapper.querySelector(':scope > table');
+        if (lwRoot) {
+            lwRoot.style.position = 'relative';
+            lwRoot.style.zIndex = '1';
         }
         chartWrapper.querySelectorAll('.chart-dom-overlay').forEach((el) => {
-            el.style.zIndex = '2';
+            // Подписи с карандашом/× — выше остальных DOM-оверлеев, чтобы hit-test не
+            // упирался в соседние слои с тем же z-index (порядок DOM + canvas).
+            el.style.zIndex = (el.id === 'classic-indicator-labels') ? '4' : '2';
         });
         if (botCrosshairOverlay) {
-            botCrosshairOverlay.style.zIndex = '3';
+            botCrosshairOverlay.style.zIndex = '5';
         }
     }
 
@@ -6441,7 +6918,12 @@
             },
             grid: { vertLines: { color: '#27272a' }, horzLines: { color: '#27272a' } },
             rightPriceScale: { borderColor: '#3f3f46', scaleMargins: { top: 0.08, bottom: 0.05 } },
-            timeScale: { borderColor: '#3f3f46', timeVisible: true, secondsVisible: false },
+            timeScale: {
+                borderColor: '#3f3f46',
+                timeVisible: true,
+                // S30/S15/S5: без секунд две свечи живут под одной подписью «13:35».
+                secondsVisible: timeframeSeconds(currentTimeframeMinutes) < 60,
+            },
             // Включаем "tradingview-like" интерактивность перемещения графика:
             // - drag мышью (зажали и тянем) = прокрутка истории влево/вправо,
             // - wheel и drag по осям = удобная навигация по времени/цене,
@@ -6535,7 +7017,7 @@
     }
     function loadMoreCandles() {
         if (!currentInstrument || loadingMore || oldestLoadedTime == null) return;
-        const earliestSignalTs = earliestSignalTsForInstrument(currentInstrument);
+        const earliestSignalTs = earliestHistoryTsForInstrument(currentInstrument);
         const dynamicSince = (earliestSignalTs && Number.isFinite(earliestSignalTs))
             ? Math.min(candlesSince(), Math.max(0, earliestSignalTs - 3600))
             : candlesSince();
@@ -6695,6 +7177,7 @@
         currentInstrument = instrument;
         currentDisplayName = displayName;
         saveSelectedInstrument(instrument);
+        updateBacktestMarkersMeta();
         openTrades = [];
         renderOpenTradesOverlay();
         // При смене пары сразу убираем старый анализ; при первом выборе оставляем SSR до ответа open-trades (без мигания).
@@ -6788,6 +7271,15 @@
         if (!Number.isFinite(m) || m === currentTimeframeMinutes) { tfPanel.classList.add('hidden'); return; }
         currentTimeframeMinutes = m;
         updateTfOptionStyles();
+        if (chart && typeof chart.timeScale === 'function') {
+            try {
+                chart.timeScale().applyOptions({
+                    timeVisible: true,
+                    secondsVisible: timeframeSeconds(currentTimeframeMinutes) < 60,
+                });
+            } catch (e) {}
+        }
+        saveLayerPrefs();
         tfPanel.classList.add('hidden');
         if (window.PlatformChartFetch) window.PlatformChartFetch.invalidateAll();
         if (currentInstrument && candlestickSeries) reloadChartData();
@@ -6945,7 +7437,44 @@
         syncSearchClearButton();
         instrumentSearchInput.focus();
     });
+    // Бэктест: перед открытием новой вкладки подставляем текущую пару в ?instrument=.
+    const botBacktestLink = document.getElementById('bot-backtest-link');
+    if (botBacktestLink) {
+        botBacktestLink.addEventListener('click', () => {
+            if (!currentInstrument) return;
+            const u = new URL(botBacktestLink.getAttribute('href'), window.location.origin);
+            u.searchParams.set('instrument', currentInstrument);
+            botBacktestLink.href = u.pathname + u.search;
+        });
+    }
+    // Чекбокс BT: показать/скрыть маркеры бэктеста без перезагрузки.
+    const botBacktestShowMarkers = document.getElementById('bot-backtest-show-markers');
+    if (botBacktestShowMarkers) {
+        botBacktestShowMarkers.addEventListener('change', () => {
+            renderChartMarkers();
+            updateBacktestMarkersMeta();
+        });
+    }
+    const botBacktestRunSelect = document.getElementById('bot-backtest-run-select');
+    if (botBacktestRunSelect) {
+        botBacktestRunSelect.addEventListener('change', () => {
+            const id = Number(botBacktestRunSelect.value);
+            if (Number.isFinite(id) && id > 0) {
+                loadBacktestMarkersForRun(id);
+            } else {
+                backtestTrades = [];
+                backtestLoadedRunId = null;
+                updateBacktestMarkersMeta();
+                renderChartMarkers();
+            }
+        });
+        refreshBacktestRunSelect();
+    }
+
     botAnalysisBtn.addEventListener('click', fetchBotAnalysis);
+    if (botChartPresetBtn) {
+        botChartPresetBtn.addEventListener('click', () => applyBotChartPreset({ reload: true }));
+    }
     if (botAnalysisCollapseBtn) {
         botAnalysisCollapseBtn.addEventListener('click', () => {
             const collapsed = botAnalysisPanel && botAnalysisPanel.classList.contains('bot-analysis-collapsed');
@@ -6966,7 +7495,7 @@
         if (BOT_IS_CHART_ANALYST) clearLlmChartLevels();
     });
 
-    loadLayerPrefs();
+    loadLayerPrefs() || applyBotChartPreset({ reload: false });
     updateTfOptionStyles();
     syncSearchClearButton();
     instrumentListRefreshInterval = setInterval(refreshInstrumentSidebar, 1000);
@@ -6975,6 +7504,7 @@
         updateSidebarActiveTradePanel();
         tickSidebarTradeTimers();
         tickCandleCloseTimer();
+        tickScanNextCountdown();
         // Обновление таймеров/позиции лучей PO раз в секунду (live-свеча двигает X).
         renderPoOpenTradeRaysOverlay();
         renderTimeDebugPanel();
@@ -6983,6 +7513,7 @@
     tickOpenTradesOverlayTimers();
     tickSidebarTradeTimers();
     tickCandleCloseTimer();
+    tickScanNextCountdown();
     renderTimeDebugPanel();
     refreshSignalsHistory();
     openTradesFetchInterval = setInterval(refreshOpenTrades, 3000);
@@ -6999,7 +7530,15 @@
         let ib = null;
         const targetSignal = findTargetSignal();
         const persisted = loadSelectedInstrument();
-        if (targetSignal && targetSignal.instrument) {
+        const urlInstrument = (new URLSearchParams(window.location.search).get('instrument') || '').trim();
+        // С бэктеста (?instrument= / ?backtest_run=) приоритетнее localStorage, иначе маркеры BT на «чужой» паре.
+        if (urlInstrument || requestedBacktestRunId) {
+            const want = urlInstrument || initialInstrument;
+            document.querySelectorAll('.instrument-btn').forEach((b) => {
+                if (want && b.dataset.instrument === want) ib = b;
+            });
+        }
+        if (!ib && targetSignal && targetSignal.instrument) {
             document.querySelectorAll('.instrument-btn').forEach((b) => {
                 if (b.dataset.instrument === targetSignal.instrument) ib = b;
             });
@@ -7015,7 +7554,17 @@
             });
         }
         if (!ib) ib = document.querySelector('.instrument-btn');
-        if (ib) ib.click();
+        if (ib) {
+            ib.click();
+        } else if (urlInstrument || (requestedBacktestRunId && initialInstrument)) {
+            // Пары нет в сайдбаре (только в прогоне) — всё равно открываем график по символу.
+            const sym = urlInstrument || initialInstrument;
+            if (sym) selectInstrument(sym, sym);
+        }
+        // После выбора пары — подтянуть сделки прогона для маркеров BT.
+        if (requestedBacktestRunId) {
+            loadBacktestMarkersForRun(requestedBacktestRunId);
+        }
     });
 })();
 </script>

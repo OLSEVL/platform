@@ -7,7 +7,7 @@ Type=simple
 User=o
 Group=o
 WorkingDirectory=/home/o/platform
-ExecStart=/usr/bin/php artisan queue:work database --queue=mirror,default --sleep=1 --tries=3 --max-time=3600 --timeout=180
+ExecStart=/usr/bin/php artisan queue:work database --queue=backtest,mirror,default,telegram-analyst --sleep=1 --tries=3 --max-time=7200 --timeout=3600
 Restart=always
 RestartSec=5
 StandardOutput=append:/home/o/platform/storage/logs/queue.log

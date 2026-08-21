@@ -73,6 +73,8 @@ class DataCleanupServiceTest extends TestCase
         $this->assertNull($service->normalizeAutoCleanupRetentionHours(''));
         $this->assertSame(24, $service->normalizeAutoCleanupRetentionHours(24));
         $this->assertSame(1, $service->normalizeAutoCleanupRetentionHours('1'));
+        $this->assertSame(720, $service->normalizeAutoCleanupRetentionHours(720)); // 30 дней
+        $this->assertSame(72, $service->normalizeAutoCleanupRetentionHours('72')); // 3 дня
         $this->assertNull($service->normalizeAutoCleanupRetentionHours(0));
         $this->assertNull($service->normalizeAutoCleanupRetentionHours(99));
     }
@@ -82,7 +84,23 @@ class DataCleanupServiceTest extends TestCase
         $service = new DataCleanupService();
 
         $this->assertSame('Ничего не удалять', $service->autoCleanupRetentionLabel(null));
-        $this->assertSame('24 часа', $service->autoCleanupRetentionLabel(24));
+        $this->assertSame('1 день (24 часа)', $service->autoCleanupRetentionLabel(24));
+        $this->assertSame('2 дня (48 часов)', $service->autoCleanupRetentionLabel(48));
+        $this->assertSame('5 дней (120 часов)', $service->autoCleanupRetentionLabel(120));
+        $this->assertSame('21 день (504 часа)', $service->autoCleanupRetentionLabel(504));
+        $this->assertSame('30 дней (720 часов)', $service->autoCleanupRetentionLabel(720));
         $this->assertSame('1 час', $service->autoCleanupRetentionLabel(1));
+    }
+
+    public function test_allowed_auto_cleanup_includes_one_to_thirty_days(): void
+    {
+        $hours = DataCleanupService::allowedAutoCleanupRetentionHours();
+
+        $this->assertContains(24, $hours);
+        $this->assertContains(48, $hours);
+        $this->assertContains(720, $hours);
+        $this->assertContains(1, $hours);
+        $this->assertCount(34, $hours); // 30 суток + 12/6/3/1 ч.
+        $this->assertSame(720, $hours[0]); // сначала самый длинный период
     }
 }

@@ -394,6 +394,68 @@ class TelegramAnalystServicesTest extends TestCase
         $this->assertSame('GBPUSD_otc', $parsed['instrument']);
     }
 
+    public function test_strong_trend_demarker_llm_button_callback_markup(): void
+    {
+        $user = User::factory()->create();
+        $analyst = Bot::query()->create([
+            'user_id' => $user->id,
+            'name' => 'Chart Analyst',
+            'type' => 'openrouter_llm_analyst',
+            'is_active' => true,
+            'config' => [],
+        ]);
+        $demarker = Bot::query()->create([
+            'user_id' => $user->id,
+            'name' => 'Strong Trend + DeMarker',
+            'type' => 'strong_trend_demarker',
+            'is_active' => true,
+            'config' => ['telegram_analyst_llm_enabled' => true],
+        ]);
+
+        $markup = StrongLevelTelegramLlmButton::inlineKeyboardMarkup(
+            $demarker->config,
+            $demarker,
+            'EURUSD_otc',
+        );
+
+        $this->assertNotNull($markup);
+        $parsed = StrongLevelTelegramLlmButton::parseCallbackData($markup['inline_keyboard'][0][0]['callback_data']);
+        $this->assertNotNull($parsed);
+        $this->assertSame($analyst->id, $parsed['analyst_bot_id']);
+        $this->assertSame('EURUSD_otc', $parsed['instrument']);
+    }
+
+    public function test_sweep_raid_liquidity_llm_button_callback_markup(): void
+    {
+        $user = User::factory()->create();
+        $analyst = Bot::query()->create([
+            'user_id' => $user->id,
+            'name' => 'Chart Analyst',
+            'type' => 'openrouter_llm_analyst',
+            'is_active' => true,
+            'config' => [],
+        ]);
+        $sweep = Bot::query()->create([
+            'user_id' => $user->id,
+            'name' => 'Sweep / Raid Liquidity',
+            'type' => 'sweep_raid_liquidity',
+            'is_active' => true,
+            'config' => ['telegram_analyst_llm_enabled' => true],
+        ]);
+
+        $markup = StrongLevelTelegramLlmButton::inlineKeyboardMarkup(
+            $sweep->config,
+            $sweep,
+            'AUDCAD_otc',
+        );
+
+        $this->assertNotNull($markup);
+        $parsed = StrongLevelTelegramLlmButton::parseCallbackData($markup['inline_keyboard'][0][0]['callback_data']);
+        $this->assertNotNull($parsed);
+        $this->assertSame($analyst->id, $parsed['analyst_bot_id']);
+        $this->assertSame('AUDCAD_otc', $parsed['instrument']);
+    }
+
     public function test_hybrid_analyst_self_llm_button_markup(): void
     {
         $user = User::factory()->create();

@@ -28,6 +28,10 @@ class BotDataService
         // - 4005 => секундный S5 поток для быстрых стратегий.
         // Источник единый через CandleService, чтобы график и бот видели одинаковые свечи.
         $rows = $this->candleService->seriesForDashboard($instrument, $timeframe, null, null, $count);
+        // Агрегат S15/S30/M1 всегда включает текущий (ещё открытый) бакет. Стратегия и Telegram
+        // должны считать DeMarker только по закрытым барам, иначе после закрытия свечи
+        // значение на веб-графике уже другое, чем на PNG в момент входа.
+        $rows = self::withoutOpenLastBucket($rows, $timeframe);
 
         $closed = array_map(static fn (array $r) => [
             'time' => (int) ($r['time'] ?? 0),
@@ -124,6 +128,29 @@ class BotDataService
     }
 
     /**
+     * Убирает последний бакет, если его период ещё не закончился (now < time+period).
+     * Нужно для S30/S15/M1: seriesForDashboard отдаёт формирующуюся свечу как обычный ряд.
+     *
+     * @param  list<array<string, mixed>>  $rows
+     * @return list<array<string, mixed>>
+     */
+    public static function withoutOpenLastBucket(array $rows, int $timeframe, ?int $now = null): array
+    {
+        $period = CandleService::periodSecondsForDashboardTf($timeframe);
+        if ($period === null || $rows === []) {
+            return $rows;
+        }
+        $now ??= time();
+        $last = $rows[array_key_last($rows)];
+        $start = (int) ($last['time'] ?? 0);
+        if ($start > 0 && ($start + $period) > $now) {
+            array_pop($rows);
+        }
+
+        return $rows;
+    }
+
+    /**
      * @param  array<string, mixed>  $partial
      * @return array{time:int,open:float,high:float,low:float,close:float,volume:float,is_partial:bool}
      */
@@ -163,6 +190,7 @@ class BotDataService
         $map[$timeframe] = $count;
         $bundle = $this->candleService->seriesBundle($instrument, $map);
         $rows = $bundle[(string) $timeframe] ?? [];
+        $rows = self::withoutOpenLastBucket($rows, $timeframe);
 
         $closed = array_map(static fn (array $r) => [
             'time' => (int) ($r['time'] ?? 0),
@@ -207,6 +235,41 @@ class BotDataService
     public function mtfSeries(string $instrument, array $tfToMaxBars): array
     {
         return $this->normalizeMtfBundle($this->candleService->seriesBundle($instrument, $tfToMaxBars));
+    }
+
+    /**
+     * Закрытые бары ТФ за [fromTs, toTs] для candle-replay backtest.
+     * Partial не включаем: в истории «текущей» свечи нет — только закрытые бакеты.
+     *
+     * @return list<array{time:int,open:float,high:float,low:float,close:float,volume:float,is_partial:bool}>
+     */
+    public function closedSeriesInRange(
+        string $instrument,
+        int $timeframe,
+        int $fromTs,
+        int $toTs,
+        ?int $maxBars = null,
+    ): array {
+        $rows = $this->candleService->seriesForDashboard(
+            $instrument,
+            $timeframe,
+            $fromTs,
+            $toTs + 1,
+            $maxBars,
+        );
+        // На верхней границе периода «открытого» бакета уже нет: toTs в прошлом.
+        // withoutOpenLastBucket всё равно безопасен, если toTs ≈ now.
+        $rows = self::withoutOpenLastBucket($rows, $timeframe, $toTs);
+
+        return array_values(array_map(static fn (array $r) => [
+            'time' => (int) ($r['time'] ?? 0),
+            'open' => (float) ($r['open'] ?? 0),
+            'high' => (float) ($r['high'] ?? 0),
+            'low' => (float) ($r['low'] ?? 0),
+            'close' => (float) ($r['close'] ?? 0),
+            'volume' => (float) ($r['volume'] ?? 0),
+            'is_partial' => false,
+        ], $rows));
     }
 
     /**

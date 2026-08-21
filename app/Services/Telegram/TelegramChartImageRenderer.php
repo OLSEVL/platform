@@ -44,6 +44,7 @@ class TelegramChartImageRenderer
      *     zones?:list<array<string,mixed>>,
      *     entry?:?array<string,mixed>,
      *     oscillator?:?array<string,mixed>,
+     *     oscillator_guides?:list<array<string,mixed>>,
      *     segments?:list<array<string,mixed>>,
      *     markers?:list<array<string,mixed>>,
      *     subtitle?:string,
@@ -96,6 +97,7 @@ class TelegramChartImageRenderer
         $levels = is_array($chartLevels['levels'] ?? null) ? $chartLevels['levels'] : [];
         $zones = is_array($chartLevels['zones'] ?? null) ? $chartLevels['zones'] : [];
         $entry = is_array($chartLevels['entry'] ?? null) ? $chartLevels['entry'] : null;
+        $oscillatorGuides = is_array($chartLevels['oscillator_guides'] ?? null) ? $chartLevels['oscillator_guides'] : [];
         $segments = is_array($chartLevels['segments'] ?? null) ? $chartLevels['segments'] : [];
         $markers = is_array($chartLevels['markers'] ?? null) ? $chartLevels['markers'] : [];
 
@@ -211,6 +213,10 @@ class TelegramChartImageRenderer
             is_array($entry) ? ($entry['time'] ?? null) : null,
             $barCount,
         );
+        // Без time в entry считаем входом последний закрытый бар (как в scan DeMarker).
+        if ($entryBarIndex === null && $entry !== null && $barCount > 0) {
+            $entryBarIndex = $barCount - 1;
+        }
 
         foreach ($zones as $zone) {
             $low = (float) ($zone['price_low'] ?? $zone['low'] ?? 0);
@@ -222,6 +228,27 @@ class TelegramChartImageRenderer
             $yBot = $this->priceToY($low, $priceMin, $priceMax, $plotY0, $candleH);
             $zoneColor = imagecolorallocatealpha($img, 59, 130, 246, 100);
             imagefilledrectangle($img, $plotX0, min($yTop, $yBot), $width - $marginRight, max($yTop, $yBot), $zoneColor);
+        }
+
+        // Подсветка свечей «подряд»: те же бары, с которых потом пойдут вертикали на DeMarker.
+        $streakBarIndexes = [];
+        foreach ($oscillatorGuides as $guide) {
+            if (! is_array($guide)) {
+                continue;
+            }
+            $idx = $this->barIndexByTime($timeIndex, $guide['time'] ?? null, $barCount);
+            if ($idx === null || $idx === $entryBarIndex) {
+                continue;
+            }
+            $streakBarIndexes[] = $idx;
+        }
+        if ($streakBarIndexes !== []) {
+            $streakHighlight = imagecolorallocatealpha($img, 34, 211, 238, 108);
+            foreach (array_unique($streakBarIndexes) as $idx) {
+                $xLeft = (int) round($barX0 + $idx * $slotW);
+                $xRight = (int) round($barX0 + ($idx + 1) * $slotW);
+                imagefilledrectangle($img, $xLeft, $plotY0, max($xLeft + 2, $xRight), $plotY0 + $candleH, $streakHighlight);
+            }
         }
 
         // Подсветка свечи входа — чтобы сразу было видно, на каком баре бот открылся.
@@ -366,6 +393,63 @@ class TelegramChartImageRenderer
                 $barX0,
                 $slotW,
             );
+            $streakGuideColor = imagecolorallocate($img, 34, 211, 238);
+            $streakColumn = imagecolorallocatealpha($img, 34, 211, 238, 105);
+            // Сначала серия «подряд», затем вход — жёлтая линия входа поверх, если бары совпали.
+            foreach ($oscillatorGuides as $guide) {
+                if (! is_array($guide) || ! isset($guide['price']) || ! is_numeric($guide['price'])) {
+                    continue;
+                }
+                $idx = $this->barIndexByTime($timeIndex, $guide['time'] ?? null, $barCount);
+                if ($idx === null) {
+                    continue;
+                }
+                $this->drawPriceToOscillatorGuide(
+                    $img,
+                    $fontPath,
+                    $fontLabel,
+                    (float) $guide['price'],
+                    $oscillator,
+                    $oscValues,
+                    $idx,
+                    $barX0,
+                    $slotW,
+                    $plotY0,
+                    $candleH,
+                    $oscY0,
+                    $oscH,
+                    $priceMin,
+                    $priceMax,
+                    $streakGuideColor,
+                    $streakColumn,
+                    (string) ($guide['label'] ?? ''),
+                    false,
+                );
+            }
+            // Вертикаль: свеча входа → то же время на DeMarker, чтобы не гадать «на какой бар смотреть».
+            if ($entryBarIndex !== null && $entry && isset($entry['price']) && is_numeric($entry['price'])) {
+                $this->drawPriceToOscillatorGuide(
+                    $img,
+                    $fontPath,
+                    $fontLabel,
+                    (float) $entry['price'],
+                    $oscillator,
+                    $oscValues,
+                    $entryBarIndex,
+                    $barX0,
+                    $slotW,
+                    $plotY0,
+                    $candleH,
+                    $oscY0,
+                    $oscH,
+                    $priceMin,
+                    $priceMax,
+                    $entryColor ?? imagecolorallocate($img, 250, 204, 21),
+                    imagecolorallocatealpha($img, 250, 204, 21, 105),
+                    '',
+                    true,
+                );
+            }
         }
 
         if ($legend !== '') {
@@ -473,6 +557,86 @@ class TelegramChartImageRenderer
             $lastY = $y;
         }
         imagefilledellipse($img, $lastX, $lastY, 8, 8, $lastDot);
+    }
+
+    /**
+     * Пунктир от цены свечи до значения DeMarker на том же баре.
+     *
+     * @param  \GdImage  $img
+     * @param  array<string, mixed>  $oscillator
+     * @param  list<mixed>  $oscValues
+     */
+    private function drawPriceToOscillatorGuide(
+        $img,
+        ?string $fontPath,
+        float $fontLabel,
+        float $price,
+        array $oscillator,
+        array $oscValues,
+        int $barIndex,
+        float $barX0,
+        float $slotW,
+        int $plotY0,
+        int $candleH,
+        int $oscY0,
+        int $oscH,
+        float $priceMin,
+        float $priceMax,
+        int $lineColor,
+        int $columnColor,
+        string $indexLabel,
+        bool $showDemarkerValue,
+    ): void {
+        $oscMin = (float) ($oscillator['min'] ?? 0.0);
+        $oscMax = (float) ($oscillator['max'] ?? 1.0);
+        if ($oscMax <= $oscMin) {
+            $oscMax = $oscMin + 1.0;
+        }
+        $raw = $oscValues[$barIndex] ?? null;
+        if (! is_numeric($raw)) {
+            return;
+        }
+        $oscValue = (float) $raw;
+        $xMid = (int) round($barX0 + ($barIndex + 0.5) * $slotW);
+        $yPrice = $this->priceToY($price, $priceMin, $priceMax, $plotY0, $candleH);
+        $yOsc = $this->priceToY($oscValue, $oscMin, $oscMax, $oscY0, $oscH);
+        // Колонка на DeMarker под той же свечой, затем пунктир поверх (чтобы линия не пряталась).
+        $xLeft = (int) round($barX0 + $barIndex * $slotW);
+        $xRight = (int) round($barX0 + ($barIndex + 1) * $slotW);
+        imagefilledrectangle($img, $xLeft, $oscY0, max($xLeft + 2, $xRight), $oscY0 + $oscH, $columnColor);
+        $yTop = min($yPrice, $yOsc);
+        $yBot = max($yPrice, $yOsc);
+        for ($y = $yTop; $y < $yBot; $y += 7) {
+            imageline($img, $xMid, $y, $xMid, min($y + 4, $yBot), $lineColor);
+        }
+        $dot = $showDemarkerValue ? 10 : 7;
+        imagefilledellipse($img, $xMid, $yOsc, $dot, $dot, $lineColor);
+        if ($showDemarkerValue) {
+            $pct = number_format($oscValue * 100, 1);
+            $this->drawText(
+                $img,
+                $fontPath,
+                max(7.5, $fontLabel - 0.5),
+                $xMid + 8,
+                $yOsc - 4,
+                $lineColor,
+                'DeM '.$pct,
+            );
+
+            return;
+        }
+        // Номер свечи серии над панелью DeMarker — без процентов, иначе подписи налезут друг на друга.
+        if ($indexLabel !== '') {
+            $this->drawText(
+                $img,
+                $fontPath,
+                max(7.0, $fontLabel - 1.5),
+                $xMid - 3,
+                $oscY0 + 12,
+                $lineColor,
+                $indexLabel,
+            );
+        }
     }
 
     /**

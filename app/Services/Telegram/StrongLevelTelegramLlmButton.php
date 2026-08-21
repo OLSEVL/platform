@@ -5,7 +5,7 @@ namespace App\Services\Telegram;
 use App\Models\Bot;
 
 /**
- * Inline-кнопка «Доп. анализ SMC Flow» на алертах Strong Level и Strong Trend Telegram.
+ * Inline-кнопка «Доп. анализ SMC Flow» на алертах Strong Level, CRC, Strong Trend, DeMarker и Sweep / Raid.
  */
 class StrongLevelTelegramLlmButton
 {
@@ -42,8 +42,8 @@ class StrongLevelTelegramLlmButton
 
     public static function supportsBotType(string $type): bool
     {
-        // strong_trend_telegram шлёт LLM-кнопку, но не входит в CARD_AND_TELEGRAM (level-bounce).
-        return $type === 'strong_trend_telegram'
+        // Эти типы шлют ту же кнопку, но не входят в CARD_AND_TELEGRAM (level-bounce).
+        return in_array($type, ['strong_trend_telegram', 'strong_trend_demarker', 'sweep_raid_liquidity'], true)
             || in_array($type, self::SUPPORTED_BOT_TYPES, true);
     }
 

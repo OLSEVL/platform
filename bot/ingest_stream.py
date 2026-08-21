@@ -35,6 +35,21 @@ PROXY_POOL_VERSION_POLL_SEC = int(os.environ.get("PROXY_POOL_VERSION_POLL_SEC", 
 CONNECT_FAIL_EXIT_STREAK = int(os.environ.get("INGEST_CONNECT_FAIL_EXIT_STREAK", "3"))
 # Макс. backoff до выхода/ретрая — не 300с: иначе одна мёртвая пара «молчит» часами.
 CONNECT_FAIL_MAX_SLEEP_SEC = int(os.environ.get("INGEST_CONNECT_FAIL_MAX_SLEEP_SEC", "45"))
+# Сколько ждать завершения воркера после task.cancel().
+# Без лимита супервизор навечно зависает на await, если finally→disconnect() залип
+# на полумёртвом SOCKS/WebSocket — тогда пропадают poll pool-version / instruments
+# и Laravel перестаёт помечать прокси dead по stale PO.
+WORKER_CANCEL_AWAIT_TIMEOUT_SEC = float(
+    os.environ.get("INGEST_WORKER_CANCEL_AWAIT_TIMEOUT_SEC", "5")
+)
+# Таймаут client.disconnect() в finally воркера (websocket.close на мёртвом прокси).
+WORKER_DISCONNECT_TIMEOUT_SEC = float(
+    os.environ.get("INGEST_WORKER_DISCONNECT_TIMEOUT_SEC", "3")
+)
+# Таймаут client.connect() — иначе cancel во время connect тоже может не вернуться.
+WORKER_CONNECT_TIMEOUT_SEC = float(
+    os.environ.get("INGEST_WORKER_CONNECT_TIMEOUT_SEC", "45")
+)
 # Базовый период свечи в секундах.
 # Для нового секундного режима по умолчанию используем S5.
 BASE_BAR_PERIOD_SEC = int(os.environ.get("INGEST_BASE_BAR_SECONDS", "5"))
@@ -98,6 +113,71 @@ FEED_TIME_DELTA_LOG_ENABLE = os.environ.get("FEED_TIME_DELTA_LOG_ENABLE", "1").s
 
 _ingest_http_session: Optional[aiohttp.ClientSession] = None
 _ingest_http_lock: Optional[asyncio.Lock] = None
+
+
+async def _await_cancelled_worker(
+    task: asyncio.Task,
+    label: str,
+    timeout_sec: Optional[float] = None,
+) -> None:
+    """
+    Ждём завершения уже отменённого воркера, но не дольше timeout_sec.
+
+    Если finally воркера завис на disconnect/close — супервизор всё равно продолжает
+    цикл (refresh instruments → dead-on-stale). Старая task может ещё жить как orphan
+    до своего disconnect; новый воркер на ту же пару при этом уже можно стартовать.
+    """
+    limit = WORKER_CANCEL_AWAIT_TIMEOUT_SEC if timeout_sec is None else float(timeout_sec)
+    try:
+        await asyncio.wait_for(asyncio.shield(task), timeout=max(0.1, limit))
+    except asyncio.TimeoutError:
+        print(
+            f"[INGEST] worker {label}: cancel await timed out after {limit:.1f}s "
+            f"(orphan may still be disconnecting; supervisor continues)",
+            flush=True,
+        )
+    except asyncio.CancelledError:
+        # Сам супервизор отменён, или task уже завершился CancelledError'ом — норма.
+        pass
+    except Exception as e:
+        print(f"[INGEST] worker {label}: cancel await error: {e!r}", flush=True)
+
+
+async def _disconnect_client_safely(
+    client: Any,
+    instrument: str,
+    timeout_sec: Optional[float] = None,
+) -> None:
+    """
+    Обрыв WS с таймаутом — не блокируем finally и cancel-путь супервизора.
+
+    shield(disconnect): при TimeoutError wait_for не должен повторно cancel'ить
+    уже залипший close() и снова ждать его вечно; coroutine disconnect уходит
+    в фон и мы продолжаем cleanup воркера.
+    """
+    if client is None:
+        return
+    limit = WORKER_DISCONNECT_TIMEOUT_SEC if timeout_sec is None else float(timeout_sec)
+    try:
+        await asyncio.wait_for(
+            asyncio.shield(client.disconnect()),
+            timeout=max(0.1, limit),
+        )
+    except asyncio.TimeoutError:
+        print(
+            f"[INGEST] {instrument}: disconnect timed out after {limit:.1f}s "
+            f"(abandoning stuck websocket close)",
+            flush=True,
+        )
+    except asyncio.CancelledError:
+        # Cancel во время cleanup — не пробрасываем, иначе finally воркера
+        # может снова застрять на пути отмены супервизора.
+        print(
+            f"[INGEST] {instrument}: disconnect interrupted by cancel",
+            flush=True,
+        )
+    except Exception as e:
+        print(f"[INGEST] {instrument}: disconnect error: {e!r}", flush=True)
 
 
 def _ingest_lock() -> asyncio.Lock:
@@ -670,7 +750,26 @@ async def run_instrument_worker(
             client._websocket.add_event_handler("history_update", on_json_data)
             client._websocket.add_event_handler("payout_update", on_payout_update)
 
-            ok = await client.connect()
+            # wait_for+shield: иначе connect через мёртвый SOCKS зависает, а при timeout
+            # обычный wait_for снова cancel'ит connect и ждёт его вечно.
+            connect_timed_out = False
+            connect_task = asyncio.create_task(client.connect())
+            try:
+                ok = bool(
+                    await asyncio.wait_for(
+                        asyncio.shield(connect_task),
+                        timeout=max(1.0, WORKER_CONNECT_TIMEOUT_SEC),
+                    )
+                )
+            except asyncio.TimeoutError:
+                ok = False
+                connect_timed_out = True
+                connect_task.cancel()
+                print(
+                    f"[INGEST] {instrument}: connect timed out after "
+                    f"{WORKER_CONNECT_TIMEOUT_SEC:.0f}s",
+                    flush=True,
+                )
             if not ok:
                 connect_fail_streak += 1
                 delay = min(
@@ -679,6 +778,10 @@ async def run_instrument_worker(
                 )
                 # Деталь из WebSocket-клиента (регион, последняя ошибка) — иначе только «connect_failed».
                 connect_detail = "connect_failed"
+                if connect_timed_out:
+                    connect_detail = (
+                        f"connect_failed timeout={int(WORKER_CONNECT_TIMEOUT_SEC)}s"
+                    )
                 try:
                     ws = getattr(client, "_websocket", None)
                     info = getattr(ws, "connection_info", None) if ws else None
@@ -686,7 +789,7 @@ async def run_instrument_worker(
                     if info is not None:
                         region = getattr(info, "region", None) or getattr(info, "url", None)
                         if region:
-                            connect_detail = f"connect_failed region={region}"
+                            connect_detail = f"{connect_detail} region={region}"
                     if last_err:
                         connect_detail = f"{connect_detail}: {last_err}"
                 except Exception:
@@ -1009,10 +1112,9 @@ async def run_instrument_worker(
                 except Exception:
                     pass
             if client:
-                try:
-                    await client.disconnect()
-                except Exception:
-                    pass
+                # Таймаут обязателен: websocket.close() на мёртвом прокси может не вернуться,
+                # и тогда task.cancel()+await в супервизоре тоже зависает навсегда.
+                await _disconnect_client_safely(client, instrument)
 
 
 # Global cache accessible to pocket-options-proxy.py
@@ -1125,13 +1227,10 @@ async def run_ingest_forever() -> None:
                 if key not in current_keys:
                     # Инструмент удалён из выдачи API: корректно останавливаем его воркер,
                     # чтобы не держать лишние WebSocket/ресурсы.
-                    workers[key].cancel()
-                    try:
-                        await workers[key]
-                    except asyncio.CancelledError:
-                        pass
-                    del workers[key]
+                    task = workers.pop(key)
                     worker_specs.pop(key, None)
+                    task.cancel()
+                    await _await_cancelled_worker(task, key)
 
             for item in to_run:
                 instrument = item.get("instrument") or item.get("symbol")
@@ -1158,13 +1257,11 @@ async def run_ingest_forever() -> None:
                     # Критично: при смене proxy_url/session_token/uid/is_demo принудительно
                     # перезапускаем воркер, иначе он останется на старом WebSocket-клиенте
                     # и будет фактически игнорировать новую прокси-конфигурацию.
-                    workers[instrument].cancel()
-                    try:
-                        await workers[instrument]
-                    except asyncio.CancelledError:
-                        pass
-                    del workers[instrument]
+                    # pop до await: даже при timeout orphan не блокирует старт нового воркера.
+                    old_task = workers.pop(instrument)
                     worker_specs.pop(instrument, None)
+                    old_task.cancel()
+                    await _await_cancelled_worker(old_task, instrument)
                     print(
                         f"[INGEST] restarted worker for {instrument}: detected config change "
                         f"(proxy/session/uid/is_demo)",
@@ -1191,14 +1288,20 @@ async def run_ingest_forever() -> None:
             await asyncio.sleep(PROXY_POOL_VERSION_POLL_SEC)
     except asyncio.CancelledError:
         stop.set()
-        for t in workers.values():
-            t.cancel()
-        for t in workers.values():
-            try:
-                await t
-            except asyncio.CancelledError:
-                pass
+        pending = list(workers.items())
+        workers.clear()
         worker_specs.clear()
+        for key, t in pending:
+            t.cancel()
+        # Параллельно ждём всех с общим per-task лимитом — shutdown не должен висеть минутами.
+        if pending:
+            await asyncio.gather(
+                *(
+                    _await_cancelled_worker(t, key)
+                    for key, t in pending
+                ),
+                return_exceptions=True,
+            )
     finally:
         await close_ingest_http_session()
 

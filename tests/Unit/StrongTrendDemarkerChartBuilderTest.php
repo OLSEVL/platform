@@ -21,16 +21,22 @@ class StrongTrendDemarkerChartBuilderTest extends TestCase
                 'demarker_period' => 4,
                 'demarker_oversold' => 0.10,
                 'demarker_overbought' => 0.90,
+                'streak_from_time' => 90,
+                'streak_to_time' => 150,
             ],
         ], $candles);
 
         $this->assertCount(1, $chart['zones']);
         $this->assertNotNull($chart['entry']);
         $this->assertSame('CALL', $chart['entry']['side']);
+        $this->assertSame(330, $chart['entry']['time']);
         $this->assertSame('DeMarker(4)', $chart['oscillator']['label']);
         $this->assertCount(12, $chart['oscillator']['values']);
         $this->assertEqualsWithDelta(0.10, $chart['oscillator']['oversold'], 1e-9);
         $this->assertEqualsWithDelta(0.90, $chart['oscillator']['overbought'], 1e-9);
+        $this->assertCount(3, $chart['oscillator_guides']);
+        $this->assertSame([90, 120, 150], array_column($chart['oscillator_guides'], 'time'));
+        $this->assertSame(['1', '2', '3'], array_column($chart['oscillator_guides'], 'label'));
     }
 
     public function test_zero_streak_skips_zone_but_keeps_oscillator(): void
@@ -51,6 +57,7 @@ class StrongTrendDemarkerChartBuilderTest extends TestCase
         $this->assertSame([], $chart['levels']);
         $this->assertSame('DeMarker', $chart['entry']['label']);
         $this->assertSame('DeMarker(3)', $chart['oscillator']['label']);
+        $this->assertSame([], $chart['oscillator_guides']);
     }
 
     public function test_renderer_draws_oscillator_pane_when_gd_available(): void

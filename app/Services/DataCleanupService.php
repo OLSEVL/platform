@@ -18,7 +18,10 @@ class DataCleanupService
     /** Допустимые окна хранения в UI «Удалить все данные» (0 = удалить всё). */
     public const ALLOWED_RETENTION_HOURS = [0, 1, 3, 6, 12, 24, 48];
 
-    /** Допустимые окна для авто-очистки по крону (без полного стирания). */
+    /**
+     * @deprecated Используйте allowedAutoCleanupRetentionHours() — список дней 1–30 динамический.
+     * Оставлен для совместимости старых ссылок на константу в коде/доках.
+     */
     public const ALLOWED_AUTO_CLEANUP_RETENTION_HOURS = [1, 3, 6, 12, 24, 48];
 
     public const SETTING_KEY_AUTO_CLEANUP_RETENTION_HOURS = 'data_auto_cleanup_retention_hours';
@@ -29,9 +32,43 @@ class DataCleanupService
     public const DEFAULT_AUTO_CLEANUP_RETENTION_HOURS = 24;
 
     /**
+     * Разрешённые окна авто-очистки: сутки 1–30 (в часах) + короткие 1/3/6/12 ч.
+     * Порядок: сначала длиннее (больше истории), потом короткие часы.
+     *
+     * @return list<int>
+     */
+    public static function allowedAutoCleanupRetentionHours(): array
+    {
+        $hours = [];
+        for ($day = 30; $day >= 1; $day--) {
+            $hours[] = $day * 24;
+        }
+        foreach ([12, 6, 3, 1] as $shortHours) {
+            $hours[] = $shortHours;
+        }
+
+        return $hours;
+    }
+
+    /**
+     * Пары value→подпись для селекта «Автоматически удалять данные старше».
+     *
+     * @return array<int, string> hours => label
+     */
+    public static function autoCleanupRetentionOptions(): array
+    {
+        $options = [];
+        foreach (self::allowedAutoCleanupRetentionHours() as $hours) {
+            $options[$hours] = (new self)->autoCleanupRetentionLabel($hours);
+        }
+
+        return $options;
+    }
+
+    /**
      * Только свечи — для hourly-планировщика `candles:prune-old`.
      *
-     * @return array{candles: int, logs: int, analysis_runs: int, trades: int, signals: int, bot_runs: int, retention_hours: int}
+     * @return array{candles: int, logs: int, analysis_runs: int, trades: int, signals: int, bot_runs: int, backtest_runs: int, retention_hours: int}
      */
     public function purgeCandlesOlderThan(int $hours): array
     {
@@ -44,7 +81,7 @@ class DataCleanupService
      * @param  int|null  $botId  Если задан — чистим только данные этого бота (без свечей).
      * @param  bool  $includeCandles  Свечи общие для платформы; при очистке одного бота не трогаем.
      * @param  bool  $includeBotData  Сигналы/сделки/логи ботов; выключено для cron только по свечам.
-     * @return array{candles: int, logs: int, analysis_runs: int, trades: int, signals: int, bot_runs: int, retention_hours: int}
+     * @return array{candles: int, logs: int, analysis_runs: int, trades: int, signals: int, bot_runs: int, backtest_runs: int, retention_hours: int}
      */
     public function purgeOlderThan(
         int $hours,
@@ -64,6 +101,7 @@ class DataCleanupService
         $deletedTrades = 0;
         $deletedSignals = 0;
         $deletedBotRuns = 0;
+        $deletedBacktestRuns = 0;
 
         DB::transaction(function () use (
             $botId,
@@ -78,6 +116,7 @@ class DataCleanupService
             &$deletedTrades,
             &$deletedSignals,
             &$deletedBotRuns,
+            &$deletedBacktestRuns,
         ): void {
             // Свечи общие для всей платформы — при очистке конкретного бота их не трогаем.
             if ($includeCandles && $botId === null) {
@@ -137,6 +176,17 @@ class DataCleanupService
                     $purgeAll,
                 );
             }
+
+            // Прогоны бэктеста: сделки удаляются cascadeOnDelete с bot_backtest_runs.
+            if (Schema::hasTable('bot_backtest_runs')) {
+                $deletedBacktestRuns = $this->deleteByBotScope(
+                    'bot_backtest_runs',
+                    'created_at',
+                    $cutoff,
+                    $botId,
+                    $purgeAll,
+                );
+            }
         });
 
         return [
@@ -146,6 +196,7 @@ class DataCleanupService
             'trades' => $deletedTrades,
             'signals' => $deletedSignals,
             'bot_runs' => $deletedBotRuns,
+            'backtest_runs' => $deletedBacktestRuns,
             'retention_hours' => $retentionHours,
         ];
     }
@@ -180,7 +231,7 @@ class DataCleanupService
 
         $hours = (int) $row;
 
-        return in_array($hours, self::ALLOWED_AUTO_CLEANUP_RETENTION_HOURS, true)
+        return in_array($hours, self::allowedAutoCleanupRetentionHours(), true)
             ? $hours
             : self::DEFAULT_AUTO_CLEANUP_RETENTION_HOURS;
     }
@@ -195,7 +246,7 @@ class DataCleanupService
      */
     public function setAutoCleanupRetentionHours(?int $hours): void
     {
-        $value = ($hours !== null && in_array($hours, self::ALLOWED_AUTO_CLEANUP_RETENTION_HOURS, true))
+        $value = ($hours !== null && in_array($hours, self::allowedAutoCleanupRetentionHours(), true))
             ? (string) $hours
             : '';
 
@@ -220,13 +271,14 @@ class DataCleanupService
 
         $hours = (int) $raw;
 
-        return in_array($hours, self::ALLOWED_AUTO_CLEANUP_RETENTION_HOURS, true)
+        return in_array($hours, self::allowedAutoCleanupRetentionHours(), true)
             ? $hours
             : null;
     }
 
     /**
      * Человекочитаемая подпись для UI и flash-сообщений.
+     * Сутки: «1 день (24 часа)» … «30 дней (720 часов)»; короткие окна — в часах.
      */
     public function autoCleanupRetentionLabel(?int $hours): string
     {
@@ -234,67 +286,123 @@ class DataCleanupService
             return 'Ничего не удалять';
         }
 
-        return match ($hours) {
-            1 => '1 час',
-            3 => '3 часа',
-            6 => '6 часов',
-            12 => '12 часов',
-            24 => '24 часа',
-            48 => '48 часов',
-            default => "{$hours} ч.",
-        };
+        // Краткоживущие окна (меньше суток) оставляем как «N час(а/ов)».
+        if ($hours < 24) {
+            return match ($hours) {
+                1 => '1 час',
+                3 => '3 часа',
+                6 => '6 часов',
+                12 => '12 часов',
+                default => self::pluralizeHours($hours),
+            };
+        }
+
+        // Полные сутки: 24, 48, … 720 → «N день/дня/дней (M час/часа/часов)».
+        if ($hours % 24 === 0) {
+            $days = intdiv($hours, 24);
+            if ($days >= 1 && $days <= 30) {
+                return sprintf(
+                    '%s (%s)',
+                    self::pluralizeDays($days),
+                    self::pluralizeHours($hours)
+                );
+            }
+        }
+
+        return self::pluralizeHours($hours);
+    }
+
+    /** «1 день» / «2 дня» / «5 дней». */
+    private static function pluralizeDays(int $days): string
+    {
+        $n = abs($days) % 100;
+        $n1 = $n % 10;
+        if ($n > 10 && $n < 20) {
+            return $days.' дней';
+        }
+        if ($n1 === 1) {
+            return $days.' день';
+        }
+        if ($n1 >= 2 && $n1 <= 4) {
+            return $days.' дня';
+        }
+
+        return $days.' дней';
+    }
+
+    /** «1 час» / «2 часа» / «5 часов» / «24 часа». */
+    private static function pluralizeHours(int $hours): string
+    {
+        $n = abs($hours) % 100;
+        $n1 = $n % 10;
+        if ($n > 10 && $n < 20) {
+            return $hours.' часов';
+        }
+        if ($n1 === 1) {
+            return $hours.' час';
+        }
+        if ($n1 >= 2 && $n1 <= 4) {
+            return $hours.' часа';
+        }
+
+        return $hours.' часов';
     }
 
     /**
      * Формирует человекочитаемое сообщение об итогах очистки.
      *
-     * @param  array{candles: int, logs: int, analysis_runs: int, trades: int, signals: int, bot_runs: int, retention_hours: int}  $result
+     * @param  array{candles: int, logs: int, analysis_runs: int, trades: int, signals: int, bot_runs: int, backtest_runs?: int, retention_hours: int}  $result
      */
     public function formatResultMessage(array $result, bool $includeCandles = true): string
     {
         $hours = (int) $result['retention_hours'];
         $llmTotal = (int) $result['logs'] + (int) $result['analysis_runs'];
+        $backtests = (int) ($result['backtest_runs'] ?? 0);
 
         if ($includeCandles) {
             if ($hours === 0) {
                 return sprintf(
-                    'Удалены все данные: свечи=%d, LLM/анализ=%d, сделки=%d, сигналы=%d, запуски ботов=%d.',
+                    'Удалены все данные: свечи=%d, LLM/анализ=%d, сделки=%d, сигналы=%d, запуски ботов=%d, бэктесты=%d.',
                     (int) $result['candles'],
                     $llmTotal,
                     (int) $result['trades'],
                     (int) $result['signals'],
                     (int) $result['bot_runs'],
+                    $backtests,
                 );
             }
 
             return sprintf(
-                'Удалены данные старше %d ч.: свечи=%d, LLM/анализ=%d, сделки=%d, сигналы=%d, запуски ботов=%d.',
+                'Удалены данные старше %d ч.: свечи=%d, LLM/анализ=%d, сделки=%d, сигналы=%d, запуски ботов=%d, бэктесты=%d.',
                 $hours,
                 (int) $result['candles'],
                 $llmTotal,
                 (int) $result['trades'],
                 (int) $result['signals'],
                 (int) $result['bot_runs'],
+                $backtests,
             );
         }
 
         if ($hours === 0) {
             return sprintf(
-                'Очистка выполнена (удалено всё): logs=%d, trades=%d, signals=%d, запуски=%d.',
+                'Очистка выполнена (удалено всё): logs=%d, trades=%d, signals=%d, запуски=%d, бэктесты=%d.',
                 $llmTotal,
                 (int) $result['trades'],
                 (int) $result['signals'],
                 (int) $result['bot_runs'],
+                $backtests,
             );
         }
 
         return sprintf(
-            'Очистка выполнена (удалено старше %d ч.): logs=%d, trades=%d, signals=%d, запуски=%d.',
+            'Очистка выполнена (удалено старше %d ч.): logs=%d, trades=%d, signals=%d, запуски=%d, бэктесты=%d.',
             $hours,
             $llmTotal,
             (int) $result['trades'],
             (int) $result['signals'],
             (int) $result['bot_runs'],
+            $backtests,
         );
     }
 

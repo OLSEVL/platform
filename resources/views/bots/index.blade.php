@@ -48,6 +48,7 @@
                             $algoShort = $algoCatalog[(string) $bot->type]['short'] ?? '';
                             // Размер кнопок как раньше (px-2 py-0.5); w-full только для выравнивания колонок сетки.
                             $btnClass = 'inline-flex w-full items-center justify-center whitespace-nowrap rounded border border-zinc-600 bg-zinc-800/80 px-2 py-0.5 text-[11px] font-medium text-zinc-300 transition-colors hover:border-zinc-500 hover:bg-zinc-700 hover:text-zinc-50 focus:outline-none focus:ring-2 focus:ring-blue-500/40';
+                            $btnBacktestClass = 'inline-flex w-full items-center justify-center whitespace-nowrap rounded border border-cyan-800/70 bg-cyan-950/40 px-2 py-0.5 text-[11px] font-medium text-cyan-100 transition-colors hover:border-cyan-600 hover:bg-cyan-900/50 hover:text-cyan-50 focus:outline-none focus:ring-2 focus:ring-cyan-500/40';
                         @endphp
                         <tr class="hover:bg-zinc-900/50">
                             <td class="px-3 py-3 tabular-nums text-zinc-500 align-middle">{{ $bot->id }}</td>
@@ -55,7 +56,9 @@
                                 <a href="{{ route('bots.show', $bot) }}" class="text-zinc-100 hover:text-blue-300">{{ $bot->name }}</a>
                             </td>
                             <td class="px-3 py-3 align-middle">
-                                <div class="grid grid-cols-[5.5rem_7.5rem_6.5rem_5.5rem_7rem] gap-1">
+                                <div class="grid grid-cols-[5rem_5.5rem_7.5rem_6.5rem_5.5rem_7rem] gap-1">
+                                    {{-- Бэктест: отдельная вкладка; «Все» пары по умолчанию (без ?instrument=). --}}
+                                    <a href="{{ route('bots.backtest', $bot) }}" target="_blank" rel="noopener noreferrer" class="{{ $btnBacktestClass }}" title="Открыть бэктест в новой вкладке">Бэктест</a>
                                     {{-- Карточки: live open-сделки; доступны всем типам ботов (пустая сетка, если сделок нет). --}}
                                     <a href="{{ route('bots.cards', $bot) }}" class="{{ $btnClass }}">Карточки</a>
                                     <a href="{{ route('bots.activity', $bot) }}" class="{{ $btnClass }}">Сигналы и сделки</a>

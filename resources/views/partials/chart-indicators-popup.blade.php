@@ -8,6 +8,8 @@
     $helpCatalog = ChartIndicatorHelp::catalog();
     $settingsBot = $indicatorBot ?? null;
     $showLlmLevels = $showLlmLevels ?? false;
+    // Слои, которыми этот бот торгует — метка «торговля» в списке.
+    $tradingLayerIds = $tradingLayerIds ?? [];
 
     /**
      * Строка слоя: id чекбокса, ключ help, route name (nullable), заголовок UI.
@@ -138,7 +140,7 @@
         <div class="flex items-center justify-between gap-3 border-b border-zinc-700 bg-[#1e2028] px-4 py-3 shrink-0">
             <div>
                 <h2 id="layers-popup-title" class="text-base font-semibold text-zinc-100">Индикаторы на графике</h2>
-                <p class="text-[11px] text-zinc-500 mt-0.5">Включите слой · клик по описанию или «?» — простая справка с картинками · ⚙ настройки</p>
+                <p class="text-[11px] text-zinc-500 mt-0.5">Включите слой · клик по описанию или «?» — простая справка с картинками · ⚙ настройки@if (! empty($tradingLayerIds)) · метка «торговля» — те же настройки, что у бота на вход@endif</p>
             </div>
             <button type="button"
                 class="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-zinc-600 bg-zinc-800 text-zinc-300 hover:bg-zinc-700 hover:text-white"
@@ -153,6 +155,7 @@
                     $help = $helpCatalog[$row['help']] ?? null;
                     $short = $help['short'] ?? '';
                     $title = $help['title'] ?? $row['label'];
+                    $isTradingLayer = in_array($row['id'], $tradingLayerIds, true);
                 @endphp
 
                 @if (! empty($row['section']))
@@ -161,13 +164,16 @@
                     </div>
                 @endif
 
-                <div class="grid grid-cols-1 gap-2 rounded-lg px-2 py-2 hover:bg-zinc-800/50 sm:grid-cols-[minmax(11rem,14rem)_minmax(0,1fr)_auto] sm:items-start sm:gap-3">
+                <div class="grid grid-cols-1 gap-2 rounded-lg px-2 py-2 hover:bg-zinc-800/50 sm:grid-cols-[minmax(11rem,14rem)_minmax(0,1fr)_auto] sm:items-start sm:gap-3 {{ $isTradingLayer ? 'bg-emerald-950/25 ring-1 ring-emerald-800/40' : '' }}">
                     <label for="{{ $row['id'] }}" class="flex min-w-0 items-center gap-2 text-sm text-zinc-200 cursor-pointer sm:pt-0.5">
                         <input type="checkbox"
                             id="{{ $row['id'] }}"
                             class="rounded border-zinc-600 bg-zinc-800 text-blue-500 shrink-0"
                             @if(($row['id'] ?? '') === 'layer-llm-levels') checked @endif>
                         <span class="truncate font-medium">{{ $row['label'] }}</span>
+                        @if ($isTradingLayer)
+                            <span class="shrink-0 rounded border border-emerald-700/60 bg-emerald-950/70 px-1 py-px text-[9px] font-semibold uppercase tracking-wide text-emerald-400" title="Бот входит по этому индикатору с теми же настройками">торговля</span>
+                        @endif
                     </label>
 
                     {{-- Клик по тексту открывает ту же справку, что и «?». --}}

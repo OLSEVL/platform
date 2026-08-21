@@ -470,11 +470,18 @@ class TelegramAlertService
             $photoError = 'gd_extension_missing';
         }
 
+        $text = implode("\n", $lines);
+        $llmMarkup = StrongLevelTelegramLlmButton::inlineKeyboardMarkup($config, $bot, $instrument);
+        if ($llmMarkup !== null || TelegramChatAccess::autoSubscribeEnabled($config)) {
+            app(StrongLevelTelegramProcessManager::class)->ensurePollRunning($bot->id);
+        }
+
         $messageResult = $this->broadcastToRecipients($token, $recipients, function (string $chatId) use (
             $token,
             $pngPath,
             $caption,
-            $lines,
+            $text,
+            $llmMarkup,
             $bot,
             $instrument,
             $chartLogKey,
@@ -497,7 +504,9 @@ class TelegramAlertService
                 }
             }
 
-            return $this->sendMessage($token, $chatId, implode("\n", $lines));
+            return $llmMarkup !== null
+                ? $this->sendMessageWithMarkup($token, $chatId, $text, $llmMarkup)
+                : $this->sendMessage($token, $chatId, $text);
         });
 
         if ($pngPath !== null) {

@@ -3,6 +3,7 @@
 use App\Http\Controllers\Auth\LoginController;
 use App\Http\Controllers\Auth\RegisterController;
 use App\Http\Controllers\BotChartIndicatorController;
+use App\Http\Controllers\BotBacktestController;
 use App\Http\Controllers\BotController;
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\InstrumentController;
@@ -49,6 +50,18 @@ Route::middleware('auth')->group(function () {
         Route::get('/{bot}/signals/data', [BotController::class, 'signalsData'])->name('signals.data');
         Route::get('/{bot}/analysis/data', [BotController::class, 'analysisData'])->name('analysis.data');
         Route::get('/{bot}/stats/data', [BotController::class, 'statsData'])->name('stats.data');
+        // HTML-страница бэктеста (новая вкладка); API — /backtests ниже.
+        Route::get('/{bot}/backtest', [BotBacktestController::class, 'page'])->name('backtest');
+        // Candle-replay backtest: прогон текущих/override настроек по истории свечей.
+        // compare / destroy-all — до {run}, иначе «compare» попадёт в route-model binding.
+        Route::get('/{bot}/backtests/compare', [BotBacktestController::class, 'compare'])->name('backtests.compare');
+        Route::get('/{bot}/backtests', [BotBacktestController::class, 'index'])->name('backtests.index');
+        Route::post('/{bot}/backtests', [BotBacktestController::class, 'store'])->name('backtests.store');
+        Route::delete('/{bot}/backtests', [BotBacktestController::class, 'destroyAll'])->name('backtests.destroy-all');
+        Route::get('/{bot}/backtests/{run}', [BotBacktestController::class, 'show'])->name('backtests.show');
+        Route::get('/{bot}/backtests/{run}/trades', [BotBacktestController::class, 'trades'])->name('backtests.trades');
+        Route::post('/{bot}/backtests/{run}/cancel', [BotBacktestController::class, 'cancel'])->name('backtests.cancel');
+        Route::delete('/{bot}/backtests/{run}', [BotBacktestController::class, 'destroy'])->name('backtests.destroy');
         Route::get('/{bot}/instruments/data', [BotController::class, 'instrumentsSidebarData'])->name('instruments.sidebar-data');
         Route::get('/{bot}/indicators/data', [BotController::class, 'indicatorsData'])->name('indicators.data');
         Route::get('/{bot}/indicators/price-action-dgt', [BotChartIndicatorController::class, 'editPriceActionDgt'])->name('indicators.price-action-dgt.edit');

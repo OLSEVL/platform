@@ -697,6 +697,9 @@ Artisan::command('bots:sweep-raid-liquidity-bootstrap', function () {
                 'telegram_chat_id' => '',
                 // /start в отдельный Telegram-бот добавляет чат в получатели алертов.
                 'telegram_auto_subscribe' => true,
+                'telegram_analyst_llm_enabled' => true,
+                'telegram_analyst_bot_id' => null,
+                'telegram_analyst_llm_question' => \App\Services\Telegram\StrongLevelTelegramLlmButton::DEFAULT_LLM_QUESTION,
                 'version' => 'sweep_raid_liquidity_v1',
             ],
         ],
@@ -778,7 +781,10 @@ Artisan::command('bots:strong-trend-demarker-bootstrap', function () {
                 'telegram_chat_id' => '',
                 // /start в @strong_DeMarker_bot добавляет чат в получатели алертов.
                 'telegram_auto_subscribe' => true,
-                'version' => 'strong_trend_demarker_v1',
+                'telegram_analyst_llm_enabled' => true,
+                'telegram_analyst_bot_id' => null,
+                'telegram_analyst_llm_question' => \App\Services\Telegram\StrongLevelTelegramLlmButton::DEFAULT_LLM_QUESTION,
+                'version' => 'strong_trend_demarker_v2',
             ],
         ],
     );
@@ -1032,11 +1038,26 @@ Artisan::command('bots:scan-dispatch', function () {
     }
 
     $started = 0;
-    $skipped = 0;
+    $skippedRunning = 0;
+    $skippedInterval = 0;
     foreach ($bots as $bot) {
         if (BotScanCoordinator::isScanRunning($bot->id)) {
-            $skipped++;
+            $skippedRunning++;
             $this->line(sprintf('[bot:%d] scan уже выполняется — пропуск.', $bot->id));
+
+            continue;
+        }
+
+        if (! BotScanCoordinator::isDueToSpawn($bot)) {
+            $skippedInterval++;
+            $interval = BotScanCoordinator::scanIntervalSecForBot($bot);
+            $nextAt = BotScanCoordinator::nextDueUnix($bot);
+            $this->line(sprintf(
+                '[bot:%d] рано (интервал %dс, следующий старт через %dс) — пропуск.',
+                $bot->id,
+                $interval,
+                max(0, $nextAt - time())
+            ));
 
             continue;
         }
@@ -1049,7 +1070,13 @@ Artisan::command('bots:scan-dispatch', function () {
         }
     }
 
-    $this->info(sprintf('Диспетчер: запущено %d, пропущено (уже идёт) %d, ботов %d.', $started, $skipped, $bots->count()));
+    $this->info(sprintf(
+        'Диспетчер: запущено %d, пропущено (уже идёт) %d, пропущено (интервал) %d, ботов %d.',
+        $started,
+        $skippedRunning,
+        $skippedInterval,
+        $bots->count()
+    ));
 })->purpose('Запустить параллельный bots:scan для каждого активного бота (cron каждую минуту)');
 
 Artisan::command('bots:scan {--bot_id=} {--active-only=1}', function (BotEngineService $engine) {

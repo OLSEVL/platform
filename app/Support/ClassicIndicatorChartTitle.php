@@ -174,6 +174,10 @@ final class ClassicIndicatorChartTitle
                 continue;
             }
             $params = self::resolveParams($bot, $meta['merged'], $meta['defaults']);
+            // Подпись «RSI 14» должна совпадать с торговым config, а не только с indicator_settings.
+            if ($bot !== null) {
+                $params = BotTradingChartLayers::overlayParams($bot, $key, $params);
+            }
             $json[$key]['params'] = $params;
             $json[$key]['title'] = self::format($meta['name'], $params, $meta['keys']);
         }

@@ -726,15 +726,12 @@
                     <span>Автоматически удалять данные старше</span>
                     <select
                         name="auto_cleanup_retention_hours"
-                        class="min-w-[12rem] px-2 py-2 rounded border border-zinc-600 bg-zinc-950 text-zinc-100 focus:ring-2 focus:ring-indigo-600 focus:border-transparent"
+                        class="min-w-[16rem] px-2 py-2 rounded border border-zinc-600 bg-zinc-950 text-zinc-100 focus:ring-2 focus:ring-indigo-600 focus:border-transparent"
                     >
                         <option value="" @selected(($dataAutoCleanupRetentionHours ?? null) === null)>Ничего не удалять</option>
-                        <option value="48" @selected(($dataAutoCleanupRetentionHours ?? null) === 48)>48 часов</option>
-                        <option value="24" @selected(($dataAutoCleanupRetentionHours ?? null) === 24)>24 часа</option>
-                        <option value="12" @selected(($dataAutoCleanupRetentionHours ?? null) === 12)>12 часов</option>
-                        <option value="6" @selected(($dataAutoCleanupRetentionHours ?? null) === 6)>6 часов</option>
-                        <option value="3" @selected(($dataAutoCleanupRetentionHours ?? null) === 3)>3 часа</option>
-                        <option value="1" @selected(($dataAutoCleanupRetentionHours ?? null) === 1)>1 час</option>
+                        @foreach(($dataAutoCleanupRetentionOptions ?? \App\Services\DataCleanupService::autoCleanupRetentionOptions()) as $hours => $label)
+                            <option value="{{ $hours }}" @selected(($dataAutoCleanupRetentionHours ?? null) === (int) $hours)>{{ $label }}</option>
+                        @endforeach
                     </select>
                 </label>
                 <button

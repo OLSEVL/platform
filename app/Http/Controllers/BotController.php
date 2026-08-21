@@ -93,7 +93,9 @@ use App\Services\Telegram\StrongLevelTelegramProcessManager;
 use App\Services\Telegram\TelegramAlertService;
 use App\Services\Telegram\TelegramAnalystProcessManager;
 use App\Support\TelegramBotConfigFields;
+use App\Support\BotScanCoordinator;
 use App\Support\BotScanProgress;
+use App\Support\BotTradingChartLayers;
 use App\Support\LevelBounceBotTypes;
 use App\Support\OsEngineWaveABotConfig;
 use App\Support\OsEngineWaveBBotConfig;
@@ -1017,7 +1019,7 @@ class BotController extends Controller
         return view('bots.settings', [
             'bot' => $bot,
             'openrouterModels' => $openrouterModels,
-            'chartAnalystBots' => in_array($bot->type, array_merge(LevelBounceBotTypes::CARD_AND_TELEGRAM, ['strong_trend_telegram']), true)
+            'chartAnalystBots' => in_array($bot->type, array_merge(LevelBounceBotTypes::CARD_AND_TELEGRAM, ['strong_trend_telegram', 'strong_trend_demarker', 'sweep_raid_liquidity']), true)
                 ? Bot::query()
                     ->where('user_id', $bot->user_id)
                     ->where('type', 'openrouter_llm_analyst')
@@ -1591,6 +1593,9 @@ class BotController extends Controller
                 'telegram_send_chart' => ['required', 'string', Rule::in(['1', '0'])],
                 'telegram_bot_token' => ['nullable', 'string', 'max:128'],
                 'telegram_chat_id' => ['nullable', 'string', 'max:64'],
+                'telegram_analyst_llm_enabled' => ['sometimes', 'boolean'],
+                'telegram_analyst_bot_id' => ['nullable', 'integer', 'min:1'],
+                'telegram_analyst_llm_question' => ['nullable', 'string', 'max:500'],
             ] + TelegramBotConfigFields::validationRules());
             if (! $request->boolean('srl_enter_sweep') && ! $request->boolean('srl_enter_pullback')) {
                 throw ValidationException::withMessages([
@@ -1615,6 +1620,13 @@ class BotController extends Controller
                 // Пустое поле на форме не затирает уже сохранённый токен.
                 'telegram_bot_token' => $tokenInput !== '' ? $tokenInput : $existingToken,
                 'telegram_chat_id' => trim((string) ($extra['telegram_chat_id'] ?? '')),
+                'telegram_analyst_llm_enabled' => $request->boolean('telegram_analyst_llm_enabled'),
+                'telegram_analyst_bot_id' => ! empty($extra['telegram_analyst_bot_id'])
+                    ? (int) $extra['telegram_analyst_bot_id']
+                    : null,
+                'telegram_analyst_llm_question' => StrongLevelTelegramLlmButton::llmQuestionFromConfig([
+                    'telegram_analyst_llm_question' => $extra['telegram_analyst_llm_question'] ?? null,
+                ]),
                 'version' => 'sweep_raid_liquidity_v1',
             ]);
             $config = TelegramBotConfigFields::mergeFromRequest($request, $config, $bot->config ?? []);
@@ -1671,6 +1683,9 @@ class BotController extends Controller
                 'telegram_send_chart' => ['required', 'string', Rule::in(['1', '0'])],
                 'telegram_bot_token' => ['nullable', 'string', 'max:128'],
                 'telegram_chat_id' => ['nullable', 'string', 'max:64'],
+                'telegram_analyst_llm_enabled' => ['sometimes', 'boolean'],
+                'telegram_analyst_bot_id' => ['nullable', 'integer', 'min:1'],
+                'telegram_analyst_llm_question' => ['nullable', 'string', 'max:500'],
             ] + TelegramBotConfigFields::validationRules());
             $timeframe = (int) $extra['timeframe'];
             // Экспирация всегда равна длине бара: S30 → 30 с, M1 → 60 с.
@@ -1699,7 +1714,14 @@ class BotController extends Controller
                 'telegram_send_chart' => ($extra['telegram_send_chart'] ?? '1') === '1',
                 'telegram_bot_token' => $tokenInput !== '' ? $tokenInput : $existingToken,
                 'telegram_chat_id' => trim((string) ($extra['telegram_chat_id'] ?? '')),
-                'version' => 'strong_trend_demarker_v1',
+                'telegram_analyst_llm_enabled' => $request->boolean('telegram_analyst_llm_enabled'),
+                'telegram_analyst_bot_id' => ! empty($extra['telegram_analyst_bot_id'])
+                    ? (int) $extra['telegram_analyst_bot_id']
+                    : null,
+                'telegram_analyst_llm_question' => StrongLevelTelegramLlmButton::llmQuestionFromConfig([
+                    'telegram_analyst_llm_question' => $extra['telegram_analyst_llm_question'] ?? null,
+                ]),
+                'version' => 'strong_trend_demarker_v2',
             ]);
             $config = TelegramBotConfigFields::mergeFromRequest($request, $config, $bot->config ?? []);
         } elseif ($bot->type === 'strong_trend_telegram') {
@@ -2054,6 +2076,21 @@ class BotController extends Controller
         // Checkbox есть в форме только у них; иначе boolean()=false затёрло бы дефолт «вкл».
         if ($bot->type !== 'openrouter_llm_analyst') {
             $config['mirror_trades_enabled'] = $request->boolean('mirror_trades_enabled');
+            // Как часто dispatch может стартовать новый проход: S30=30с, M1=60с (дефолт).
+            $intervalRaw = $request->input(
+                'scan_interval_sec',
+                BotScanCoordinator::DEFAULT_SCAN_INTERVAL_SEC
+            );
+            $intervalValidated = validator(
+                ['scan_interval_sec' => $intervalRaw],
+                ['scan_interval_sec' => ['required', 'integer', Rule::in([
+                    BotScanCoordinator::SCAN_INTERVAL_S30,
+                    BotScanCoordinator::SCAN_INTERVAL_M1,
+                ])]]
+            )->validate();
+            $config['scan_interval_sec'] = BotScanCoordinator::normalizeScanIntervalSec(
+                $intervalValidated['scan_interval_sec']
+            );
         }
 
         // price_action_dgt хранится только в indicator_settings (страница индикатора), из config убираем при любом сохранении общих настроек.
@@ -2516,7 +2553,7 @@ class BotController extends Controller
         $scanMinPayout = (float) $engine->runtimeSettings($bot)['min_payout'];
 
         $expiryMap = $sidebar['nearest_expiry_ts'];
-        $scanProgress = BotScanProgress::snapshot($bot->id, $scanMinPayout);
+        $scanProgress = $this->scanProgressPayload($bot, $scanMinPayout);
 
         return response()->json([
             'instruments' => $sidebar['instruments']->map(fn (PocketInstrument $inst) => [
@@ -2538,6 +2575,7 @@ class BotController extends Controller
             'scan_total' => $scanProgress['scan_total'],
             'scan_remaining' => $scanProgress['scan_remaining'],
             'scan_min_payout' => $scanMinPayout,
+            'next_scan_at' => $scanProgress['next_scan_at'],
             'server_time' => now()->toIso8601String(),
         ]);
     }
@@ -2886,6 +2924,11 @@ class BotController extends Controller
             ? (bool) $botConfig['tv_crosshair_enabled']
             : true;
         $initialInstrument = $signalInstruments->first() ?: optional($instruments->first())->instrument;
+        // ?instrument= с бэктеста / ссылки «На графике» — стартовая пара для маркеров BT.
+        $requestedInstrument = trim((string) request()->query('instrument', ''));
+        if ($requestedInstrument !== '') {
+            $initialInstrument = $requestedInstrument;
+        }
         $timeframes = [
             // Секундные таймфреймы используют отдельные ID (4xxx), чтобы не конфликтовать
             // с минутными значениями 5/15/30, которые уже давно живут в UI/API.
@@ -2946,7 +2989,20 @@ class BotController extends Controller
             'activeTradeSidebar' => $activeTradeSidebar,
             'tvCrosshairEnabled' => $tvCrosshairEnabled,
             'scanMinPayout' => $scanMinPayout,
-            'scanProgress' => BotScanProgress::snapshot($bot->id, $scanMinPayout),
+            'scanProgress' => $this->scanProgressPayload($bot, $scanMinPayout),
+            // Слои и ТФ «как у бота»: кнопка на графике сбрасывает к ним, prefs пользователя не затираем.
+            'tradingChartLayerIds' => BotTradingChartLayers::layerIds($bot),
+            'tradingChartTimeframe' => BotTradingChartLayers::chartTimeframeMinutes($bot),
+            'tradingChartTimeframeLabel' => $this->chartTimeframeLabel(
+                $timeframes,
+                BotTradingChartLayers::chartTimeframeMinutes($bot)
+            ),
+            // UI бэктеста: LLM/manual не прогоняются по истории.
+            'backtestSupported' => ! in_array(
+                $bot->type,
+                \App\Services\Bots\BotBacktestEngine::unsupportedTypes(),
+                true
+            ),
         ]);
     }
 
@@ -3074,22 +3130,22 @@ class BotController extends Controller
             $json['liquidity_swings'] = $liquiditySwings->compute($rows, IndicatorSetting::mergedLiquiditySwingsParams($bot));
         }
         if (! empty($want['srl'])) {
-            $json['sweep_raid_liquidity'] = $sweepRaidLiquidity->compute($rows, IndicatorSetting::mergedSweepRaidLiquidityParams($bot));
+            $json['sweep_raid_liquidity'] = $sweepRaidLiquidity->compute($rows, $this->chartOverlayParams($bot, 'srl', IndicatorSetting::mergedSweepRaidLiquidityParams($bot)));
         }
         if (! empty($want['smc'])) {
             $json['smc_flow'] = $smcFlow->compute($rows, IndicatorSetting::mergedSmcFlowParams($bot));
         }
         if (! empty($want['bollinger'])) {
-            $json['bollinger'] = $bollinger->compute($rows, IndicatorSetting::mergedBollingerParams($bot));
+            $json['bollinger'] = $bollinger->compute($rows, $this->chartOverlayParams($bot, 'bollinger', IndicatorSetting::mergedBollingerParams($bot)));
         }
         if (! empty($want['rsi'])) {
-            $json['rsi'] = $rsi->compute($rows, IndicatorSetting::mergedRsiParams($bot));
+            $json['rsi'] = $rsi->compute($rows, $this->chartOverlayParams($bot, 'rsi', IndicatorSetting::mergedRsiParams($bot)));
         }
         if (! empty($want['sma'])) {
-            $json['sma'] = $sma->compute($rows, IndicatorSetting::mergedSmaParams($bot));
+            $json['sma'] = $sma->compute($rows, $this->chartOverlayParams($bot, 'sma', IndicatorSetting::mergedSmaParams($bot)));
         }
         if (! empty($want['ema'])) {
-            $json['ema'] = $ema->compute($rows, IndicatorSetting::mergedEmaParams($bot));
+            $json['ema'] = $ema->compute($rows, $this->chartOverlayParams($bot, 'ema', IndicatorSetting::mergedEmaParams($bot)));
         }
         if (! empty($want['vwma'])) {
             $json['vwma'] = $vwma->compute($rows, IndicatorSetting::mergedVwmaParams($bot));
@@ -3098,22 +3154,22 @@ class BotController extends Controller
             $json['atr'] = $atr->compute($rows, IndicatorSetting::mergedAtrParams($bot));
         }
         if (! empty($want['macd'])) {
-            $json['macd'] = $macd->compute($rows, IndicatorSetting::mergedMacdParams($bot));
+            $json['macd'] = $macd->compute($rows, $this->chartOverlayParams($bot, 'macd', IndicatorSetting::mergedMacdParams($bot)));
         }
         if (! empty($want['stochastic'])) {
-            $json['stochastic'] = $stochastic->compute($rows, IndicatorSetting::mergedStochasticParams($bot));
+            $json['stochastic'] = $stochastic->compute($rows, $this->chartOverlayParams($bot, 'stochastic', IndicatorSetting::mergedStochasticParams($bot)));
         }
         if (! empty($want['cci'])) {
-            $json['cci'] = $cci->compute($rows, IndicatorSetting::mergedCciParams($bot));
+            $json['cci'] = $cci->compute($rows, $this->chartOverlayParams($bot, 'cci', IndicatorSetting::mergedCciParams($bot)));
         }
         if (! empty($want['keltner'])) {
             $json['keltner'] = $keltner->compute($rows, IndicatorSetting::mergedKeltnerParams($bot));
         }
         if (! empty($want['envelops'])) {
-            $json['envelops'] = $envelops->compute($rows, IndicatorSetting::mergedEnvelopsParams($bot));
+            $json['envelops'] = $envelops->compute($rows, $this->chartOverlayParams($bot, 'envelops', IndicatorSetting::mergedEnvelopsParams($bot)));
         }
         if (! empty($want['parabolic_sar'])) {
-            $json['parabolic_sar'] = $parabolicSar->compute($rows, IndicatorSetting::mergedParabolicSarParams($bot));
+            $json['parabolic_sar'] = $parabolicSar->compute($rows, $this->chartOverlayParams($bot, 'parabolic_sar', IndicatorSetting::mergedParabolicSarParams($bot)));
         }
         if (! empty($want['supertrend'])) {
             $json['supertrend'] = $superTrend->compute($rows, IndicatorSetting::mergedSuperTrendParams($bot));
@@ -3122,7 +3178,7 @@ class BotController extends Controller
             $json['adx'] = $adx->compute($rows, IndicatorSetting::mergedAdxParams($bot));
         }
         if (! empty($want['williams'])) {
-            $json['williams'] = $williams->compute($rows, IndicatorSetting::mergedWilliamsParams($bot));
+            $json['williams'] = $williams->compute($rows, $this->chartOverlayParams($bot, 'williams', IndicatorSetting::mergedWilliamsParams($bot)));
         }
         if (! empty($want['ao'])) {
             $json['ao'] = $ao->compute($rows, IndicatorSetting::mergedAoParams($bot));
@@ -3134,7 +3190,7 @@ class BotController extends Controller
             $json['ichimoku'] = $ichimoku->compute($rows, IndicatorSetting::mergedIchimokuParams($bot));
         }
         if (! empty($want['price_channel'])) {
-            $json['price_channel'] = $priceChannel->compute($rows, IndicatorSetting::mergedPriceChannelParams($bot));
+            $json['price_channel'] = $priceChannel->compute($rows, $this->chartOverlayParams($bot, 'price_channel', IndicatorSetting::mergedPriceChannelParams($bot)));
         }
         if (! empty($want['nrtr'])) {
             $json['nrtr'] = $nrtr->compute($rows, IndicatorSetting::mergedNrtrParams($bot));
@@ -3146,7 +3202,7 @@ class BotController extends Controller
             $json['aroon'] = $aroon->compute($rows, IndicatorSetting::mergedAroonParams($bot));
         }
         if (! empty($want['momentum'])) {
-            $json['momentum'] = $momentum->compute($rows, IndicatorSetting::mergedMomentumParams($bot));
+            $json['momentum'] = $momentum->compute($rows, $this->chartOverlayParams($bot, 'momentum', IndicatorSetting::mergedMomentumParams($bot)));
         }
         if (! empty($want['roc'])) {
             $json['roc'] = $roc->compute($rows, IndicatorSetting::mergedRocParams($bot));
@@ -3161,10 +3217,10 @@ class BotController extends Controller
             $json['cmo'] = $cmo->compute($rows, IndicatorSetting::mergedCmoParams($bot));
         }
         if (! empty($want['demarker'])) {
-            $json['demarker'] = $demarker->compute($rows, IndicatorSetting::mergedDemarkerParams($bot));
+            $json['demarker'] = $demarker->compute($rows, $this->chartOverlayParams($bot, 'demarker', IndicatorSetting::mergedDemarkerParams($bot)));
         }
         if (! empty($want['rvi'])) {
-            $json['rvi'] = $rvi->compute($rows, IndicatorSetting::mergedRviParams($bot));
+            $json['rvi'] = $rvi->compute($rows, $this->chartOverlayParams($bot, 'rvi', IndicatorSetting::mergedRviParams($bot)));
         }
         if (! empty($want['ultimate'])) {
             $json['ultimate'] = $ultimate->compute($rows, IndicatorSetting::mergedUltimateParams($bot));
@@ -3227,7 +3283,7 @@ class BotController extends Controller
             $json['cog'] = $cog->compute($rows, IndicatorSetting::mergedCogParams($bot));
         }
         if (! empty($want['pivot_floor'])) {
-            $json['pivot_floor'] = $pivotFloor->compute($rows, IndicatorSetting::mergedPivotFloorParams($bot));
+            $json['pivot_floor'] = $pivotFloor->compute($rows, $this->chartOverlayParams($bot, 'pivot_floor', IndicatorSetting::mergedPivotFloorParams($bot)));
         }
         if (! empty($want['mass_index'])) {
             $json['mass_index'] = $massIndex->compute($rows, IndicatorSetting::mergedMassIndexParams($bot));
@@ -3242,10 +3298,10 @@ class BotController extends Controller
             $json['price_channel_offset'] = $priceChannelOffset->compute($rows, IndicatorSetting::mergedPriceChannelOffsetParams($bot));
         }
         if (! empty($want['parabolic_bollinger'])) {
-            $json['parabolic_bollinger'] = $parabolicBollinger->compute($rows, IndicatorSetting::mergedParabolicBollingerParams($bot));
+            $json['parabolic_bollinger'] = $parabolicBollinger->compute($rows, $this->chartOverlayParams($bot, 'parabolic_bollinger', IndicatorSetting::mergedParabolicBollingerParams($bot)));
         }
         if (! empty($want['parabolic_price_channel'])) {
-            $json['parabolic_price_channel'] = $parabolicPriceChannel->compute($rows, IndicatorSetting::mergedParabolicPriceChannelParams($bot));
+            $json['parabolic_price_channel'] = $parabolicPriceChannel->compute($rows, $this->chartOverlayParams($bot, 'parabolic_price_channel', IndicatorSetting::mergedParabolicPriceChannelParams($bot)));
         }
         if (! empty($want['atr_channel'])) {
             $json['atr_channel'] = $atrChannel->compute($rows, IndicatorSetting::mergedAtrChannelParams($bot));
@@ -3275,7 +3331,7 @@ class BotController extends Controller
             $json['adaptive_look_back'] = $adaptiveLookBack->compute($rows, IndicatorSetting::mergedAdaptiveLookBackParams($bot));
         }
         if (! empty($want['linreg_channel_fast'])) {
-            $json['linreg_channel_fast'] = $linRegChannelFast->compute($rows, IndicatorSetting::mergedLinRegChannelFastParams($bot));
+            $json['linreg_channel_fast'] = $linRegChannelFast->compute($rows, $this->chartOverlayParams($bot, 'linreg_channel_fast', IndicatorSetting::mergedLinRegChannelFastParams($bot)));
         }
         if (! empty($want['volatility_candles'])) {
             $json['volatility_candles'] = $volatilityCandles->compute($rows, IndicatorSetting::mergedVolatilityCandlesParams($bot));
@@ -3294,6 +3350,34 @@ class BotController extends Controller
         $json = \App\Support\ClassicIndicatorChartTitle::enrich($json, $bot);
 
         return response()->json($json);
+    }
+
+    /**
+     * Подпись пункта ТФ в шапке графика («S30», «1м») по минутам/id таймфрейма.
+     *
+     * @param  list<array{minutes:int,label:string}>  $timeframes
+     */
+    private function chartTimeframeLabel(array $timeframes, int $minutes): string
+    {
+        foreach ($timeframes as $tf) {
+            if ((int) ($tf['minutes'] ?? 0) === $minutes) {
+                return (string) ($tf['label'] ?? '');
+            }
+        }
+
+        return '1м';
+    }
+
+    /**
+     * Параметры слоя графика: indicator_settings + торговый config бота.
+     * Нужно, чтобы период/зоны на /bots/{id} совпадали со входом стратегии.
+     *
+     * @param  array<string, mixed>  $merged
+     * @return array<string, mixed>
+     */
+    private function chartOverlayParams(Bot $bot, string $layer, array $merged): array
+    {
+        return BotTradingChartLayers::overlayParams($bot, $layer, $merged);
     }
 
     /**
@@ -3472,6 +3556,35 @@ class BotController extends Controller
                 ] : null,
             ];
         })->values()->all();
+    }
+
+    /**
+     * Прогресс текущего scan + unix следующего dispatch, если бот активен и scan не идёт.
+     *
+     * @return array{
+     *     scan_active: bool,
+     *     analyzing_instrument: ?string,
+     *     analyzed_instruments: list<string>,
+     *     scan_total: int,
+     *     scan_remaining: ?int,
+     *     scan_min_payout: ?float,
+     *     analyzing_since: ?int,
+     *     next_scan_at: ?int
+     * }
+     */
+    private function scanProgressPayload(Bot $bot, float $scanMinPayout): array
+    {
+        $progress = BotScanProgress::snapshot($bot->id, $scanMinPayout);
+        // Cache может отставать от старта PHP-процесса: /proc надёжнее для «scan уже идёт».
+        if (! $progress['scan_active'] && $bot->is_active && BotScanCoordinator::isScanRunning($bot->id)) {
+            $progress['scan_active'] = true;
+        }
+        // Пока scan жив — не считаем до следующего dispatch, иначе таймер живёт своей жизнью.
+        $progress['next_scan_at'] = (! $progress['scan_active'] && $bot->is_active)
+            ? BotScanCoordinator::nextDueUnix($bot)
+            : null;
+
+        return $progress;
     }
 
     /**

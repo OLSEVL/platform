@@ -57,6 +57,50 @@
             </select>
             <p class="text-[11px] text-zinc-500">Sweep / Raid: FH/FL, свип, рейд, откат и точка входа. DeMarker: свечи + панель осциллятора.</p>
         </div>
+        @if (in_array($bot->type ?? '', ['strong_trend_demarker', 'sweep_raid_liquidity'], true))
+            {{-- Те же LLM-поля, что у Candle Reversal + Confirm: кнопка SMC Flow, выбор Chart Analyst и вопрос. --}}
+            @php
+                $llmCallbackBotHint = match ($bot->type ?? '') {
+                    'strong_trend_demarker' => '@strong_DeMarker_bot',
+                    default => 'этом Telegram-боте (token Sweep / Raid)',
+                };
+            @endphp
+            <div class="space-y-1 sm:col-span-2">
+                <label class="flex items-start gap-2">
+                    <input type="checkbox" name="telegram_analyst_llm_enabled" id="telegram_analyst_llm_enabled_strategy" value="1"
+                        class="mt-0.5 rounded border-zinc-600 bg-zinc-800 text-blue-500"
+                        @checked(old('telegram_analyst_llm_enabled', $cfg['telegram_analyst_llm_enabled'] ?? true))>
+                    <span>
+                        <span class="text-sm font-medium text-zinc-300">Кнопка «{{ \App\Services\Telegram\StrongLevelTelegramLlmButton::BUTTON_LABEL }}»</span>
+                        <span class="mt-0.5 block text-[11px] font-normal text-zinc-500">Inline-кнопка под алертом: callback в {{ $llmCallbackBotHint }} → LLM Chart Analyst в этом же чате. Нужен poll (кнопка ниже).</span>
+                    </span>
+                </label>
+                @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('telegram_analyst_llm_enabled')])
+                @error('telegram_analyst_llm_enabled')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+            </div>
+            <div class="space-y-1">
+                <label for="telegram_analyst_bot_id_strategy" class="block text-xs font-medium text-zinc-400">Бот Chart Analyst</label>
+                @php $selectedAnalystIdStrategy = old('telegram_analyst_bot_id', $cfg['telegram_analyst_bot_id'] ?? ''); @endphp
+                <select name="telegram_analyst_bot_id" id="telegram_analyst_bot_id_strategy"
+                    class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                    <option value="">Авто (первый Chart Analyst)</option>
+                    @foreach ($chartAnalystBots ?? [] as $analystBot)
+                        <option value="{{ $analystBot->id }}" @selected((string) $selectedAnalystIdStrategy === (string) $analystBot->id)>
+                            #{{ $analystBot->id }} — {{ $analystBot->name }}@if(!$analystBot->is_active) (выкл.)@endif
+                        </option>
+                    @endforeach
+                </select>
+                @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('telegram_analyst_bot_id')])
+                @error('telegram_analyst_bot_id')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+            </div>
+            <div class="space-y-1 sm:col-span-2">
+                <label for="telegram_analyst_llm_question_strategy" class="block text-xs font-medium text-zinc-400">Вопрос к LLM по кнопке</label>
+                <textarea name="telegram_analyst_llm_question" id="telegram_analyst_llm_question_strategy" rows="2"
+                    class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">{{ old('telegram_analyst_llm_question', $cfg['telegram_analyst_llm_question'] ?? \App\Services\Telegram\StrongLevelTelegramLlmButton::DEFAULT_LLM_QUESTION) }}</textarea>
+                @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('telegram_analyst_llm_question')])
+                @error('telegram_analyst_llm_question')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+            </div>
+        @endif
         <div class="space-y-1">
             @include('bots._telegram-bot-token-field', [
                 'inputId' => 'telegram_bot_token_strategy',

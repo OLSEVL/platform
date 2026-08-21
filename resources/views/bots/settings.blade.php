@@ -195,6 +195,8 @@
                 </span>
             </label>
         </div>
+
+        @include('bots._scan-interval-settings', ['cfg' => $cfg])
         @else
         <p class="text-sm text-zinc-500">
             Плановый <code class="text-zinc-400">bots:scan</code> для Chart Analyst не запускается.
@@ -2447,7 +2449,7 @@
                         <input type="number" name="streak_len" id="streak_len" min="0" max="30" required
                             value="{{ old('streak_len', $cfg['streak_len'] ?? 6) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-                        <p class="text-[11px] text-zinc-500">0 — только выход DeMarker из зоны. 1–30 — ещё N одноцветных закрытых свечей.</p>
+                        <p class="text-[11px] text-zinc-500">0 — только выход DeMarker из зоны. 1–30 — N одноцветных закрытых свечей <span class="text-zinc-300">до входа</span> осциллятора в нижнюю/верхнюю зону.</p>
                         @error('streak_len')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
@@ -2493,7 +2495,7 @@
                         <input type="number" name="demarker_oversold" id="demarker_oversold" min="0" max="49.99" step="0.01" required
                             value="{{ old('demarker_oversold', $cfg['demarker_oversold'] ?? 10) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-                        <p class="text-[11px] text-zinc-500">Выход вверх из зоны + бычья серия → CALL.</p>
+                        <p class="text-[11px] text-zinc-500">Выход вверх из нижней зоны → CALL. Серия свечей (если включена) должна быть до входа в эту зону.</p>
                         @error('demarker_oversold')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
@@ -2501,7 +2503,7 @@
                         <input type="number" name="demarker_overbought" id="demarker_overbought" min="50.01" max="100" step="0.01" required
                             value="{{ old('demarker_overbought', $cfg['demarker_overbought'] ?? 90) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-                        <p class="text-[11px] text-zinc-500">Выход вниз из зоны + медвежья серия → PUT.</p>
+                        <p class="text-[11px] text-zinc-500">Выход вниз из верхней зоны → PUT. Серия свечей (если включена) должна быть до входа в эту зону.</p>
                         @error('demarker_overbought')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                 </div>

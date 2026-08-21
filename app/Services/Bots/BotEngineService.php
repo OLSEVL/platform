@@ -1210,7 +1210,10 @@ class BotEngineService
             'sweep_raid_liquidity' => max(10, (int) ($config['min_closed_bars'] ?? 30)),
             'strong_level' => max(80, (int) ($config['min_closed_bars'] ?? 200)),
             'strong_trend_telegram' => $trendPatternBars,
-            'strong_trend_demarker' => max($trendPatternBars, (int) ($config['demarker_period'] ?? 6) + 2),
+            'strong_trend_demarker' => max(
+                $trendPatternBars + (int) ($config['demarker_period'] ?? 6) + 2,
+                (int) ($config['demarker_period'] ?? 6) + 2
+            ),
             // Для MTF-разворота нужен запас истории M1 и стабильная M5-агрегация.
             'candle_reversal_confirm' => max(80, (int) ($config['min_closed_bars'] ?? 200)),
             // OsEngine: SMA length+1 и RSI length+5.
@@ -1302,6 +1305,15 @@ class BotEngineService
         $tfMap = \App\Support\OpenRouterLlmConfig::mtfBarMap($config, $includeM1, $m1Min);
 
         return $this->botDataService->mtfSeries($instrument, $tfMap);
+    }
+
+    /**
+     * Публичный доступ к стратегии по типу бота.
+     * Нужен backtest-движку и explain, чтобы не дублировать match-таблицу.
+     */
+    public function strategyForType(string $type): ?BotStrategyInterface
+    {
+        return $this->resolveStrategy($type);
     }
 
     private function resolveStrategy(string $type): ?BotStrategyInterface

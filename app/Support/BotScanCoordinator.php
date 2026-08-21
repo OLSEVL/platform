@@ -41,6 +41,77 @@ final class BotScanCoordinator
     /** Lock для ручного прохода всех ботов в одном процессе (без --bot_id). */
     public const ALL_BOTS_LOCK = 'bots:scan:all';
 
+    /** Как в bootstrap/app.php: bots:scan-dispatch → everyThirtySeconds. */
+    public const DISPATCH_INTERVAL_SEC = 30;
+
+    /** Интервал скана бота: S30 (каждый тик dispatch) или M1 (не чаще раза в минуту). */
+    public const SCAN_INTERVAL_S30 = 30;
+
+    public const SCAN_INTERVAL_M1 = 60;
+
+    /** Нет ключа в config → M1, как просили для всех ботов. */
+    public const DEFAULT_SCAN_INTERVAL_SEC = self::SCAN_INTERVAL_M1;
+
+    /**
+     * Unix-время следующего тика dispatch (границы :00 и :30).
+     * На самой границе возвращаем «сейчас»: команда как раз должна стартовать.
+     */
+    public static function nextDispatchUnix(?int $now = null): int
+    {
+        $now = $now ?? time();
+        $interval = self::DISPATCH_INTERVAL_SEC;
+        $mod = $now % $interval;
+
+        return $mod === 0 ? $now : $now + ($interval - $mod);
+    }
+
+    /** 30 или 60; всё остальное (в т.ч. мусор) → M1. */
+    public static function normalizeScanIntervalSec(mixed $raw): int
+    {
+        return (int) $raw === self::SCAN_INTERVAL_S30
+            ? self::SCAN_INTERVAL_S30
+            : self::SCAN_INTERVAL_M1;
+    }
+
+    public static function scanIntervalSecForBot(Bot $bot): int
+    {
+        $cfg = is_array($bot->config) ? $bot->config : [];
+        if (! array_key_exists('scan_interval_sec', $cfg) || $cfg['scan_interval_sec'] === null || $cfg['scan_interval_sec'] === '') {
+            return self::DEFAULT_SCAN_INTERVAL_SEC;
+        }
+
+        return self::normalizeScanIntervalSec($cfg['scan_interval_sec']);
+    }
+
+    /** Можно ли стартовать новый scan: прошло ≥ интервала с прошлого старта. */
+    public static function isDueToSpawn(Bot $bot, ?int $now = null): bool
+    {
+        $now = $now ?? time();
+        $last = BotScanProgress::lastStartedAt((int) $bot->id);
+        if ($last === null) {
+            return true;
+        }
+
+        return ($now - $last) >= self::scanIntervalSecForBot($bot);
+    }
+
+    /** Unix следующего разрешённого старта (для отсчёта на странице бота). */
+    public static function nextDueUnix(Bot $bot, ?int $now = null): int
+    {
+        $now = $now ?? time();
+        $interval = self::scanIntervalSecForBot($bot);
+        $last = BotScanProgress::lastStartedAt((int) $bot->id);
+        if ($last !== null) {
+            $earliest = $last + $interval;
+            if ($earliest > $now) {
+                return $earliest;
+            }
+        }
+        $mod = $now % $interval;
+
+        return $mod === 0 ? $now : $now + ($interval - $mod);
+    }
+
     public static function botLockName(int $botId): string
     {
         return 'bots:scan:bot:'.$botId;
@@ -195,10 +266,16 @@ final class BotScanCoordinator
 
     public static function spawnScan(int $botId): bool
     {
-        return ArtisanProcessFinder::spawnBackground(
+        $ok = ArtisanProcessFinder::spawnBackground(
             [ArtisanProcessFinder::cliPhpBinary(), 'artisan', 'bots:scan', '--bot_id='.$botId],
             self::logPathForBot($botId),
         );
+        if ($ok) {
+            // Фиксируем старт сразу: иначе следующий 30с-тик успеет запустить второй процесс до beginScan.
+            BotScanProgress::markStarted($botId);
+        }
+
+        return $ok;
     }
 
     public static function spawnDispatchAll(): int
@@ -206,6 +283,9 @@ final class BotScanCoordinator
         $started = 0;
         foreach (self::scannableBots() as $bot) {
             if (self::isScanRunning($bot->id)) {
+                continue;
+            }
+            if (! self::isDueToSpawn($bot)) {
                 continue;
             }
             if (self::spawnScan($bot->id)) {
