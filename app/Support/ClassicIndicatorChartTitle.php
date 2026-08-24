@@ -185,6 +185,12 @@ final class ClassicIndicatorChartTitle
         return $json;
     }
 
+    /** Имя индикатора для подписи на графике по ключу API (rsi, parabolic_sar). */
+    public static function nameForApiKey(string $apiKey): string
+    {
+        return (string) (self::MAP[$apiKey]['name'] ?? strtoupper(str_replace('_', ' ', $apiKey)));
+    }
+
     /**
      * @param  list<string>  $keys
      * @param  array<string, mixed>  $params

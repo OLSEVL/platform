@@ -16,7 +16,23 @@ use App\Services\CandleService;
 final class BotTradingChartLayers
 {
     /**
-     * Id чекбоксов в попапе «Индикаторы» — эти слои включаем на странице бота.
+     * Боты, у которых торговые индикаторы на графике — экземпляры (не legacy-чекбоксы).
+     */
+    public static function usesChartIndicatorInstances(Bot $bot): bool
+    {
+        return in_array((string) $bot->type, [
+            'strong_trend_demarker',
+            DemarkerDualFastConfig::BOT_TYPE,
+            'rsi_contrtrend',
+            'rsi_trade',
+            'cci_trade',
+            'williams_range_trade',
+            'sma_stochastic',
+            'momentum_macd',
+        ], true);
+    }
+
+    /**
      *
      * @return list<string>
      */
@@ -27,12 +43,14 @@ final class BotTradingChartLayers
 
         return match ($type) {
             'sweep_raid_liquidity' => ['layer-sweep-raid-liquidity'],
-            'strong_trend_demarker' => ['layer-demarker'],
+            // DeMarker / RSI / MACD+… — через chart_indicator_instances (syncTradingInstances).
+            'strong_trend_demarker' => [],
+            DemarkerDualFastConfig::BOT_TYPE => [],
             'bollinger_contrtrend' => ['layer-bollinger'],
-            'rsi_contrtrend' => ['layer-rsi', 'layer-sma'],
-            'rsi_trade' => ['layer-rsi'],
-            'cci_trade' => ['layer-cci'],
-            'williams_range_trade' => ['layer-williams'],
+            'rsi_contrtrend' => [],
+            'rsi_trade' => [],
+            'cci_trade' => [],
+            'williams_range_trade' => [],
             'rvi_trade' => ['layer-rvi'],
             'smc_flow' => ['layer-smc-flow'],
             'strong_level', 'candle_reversal_confirm' => ['layer-pa-dgt'],
@@ -41,12 +59,13 @@ final class BotTradingChartLayers
             'parabolic_sar_trade' => ['layer-parabolic-sar'],
             'break_linreg_channel' => ['layer-linreg-channel-fast', 'layer-sma'],
             'pivot_points' => ['layer-pivot-floor'],
-            'sma_stochastic' => ['layer-sma', 'layer-stochastic'],
-            'momentum_macd' => ['layer-macd', 'layer-momentum'],
+            'sma_stochastic' => [],
+            'momentum_macd' => [],
             'parabolic_bollinger' => ['layer-parabolic-bollinger'],
             'parabolic_price_channel' => ['layer-parabolic-price-channel'],
             'pinbar_trade' => ['layer-sma'],
             'openrouter_llm_analyst' => self::analystLayerIds($cfg),
+            ChartAnalystBotTypes::SRL => ['layer-llm-levels', 'layer-sweep-raid-liquidity'],
             'strong_trend_telegram' => self::telegramPullbackLayerIds($cfg),
             // Свечные паттерны без оверлей-индикатора: three_candles, three_soldier, Wave B impulse и т.п.
             default => [],
@@ -60,7 +79,7 @@ final class BotTradingChartLayers
     public static function chartTimeframeMinutes(Bot $bot): int
     {
         $cfg = self::config($bot);
-        if ((string) $bot->type !== 'strong_trend_demarker') {
+        if (! in_array((string) $bot->type, ['strong_trend_demarker', DemarkerDualFastConfig::BOT_TYPE], true)) {
             return 1;
         }
         $tf = (int) ($cfg['timeframe'] ?? CandleService::TF_S30);
@@ -152,7 +171,7 @@ final class BotTradingChartLayers
      */
     private static function overlaySrl(string $type, array $cfg, array $params): array
     {
-        if ($type !== 'sweep_raid_liquidity') {
+        if (! in_array($type, ['sweep_raid_liquidity', ChartAnalystBotTypes::SRL], true)) {
             return $params;
         }
         $params['pivot_length'] = max(1, min(100, (int) ($cfg['srl_pivot_length'] ?? $params['pivot_length'] ?? 2)));
@@ -174,7 +193,7 @@ final class BotTradingChartLayers
      */
     private static function overlayDemarker(string $type, array $cfg, array $params): array
     {
-        if ($type !== 'strong_trend_demarker') {
+        if (! in_array($type, ['strong_trend_demarker', DemarkerDualFastConfig::BOT_TYPE], true)) {
             return $params;
         }
         $params['period'] = max(1, min(500, (int) ($cfg['demarker_period'] ?? $params['period'] ?? 6)));

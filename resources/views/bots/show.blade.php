@@ -144,6 +144,19 @@
                 </div>
                 {{-- Индикатор загрузки свечей: раньше стоял рядом с крупным именем бота в шапке. --}}
                 <span id="chart-loading" class="text-sm text-zinc-500 hidden">Загрузка…</span>
+                {{-- Как на dashboard: скрыть маркеры/лучи/полосы сделок бота — чистый график. BT — отдельный чекбокс. --}}
+                <label
+                    for="bot-show-trades-toggle"
+                    class="inline-flex items-center gap-2 cursor-pointer select-none shrink-0"
+                    title="Показывать сделки этого бота на графике и в списке пар. Выключите — только свечи и индикаторы."
+                >
+                    <span id="bot-show-trades-label" class="text-xs text-zinc-400">Торговля</span>
+                    <span class="relative inline-block h-5 w-9 shrink-0">
+                        <input type="checkbox" id="bot-show-trades-toggle" class="peer sr-only" checked>
+                        <span class="block h-5 w-9 rounded-full bg-zinc-700 transition-colors peer-checked:bg-emerald-600 peer-focus-visible:ring-2 peer-focus-visible:ring-emerald-500/50"></span>
+                        <span class="pointer-events-none absolute left-0.5 top-0.5 h-4 w-4 rounded-full bg-zinc-100 shadow transition-transform peer-checked:translate-x-4"></span>
+                    </span>
+                </label>
                 <div class="relative shrink-0" id="tf-dropdown-wrap">
                     <button type="button" id="tf-dropdown-btn" class="text-sm px-2 py-1 rounded border border-zinc-600 bg-zinc-800 text-zinc-200 hover:bg-zinc-700">
                         <span id="tf-dropdown-label">{{ $tradingChartTimeframeLabel ?? '1м' }}</span> ▾
@@ -376,6 +389,7 @@
 @include('partials.chart-markers-helper')
 @include('partials.chart-candle-smooth-helper')
 @include('partials.chart-fetch-helper')
+@include('partials.chart-indicator-instances-script', ['bot' => $bot])
 <script src="https://unpkg.com/lightweight-charts@5.2.0/dist/lightweight-charts.standalone.production.js"></script>
 <script>
 (function() {
@@ -392,9 +406,17 @@
     const BOT_BACKTESTS_URL = '{{ route("bots.backtests.index", $bot) }}';
     const BOT_IS_CHART_ANALYST = @json($isChartAnalystBot ?? false);
     const BOT_ANALYST_SMC_FLOW_ENABLED = @json($analystSmcFlowEnabled ?? false);
+    const BOT_ANALYST_SRL_FLOW_ENABLED = @json($analystSrlFlowEnabled ?? false);
     // Слои и ТФ, по которым этот бот входит. Кнопка «Сделать как у бота» сбрасывает график к ним.
     const BOT_TRADING_LAYER_IDS = @json($tradingChartLayerIds ?? []);
     const BOT_TRADING_TIMEFRAME = {{ (int) ($tradingChartTimeframe ?? 1) }};
+    @if(\App\Services\ChartIndicatorInstanceService::needsTradingSync($bot))
+    const BOT_CHART_INSTANCES_SYNC_TRADING_URL = @json(route('bots.chart-instances.sync-trading', $bot));
+    @else
+    const BOT_CHART_INSTANCES_SYNC_TRADING_URL = '';
+    @endif
+    // Pilot: дополнительные SMA/EMA (экземпляры chart_indicator_instances).
+    window.PLATFORM_CHART_INDICATOR_INSTANCES = @json($chartIndicatorInstances ?? []);
     const BOT_STATS_URL = '{{ route("bots.stats.data", $bot) }}';
     // Два среза для правой панели: подгружаем оба с сервера при SSR, переключатель шлёт scope= в polling.
     const STATS_SCOPE_STORAGE_KEY = 'platform.bot.show.statsScope.v1.{{ $bot->id }}';
@@ -413,6 +435,8 @@
     // По умолчанию true (если ключа еще нет в config), чтобы сохранить текущее UX-поведение.
     const TV_CROSSHAIR_ENABLED = @json($tvCrosshairEnabled);
     const SELECTED_INSTRUMENT_KEY = 'platform.bot.show.selectedInstrument.{{ $bot->id }}';
+    // Показ сделок бота на графике (маркеры, полосы, лучи, таймеры в списке пар).
+    const SHOW_TRADES_STORAGE_KEY = 'platform.bot.showTrades.v1.{{ $bot->id }}';
     // Увеличенное окно истории:
     // - LIMIT: сколько свечей максимум запрашиваем у API за один вызов;
     // - WINDOW_SEC: базовый диапазон (3 суток) даже без сигналов;
@@ -527,6 +551,77 @@
     let backtestLoadedRunId = null;
     let backtestMarkersFocusDone = false;
 
+    /** Читает предпочтение «показывать торговлю» из localStorage (по умолчанию вкл.). */
+    function loadShowTradesPref() {
+        try {
+            const v = localStorage.getItem(SHOW_TRADES_STORAGE_KEY);
+            if (v == null) return true;
+            return !(v === '0' || v === 'false' || v === 'off');
+        } catch (_) {
+            return true;
+        }
+    }
+
+    function saveShowTradesPref(on) {
+        try {
+            localStorage.setItem(SHOW_TRADES_STORAGE_KEY, on ? '1' : '0');
+        } catch (_) { /* ignore */ }
+    }
+
+    let showTrades = loadShowTradesPref();
+
+    function syncShowTradesToggleUi() {
+        if (showTradesToggle) showTradesToggle.checked = showTrades;
+        if (showTradesLabel) {
+            showTradesLabel.textContent = 'Торговля';
+            showTradesLabel.classList.toggle('text-zinc-400', showTrades);
+            showTradesLabel.classList.toggle('text-zinc-500', !showTrades);
+        }
+    }
+
+    /** Убирает подсветку открытых сделок и таймеры в списке пар (не трогая выбранную пару). */
+    function hideSidebarTradeChrome() {
+        document.querySelectorAll('.instrument-btn').forEach((btn) => {
+            btn.classList.remove('bg-stone-800/45');
+            btn.querySelectorAll('.instrument-trade-timer').forEach((el) => el.remove());
+        });
+    }
+
+    /**
+     * Вкл/выкл сделок бота на графике и в сайдбаре.
+     * Маркеры бэктеста (BT) управляются отдельным чекбоксом.
+     */
+    function applyShowTradesMode(on, { persist = true } = {}) {
+        showTrades = !!on;
+        if (persist) saveShowTradesPref(showTrades);
+        syncShowTradesToggleUi();
+
+        if (!showTrades) {
+            hideSidebarTradeChrome();
+            if (openTradesOverlay) {
+                openTradeOverlayCardMap.clear();
+                openTradesOverlay.replaceChildren();
+            }
+            historyDurationCache.clear();
+            renderChartMarkers();
+            renderTradeDurationOverlay();
+            renderDemarkerTradeMarkers();
+            renderPoOpenTradeRaysOverlay();
+            updateSidebarActiveTradePanel();
+            return;
+        }
+
+        refreshInstrumentSidebar();
+        refreshOpenTrades();
+        refreshSignalsHistory();
+        renderChartMarkers();
+        renderTradeDurationOverlay();
+        renderDemarkerTradeMarkers();
+        renderPoOpenTradeRaysOverlay();
+        renderOpenTradesOverlay();
+        updateSidebarActiveTradePanel();
+    }
+
     const chartPlaceholder = document.getElementById('chart-placeholder');
     const chartWrapper = document.getElementById('chart-wrapper');
     const tradeDurationOverlay = document.getElementById('trade-duration-overlay');
@@ -552,6 +647,8 @@
     const chartTitle = document.getElementById('chart-title');
     const chartTitlePayoutEl = document.getElementById('chart-title-payout');
     const chartLoading = document.getElementById('chart-loading');
+    const showTradesToggle = document.getElementById('bot-show-trades-toggle');
+    const showTradesLabel = document.getElementById('bot-show-trades-label');
     const tfBtn = document.getElementById('tf-dropdown-btn');
     const tfPanel = document.getElementById('tf-dropdown-panel');
     const tfLabelEl = document.getElementById('tf-dropdown-label');
@@ -1015,12 +1112,31 @@
      * Сброс к торговой картинке бота: только его индикаторы и его таймфрейм.
      * Пользовательские слои после этого можно снова включать — они сохранятся до следующего сброса.
      */
-    function applyBotChartPreset(opts) {
+    async function applyBotChartPreset(opts) {
         const reload = !!(opts && opts.reload);
         const trading = new Set(Array.isArray(BOT_TRADING_LAYER_IDS) ? BOT_TRADING_LAYER_IDS : []);
         document.querySelectorAll('#layers-dropdown-panel input[type="checkbox"]').forEach((el) => {
             el.checked = trading.has(el.id);
         });
+        // Dual DeMarker и др.: экземпляры из config бота (не legacy-чекбокс layer-demarker).
+        if (BOT_CHART_INSTANCES_SYNC_TRADING_URL) {
+            try {
+                const csrf = document.querySelector('meta[name="csrf-token"]');
+                const res = await fetch(BOT_CHART_INSTANCES_SYNC_TRADING_URL, {
+                    method: 'POST',
+                    headers: {
+                        'Accept': 'application/json',
+                        'X-CSRF-TOKEN': csrf ? csrf.getAttribute('content') : '',
+                        'X-Requested-With': 'XMLHttpRequest',
+                    },
+                });
+                if (res.ok && window.PlatformChartIndicatorInstances) {
+                    await PlatformChartIndicatorInstances.refreshFromServer();
+                }
+            } catch (e) {
+                console.error('[chart] sync trading instances', e);
+            }
+        }
         const tf = parseInt(BOT_TRADING_TIMEFRAME, 10);
         const tfChanged = isAllowedChartTimeframe(tf) && tf !== currentTimeframeMinutes;
         if (isAllowedChartTimeframe(tf)) {
@@ -1316,6 +1432,22 @@
         }
     }
 
+    /** После анализа SRL-аналитика — оверлей фракталов/свипов с сервера. */
+    function applySweepRaidFromAnalysis(data) {
+        if (!BOT_IS_CHART_ANALYST || !BOT_ANALYST_SRL_FLOW_ENABLED) return;
+        if (data && data.sweep_raid_liquidity && typeof data.sweep_raid_liquidity === 'object') {
+            lastSrlPayload = data.sweep_raid_liquidity;
+            if (layerSweepRaidLiquidity) layerSweepRaidLiquidity.checked = true;
+            saveLayerPrefs();
+            if (typeof sweepRaidLiquidityOverlay !== 'undefined' && sweepRaidLiquidityOverlay) {
+                sweepRaidLiquidityOverlay.classList.remove('hidden');
+            }
+            if (typeof redrawLiquiditySwingsOverlay === 'function') {
+                redrawLiquiditySwingsOverlay(sweepRaidLiquidityOverlay, layerSweepRaidLiquidity, lastSrlPayload);
+            }
+        }
+    }
+
     /** Нормализация цвета индикатора (#RRGGBBAA) для CSS. */
     function paCssColor(c) {
         if (c == null || c === '') return 'rgba(148,163,184,0.5)';
@@ -1435,7 +1567,8 @@
         const wantVolatilityStagesAw = layerVolatilityStagesAw && layerVolatilityStagesAw.checked;
         if (!wantPa && !wantLs && !wantSrl && !wantSmc && !wantBb && !wantRsi && !wantSma && !wantEma && !wantVwma && !wantAtr && !wantMacd && !wantStochastic && !wantCci && !wantKeltner && !wantEnvelops && !wantParabolicSar && !wantSuperTrend && !wantAdx && !wantWilliams && !wantAo && !wantAlligator && !wantIchimoku && !wantPriceChannel && !wantNrtr && !wantHma && !wantAroon
             && !wantMomentum && !wantRoc && !wantOsma && !wantTrix && !wantCmo && !wantDemarker && !wantRvi && !wantUltimate && !wantSmi && !wantStdDev && !wantSmaChannel && !wantIvashov && !wantLinReg && !wantLinRegChannel && !wantKalman && !wantFractal
-            && !wantDonchian && !wantStochRsi && !wantAc && !wantBullsPower && !wantBearsPower && !wantDpo && !wantQstick && !wantVhFilter && !wantEfficiencyRatio && !wantRavi && !wantCog && !wantPivotFloor && !wantMassIndex && !wantNrtrWatr && !wantPriceChannelAdaptive && !wantPriceChannelOffset && !wantParabolicBollinger && !wantParabolicPriceChannel && !wantAtrChannel && !wantOffsetSma && !wantOffsetEma && !wantOffsetSsma && !wantVolatilityAverage && !wantVolatilityAverageChannel && !wantPriceOscillator && !wantDynamicTrendDetector && !wantAdaptiveLookBack && !wantLinRegChannelFast && !wantVolatilityCandles && !wantZigZag && !wantVolatilityAverageTwice && !wantVolatilityStagesAw) {
+            && !wantDonchian && !wantStochRsi && !wantAc && !wantBullsPower && !wantBearsPower && !wantDpo && !wantQstick && !wantVhFilter && !wantEfficiencyRatio && !wantRavi && !wantCog && !wantPivotFloor && !wantMassIndex && !wantNrtrWatr && !wantPriceChannelAdaptive && !wantPriceChannelOffset && !wantParabolicBollinger && !wantParabolicPriceChannel && !wantAtrChannel && !wantOffsetSma && !wantOffsetEma && !wantOffsetSsma && !wantVolatilityAverage && !wantVolatilityAverageChannel && !wantPriceOscillator && !wantDynamicTrendDetector && !wantAdaptiveLookBack && !wantLinRegChannelFast && !wantVolatilityCandles && !wantZigZag && !wantVolatilityAverageTwice && !wantVolatilityStagesAw
+            && !(window.PlatformChartIndicatorInstances && PlatformChartIndicatorInstances.hasVisibleInstances())) {
             lastPaPayload = null;
             lastLsPayload = null;
             lastSrlPayload = null;
@@ -1510,6 +1643,7 @@
             lastZigZagPayload = null;
             lastVolatilityAverageTwicePayload = null;
             lastVolatilityStagesAwPayload = null;
+            if (window.PlatformChartIndicatorInstances) PlatformChartIndicatorInstances.clearPayloads();
             if (window.PlatformChartFetch) window.PlatformChartFetch.invalidate('bot-indicators');
             redrawPriceActionOverlay();
             applyPaBarColors({ fullResync: true });
@@ -1594,12 +1728,19 @@
         if (wantVolatilityAverageTwice) layers.push('volatility_average_twice');
         if (wantVolatilityStagesAw) layers.push('volatility_stages_aw');
         layers.forEach((l) => params.append('layers[]', l));
+        if (window.PlatformChartIndicatorInstances) {
+            PlatformChartIndicatorInstances.appendFetchParams(params);
+        }
         if (!window.PlatformChartFetch) return;
+        const instKey = (window.PlatformChartIndicatorInstances && PlatformChartIndicatorInstances.hasVisibleInstances())
+            ? PlatformChartIndicatorInstances.visibleInstanceIds().slice().sort((a, b) => a - b).join(',')
+            : '';
         // Ключ включает слои: смена чекбоксов abort'ит старый запрос; тот же ключ coalesce (throttle+таймер).
         const requestKey = [
             currentInstrument,
             String(currentTimeframeMinutes),
             layers.slice().sort().join(','),
+            instKey,
         ].join('|');
         // force=true (reload / toggle): не coalesce — перезапрашиваем даже при совпадающем key.
         PlatformChartFetch.requestJson('bot-indicators', {
@@ -1682,6 +1823,9 @@
                     lastZigZagPayload = wantZigZag && d && d.zigzag ? d.zigzag : null;
                     lastVolatilityAverageTwicePayload = wantVolatilityAverageTwice && d && d.volatility_average_twice ? d.volatility_average_twice : null;
                     lastVolatilityStagesAwPayload = wantVolatilityStagesAw && d && d.volatility_stages_aw ? d.volatility_stages_aw : null;
+                    if (window.PlatformChartIndicatorInstances) {
+                        PlatformChartIndicatorInstances.applyPayloads(d);
+                    }
                     redrawPriceActionOverlay();
                     applyPaBarColors({ fullResync: wantPa });
                     renderChartMarkers();
@@ -1841,6 +1985,9 @@
 
     function clearClassicOsEngineSeries() {
         demarkerTradeMarkers = null;
+        if (window.__demarkerInstanceMarkers) {
+            window.__demarkerInstanceMarkers.clear();
+        }
         if (!chart) {
             classicLineSeries = {};
             rsiLevelLines = [];
@@ -1985,6 +2132,10 @@
         if (wantEma) {
             const st = lastEmaPayload.style || {};
             addMainLine('ema', (lastEmaPayload.series || {}).ema, st.color, st.line_width);
+        }
+        // Дополнительные экземпляры классических индикаторов (overlay на свечах).
+        if (window.PlatformChartIndicatorInstances) {
+            PlatformChartIndicatorInstances.renderMainOverlays(addMainLine, chart, LineSeries, classicLineSeries);
         }
         if (wantVwma) {
             const st = lastVwmaPayload.style || {};
@@ -3865,6 +4016,9 @@
         pushOverlay(wantBb, lastBollingerPayload, 'Bollinger', 'layer-bollinger');
         pushOverlay(wantSma, lastSmaPayload, 'SMA', 'layer-sma');
         pushOverlay(wantEma, lastEmaPayload, 'EMA', 'layer-ema');
+        if (window.PlatformChartIndicatorInstances) {
+            overlays.push(...PlatformChartIndicatorInstances.collectOverlayLabels());
+        }
         pushOverlay(wantVwma, lastVwmaPayload, 'VWMA', 'layer-vwma');
         pushOverlay(wantKeltner, lastKeltnerPayload, 'Keltner', 'layer-keltner');
         pushOverlay(wantEnvelops, lastEnvelopsPayload, 'Envelops', 'layer-envelops');
@@ -3965,6 +4119,19 @@
         }
         pushOsc(wantAtr, lastAtrPayload, 'ATR', 'layer-atr');
 
+        // Экземпляры-осцилляторы (RSI 9 + RSI 21 и т.д.) — отдельная pane на каждый.
+        if (window.PlatformChartIndicatorInstances) {
+            PlatformChartIndicatorInstances.renderOscillators({
+                chart: chart,
+                LineSeries: LineSeries,
+                HistogramSeries: HistogramSeries,
+                classicLineSeries: classicLineSeries,
+                classicOscPaneCount: classicOscPaneCount,
+                rsiLevelLines: rsiLevelLines,
+            });
+            oscillators.push(...PlatformChartIndicatorInstances.collectOscillatorLabels());
+        }
+
         lastClassicNameState = { overlays, oscillators };
         // rAF: после addPane высоты pane из LWC обычно уже актуальны.
         requestAnimationFrame(() => renderAllIndicatorNameLabels());
@@ -4046,7 +4213,8 @@
             (layerVolatilityCandles && layerVolatilityCandles.checked) ||
             (layerZigZag && layerZigZag.checked) ||
             (layerVolatilityAverageTwice && layerVolatilityAverageTwice.checked) ||
-            (layerVolatilityStagesAw && layerVolatilityStagesAw.checked)
+            (layerVolatilityStagesAw && layerVolatilityStagesAw.checked) ||
+            (window.PlatformChartIndicatorInstances && PlatformChartIndicatorInstances.hasVisibleInstances())
         );
     }
 
@@ -4838,8 +5006,8 @@
     }
     function renderChartMarkers() {
         if (!candlestickSeries || !currentInstrument) return;
-        const base = markersForInstrument(currentInstrument);
-        const active = activeTradeMarkersForCurrentInstrument();
+        const base = showTrades ? markersForInstrument(currentInstrument) : [];
+        const active = showTrades ? activeTradeMarkersForCurrentInstrument() : [];
         const paMk = (layerPa && layerPa.checked && lastPaPayload && Array.isArray(lastPaPayload.markers)) ? lastPaPayload.markers : [];
         // Маркеры бэктеста (BT CALL/PUT + результат) — поверх live/PA, но не путаем с live WIN/LOSE.
         const btMk = backtestMarkersForCurrentInstrument();
@@ -5015,35 +5183,56 @@
     /**
      * На панели DeMarker подписываем вход тем же бакетом, что и стрелка на свечах,
      * текстом фактического значения (0.12), а не «на глаз» по сжатой линии.
+     * Поддерживает legacy layer-demarker и экземпляры inst_* (Dual DeMarker и др.).
      */
     function renderDemarkerTradeMarkers() {
         const PCM = window.PlatformChartMarkers;
-        const line = classicLineSeries && classicLineSeries.demarker;
-        if (!line || !PCM || typeof PCM.applyMarkers !== 'function' || !demarkerTradeMarkers) return;
-        const pts = ((lastDemarkerPayload && lastDemarkerPayload.series) || {}).dem || [];
-        const byTime = new Map();
-        pts.forEach((p) => {
-            if (!p) return;
-            byTime.set(Number(p.time), Number(p.value));
-        });
-        const markers = [];
-        mergedSignals(currentInstrument).forEach((s) => {
-            if (!s || s.instrument !== currentInstrument) return;
-            const t = toClosedBarTime(toUnixSec(s.signal_at));
-            if (!Number.isFinite(t) || !byTime.has(t)) return;
-            const v = byTime.get(t);
-            if (!Number.isFinite(v)) return;
-            const tradeId = (s.trade && s.trade.id) ? Number(s.trade.id) : null;
-            const idSuffix = Number.isFinite(tradeId) ? ` ${tradeId}` : '';
-            markers.push({
-                time: t,
-                position: v <= 0.5 ? 'belowBar' : 'aboveBar',
-                color: '#facc15',
-                shape: 'circle',
-                text: `DeM${idSuffix} ${v.toFixed(2)}`,
+        if (!PCM || typeof PCM.applyMarkers !== 'function') return;
+
+        const buildMarkers = function (pts) {
+            const byTime = new Map();
+            (Array.isArray(pts) ? pts : []).forEach((p) => {
+                if (!p) return;
+                byTime.set(Number(p.time), Number(p.value));
             });
+            const markers = [];
+            mergedSignals(currentInstrument).forEach((s) => {
+                if (!s || s.instrument !== currentInstrument) return;
+                const t = toClosedBarTime(toUnixSec(s.signal_at));
+                if (!Number.isFinite(t) || !byTime.has(t)) return;
+                const v = byTime.get(t);
+                if (!Number.isFinite(v)) return;
+                const tradeId = (s.trade && s.trade.id) ? Number(s.trade.id) : null;
+                const idSuffix = Number.isFinite(tradeId) ? ` ${tradeId}` : '';
+                markers.push({
+                    time: t,
+                    position: v <= 0.5 ? 'belowBar' : 'aboveBar',
+                    color: '#facc15',
+                    shape: 'circle',
+                    text: `DeM${idSuffix} ${v.toFixed(2)}`,
+                });
+            });
+            return markers;
+        };
+
+        const markers = buildMarkers(((lastDemarkerPayload && lastDemarkerPayload.series) || {}).dem || []);
+        const line = classicLineSeries && classicLineSeries.demarker;
+        if (line && demarkerTradeMarkers) {
+            PCM.applyMarkers(demarkerTradeMarkers, showTrades ? markers : []);
+        }
+
+        const instMap = window.__demarkerInstanceMarkers;
+        if (!instMap || typeof instMap.forEach !== 'function') return;
+        instMap.forEach(function (plugin, instId) {
+            if (!plugin) return;
+            let pts = [];
+            if (window.PlatformChartIndicatorInstances
+                && typeof PlatformChartIndicatorInstances.getPayload === 'function') {
+                const payload = PlatformChartIndicatorInstances.getPayload(instId);
+                pts = (payload && payload.series && payload.series.dem) ? payload.series.dem : [];
+            }
+            PCM.applyMarkers(plugin, showTrades ? buildMarkers(pts) : []);
         });
-        PCM.applyMarkers(demarkerTradeMarkers, markers);
     }
 
     /**
@@ -5061,7 +5250,7 @@
             instrument: currentInstrument,
             barSec: timeframeSeconds(currentTimeframeMinutes),
             nowSec: Math.floor(Date.now() / 1000),
-            show: true,
+            show: !!showTrades,
         });
     }
 
@@ -5182,6 +5371,11 @@
      */
     function renderTradeDurationOverlay() {
         if (!tradeDurationOverlay) return;
+        if (!showTrades) {
+            tradeDurationOverlay.classList.add('hidden');
+            tradeDurationOverlay.innerHTML = '';
+            return;
+        }
         if (!chart || !currentInstrument || !allChartData.length) {
             tradeDurationOverlay.classList.add('hidden');
             tradeDurationOverlay.innerHTML = '';
@@ -5486,6 +5680,7 @@
         if (botAnalysisBody) botAnalysisBody.scrollTop = 0;
         applyLlmChartLevelsFromAnalysis(data);
         applySmcFlowFromAnalysis(data);
+        applySweepRaidFromAnalysis(data);
         updateSidebarActiveTradePanel();
     }
     function renderBotAnalysis(data) {
@@ -5747,7 +5942,7 @@
             const li = document.createElement('li');
             const btn = document.createElement('button');
             btn.type = 'button';
-            btn.className = 'instrument-btn w-full text-left px-4 py-3 hover:bg-zinc-800 focus:bg-zinc-800 focus:outline-none transition-colors' + (inst.open_trade ? ' bg-stone-800/45' : '');
+            btn.className = 'instrument-btn w-full text-left px-4 py-3 hover:bg-zinc-800 focus:bg-zinc-800 focus:outline-none transition-colors' + (showTrades && inst.open_trade ? ' bg-stone-800/45' : '');
             btn.dataset.instrument = inst.instrument;
             btn.dataset.displayName = inst.display_name;
             btn.dataset.search = normalizeText(`${inst.display_name || ''} ${inst.instrument || ''}`);
@@ -5761,7 +5956,7 @@
             name.className = 'font-medium text-zinc-100 truncate';
             name.textContent = inst.display_name || inst.instrument;
             nameWrap.appendChild(name);
-            if (inst.open_trade && inst.expiry_ts) {
+            if (showTrades && inst.open_trade && inst.expiry_ts) {
                 const timer = document.createElement('span');
                 timer.className = 'instrument-trade-timer shrink-0 text-xs font-mono tabular-nums text-stone-200';
                 // Нормализуем до unix-sec: так таймер и маркеры не "прыгают" при ms/строковом формате.
@@ -6060,9 +6255,11 @@
             return;
         }
         const nowSec = Math.floor(Date.now() / 1000);
-        const rows = (openTrades || [])
-            .filter((t) => t.instrument === currentInstrument && toUnixSec(t.expiry_ts) > nowSec)
-            .sort((a, b) => toUnixSec(a.expiry_ts || 0) - toUnixSec(b.expiry_ts || 0));
+        const rows = showTrades
+            ? (openTrades || [])
+                .filter((t) => t.instrument === currentInstrument && toUnixSec(t.expiry_ts) > nowSec)
+                .sort((a, b) => toUnixSec(a.expiry_ts || 0) - toUnixSec(b.expiry_ts || 0))
+            : [];
         if (!rows.length) {
             // Если активной сделки нет, но пользователь запросил "Анализ", показываем этот же блок справа в режиме диагностики.
             const a = latestManualAnalysis;
@@ -6236,6 +6433,11 @@
 
     function renderOpenTradesOverlay() {
         if (!openTradesOverlay) return;
+        if (!showTrades) {
+            openTradeOverlayCardMap.clear();
+            openTradesOverlay.replaceChildren();
+            return;
+        }
         if (!currentInstrument) {
             openTradeOverlayCardMap.clear();
             openTradesOverlay.replaceChildren();
@@ -6295,6 +6497,7 @@
         });
     }
     function refreshOpenTrades() {
+        if (!showTrades) return;
         if (!currentInstrument) return;
         if (!window.PlatformChartFetch) return;
         const params = new URLSearchParams({ instrument: currentInstrument });
@@ -6303,6 +6506,7 @@
             key: currentInstrument,
             url: `${OPEN_TRADES_URL}?${params.toString()}`,
             apply: (d) => {
+                if (!showTrades) return;
                 if (d && d.server_time) lastServerTimes.openTrades = d.server_time;
                 const prevOpenTrades = openTrades || [];
                 openTrades = d.trades || [];
@@ -6357,6 +6561,7 @@
         });
     }
     function refreshSignalsHistory() {
+        if (!showTrades) return;
         // История сигналов обновляется отдельно от open-trades, иначе после закрытия сделки маркер exp может пропасть до перезагрузки.
         if (!window.PlatformChartFetch) return;
         const params = new URLSearchParams();
@@ -6365,6 +6570,7 @@
             key: currentInstrument || '',
             url: `${SIGNALS_URL}?${params.toString()}`,
             apply: (d) => {
+                if (!showTrades) return;
                 if (d && d.server_time) lastServerTimes.signals = d.server_time;
                 if (!Array.isArray(d.signals)) return;
                 signals = d.signals;
@@ -7161,6 +7367,12 @@
         }
         fetchPriceActionIndicator({ force: true });
     });
+    window.addEventListener('platform:chart-instances-changed', function () {
+        if (window.PlatformChartFetch) {
+            window.PlatformChartFetch.invalidate('bot-indicators');
+        }
+        fetchPriceActionIndicator({ force: true });
+    });
 
     function selectInstrument(instrument, displayName) {
         if (currentInstrument === instrument) return;
@@ -7469,6 +7681,16 @@
             }
         });
         refreshBacktestRunSelect();
+    }
+
+    syncShowTradesToggleUi();
+    if (showTradesToggle) {
+        showTradesToggle.addEventListener('change', () => {
+            applyShowTradesMode(!!showTradesToggle.checked, { persist: true });
+        });
+    }
+    if (!showTrades) {
+        hideSidebarTradeChrome();
     }
 
     botAnalysisBtn.addEventListener('click', fetchBotAnalysis);

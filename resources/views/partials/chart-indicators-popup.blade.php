@@ -4,10 +4,13 @@
 --}}
 @php
     use App\Support\ChartIndicatorHelp;
+    use App\Support\ChartIndicatorInstanceRegistry;
 
     $helpCatalog = ChartIndicatorHelp::catalog();
     $settingsBot = $indicatorBot ?? null;
     $showLlmLevels = $showLlmLevels ?? false;
+    // Классические индикаторы, для которых доступны несколько экземпляров (+).
+    $chartInstanceTypes = ChartIndicatorInstanceRegistry::supportedHelpKeys();
     // Слои, которыми этот бот торгует — метка «торговля» в списке.
     $tradingLayerIds = $tradingLayerIds ?? [];
 
@@ -174,6 +177,13 @@
                         @if ($isTradingLayer)
                             <span class="shrink-0 rounded border border-emerald-700/60 bg-emerald-950/70 px-1 py-px text-[9px] font-semibold uppercase tracking-wide text-emerald-400" title="Бот входит по этому индикатору с теми же настройками">торговля</span>
                         @endif
+                        {{-- Несколько экземпляров одного типа с отдельными настройками --}}
+                        @if (in_array($row['help'] ?? '', $chartInstanceTypes, true) && $settingsBot && ($row['route'] ?? null))
+                            <button type="button"
+                                class="shrink-0 rounded border border-sky-800/60 bg-sky-950/40 px-1.5 py-0.5 text-[10px] font-semibold text-sky-300 hover:bg-sky-900/50"
+                                data-chart-instance-add="{{ $row['help'] }}"
+                                title="Добавить ещё один {{ $row['label'] }} на график">+</button>
+                        @endif
                     </label>
 
                     {{-- Клик по тексту открывает ту же справку, что и «?». --}}
@@ -208,6 +218,10 @@
                             aria-label="Справка по {{ $title }}">?</button>
                     </div>
                 </div>
+                @if (in_array($row['help'] ?? '', $chartInstanceTypes, true) && $settingsBot && ($row['route'] ?? null))
+                    {{-- Контейнер дополнительных экземпляров; строки рисует JS --}}
+                    <div data-chart-instance-list="{{ $row['help'] }}" class="col-span-full space-y-1 pb-1"></div>
+                @endif
             @endforeach
         </div>
     </div>

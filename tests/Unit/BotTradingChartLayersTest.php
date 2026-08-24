@@ -15,16 +15,46 @@ class BotTradingChartLayersTest extends TestCase
         $this->assertSame(['layer-sweep-raid-liquidity'], BotTradingChartLayers::layerIds($bot));
     }
 
+    public function test_srl_analyst_enables_llm_and_srl_layers(): void
+    {
+        $bot = $this->bot(\App\Support\ChartAnalystBotTypes::SRL, [
+            'analyst_srl_flow_enabled' => true,
+            'srl_pivot_length' => 3,
+            'srl_enter_sweep' => true,
+            'srl_enter_pullback' => false,
+        ]);
+
+        $this->assertSame(
+            ['layer-llm-levels', 'layer-sweep-raid-liquidity'],
+            BotTradingChartLayers::layerIds($bot)
+        );
+        $params = BotTradingChartLayers::overlayParams($bot, 'srl', [
+            'pivot_length' => 2,
+            'show_sweeps' => false,
+            'show_raids' => true,
+            'show_pullback_entries' => true,
+        ]);
+        $this->assertSame(3, $params['pivot_length']);
+        $this->assertTrue($params['show_sweeps']);
+        $this->assertFalse($params['show_pullback_entries']);
+    }
+
     public function test_demarker_enables_demarker_layer(): void
     {
         $bot = $this->bot('strong_trend_demarker');
-        $this->assertSame(['layer-demarker'], BotTradingChartLayers::layerIds($bot));
+        $this->assertSame([], BotTradingChartLayers::layerIds($bot));
+        $this->assertTrue(BotTradingChartLayers::usesChartIndicatorInstances($bot));
+        $this->assertSame(
+            [],
+            BotTradingChartLayers::layerIds($this->bot(\App\Support\DemarkerDualFastConfig::BOT_TYPE))
+        );
     }
 
-    public function test_rsi_contrtrend_enables_rsi_and_sma(): void
+    public function test_rsi_contrtrend_uses_instances_not_legacy_layers(): void
     {
         $bot = $this->bot('rsi_contrtrend');
-        $this->assertSame(['layer-rsi', 'layer-sma'], BotTradingChartLayers::layerIds($bot));
+        $this->assertSame([], BotTradingChartLayers::layerIds($bot));
+        $this->assertTrue(BotTradingChartLayers::usesChartIndicatorInstances($bot));
     }
 
     public function test_candle_only_bot_has_no_trading_layers(): void
@@ -103,6 +133,10 @@ class BotTradingChartLayersTest extends TestCase
         $this->assertSame(
             1,
             BotTradingChartLayers::chartTimeframeMinutes($this->bot('strong_trend_demarker', ['timeframe' => 1]))
+        );
+        $this->assertSame(
+            CandleService::TF_S30,
+            BotTradingChartLayers::chartTimeframeMinutes($this->bot(\App\Support\DemarkerDualFastConfig::BOT_TYPE))
         );
     }
 

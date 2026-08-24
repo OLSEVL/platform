@@ -64,6 +64,14 @@ Route::middleware('auth')->group(function () {
         Route::delete('/{bot}/backtests/{run}', [BotBacktestController::class, 'destroy'])->name('backtests.destroy');
         Route::get('/{bot}/instruments/data', [BotController::class, 'instrumentsSidebarData'])->name('instruments.sidebar-data');
         Route::get('/{bot}/indicators/data', [BotController::class, 'indicatorsData'])->name('indicators.data');
+        // Pilot: несколько SMA/EMA на одном графике (экземпляры с отдельными настройками).
+        Route::get('/{bot}/chart-instances', [\App\Http\Controllers\ChartIndicatorInstanceController::class, 'index'])->name('chart-instances.index');
+        Route::post('/{bot}/chart-instances', [\App\Http\Controllers\ChartIndicatorInstanceController::class, 'store'])->name('chart-instances.store');
+        Route::post('/{bot}/chart-instances/sync-trading', [\App\Http\Controllers\ChartIndicatorInstanceController::class, 'syncTrading'])->name('chart-instances.sync-trading');
+        Route::patch('/{bot}/chart-instances/{instance}', [\App\Http\Controllers\ChartIndicatorInstanceController::class, 'updateVisibility'])->name('chart-instances.visibility');
+        Route::delete('/{bot}/chart-instances/{instance}', [\App\Http\Controllers\ChartIndicatorInstanceController::class, 'destroy'])->name('chart-instances.destroy');
+        Route::get('/{bot}/chart-instances/{instance}/edit', [\App\Http\Controllers\ChartIndicatorInstanceController::class, 'edit'])->name('chart-instances.edit');
+        Route::put('/{bot}/chart-instances/{instance}', [\App\Http\Controllers\ChartIndicatorInstanceController::class, 'update'])->name('chart-instances.update');
         Route::get('/{bot}/indicators/price-action-dgt', [BotChartIndicatorController::class, 'editPriceActionDgt'])->name('indicators.price-action-dgt.edit');
         Route::put('/{bot}/indicators/price-action-dgt', [BotChartIndicatorController::class, 'updatePriceActionDgt'])->name('indicators.price-action-dgt.update');
         Route::get('/{bot}/indicators/order-blocks', [BotChartIndicatorController::class, 'editOrderBlocks'])->name('indicators.order-blocks.edit');
