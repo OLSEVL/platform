@@ -36,6 +36,8 @@ class SettingsController extends Controller
     ): \Illuminate\View\View {
         $payoutStaleMinutesThreshold = $this->getPayoutStaleMinutesThreshold();
         $healthFilter = (string) $request->query('health_filter', 'all');
+        $dataCleanup = app(DataCleanupService::class);
+        $candlesStorageStats = $dataCleanup->getCandlesStorageStats();
 
         return view('settings.index', [
             'proxyAutoRotationEnabled' => $proxyRotation->isAutoRotationEnabled(),
@@ -63,8 +65,12 @@ class SettingsController extends Controller
                 'active' => ProxyEndpoint::query()->where('status', ProxyEndpoint::STATUS_ACTIVE)->count(),
                 'dead' => ProxyEndpoint::query()->where('status', ProxyEndpoint::STATUS_DEAD)->count(),
             ],
-            'dataAutoCleanupRetentionHours' => app(DataCleanupService::class)->getAutoCleanupRetentionHours(),
+            'dataAutoCleanupRetentionHours' => $dataCleanup->getAutoCleanupRetentionHours(),
             'dataAutoCleanupRetentionOptions' => DataCleanupService::autoCleanupRetentionOptions(),
+            // Сколько часов свечей реально лежит в БД — для блока «Очистка данных».
+            'candlesStorageStats' => $candlesStorageStats,
+            'candlesStorageDepthLabel' => $dataCleanup->candlesStorageDepthLabel($candlesStorageStats),
+            'candlesStorageOldestLabel' => $dataCleanup->candlesStorageOldestLabel($candlesStorageStats),
             // Watchdog bots:scan — порог wall-time и снимок живых процессов.
             'scanWatchdogMaxElapsedSec' => BotScanCoordinator::getScanMaxElapsedSec(),
             'scanWatchdogAllowedElapsedSec' => BotScanCoordinator::ALLOWED_WATCHDOG_MAX_ELAPSED_SEC,

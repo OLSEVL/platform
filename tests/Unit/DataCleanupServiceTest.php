@@ -20,6 +20,19 @@ class DataCleanupServiceTest extends TestCase
         $this->assertSame(48, $service->normalizeRetentionHours(48));
     }
 
+    /**
+     * Окно авто-очистки в днях (120/168/…) должно проходить в purge без сброса на 24 ч.
+     */
+    public function test_normalize_retention_hours_accepts_auto_cleanup_day_windows(): void
+    {
+        $service = new DataCleanupService();
+
+        $this->assertSame(72, $service->normalizeRetentionHours(72));   // 3 дня
+        $this->assertSame(120, $service->normalizeRetentionHours(120)); // 5 дней
+        $this->assertSame(168, $service->normalizeRetentionHours(168)); // 7 дней
+        $this->assertSame(720, $service->normalizeRetentionHours(720)); // 30 дней
+    }
+
     public function test_normalize_retention_hours_falls_back_to_default(): void
     {
         $service = new DataCleanupService();
@@ -102,5 +115,69 @@ class DataCleanupServiceTest extends TestCase
         $this->assertContains(1, $hours);
         $this->assertCount(34, $hours); // 30 суток + 12/6/3/1 ч.
         $this->assertSame(720, $hours[0]); // сначала самый длинный период
+    }
+
+    /**
+     * chartHistoryMaxSeconds без БД: при отсутствии настройки getAutoCleanup
+     * вернёт DEFAULT 24ч → 86400 сек (поведение по умолчанию для графика).
+     */
+    public function test_chart_history_max_seconds_uses_default_when_unset(): void
+    {
+        $service = new class extends DataCleanupService
+        {
+            public function getAutoCleanupRetentionHours(): ?int
+            {
+                return self::DEFAULT_AUTO_CLEANUP_RETENTION_HOURS;
+            }
+        };
+
+        $this->assertSame(24 * 3600, $service->chartHistoryMaxSeconds());
+    }
+
+    public function test_chart_history_max_seconds_follows_retention_and_disabled_cap(): void
+    {
+        $sevenDays = new class extends DataCleanupService
+        {
+            public function getAutoCleanupRetentionHours(): ?int
+            {
+                return 168;
+            }
+        };
+        $this->assertSame(168 * 3600, $sevenDays->chartHistoryMaxSeconds());
+
+        // «Ничего не удалять» → потолок 30 суток, не бесконечность.
+        $disabled = new class extends DataCleanupService
+        {
+            public function getAutoCleanupRetentionHours(): ?int
+            {
+                return null;
+            }
+        };
+        $this->assertSame(30 * 24 * 3600, $disabled->chartHistoryMaxSeconds());
+    }
+
+    public function test_candles_storage_depth_label_for_empty_stats(): void
+    {
+        $service = new DataCleanupService();
+
+        $this->assertSame('нет данных', $service->candlesStorageDepthLabel(['count' => 0]));
+    }
+
+    public function test_candles_storage_depth_label_formats_hours_and_days(): void
+    {
+        $service = new DataCleanupService();
+
+        $this->assertSame('~64 часа', $service->candlesStorageDepthLabel([
+            'count' => 1000,
+            'depth_hours' => 63.8,
+        ]));
+        $this->assertSame('7 дней (168 часов)', $service->candlesStorageDepthLabel([
+            'count' => 5000,
+            'depth_hours' => 168.0,
+        ]));
+        $this->assertSame('~12 часов', $service->candlesStorageDepthLabel([
+            'count' => 100,
+            'depth_hours' => 11.6,
+        ]));
     }
 }

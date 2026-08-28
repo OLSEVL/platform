@@ -464,7 +464,16 @@
                 btn.addEventListener('click', (ev) => {
                     ev.preventDefault();
                     ev.stopPropagation();
-                    const cb = document.getElementById(String(item.layerId));
+                    const layerId = String(item.layerId);
+                    // Pilot: экземпляры SMA/EMA — inst-42, без чекбокса layer-*.
+                    if (layerId.startsWith('inst-') && window.PlatformChartIndicatorInstances) {
+                        const id = parseInt(layerId.slice(5), 10);
+                        if (Number.isFinite(id)) {
+                            PlatformChartIndicatorInstances.setVisibleById(id, false);
+                        }
+                        return;
+                    }
+                    const cb = document.getElementById(layerId);
                     if (!cb || cb.disabled) return;
                     // Снимаем слой тем же путём, что и чекбокс в попапе индикаторов.
                     cb.checked = false;

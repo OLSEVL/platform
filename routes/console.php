@@ -18,6 +18,7 @@ use App\Services\Telegram\TelegramAnalystHandler;
 use App\Services\Telegram\TelegramAnalystProcessManager;
 use App\Services\WebshareProxyRefreshService;
 use App\Support\BotScanCoordinator;
+use App\Support\ChartAnalystBotTypes;
 use App\Support\OpenRouterChartLevelsParser;
 use App\Support\OpenRouterLlmConfig;
 use App\Support\WebshareProxyRefreshSettings;
@@ -569,6 +570,25 @@ Artisan::command('bots:wave-b-bootstrap', function () {
     }
 })->purpose('Создать Wave B OsEngine→CALL/PUT (impulse/vola-adaptive, 3 шт.), inactive');
 
+Artisan::command('bots:max-bot-bootstrap', function () {
+    $user = User::query()->orderBy('id')->first();
+    if (! $user) {
+        $this->error('Нет пользователей. Сначала зарегистрируйте пользователя.');
+
+        return;
+    }
+
+    $bot = Bot::query()->firstOrCreate(
+        ['user_id' => $user->id, 'name' => 'MaxBot', 'type' => \App\Support\MaxBotConfig::BOT_TYPE],
+        [
+            'is_active' => false,
+            'config' => \App\Support\MaxBotConfig::defaultConfig(),
+        ]
+    );
+
+    $this->info("Готово: #{$bot->id} {$bot->name} ({$bot->type})");
+})->purpose('Создать бота MaxBot (ratio тел к историческому максимуму), inactive');
+
 Artisan::command('bots:reversal-confirm-bootstrap', function () {
     $user = User::query()->orderBy('id')->first();
     if (! $user) {
@@ -792,6 +812,32 @@ Artisan::command('bots:strong-trend-demarker-bootstrap', function () {
     $this->info("Strong Trend + DeMarker: #{$bot->id} {$bot->name} ({$bot->type}) — выключен для первичной проверки.");
 })->purpose('Создать выключенного S30-бота Strong Trend + DeMarker');
 
+Artisan::command('bots:demarker-dual-fast-bootstrap', function () {
+    $user = User::query()->orderBy('id')->first();
+    if (! $user) {
+        $this->error('Нет пользователей. Сначала зарегистрируйте пользователя.');
+
+        return;
+    }
+
+    $defaults = \App\Support\DemarkerDualFastConfig::defaultConfig();
+    $defaults['telegram_analyst_llm_question'] = \App\Services\Telegram\StrongLevelTelegramLlmButton::DEFAULT_LLM_QUESTION;
+
+    $bot = Bot::query()->firstOrCreate(
+        [
+            'user_id' => $user->id,
+            'name' => 'Dual DeMarker Fast',
+            'type' => \App\Support\DemarkerDualFastConfig::BOT_TYPE,
+        ],
+        [
+            'is_active' => false,
+            'config' => $defaults,
+        ],
+    );
+
+    $this->info("Dual DeMarker Fast: #{$bot->id} {$bot->name} ({$bot->type}) — выключен для первичной проверки.");
+})->purpose('Создать выключенного S30-бота Dual DeMarker Fast (стратегия №3)');
+
 Artisan::command('bots:strong-level-bootstrap', function () {
     $user = User::query()->orderBy('id')->first();
     if (! $user) {
@@ -922,23 +968,31 @@ Artisan::command('bots:openrouter-analyst-bootstrap', function () {
 })->purpose('Создать бота OpenRouter Chart Analyst (ручной анализ)');
 
 Artisan::command('bots:openrouter-analyst-sync-prompt', function () {
-    $bots = Bot::query()->where('type', 'openrouter_llm_analyst')->get();
+    $bots = Bot::query()->whereIn('type', ChartAnalystBotTypes::all())->get();
 
     if ($bots->isEmpty()) {
-        $this->warn('Нет ботов openrouter_llm_analyst. Запустите: php artisan bots:openrouter-analyst-bootstrap');
+        $this->warn('Нет ботов Chart Analyst. Запустите: php artisan bots:openrouter-analyst-bootstrap');
 
         return 1;
     }
 
     foreach ($bots as $bot) {
         $config = is_array($bot->config) ? $bot->config : [];
+        $config['_bot_type'] = $bot->type;
+        if (ChartAnalystBotTypes::isSrl($bot->type)) {
+            $config['analyst_srl_flow_enabled'] = true;
+            $config['analyst_smc_flow_enabled'] = false;
+        }
         $config['system_prompt'] = OpenRouterChartLevelsParser::defaultAnalystSystemPromptForConfig($config);
         $config['system_prompt_short'] = OpenRouterChartLevelsParser::defaultAnalystSystemPromptShortForConfig($config);
         $config['max_tokens_short'] = (int) ($config['max_tokens_short'] ?? OpenRouterLlmConfig::ANALYST_SHORT_MAX_TOKENS_DEFAULT);
+        unset($config['_bot_type']);
         $bot->config = $config;
         $bot->save();
-        $smc = \App\Support\OpenRouterLlmConfig::analystSmcFlowEnabled($config) ? 'SMC' : 'classic';
-        $this->line("Обновлён #{$bot->id} {$bot->name} ({$smc})");
+        $pack = ChartAnalystBotTypes::isSrl($bot->type)
+            ? 'SRL'
+            : (\App\Support\OpenRouterLlmConfig::analystSmcFlowEnabled($config) ? 'SMC' : 'classic');
+        $this->line("Обновлён #{$bot->id} {$bot->name} ({$pack})");
     }
 
     $this->info('Готово: system_prompt и system_prompt_short записаны в '.count($bots).' бот(ов).');
@@ -1007,6 +1061,60 @@ Artisan::command('bots:openrouter-analyst-split-smc', function () {
 
     return 0;
 })->purpose('Переименовать аналитика в SMC Flow и создать классическую копию без SMC');
+
+Artisan::command('bots:openrouter-analyst-srl-bootstrap', function () {
+    $user = User::query()->orderBy('id')->first();
+    if (! $user) {
+        $this->error('Нет пользователей. Сначала зарегистрируйте пользователя.');
+
+        return 1;
+    }
+
+    $name = ChartAnalystBotTypes::label(ChartAnalystBotTypes::SRL);
+    $config = [
+        'count' => 120,
+        's5_take' => 240,
+        'model' => 'openai/gpt-5.2',
+        'temperature' => 0.2,
+        'max_tokens' => 900,
+        'max_tokens_short' => OpenRouterLlmConfig::ANALYST_SHORT_MAX_TOKENS_DEFAULT,
+        'openrouter_timeout_sec' => 180,
+        'mtf_enabled' => true,
+        'm5_take' => 96,
+        'm15_take' => 64,
+        'h1_take' => 24,
+        'analyst_smc_flow_enabled' => false,
+        'analyst_srl_flow_enabled' => true,
+        'srl_pivot_length' => 2,
+        'srl_enter_sweep' => true,
+        'srl_enter_pullback' => true,
+        'analyst_prompt_mode' => OpenRouterLlmConfig::ANALYST_PROMPT_MODE_FULL,
+        'system_prompt' => OpenRouterChartLevelsParser::defaultAnalystSystemPromptWithSweepRaid(),
+        'system_prompt_short' => OpenRouterChartLevelsParser::defaultAnalystSystemPromptShortWithSweepRaid(),
+        'version' => 'openrouter_llm_analyst_srl_v1',
+    ];
+
+    $bot = Bot::query()->firstOrCreate(
+        [
+            'user_id' => $user->id,
+            'name' => $name,
+            'type' => ChartAnalystBotTypes::SRL,
+        ],
+        [
+            'is_active' => false,
+            'config' => $config,
+        ]
+    );
+
+    $existing = is_array($bot->config) ? $bot->config : [];
+    $bot->config = array_merge($existing, $config);
+    $bot->save();
+
+    $this->info("SRL Chart Analyst: #{$bot->id} {$bot->name} ({$bot->type})");
+    $this->line('System prompt Sweep/Raid записан. Проверьте OPENROUTER_API_KEY и Telegram token.');
+
+    return 0;
+})->purpose('Создать бота OpenRouter Chart Analyst Sweep/Raid (LLM подтверждает SWEEP/RAID/PB)');
 
 Artisan::command('bots:openrouter-list-models', function (OpenRouterClient $client) {
     // Проверка доступности каталога OpenRouter (тот же запрос, что на странице настроек LLM-бота).
@@ -1269,25 +1377,26 @@ Artisan::command('telegram:ensure-analyst-services', function (
     return (($result['queue_running'] ?? false) && $pollCount === count($result['bots'] ?? [])) ? 0 : 1;
 })->purpose('Watchdog: poll + queue для Chart Analyst SMC Flow (/menu)');
 
-Artisan::command('telegram:analyst-poll {--bot= : ID бота openrouter_llm_analyst} {--timeout=30}', function (
+Artisan::command('telegram:analyst-poll {--bot= : ID бота Chart Analyst} {--timeout=30}', function (
     TelegramAlertService $telegram,
     TelegramAnalystHandler $handler,
 ) {
     $botId = (int) ($this->option('bot') ?: 0);
     if ($botId <= 0) {
-        $candidates = Bot::query()->where('type', 'openrouter_llm_analyst')->orderBy('id')->get();
+        $candidates = Bot::query()->whereIn('type', ChartAnalystBotTypes::all())->orderBy('id')->get();
         $bot = $candidates->first(function (Bot $b): bool {
-            return \App\Support\OpenRouterLlmConfig::analystSmcFlowEnabled(is_array($b->config) ? $b->config : []);
+            return ChartAnalystBotTypes::isSrl($b->type)
+                || \App\Support\OpenRouterLlmConfig::analystSmcFlowEnabled(is_array($b->config) ? $b->config : []);
         }) ?? $candidates->first();
         if ($bot === null) {
-            $this->error('Нет бота openrouter_llm_analyst. Укажите --bot=ID');
+            $this->error('Нет бота Chart Analyst. Укажите --bot=ID');
 
             return 1;
         }
     } else {
         $bot = Bot::query()->find($botId);
-        if ($bot === null || $bot->type !== 'openrouter_llm_analyst') {
-            $this->error('Бот не найден или не openrouter_llm_analyst');
+        if ($bot === null || ! ChartAnalystBotTypes::isAnalyst($bot->type)) {
+            $this->error('Бот не найден или не Chart Analyst');
 
             return 1;
         }
@@ -1365,7 +1474,7 @@ Artisan::command('telegram:strong-level-poll {--bot= : ID бота с Telegram (
     if ($botId <= 0) {
         $supportedTypes = array_values(array_unique(array_merge(
             \App\Services\Telegram\StrongLevelTelegramLlmButton::SUPPORTED_BOT_TYPES,
-            ['strong_trend_telegram', 'strong_trend_demarker', 'sweep_raid_liquidity'],
+            ['strong_trend_telegram', 'strong_trend_demarker', \App\Support\DemarkerDualFastConfig::BOT_TYPE, 'sweep_raid_liquidity'],
         )));
         $bot = Bot::query()->whereIn('type', $supportedTypes)->where('is_active', true)->orderBy('id')->first();
         if ($bot === null) {

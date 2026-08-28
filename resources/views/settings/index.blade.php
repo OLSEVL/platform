@@ -673,6 +673,18 @@
 
     <div class="bg-zinc-900 border border-zinc-800 rounded-lg shadow-lg shadow-black/20 p-5 mt-6">
         <h2 class="text-lg font-semibold text-zinc-100 mb-2">Очистка данных</h2>
+        @if(($candlesStorageStats['count'] ?? 0) > 0)
+            <p class="text-sm text-zinc-300 mb-3">
+                Сейчас в базе:
+                <strong class="text-zinc-100">{{ $candlesStorageDepthLabel ?? 'нет данных' }}</strong>
+                истории свечей
+                @if(! empty($candlesStorageOldestLabel))
+                    <span class="text-zinc-500">(с {{ $candlesStorageOldestLabel }}, {{ number_format($candlesStorageStats['count'], 0, ',', ' ') }} записей)</span>
+                @endif
+            </p>
+        @else
+            <p class="text-sm text-amber-400/90 mb-3">Свечей в базе пока нет.</p>
+        @endif
         <p class="text-sm text-zinc-400 mb-4">
             Удаляет исторические данные платформы: свечи в БД, сигналы и сделки всех ботов,
             LLM-логи, анализы и записи запусков. Действие необратимо.

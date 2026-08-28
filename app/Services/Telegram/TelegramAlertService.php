@@ -423,8 +423,8 @@ class TelegramAlertService
         $chartLevels = null;
         $chartLogKey = 'strategy_telegram_photo';
         if ($sendChart && $closedCandles !== [] && extension_loaded('gd')) {
-            if ($bot->type === 'strong_trend_demarker') {
-                $chartLogKey = 'strong_trend_demarker_photo';
+            if (in_array($bot->type, ['strong_trend_demarker', \App\Support\DemarkerDualFastConfig::BOT_TYPE], true)) {
+                $chartLogKey = $bot->type.'_photo';
                 $chartLevels = app(StrongTrendDemarkerChartBuilder::class)
                     ->chartLevelsFromDecision($decision, $closedCandles);
             } elseif ($bot->type === 'sweep_raid_liquidity') {
@@ -465,7 +465,7 @@ class TelegramAlertService
                     }
                 }
             }
-        } elseif ($sendChart && in_array($bot->type, ['strong_trend_demarker', 'sweep_raid_liquidity'], true) && ! extension_loaded('gd')) {
+        } elseif ($sendChart && in_array($bot->type, ['strong_trend_demarker', \App\Support\DemarkerDualFastConfig::BOT_TYPE, 'sweep_raid_liquidity'], true) && ! extension_loaded('gd')) {
             $photoOk = false;
             $photoError = 'gd_extension_missing';
         }

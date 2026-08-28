@@ -55,8 +55,11 @@ final class BotAlgorithmSummary
             'strong_level' => 'Strong Level',
             'strong_trend_telegram' => 'Strong Trend Telegram',
             'strong_trend_demarker' => 'Strong Trend + DeMarker',
+            DemarkerDualFastConfig::BOT_TYPE => 'Dual DeMarker Fast',
+            MaxBotConfig::BOT_TYPE => 'MaxBot',
             'openrouter_llm' => 'OpenRouter LLM',
             'openrouter_llm_analyst' => 'OpenRouter Chart Analyst',
+            ChartAnalystBotTypes::SRL => 'OpenRouter Chart Analyst Sweep/Raid',
             default => $type,
         };
     }
@@ -66,8 +69,8 @@ final class BotAlgorithmSummary
     {
         return match ($type) {
             'three_candles_in_row' => 'counter_three',
-            'strong_trend_telegram', 'custom_candles_impulse', 'three_soldier', 'three_soldier_vol_adaptive' => 'impulse_three',
-            'strong_trend_demarker' => 'oscillator_zones',
+            'strong_trend_telegram', 'custom_candles_impulse', MaxBotConfig::BOT_TYPE, 'three_soldier', 'three_soldier_vol_adaptive' => 'impulse_three',
+            'strong_trend_demarker', DemarkerDualFastConfig::BOT_TYPE => 'oscillator_zones',
             'pinbar_trade' => 'pinbar',
             'bollinger_contrtrend' => 'bb_reversion',
             'rsi_contrtrend', 'rsi_trade', 'williams_range_trade', 'cci_trade' => 'oscillator_zones',
@@ -79,7 +82,7 @@ final class BotAlgorithmSummary
             'strong_level', 'candle_reversal_confirm' => 'level_bounce',
             'smc_flow' => 'smc_flow',
             'sweep_raid_liquidity' => 'level_bounce',
-            'openrouter_llm', 'openrouter_llm_analyst' => 'llm',
+            'openrouter_llm', 'openrouter_llm_analyst', ChartAnalystBotTypes::SRL => 'llm',
             default => 'generic',
         };
     }
@@ -153,6 +156,9 @@ final class BotAlgorithmSummary
             'custom_candles_impulse' => "Импульс: N свечей подряд в одну сторону за короткий TimeSpan.\n"
                 ."На M1 обычно N=2 за ≤120 с или N=3 за ≤180 с.\n"
                 .'Все бычьи → CALL, все медвежьи → PUT.',
+            MaxBotConfig::BOT_TYPE => "Импульс MaxBot: серия одноцветных свечей + ratio тел к историческому максимуму.\n"
+                ."Несколько правил (1:110%, 2:120%…); первая сработавшая — сигнал.\n"
+                .'live — на текущей свече; trend/counter задаёт CALL/PUT.',
             'smc_flow' => "Три фильтра на закрытой M1 должны совпасть:\n"
                 ."UT Bot (свежий Buy/Sell) + 3BR confirm + цена в LuxAlgo OB.\n"
                 .'Только при полном совпадении стороны → CALL или PUT.',
@@ -167,12 +173,19 @@ final class BotAlgorithmSummary
                 ."Строгость свечей и мин. доля тела — как в Strong Trend Telegram.\n"
                 ."Неотработок до сделки: 0 = сразу вход; иначе N виртуальных LOSS по паре, затем paper-сделка.\n"
                 .'Виртуальный WIN или DRAW сбрасывает серию пары.',
+            DemarkerDualFastConfig::BOT_TYPE => "Dual DeMarker Fast: DeM1 выход с LEVEL_DELTA + DeM2 в окне N баров.\n"
+                ."Мин. свечей в зоне, фильтр импульса |H−L|/avg, опциональный streak.\n"
+                ."Колена: 2-е открывается только после LOSS первого (без нового сигнала).\n"
+                .'Экспирация = 1 бар (S30→30 с / M1→60 с).',
             'openrouter_llm' => "Решение CALL/PUT принимает LLM (OpenRouter) по JSON.\n"
                 ."В промпт идут свечи M1 и опционально M5/M15/H1.\n"
                 .'Классические индикаторные правила не используются.',
             'openrouter_llm_analyst' => "Аналитик, не торговый сканер: ответ текстом + уровни на график.\n"
                 ."Запуск вручную / из Telegram (плановый scan paper выключен).\n"
                 .'Опционально hybrid: реакция на сигнал другого бота.',
+            ChartAnalystBotTypes::SRL => "Chart Analyst + Sweep/Raid: LLM только подтверждает SWEEP/RAID/PB детектора.\n"
+                ."Экспирация ориентир 60 с. Плановый scan выключен (ручной / Telegram / hybrid).\n"
+                .'Rule-based бот sweep_raid_liquidity остаётся отдельным.',
             default => 'Алгоритм не описан для типа «'.$type.'».',
         };
     }
@@ -207,6 +220,13 @@ final class BotAlgorithmSummary
                 $s('Виртуальная серия', '0 = выкл., сразу paper-сделка. Иначе первые валидные сигналы по каждой паре проверяются виртуально (S30 = 30 с, M1 = 60 с). После N виртуальных LOSS следующий сигнал становится сделкой.'),
                 $s('Сброс', 'WIN или DRAW сбрасывает последовательность пары; LOSS увеличивает её. Поэтому пары считаются строго независимо друг от друга.'),
             ],
+            DemarkerDualFastConfig::BOT_TYPE => [
+                $s('Идея', 'Быстрый dual-DeMarker: основной выход с дельтой + подтверждение быстрым DeM2 в окне N баров, фильтр «ракеты» и минимум баров в зоне.'),
+                $s('Когда CALL', 'DeM1 был ≤ OS и стал ≥ OS+Δ, в зоне ≥ M баров, DeM2 подтвердил выход вверх в окне, |H−L| сигнала / avg ≤ порога.'),
+                $s('Когда PUT', 'Симметрично из верхней зоны: DeM1 ≥ OB → ≤ OB−Δ + те же фильтры.'),
+                $s('Колена', 'entries_per_signal=2: после LOSS первого колена сразу открывается второе в ту же сторону без нового сигнала. WIN на 1-м — второго нет.'),
+                $s('Опции', 'streak_len поверх (0 = выкл.). second_demarker_confirm_bars — окно подтверждения. exit_candle_avg_bars — база для импульс-фильтра.'),
+            ],
             'three_soldier', 'three_soldier_vol_adaptive' => [
                 $s('Идея', 'Классический паттерн «три солдата»: три сильные свечи одного цвета. Vol-adaptive дополнительно подстраивает минимальную высоту тел под дневную волатильность OTC.'),
                 $s('Когда CALL', 'Три бычьих свечи; высота всего паттерна и каждого тела ≥ порогов (фиксированных или от avg дневной волы).'),
@@ -220,6 +240,13 @@ final class BotAlgorithmSummary
                 $s('Когда PUT', 'То же для медвежьих баров.'),
                 $s('Пример', 'N=2, seconds=120: 14:01↑ и 14:02↑ (разница TimeStart к бару 14:00 = 120 с) → CALL. Если между барами «дыра» больше лимита — сигнала нет.'),
                 $s('Важно', 'Выход — фиксированная экспирация expiry_sec (не «через M баров»).'),
+            ],
+            MaxBotConfig::BOT_TYPE => [
+                $s('Идея', 'Порт MaxBot: сумма тел последних N свечей серии сравнивается с максимумом таких же одноцветных блоков за lookback. Сигнал, если ratio ≥ threshold%.'),
+                $s('Когда CALL', 'Зелёная серия + direction=trend, или красная + counter. Режим live учитывает текущую (ещё открытую) свечу.'),
+                $s('Когда PUT', 'Красная серия + trend, или зелёная + counter.'),
+                $s('Стратегии', 'Список правил в порядке приоритета: 1:110%, 2:120% и т.д. Первая сработавшая даёт сигнал; dedupe по strategy_id + timestamp свечи.'),
+                $s('Важно', 'scan_interval_sec по умолчанию 5 с для live на M1. ТФ бота: 5/15/30/60/300 с.'),
             ],
             'pinbar_trade' => [
                 $s('Идея', 'Пинбар = разворотная свеча: маленькое тело и длинный хвост. Тело должно лежать в верхней или нижней трети диапазона high−low.'),
@@ -370,6 +397,13 @@ final class BotAlgorithmSummary
                 $s('Когда срабатывает', 'Вручную с графика, из Telegram или hybrid-триггером от другого бота.'),
                 $s('Пример', 'Нажали «Сделать анализ» → текст на русском + линии support/resistance на чарте.'),
                 $s('Важно', 'Может торговать только в hybrid-режиме (отдельные флаги paper/mirror).'),
+            ],
+            ChartAnalystBotTypes::SRL => [
+                $s('Идея', 'Как Chart Analyst, но входная логика — стратегия свип/рейд ликвидности. Детектор находит SWEEP/RAID/PB, LLM только подтверждает или отклоняет.'),
+                $s('Когда CALL', 'Кандидат CALL в candidates: свип лоу или откат после снятия снизу (первая красная).'),
+                $s('Когда PUT', 'Кандидат PUT: свип хая или откат после снятия сверху (первая зелёная).'),
+                $s('Пример', 'На M1 FH снят зелёной тенью → candidate PUT → LLM подтверждает → рекомендация PUT на 60 с.'),
+                $s('Важно', 'Пустой candidates → NONE. Два закрытия за уровнем = уровень съеден. Rule-based бот SRL отдельно.'),
             ],
             default => [
                 $s('Описание', 'Для типа «'.$type.'» подробная карточка ещё не заполнена.'),

@@ -8,7 +8,7 @@
 --}}
 @php
     $telegramBotUsername = $telegramBotUsername ?? match ($bot->type ?? '') {
-        'strong_trend_demarker' => 'strong_DeMarker_bot',
+        'strong_trend_demarker', \App\Support\DemarkerDualFastConfig::BOT_TYPE => 'strong_DeMarker_bot',
         default => '',
     };
 @endphp
@@ -57,11 +57,11 @@
             </select>
             <p class="text-[11px] text-zinc-500">Sweep / Raid: FH/FL, свип, рейд, откат и точка входа. DeMarker: свечи + панель осциллятора.</p>
         </div>
-        @if (in_array($bot->type ?? '', ['strong_trend_demarker', 'sweep_raid_liquidity'], true))
+        @if (in_array($bot->type ?? '', ['strong_trend_demarker', \App\Support\DemarkerDualFastConfig::BOT_TYPE, 'sweep_raid_liquidity'], true))
             {{-- Те же LLM-поля, что у Candle Reversal + Confirm: кнопка SMC Flow, выбор Chart Analyst и вопрос. --}}
             @php
                 $llmCallbackBotHint = match ($bot->type ?? '') {
-                    'strong_trend_demarker' => '@strong_DeMarker_bot',
+                    'strong_trend_demarker', \App\Support\DemarkerDualFastConfig::BOT_TYPE => '@strong_DeMarker_bot',
                     default => 'этом Telegram-боте (token Sweep / Raid)',
                 };
             @endphp

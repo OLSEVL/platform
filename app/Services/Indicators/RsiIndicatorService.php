@@ -50,9 +50,15 @@ class RsiIndicatorService
 
             $startIndex = 1;
             if ($index > $length) {
+                // OsEngine: index - length - 20, но не ниже 1.
                 $startIndex = $index - $length - 20;
-                if ($startIndex - 1 < 0) {
-                    $startIndex = $index - $length + 1;
+                if ($startIndex < 1) {
+                    // Было: index - length + 1 → в priceChange* ровно length элементов
+                    // (valueInd = 0..length-1), seed MovingAverageHard (valueInd === length)
+                    // никогда не срабатывал → весь RSI оставался 0 и packSeries отбрасывал точки.
+                    // На H1/H4 при короткой истории (≲35 баров) панель «RSI» была пустой.
+                    // Нужно ≥ length+1 диффов: startIndex = index - length → valueInd доходит до length.
+                    $startIndex = max(1, $index - $length);
                 }
             }
 

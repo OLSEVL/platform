@@ -73,19 +73,59 @@ class BotBacktestController extends Controller
         $queuedWaitingOnWorker = BotBacktestRun::query()
             ->where('bot_id', $bot->id)
             ->where('status', BotBacktestRun::STATUS_QUEUED)
-            ->where('created_at', '<', now()->subMinutes(2))
+            ->where('updated_at', '<', now()->subMinutes(2))
             ->whereIn('id', $pendingJobRunIds !== [] ? $pendingJobRunIds : [0])
             ->exists();
 
-        $runs = BotBacktestRun::query()
+        // Важно: НЕ тянуть полный summary_json в ORDER BY/SELECT списка —
+        // там equity_curve на десятки тысяч точек → MySQL HY001 Out of sort memory.
+        $runIds = BotBacktestRun::query()
             ->where('bot_id', $bot->id)
             ->orderByDesc('id')
             ->limit(50)
-            ->get([
-                'id', 'status', 'progress_pct', 'from_ts', 'to_ts',
-                'trades_total', 'summary_json', 'error_message', 'params_json',
-                'started_at', 'finished_at', 'created_at',
-            ]);
+            ->pluck('id');
+
+        $runs = [];
+        if ($runIds->isNotEmpty()) {
+            // Только скаляры + JSON_EXTRACT метрик (без blob целиком).
+            $rows = DB::table('bot_backtest_runs')
+                ->whereIn('id', $runIds->all())
+                ->orderByDesc('id')
+                ->get([
+                    'id',
+                    'status',
+                    'progress_pct',
+                    'from_ts',
+                    'to_ts',
+                    'trades_total',
+                    'error_message',
+                    'started_at',
+                    'finished_at',
+                    'created_at',
+                    DB::raw("JSON_UNQUOTE(JSON_EXTRACT(summary_json, '$.winrate')) as summary_winrate"),
+                    DB::raw("JSON_UNQUOTE(JSON_EXTRACT(summary_json, '$.pnl_units')) as summary_pnl_units"),
+                ]);
+
+            foreach ($rows as $row) {
+                $runs[] = [
+                    'id' => (int) $row->id,
+                    'status' => $row->status,
+                    'progress_pct' => (int) ($row->progress_pct ?? 0),
+                    'from_ts' => $row->from_ts !== null ? (int) $row->from_ts : null,
+                    'to_ts' => $row->to_ts !== null ? (int) $row->to_ts : null,
+                    'trades_total' => (int) ($row->trades_total ?? 0),
+                    'error_message' => $row->error_message,
+                    'started_at' => $row->started_at,
+                    'finished_at' => $row->finished_at,
+                    'created_at' => $row->created_at,
+                    // Компактный summary только для строк списка / compare select.
+                    'summary_json' => [
+                        'winrate' => $row->summary_winrate !== null ? (float) $row->summary_winrate : null,
+                        'pnl_units' => $row->summary_pnl_units !== null ? (float) $row->summary_pnl_units : null,
+                    ],
+                ];
+            }
+        }
 
         return response()->json([
             'unsupported_types' => BotBacktestEngine::unsupportedTypes(),
@@ -117,7 +157,8 @@ class BotBacktestController extends Controller
             'to_ts' => ['required', 'integer', 'gt:from_ts'],
             'instruments' => ['required', 'array', 'min:1', 'max:200'],
             'instruments.*' => ['string', 'max:63'],
-            'payout' => ['sometimes', 'numeric', 'min:1', 'max:100'],
+            // 0 = все пары (без фильтра по min_payout в прогоне).
+            'payout' => ['sometimes', 'numeric', 'min:0', 'max:100'],
             'config_override' => ['sometimes', 'array'],
             'simulate_dedupe' => ['sometimes', 'boolean'],
             'one_trade_at_a_time' => ['sometimes', 'boolean'],
@@ -451,7 +492,8 @@ class BotBacktestController extends Controller
         $q = BotBacktestRun::query()
             ->where('bot_id', $bot->id)
             ->where('status', BotBacktestRun::STATUS_QUEUED)
-            ->where('created_at', '<', now()->subMinute());
+            // updated_at: chunk-continue тоже QUEUED, но свежий — не трогаем.
+            ->where('updated_at', '<', now()->subMinutes(2));
 
         if ($pending !== []) {
             $q->whereNotIn('id', $pending);

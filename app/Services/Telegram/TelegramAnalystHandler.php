@@ -2,6 +2,8 @@
 
 namespace App\Services\Telegram;
 
+use App\Support\ChartAnalystBotTypes;
+
 use App\Jobs\RunTelegramAnalystAnalysisJob;
 use App\Models\Bot;
 use App\Services\Telegram\StrongLevelTelegramLlmButton;
@@ -21,7 +23,7 @@ class TelegramAnalystHandler
 
     public function handleUpdate(Bot $bot, array $update): void
     {
-        if ($bot->type !== 'openrouter_llm_analyst') {
+        if (! ChartAnalystBotTypes::isAnalyst($bot->type)) {
             return;
         }
 

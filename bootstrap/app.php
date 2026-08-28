@@ -23,9 +23,8 @@ return Application::configure(basePath: dirname(__DIR__))
         $schedule->command('proxies:refresh-webshare')->dailyAt('00:00')->withoutOverlapping(60);
         // При free_slots=0 раз в час тянем свежий список Webshare (та же кнопка «Обновить прокси»).
         $schedule->command('proxies:refresh-webshare-if-exhausted')->hourly()->withoutOverlapping(30);
-        // S30-боту нужен scan на границе каждого 30-секундного бара. Команда
-        // только диспетчеризирует отдельные jobs, поэтому не блокирует sub-minute scheduler.
-        $schedule->command('bots:scan-dispatch')->everyThirtySeconds()->withoutOverlapping(2);
+        // MaxBot live (5 с) и S30: dispatch каждые 5 с; isDueToSpawn режет частоту per-bot.
+        $schedule->command('bots:scan-dispatch')->everyFiveSeconds()->withoutOverlapping(2);
         // Зависший scan (живой PID) блокирует dispatch навсегда — reap по wall-time.
         $schedule->command('bots:scan-watchdog')->everyFiveMinutes()->withoutOverlapping(5);
         // Виртуальные S30-сделки должны быть рассчитаны до следующего scan той же пары.

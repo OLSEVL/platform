@@ -100,6 +100,7 @@ use App\Support\BotTradingChartLayers;
 use App\Support\LevelBounceBotTypes;
 use App\Support\ChartAnalystBotTypes;
 use App\Support\OsEngineWaveABotConfig;
+use App\Support\MaxBotConfig;
 use App\Support\OsEngineWaveBBotConfig;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
@@ -1484,6 +1485,8 @@ class BotController extends Controller
         } elseif (OsEngineWaveABotConfig::isWaveA($bot->type)) {
             // Wave A OsEngine trend/pattern → CALL/PUT (общая валидация).
             $config = OsEngineWaveABotConfig::buildFromRequest($request, $bot);
+        } elseif (MaxBotConfig::is($bot->type)) {
+            $config = MaxBotConfig::buildFromRequest($request, $bot);
         } elseif (OsEngineWaveBBotConfig::isWaveB($bot->type)) {
             // Wave B: импульс / vola-adaptive паттерны под expiry ≤10m.
             $config = OsEngineWaveBBotConfig::buildFromRequest($request, $bot);
@@ -2187,21 +2190,20 @@ class BotController extends Controller
         // Checkbox есть в форме только у них; иначе boolean()=false затёрло бы дефолт «вкл».
         if (! ChartAnalystBotTypes::isAnalyst($bot->type)) {
             $config['mirror_trades_enabled'] = $request->boolean('mirror_trades_enabled');
-            // Как часто dispatch может стартовать новый проход: S30=30с, M1=60с (дефолт).
-            $intervalRaw = $request->input(
-                'scan_interval_sec',
-                BotScanCoordinator::DEFAULT_SCAN_INTERVAL_SEC
-            );
-            $intervalValidated = validator(
-                ['scan_interval_sec' => $intervalRaw],
-                ['scan_interval_sec' => ['required', 'integer', Rule::in([
-                    BotScanCoordinator::SCAN_INTERVAL_S30,
-                    BotScanCoordinator::SCAN_INTERVAL_M1,
-                ])]]
-            )->validate();
-            $config['scan_interval_sec'] = BotScanCoordinator::normalizeScanIntervalSec(
-                $intervalValidated['scan_interval_sec']
-            );
+            // MaxBot хранит scan_interval_sec в своём блоке настроек.
+            if (! MaxBotConfig::is($bot->type)) {
+                $intervalRaw = $request->input(
+                    'scan_interval_sec',
+                    BotScanCoordinator::defaultScanIntervalSecForType((string) $bot->type)
+                );
+                $intervalValidated = validator(
+                    ['scan_interval_sec' => $intervalRaw],
+                    ['scan_interval_sec' => ['required', 'integer', Rule::in(BotScanCoordinator::ALLOWED_SCAN_INTERVALS_SEC)]]
+                )->validate();
+                $config['scan_interval_sec'] = BotScanCoordinator::normalizeScanIntervalSec(
+                    $intervalValidated['scan_interval_sec']
+                );
+            }
         }
 
         // price_action_dgt хранится только в indicator_settings (страница индикатора), из config убираем при любом сохранении общих настроек.
@@ -2359,6 +2361,7 @@ class BotController extends Controller
             'vol_adaptive_candles',
             'three_soldier_vol_adaptive',
             'custom_candles_impulse' => '@candle_reversal_confirm_bot',
+            MaxBotConfig::BOT_TYPE => '@candle_reversal_confirm_bot',
             'openrouter_llm_analyst' => '@chart_analyct_smc_flow_bot',
             ChartAnalystBotTypes::SRL => '@chart_analyst_sweep_raid_bot',
             'strong_trend_demarker' => '@strong_DeMarker_bot',

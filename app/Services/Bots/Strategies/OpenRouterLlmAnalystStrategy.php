@@ -61,6 +61,11 @@ class OpenRouterLlmAnalystStrategy implements BotStrategyInterface
         $smcFlowSummary = $analystSmcEnabled && is_array($context['smc_flow_summary'] ?? null)
             ? $context['smc_flow_summary']
             : [];
+        $analystSrlEnabled = (bool) ($context['analyst_srl_flow_enabled'] ?? false);
+        /** @var array<string,mixed> $sweepRaidSummary */
+        $sweepRaidSummary = $analystSrlEnabled && is_array($context['sweep_raid_summary'] ?? null)
+            ? $context['sweep_raid_summary']
+            : [];
 
         // Гибрид: полный decision source-бота (runtime), без изменения сохранённого system_prompt.
         /** @var array<string,mixed>|null $hybridSourceSignal */
@@ -99,6 +104,10 @@ class OpenRouterLlmAnalystStrategy implements BotStrategyInterface
             $payload['smc_flow_summary'] = $smcFlowSummary;
             $payload['expiry_focus_min'] = [3, 6];
         }
+        if ($analystSrlEnabled) {
+            $payload['sweep_raid_summary'] = $sweepRaidSummary;
+            $payload['expiry_focus_sec'] = 60;
+        }
         if ($hybridSourceSignal !== null) {
             $payload['hybrid_source_signal'] = $hybridSourceSignal;
         }
@@ -112,6 +121,10 @@ class OpenRouterLlmAnalystStrategy implements BotStrategyInterface
                 $userContent = "Гибридный разбор: сначала независимый вердикт по рынку (без hybrid_source_signal), "
                     ."затем сверка с source и итоговая Рекомендация. Ответ — связный текст на русском.\n";
             }
+        } elseif ($analystSrlEnabled && $shortPromptMode) {
+            $userContent = "Подтверди или отклони candidates из sweep_raid_summary: CALL/PUT/NONE и вероятность успеха.\n";
+        } elseif ($analystSrlEnabled) {
+            $userContent = "Подтверди или отклони уже найденные SWEEP/RAID/PB из sweep_raid_summary. Ответ — связный текст на русском.\n";
         } elseif ($shortPromptMode) {
             $userContent = "Дай краткий вердикт по данным ниже: только направление (CALL/PUT/NONE) и вероятность успеха в процентах.\n";
         } else {
@@ -219,6 +232,10 @@ class OpenRouterLlmAnalystStrategy implements BotStrategyInterface
                 's5_bars_sent' => count($closedS5) + ($partialS5 ? 1 : 0),
                 'analyst_smc_flow_enabled' => $analystSmcEnabled,
                 'smc_flow_modules' => $analystSmcEnabled ? ($smcFlowSummary['modules'] ?? []) : [],
+                'analyst_srl_flow_enabled' => $analystSrlEnabled,
+                'srl_candidates_count' => $analystSrlEnabled
+                    ? count($sweepRaidSummary['candidates'] ?? [])
+                    : 0,
                 'mtf_enabled' => $mtfEnabled,
                 'm1_bars_sent' => count($m1),
                 'm5_bars_sent' => count($m5),

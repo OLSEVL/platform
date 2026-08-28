@@ -47,7 +47,7 @@ else
   echo "[...] Запуск очереди в фоне..."
   mkdir -p storage/app storage/logs
   # --timeout=3600: RunBotBacktestJob на «Все» пары; очереди: backtest первее default.
-  nohup php artisan queue:work --queue=backtest,default,mirror,telegram-analyst --sleep=3 --tries=3 --timeout=3600 --max-time=7200 >> storage/logs/queue.log 2>&1 &
+  nohup php artisan queue:work --queue=backtest,default,mirror,telegram-analyst --sleep=3 --tries=1 --timeout=3600 --max-time=7200 >> storage/logs/queue.log 2>&1 &
   echo $! > storage/app/queue.pid 2>/dev/null || true
   echo "[OK] Очередь (PID: $!)"
 fi

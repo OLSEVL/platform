@@ -3,6 +3,7 @@
 namespace App\Jobs;
 
 use App\Models\Bot;
+use App\Support\ChartAnalystBotTypes;
 use App\Services\Bots\BotDataService;
 use App\Services\Bots\BotEngineService;
 use App\Services\Telegram\StrongLevelTelegramLlmButton;
@@ -46,7 +47,7 @@ class RunTelegramAnalystAnalysisJob implements ShouldQueue
         TelegramAnalystStateStore $stateStore,
     ): void {
         $bot = Bot::query()->find($this->botId);
-        if (! $bot || $bot->type !== 'openrouter_llm_analyst') {
+        if (! $bot || ! ChartAnalystBotTypes::isAnalyst($bot->type)) {
             return;
         }
 

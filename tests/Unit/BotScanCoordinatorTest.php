@@ -46,15 +46,14 @@ class BotScanCoordinatorTest extends TestCase
         $this->assertStringEndsWith('bots-scan-11.log', $path);
     }
 
-    public function test_next_dispatch_unix_aligns_to_thirty_second_boundary(): void
+    public function test_next_dispatch_unix_aligns_to_five_second_boundary(): void
     {
-        // 1_700_000_010 % 30 === 0 — граница :00/:30.
-        $this->assertSame(0, 1_700_000_010 % 30);
-        $this->assertSame(1_700_000_010, BotScanCoordinator::nextDispatchUnix(1_700_000_010));
-        $this->assertSame(1_700_000_040, BotScanCoordinator::nextDispatchUnix(1_700_000_011));
-        $this->assertSame(1_700_000_040, BotScanCoordinator::nextDispatchUnix(1_700_000_039));
-        $this->assertSame(1_700_000_040, BotScanCoordinator::nextDispatchUnix(1_700_000_040));
-        $this->assertSame(1_700_000_070, BotScanCoordinator::nextDispatchUnix(1_700_000_041));
+        $interval = BotScanCoordinator::DISPATCH_INTERVAL_SEC;
+        $this->assertSame(5, $interval);
+        $base = 1_700_000_010;
+        $this->assertSame(0, $base % $interval);
+        $this->assertSame($base, BotScanCoordinator::nextDispatchUnix($base));
+        $this->assertSame($base + $interval, BotScanCoordinator::nextDispatchUnix($base + 1));
     }
 
     public function test_scan_max_elapsed_is_between_one_and_two_hours(): void
@@ -77,6 +76,16 @@ class BotScanCoordinatorTest extends TestCase
         $this->assertSame(60, BotScanCoordinator::normalizeScanIntervalSec(90));
         $this->assertSame(60, BotScanCoordinator::normalizeScanIntervalSec(60));
         $this->assertSame(30, BotScanCoordinator::normalizeScanIntervalSec(30));
+        $this->assertSame(15, BotScanCoordinator::normalizeScanIntervalSec(15));
+        $this->assertSame(5, BotScanCoordinator::normalizeScanIntervalSec(5));
+    }
+
+    public function test_default_scan_interval_for_max_bot_is_five_seconds(): void
+    {
+        $bot = new \App\Models\Bot;
+        $bot->forceFill(['type' => \App\Support\MaxBotConfig::BOT_TYPE, 'config' => []]);
+
+        $this->assertSame(5, BotScanCoordinator::scanIntervalSecForBot($bot));
     }
 
     public function test_missing_config_key_means_m1_interval(): void

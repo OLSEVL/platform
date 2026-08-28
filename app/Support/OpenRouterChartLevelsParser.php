@@ -20,6 +20,11 @@ final class OpenRouterChartLevelsParser
      */
     public static function defaultAnalystSystemPromptForConfig(array $config): string
     {
+        // SRL-аналитик: отдельный пакет правил (подтверждение SWEEP/RAID/PB).
+        if (OpenRouterLlmConfig::analystSrlFlowEnabled($config)) {
+            return self::defaultAnalystSystemPromptWithSweepRaid();
+        }
+
         return OpenRouterLlmConfig::analystSmcFlowEnabled($config)
             ? self::defaultAnalystSystemPromptWithSmcFlow()
             : self::defaultAnalystSystemPromptClassic();
@@ -32,6 +37,10 @@ final class OpenRouterChartLevelsParser
      */
     public static function defaultAnalystSystemPromptShortForConfig(array $config): string
     {
+        if (OpenRouterLlmConfig::analystSrlFlowEnabled($config)) {
+            return self::defaultAnalystSystemPromptShortWithSweepRaid();
+        }
+
         return OpenRouterLlmConfig::analystSmcFlowEnabled($config)
             ? self::defaultAnalystSystemPromptShortWithSmcFlow()
             : self::defaultAnalystSystemPromptShortClassic();
@@ -95,6 +104,77 @@ PROMPT;
 - Пиши ответ только на русском языке (кириллица). Не используй английский текст, кроме терминов CALL/PUT/NONE.
 - Не пиши развёрнутый разбор. Не добавляй блок уровней на графике.
 PROMPT;
+    }
+
+    /**
+     * Краткий режим Sweep/Raid: LLM только подтверждает candidates из детектора.
+     */
+    public static function defaultAnalystSystemPromptShortWithSweepRaid(): string
+    {
+        return <<<'PROMPT'
+Ты торговый AI-аналитик для бинарных опционов (краткий режим Sweep / Raid Liquidity).
+Целевая экспирация: 60 секунд (1 M1-бар).
+
+Задача — подтвердить или отклонить уже найденные сетапы из sweep_raid_summary.candidates.
+Ты НЕ ищешь новые фракталы/свипы сам по свечам — только валидируешь кандидатов детектора.
+
+Данные в запросе:
+- sweep_raid_summary — снимок детектора (candidates, recent_events, recent_pullbacks, rule_reminder)
+- closed_candles_m1 / s5 / mtf.* — контекст качества (шум, закрепление, конфликт)
+- expiry_focus_sec: 60
+- user_question — вопрос трейдера (может быть null)
+
+Формат ответа (строго, 2–4 строки на русском, без markdown):
+Рекомендация: CALL | PUT | NONE
+Вероятность успеха: NN%
+Причина: одно короткое предложение
+
+Правила:
+- Если candidates пуст → NONE.
+- CALL/PUT только если side совпадает с одним из candidates и сетап не «съеден» (два закрытия за уровнем).
+- При сомнении / грязном контексте → NONE.
+- Вероятность успеха: целое 0–100. При NONE обычно ≤50%.
+- Пиши только по-русски (кроме CALL/PUT/NONE). Без chart_levels.
+PROMPT;
+    }
+
+    /** Полный режим Sweep/Raid: подтверждение SWEEP/RAID/PB + уровни на график. */
+    public static function defaultAnalystSystemPromptWithSweepRaid(): string
+    {
+        return <<<'PROMPT'
+Ты торговый AI-аналитик для бинарных опционов по стратегии Sweep / Raid Liquidity.
+Целевая экспирация: 60 секунд. Тайминг — закрытая M1 (+ S5 для микроконтекста).
+
+Главная задача — подтвердить или отклонить уже найденные сетапы из sweep_raid_summary.
+Детектор платформы уже разметил FH/FL, SWEEP, RAID и PB. Ты НЕ изобретаешь новые уровни «с нуля».
+
+Данные в запросе:
+- sweep_raid_summary:
+  candidates — сетапы на последней закрытой M1 (подтверждать только их side),
+  recent_events / recent_pullbacks — контекст серии,
+  active_levels — FH/FL,
+  rule_reminder — правила автора
+- closed_candles_m1, partial_candle_m1 — M1
+- closed_candles_s5, partial_candle_s5 — S5
+- mtf.* — старшие ТФ (если mtf.enabled) только как фильтр качества, не как источник входа
+- expiry_focus_sec: 60
+- user_question — вопрос трейдера (может быть null)
+
+Правила стратегии (кратко):
+1) Свип хая: зелёная свеча, тень выше FH, close ниже → PUT (вход на свипе).
+2) Свип лоу: красная свеча, тень ниже FL, close выше → CALL.
+3) Рейд: снятие без цвета свипа или возврат после закрепления телом — вход НЕ на рейде, а на первой откатной.
+4) Откат сверху: первая зелёная после снятия → PUT; снизу: первая красная → CALL.
+5) Два закрытия подряд за уровнем = уровень съеден → NONE, нужен новый фрактал.
+
+Обязательно в тексте анализа:
+1) Есть ли кандидат в candidates (явно: какой setup / side) или список пуст.
+2) Подтверждаешь или отклоняешь (почему: цвет, закрепление, конфликт MTF/шум).
+3) Явная рекомендация: CALL, PUT или NONE.
+4) Горизонт 60 секунд при CALL/PUT.
+5) Строка «Вероятность успеха: NN%».
+PROMPT
+            .self::promptInstructionsWithSweepRaid();
     }
 
     /** Аналитик без SMC Flow: MTF + S5, как до интеграции индикатора. */
@@ -274,6 +354,31 @@ TXT
 TXT
             .self::chartLevelsFenceExample(includeZones: true, includeEntry: true)
             .self::chartLevelsRulesBlock();
+    }
+
+    /** Формат ответа для аналитика Sweep/Raid (уровни FH/FL + entry 60с). */
+    public static function promptInstructionsWithSweepRaid(): string
+    {
+        return <<<'TXT'
+
+Формат ответа (обязательно):
+1) Связный текст на русском: candidates → правило свип/рейд/PB → качество контекста → сценарий на 60 с.
+   В конце текстового блока — строка «Рекомендация: CALL» или «Рекомендация: PUT» или «Рекомендация: NONE (причина)».
+TXT
+            .self::successProbabilityInstructionBlock()
+            .<<<'TXT'
+2) В самом конце ответа — отдельный блок для отрисовки на графике (после текста, без markdown вокруг JSON внутри блока):
+
+TXT
+            .self::chartLevelsFenceExample(includeZones: false, includeEntry: true)
+            .self::chartLevelsRulesBlock()
+            .<<<'TXT'
+
+Дополнительно для Sweep/Raid:
+- В levels указывай подтверждённые FH/FL из sweep_raid_summary.active_levels (label вида «M1 FH · price» / «M1 FL · price»).
+- entry.price бери из кандидата (entry_price), side — только CALL или PUT из candidates.
+- Не рисуй уровни, которых нет в snapshot.
+TXT;
     }
 
     /**

@@ -3,7 +3,7 @@
 namespace App\Services;
 
 use App\Models\InstrumentCandle;
-use Carbon\CarbonInterface;
+use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
@@ -202,13 +202,28 @@ class DataCleanupService
     }
 
     /**
-     * Нормализует выбор пользователя до одного из разрешённых значений.
+     * Нормализует окно хранения перед purge.
+     *
+     * Принимает оба списка:
+     * - ALLOWED_RETENTION_HOURS — ручная «Удалить все данные» (в т.ч. 0 = всё);
+     * - allowedAutoCleanupRetentionHours() — авто-очистка 1–30 дней и короткие часы.
+     *
+     * Раньше проверялся только первый список, поэтому значение из настроек вроде
+     * «7 дней» (168 ч.) не входило в [0,1,3,6,12,24,48] и молча сбрасывалось на 24 ч.
+     * Из‑за этого hourly data:auto-cleanup оставлял только ~сутки свечей.
      */
     public function normalizeRetentionHours(int $hours): int
     {
-        return in_array($hours, self::ALLOWED_RETENTION_HOURS, true)
-            ? $hours
-            : self::DEFAULT_RETENTION_HOURS;
+        if (in_array($hours, self::ALLOWED_RETENTION_HOURS, true)) {
+            return $hours;
+        }
+
+        // Дни из селекта «Автоматически удалять данные старше» (72…720 и т.д.).
+        if (in_array($hours, self::allowedAutoCleanupRetentionHours(), true)) {
+            return $hours;
+        }
+
+        return self::DEFAULT_RETENTION_HOURS;
     }
 
     /**
@@ -239,6 +254,123 @@ class DataCleanupService
     public function isAutoCleanupEnabled(): bool
     {
         return $this->getAutoCleanupRetentionHours() !== null;
+    }
+
+    /**
+     * Глубина истории главного графика (скролл влево), в секундах.
+     *
+     * Раньше на дашборде был хардкод 24ч — настройка «Автоматически удалять данные старше»
+     * влияла только на cron purge, а UI всё равно не отдавал/не запрашивал старше суток.
+     * Берём то же окно, что и авто-очистка; если очистка выключена — потолок 30 суток
+     * (как максимум в селекте), чтобы не тянуть бесконечный since из БД.
+     */
+    public function chartHistoryMaxSeconds(): int
+    {
+        $hours = $this->getAutoCleanupRetentionHours();
+        if ($hours === null) {
+            $hours = 30 * 24;
+        }
+
+        // Минимум 1 час — иначе since ≈ now и график пустеет при сбое настройки.
+        return max(3600, $hours * 3600);
+    }
+
+    /**
+     * Сводка по таблице свечей для блока «Очистка данных» на /settings.
+     *
+     * depth_hours — возраст старейшей свечи от «сейчас»; сравнимо с окном авто-очистки.
+     * span_hours — размах MIN(time)..MAX(time) (пробелы внутри диапазона не учитываются).
+     *
+     * @return array{
+     *     count: int,
+     *     depth_hours: float|null,
+     *     span_hours: float|null,
+     *     oldest_at: int|null,
+     *     newest_at: int|null,
+     * }
+     */
+    public function getCandlesStorageStats(): array
+    {
+        $table = (new InstrumentCandle)->getTable();
+        if (! Schema::hasTable($table)) {
+            return $this->emptyCandlesStorageStats();
+        }
+
+        $row = DB::table($table)
+            ->selectRaw('COUNT(*) as cnt, MIN(time) as min_time, MAX(time) as max_time')
+            ->first();
+
+        $count = (int) ($row->cnt ?? 0);
+        if ($count === 0 || $row->min_time === null || $row->max_time === null) {
+            return $this->emptyCandlesStorageStats();
+        }
+
+        $oldest = (int) $row->min_time;
+        $newest = (int) $row->max_time;
+        $now = time();
+
+        return [
+            'count' => $count,
+            'depth_hours' => round(max(0, ($now - $oldest) / 3600), 1),
+            'span_hours' => round(max(0, ($newest - $oldest) / 3600), 1),
+            'oldest_at' => $oldest,
+            'newest_at' => $newest,
+        ];
+    }
+
+    /**
+     * Подпись глубины истории свечей для UI (например «~64 часа» или «7 дней (168 часов)»).
+     *
+     * @param  array{count?: int, depth_hours?: float|null}  $stats
+     */
+    public function candlesStorageDepthLabel(array $stats): string
+    {
+        $hours = $stats['depth_hours'] ?? null;
+        if ($hours === null || ($stats['count'] ?? 0) === 0) {
+            return 'нет данных';
+        }
+
+        $rounded = max(1, (int) round($hours));
+        if ($rounded >= 24 && $rounded % 24 === 0) {
+            return sprintf(
+                '%s (%s)',
+                self::pluralizeDays(intdiv($rounded, 24)),
+                self::pluralizeHours($rounded)
+            );
+        }
+
+        return '~'.self::pluralizeHours($rounded);
+    }
+
+    /**
+     * Дата/время старейшей свечи в часовом поясе приложения.
+     *
+     * @param  array{oldest_at?: int|null}  $stats
+     */
+    public function candlesStorageOldestLabel(array $stats): ?string
+    {
+        $oldestAt = $stats['oldest_at'] ?? null;
+        if ($oldestAt === null) {
+            return null;
+        }
+
+        return Carbon::createFromTimestamp($oldestAt)
+            ->timezone(config('app.timezone'))
+            ->format('d.m.Y H:i');
+    }
+
+    /**
+     * @return array{count: int, depth_hours: null, span_hours: null, oldest_at: null, newest_at: null}
+     */
+    private function emptyCandlesStorageStats(): array
+    {
+        return [
+            'count' => 0,
+            'depth_hours' => null,
+            'span_hours' => null,
+            'oldest_at' => null,
+            'newest_at' => null,
+        ];
     }
 
     /**

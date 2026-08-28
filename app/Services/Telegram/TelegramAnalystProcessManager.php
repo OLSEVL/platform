@@ -2,6 +2,8 @@
 
 namespace App\Services\Telegram;
 
+use App\Support\ChartAnalystBotTypes;
+
 use App\Jobs\RunTelegramAnalystAnalysisJob;
 use App\Models\Bot;
 use App\Support\ArtisanProcessFinder;
@@ -144,7 +146,7 @@ class TelegramAnalystProcessManager
         $botId = isset($payload['bot_id']) ? (int) $payload['bot_id'] : null;
         $bot = $botId > 0 ? Bot::query()->find($botId) : null;
 
-        if ($bot !== null && $bot->type === 'openrouter_llm_analyst') {
+        if ($bot !== null && ChartAnalystBotTypes::isAnalyst($bot->type)) {
             $result = $this->restart($bot);
         } else {
             $result = $this->restartQueueWorkerHard();
@@ -212,7 +214,7 @@ class TelegramAnalystProcessManager
      */
     public function restart(Bot $bot): array
     {
-        if ($bot->type !== 'openrouter_llm_analyst') {
+        if (! ChartAnalystBotTypes::isAnalyst($bot->type)) {
             return ['ok' => false, 'error' => 'unsupported_bot_type'];
         }
 
@@ -280,7 +282,7 @@ class TelegramAnalystProcessManager
     private function analystBotsWithTelegramToken()
     {
         return Bot::query()
-            ->where('type', 'openrouter_llm_analyst')
+            ->whereIn('type', ChartAnalystBotTypes::all())
             ->orderBy('id')
             ->get()
             ->filter(function (Bot $bot): bool {

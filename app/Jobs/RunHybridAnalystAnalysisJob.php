@@ -3,6 +3,7 @@
 namespace App\Jobs;
 
 use App\Models\Bot;
+use App\Support\ChartAnalystBotTypes;
 use App\Services\Bots\BotDataService;
 use App\Services\Bots\BotEngineService;
 use App\Services\Bots\HybridAnalystTradeService;
@@ -57,7 +58,7 @@ class RunHybridAnalystAnalysisJob implements ShouldQueue, ShouldBeUnique
         HybridAnalystTradeService $tradeService,
     ): void {
         $bot = Bot::query()->find($this->analystBotId);
-        if (! $bot || $bot->type !== 'openrouter_llm_analyst') {
+        if (! $bot || ! ChartAnalystBotTypes::isAnalyst($bot->type)) {
             return;
         }
 

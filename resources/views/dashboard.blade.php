@@ -446,9 +446,10 @@
     //    (~130 баров), чтобы не тянуть 1440 S5-свечей на каждый клик.
     // INITIAL — первичный показ: считаем в БАРАХ (не в часах), иначе на M5/M15
     //     2 часа давали ~24/~8 свечей. Берём viewport + буфер = 130 баров на любом TF.
-    // MAX — максимальная глубина истории для loadMoreCandles при скролле влево (24ч).
+    // MAX — потолок истории при скролле влево: из /settings «Автоматически удалять…»
+    //     (раньше был хардкод 24ч — настройка очистки на график не влияла).
     // POLL — узкое окно auto-refresh хвоста.
-    const MAX_WINDOW_SEC = 24 * 3600;
+    const MAX_WINDOW_SEC = {{ (int) ($chartHistoryMaxSeconds ?? 86400) }};
     const POLL_WINDOW_SEC = 5 * 60;
 
     // Лимиты баров в одном ответе:
@@ -1405,6 +1406,62 @@
         return Math.floor(Date.now() / 1000) - MAX_WINDOW_SEC;
     }
 
+    /**
+     * Warmup слева от oldestLoaded: период тяжёлых MA/каналов, чтобы первая
+     * видимая точка индикатора была валидной, а не «разгоном».
+     */
+    const INDICATOR_WARMUP_BARS = 250;
+
+    /**
+     * since/limit под уже загруженные свечи (+ warmup), с потолком MAX_WINDOW_SEC.
+     * Без этого /indicators/* тянули фикс. 24ч/500 баров → LWC раздувал шкалу
+     * или линии обрывались при скролле влево.
+     */
+    function appendIndicatorHistoryParams(params) {
+        const barSec = timeframeSeconds(currentTimeframeMinutes);
+        const warmupSec = INDICATOR_WARMUP_BARS * barSec;
+        const floor = candlesSince();
+        let since;
+        if (oldestLoadedTime != null) {
+            since = Math.max(floor, oldestLoadedTime - warmupSec);
+        } else {
+            since = Math.max(
+                floor,
+                Math.floor(Date.now() / 1000) - initialWindowSecForTf(currentTimeframeMinutes) - warmupSec
+            );
+        }
+        const loaded = Math.max(allChartData.length, INITIAL_BARS);
+        const limit = Math.min(5000, loaded + INDICATOR_WARMUP_BARS);
+        params.set('since', String(since));
+        params.set('limit', String(limit));
+        return { since: since, limit: limit };
+    }
+
+    /**
+     * Не даём setData индикатора расширить timeScale за пределы загруженных свечей.
+     */
+    function clipIndicatorPointsToCandles(points) {
+        if (!Array.isArray(points) || !points.length || !allChartData.length) {
+            return Array.isArray(points) ? points : [];
+        }
+        const t0 = allChartData[0].time;
+        const t1 = allChartData[allChartData.length - 1].time;
+        return points.filter((p) => p && typeof p.time === 'number' && p.time >= t0 && p.time <= t1);
+    }
+
+    function mapClippedLinePoints(data) {
+        return clipIndicatorPointsToCandles(data).map((p) => ({ time: p.time, value: p.value }));
+    }
+
+    /** Histogram с цветом по знаку — тоже клипаем к свечам. */
+    function mapClippedHistPoints(data, posColor, negColor) {
+        return clipIndicatorPointsToCandles(data).map((p) => ({
+            time: p.time,
+            value: p.value,
+            color: Number(p.value) >= 0 ? posColor : negColor,
+        }));
+    }
+
     /** ~кол-во свечей по горизонтали и «воздух» справа (в долях бара), как на референсе */
     const CHART_DEFAULT_VISIBLE_BARS = 110;
     const CHART_RIGHT_GAP_BARS = 22;
@@ -1650,7 +1707,8 @@
             return;
         }
         const params = new URLSearchParams({ instrument: currentInstrument, timeframe: String(currentTimeframeMinutes) });
-        const key = currentInstrument + '|' + String(currentTimeframeMinutes);
+        const hist = appendIndicatorHistoryParams(params);
+        const key = currentInstrument + '|' + String(currentTimeframeMinutes) + '|' + hist.since + '|' + hist.limit;
         if (!window.PlatformChartFetch) return;
         // coalesce: повторный тик 15с с тем же key не стартует второй запрос.
         PlatformChartFetch.requestJson('pa', {
@@ -1965,6 +2023,8 @@
 
         const addMainLine = (key, data, color, width) => {
             if (!Array.isArray(data) || !data.length) return;
+            const clipped = mapClippedLinePoints(data);
+            if (!clipped.length) return;
             const s = chart.addSeries(LineSeries, {
                 color: color || '#22c55e',
                 lineWidth: width || 1,
@@ -1972,7 +2032,7 @@
                 lastValueVisible: false,
                 crosshairMarkerVisible: false,
             }, 0);
-            s.setData(data.map((p) => ({ time: p.time, value: p.value })));
+            s.setData(clipped);
             classicLineSeries[key] = s;
         };
 
@@ -2027,7 +2087,7 @@
                     lastValueVisible: false,
                     crosshairMarkerVisible: false,
                 }, 0);
-                s.setData(data.map((p) => ({ time: p.time, value: p.value })));
+                s.setData(mapClippedLinePoints(data));
                 classicLineSeries['parabolic_sar'] = s;
             }
         }
@@ -2067,7 +2127,7 @@
                     lastValueVisible: false,
                     crosshairMarkerVisible: false,
                 }, 0);
-                s.setData(chinkou.map((p) => ({ time: p.time, value: p.value })));
+                s.setData(mapClippedLinePoints(chinkou));
                 classicLineSeries['ichimoku_chinkou'] = s;
             }
         }
@@ -2130,7 +2190,7 @@
                     lastValueVisible: false,
                     crosshairMarkerVisible: false,
                 }, 0);
-                s.setData(data.map((p) => ({ time: p.time, value: p.value })));
+                s.setData(mapClippedLinePoints(data));
                 classicLineSeries[key] = s;
             };
             addFractalPoints('fractal_up', ser.up, st.color_up || '#00bfff');
@@ -2199,7 +2259,7 @@
                     lastValueVisible: false,
                     crosshairMarkerVisible: false,
                 }, 0);
-                s.setData(data.map((p) => ({ time: p.time, value: p.value })));
+                s.setData(mapClippedLinePoints(data));
                 classicLineSeries[pkey] = s;
             };
             addParabPoints('parabolic_bollinger_parab', ser.parabolic, st.color_parabolic);
@@ -2222,7 +2282,7 @@
                     lastValueVisible: false,
                     crosshairMarkerVisible: false,
                 }, 0);
-                s.setData(data.map((p) => ({ time: p.time, value: p.value })));
+                s.setData(mapClippedLinePoints(data));
                 classicLineSeries[pkey] = s;
             };
             addParabPoints('parabolic_price_channel_parab', ser.parabolic, st.color_parabolic);
@@ -2287,7 +2347,7 @@
                     lastValueVisible: false,
                     crosshairMarkerVisible: false,
                 }, 0);
-                s.setData(data.map((p) => ({ time: p.time, value: p.value })));
+                s.setData(mapClippedLinePoints(data));
                 classicLineSeries[key] = s;
             };
             addZzPoints('zz_highs', ser.highs, st.color_high || '#adff2f');
@@ -2310,6 +2370,11 @@
         if (wantRsi) {
             const st = lastRsiPayload.style || {};
             const levels = lastRsiPayload.levels || {};
+            const data = ((lastRsiPayload.series || {}).rsi) || [];
+            // Нет точек (мало баров на H1/H4) — не создаём пустую чёрную pane.
+            if (!Array.isArray(data) || !data.length) {
+                // skip empty RSI pane
+            } else {
             let paneIndex = 1;
             let rsiPane = null;
             try {
@@ -2335,8 +2400,7 @@
                 // Жёсткий диапазон нужен, чтобы уровни 70/30 всегда были видимыми.
                 autoscaleInfoProvider: () => ({ priceRange: { minValue: 0, maxValue: 100 } }),
             }, paneIndex);
-            const data = ((lastRsiPayload.series || {}).rsi) || [];
-            s.setData(data.map((p) => ({ time: p.time, value: p.value })));
+            s.setData(mapClippedLinePoints(data));
             classicLineSeries['rsi'] = s;
             // Небольшие внешние отступы для более аккуратного расположения линии RSI.
             try {
@@ -2367,6 +2431,7 @@
                     : [];
                 rsiLevelLines.push(...lines);
             } catch (_) {}
+            } // end non-empty RSI data
         }
 
         // MACD pane: histogram + lines + нулевая линия (как на bots/show).
@@ -2418,7 +2483,7 @@
                     lastValueVisible: key === 'macd_line',
                     crosshairMarkerVisible: false,
                 }, paneIndex);
-                s.setData(data.map((p) => ({ time: p.time, value: p.value })));
+                s.setData(mapClippedLinePoints(data));
                 classicLineSeries[key] = s;
                 return s;
             };
@@ -2471,7 +2536,7 @@
                     priceFormat: { type: 'price', precision: 0, minMove: 1 },
                     autoscaleInfoProvider: () => ({ priceRange: { minValue: 0, maxValue: 100 } }),
                 }, paneIndex);
-                s.setData(data.map((p) => ({ time: p.time, value: p.value })));
+                s.setData(mapClippedLinePoints(data));
                 classicLineSeries[key] = s;
                 return s;
             };
@@ -2542,7 +2607,7 @@
                     crosshairMarkerVisible: false,
                     priceFormat: { type: 'price', precision: 2, minMove: 0.01 },
                 }, paneIndex);
-                cciLine.setData(cciData.map((p) => ({ time: p.time, value: p.value })));
+                cciLine.setData(mapClippedLinePoints(cciData));
                 classicLineSeries['cci'] = cciLine;
             }
 
@@ -2610,7 +2675,7 @@
                     crosshairMarkerVisible: false,
                     priceFormat: { type: 'price', precision: 2, minMove: 0.01 },
                 }, paneIndex);
-                s.setData(data.map((p) => ({ time: p.time, value: p.value })));
+                s.setData(mapClippedLinePoints(data));
                 classicLineSeries[key] = s;
                 return s;
             };
@@ -2663,7 +2728,7 @@
                     priceFormat: { type: 'price', precision: 2, minMove: 0.01 },
                     autoscaleInfoProvider: () => ({ priceRange: { minValue: -100, maxValue: 0 } }),
                 }, paneIndex);
-                wrLine.setData(data.map((p) => ({ time: p.time, value: p.value })));
+                wrLine.setData(mapClippedLinePoints(data));
                 classicLineSeries['williams'] = wrLine;
             }
             try {
@@ -2724,7 +2789,7 @@
                     priceFormat: { type: 'price', precision: 0, minMove: 1 },
                     autoscaleInfoProvider: () => ({ priceRange: { minValue: 0, maxValue: 100 } }),
                 }, paneIndex);
-                s.setData(data.map((p) => ({ time: p.time, value: p.value })));
+                s.setData(mapClippedLinePoints(data));
                 classicLineSeries[key] = s;
                 return s;
             };
@@ -2766,7 +2831,7 @@
                     crosshairMarkerVisible: false,
                     priceFormat: { type: 'price', precision: 2, minMove: 0.01 },
                 }, paneIndex);
-                momentumLine.setData(data.map((p) => ({ time: p.time, value: p.value })));
+                momentumLine.setData(mapClippedLinePoints(data));
                 classicLineSeries['momentum'] = momentumLine;
             }
             try {
@@ -2812,7 +2877,7 @@
                     crosshairMarkerVisible: false,
                     priceFormat: { type: 'price', precision: 2, minMove: 0.01 },
                 }, paneIndex);
-                rocLine.setData(data.map((p) => ({ time: p.time, value: p.value })));
+                rocLine.setData(mapClippedLinePoints(data));
                 classicLineSeries['roc'] = rocLine;
             }
             try {
@@ -2877,7 +2942,7 @@
                     lastValueVisible: !!showLast,
                     crosshairMarkerVisible: false,
                 }, paneIndex);
-                s.setData(data.map((p) => ({ time: p.time, value: p.value })));
+                s.setData(mapClippedLinePoints(data));
                 classicLineSeries[key] = s;
                 return s;
             };
@@ -2926,7 +2991,7 @@
                     crosshairMarkerVisible: false,
                     priceFormat: { type: 'price', precision: 2, minMove: 0.01 },
                 }, paneIndex);
-                trixLine.setData(data.map((p) => ({ time: p.time, value: p.value })));
+                trixLine.setData(mapClippedLinePoints(data));
                 classicLineSeries['trix'] = trixLine;
             }
             try {
@@ -2972,7 +3037,7 @@
                     crosshairMarkerVisible: false,
                     priceFormat: { type: 'price', precision: 2, minMove: 0.01 },
                 }, paneIndex);
-                cmoLine.setData(data.map((p) => ({ time: p.time, value: p.value })));
+                cmoLine.setData(mapClippedLinePoints(data));
                 classicLineSeries['cmo'] = cmoLine;
             }
             try {
@@ -3020,7 +3085,7 @@
                     priceFormat: { type: 'price', precision: 2, minMove: 0.01 },
                     autoscaleInfoProvider: () => ({ priceRange: { minValue: 0, maxValue: 1 } }),
                 }, paneIndex);
-                demLine.setData(data.map((p) => ({ time: p.time, value: p.value })));
+                demLine.setData(mapClippedLinePoints(data));
                 classicLineSeries['demarker'] = demLine;
             }
             try {
@@ -3066,7 +3131,7 @@
                     crosshairMarkerVisible: false,
                     priceFormat: { type: 'price', precision: 2, minMove: 0.01 },
                 }, paneIndex);
-                s.setData(data.map((p) => ({ time: p.time, value: p.value })));
+                s.setData(mapClippedLinePoints(data));
                 classicLineSeries[key] = s;
                 return s;
             };
@@ -3110,7 +3175,7 @@
                     crosshairMarkerVisible: false,
                     priceFormat: { type: 'price', precision: 2, minMove: 0.01 },
                 }, paneIndex);
-                uoLine.setData(data.map((p) => ({ time: p.time, value: p.value })));
+                uoLine.setData(mapClippedLinePoints(data));
                 classicLineSeries['uo'] = uoLine;
             }
             try {
@@ -3157,7 +3222,7 @@
                     crosshairMarkerVisible: false,
                     priceFormat: { type: 'price', precision: 2, minMove: 0.01 },
                 }, paneIndex);
-                s.setData(data.map((p) => ({ time: p.time, value: p.value })));
+                s.setData(mapClippedLinePoints(data));
                 classicLineSeries[key] = s;
                 return s;
             };
@@ -3200,7 +3265,7 @@
                 crosshairMarkerVisible: false,
             }, paneIndex);
             const data = ((lastStdDevPayload.series || {}).stddev) || [];
-            s.setData(data.map((p) => ({ time: p.time, value: p.value })));
+            s.setData(mapClippedLinePoints(data));
             classicLineSeries['stddev'] = s;
         }
 
@@ -3226,7 +3291,7 @@
                 crosshairMarkerVisible: false,
             }, paneIndex);
             const data = ((lastIvashovPayload.series || {}).ivashov) || [];
-            s.setData(data.map((p) => ({ time: p.time, value: p.value })));
+            s.setData(mapClippedLinePoints(data));
             classicLineSeries['ivashov'] = s;
         }
 
@@ -3256,7 +3321,7 @@
                     priceFormat: { type: 'price', precision: 0, minMove: 1 },
                     autoscaleInfoProvider: () => ({ priceRange: { minValue: 0, maxValue: 100 } }),
                 }, paneIndex);
-                s.setData(data.map((p) => ({ time: p.time, value: p.value })));
+                s.setData(mapClippedLinePoints(data));
                 classicLineSeries[key] = s;
                 return s;
             };
@@ -3297,11 +3362,7 @@
                     baseLineWidth: 1,
                     baseLineStyle: 2,
                 }, paneIndex);
-                hs.setData(data.map((p) => ({
-                    time: p.time,
-                    value: p.value,
-                    color: Number(p.value) >= 0 ? histColor : histNeg,
-                })));
+                hs.setData(mapClippedHistPoints(data, histColor, histNeg));
                 classicLineSeries[key] = hs;
             }
         };
@@ -3333,7 +3394,7 @@
                 crosshairMarkerVisible: false,
                 priceFormat: { type: 'price', precision: 2, minMove: 0.01 },
             }, paneIndex);
-            s.setData(data.map((p) => ({ time: p.time, value: p.value })));
+            s.setData(mapClippedLinePoints(data));
             classicLineSeries[key] = s;
         };
         if (wantDpo) addSimpleOscPaneLine('dpo', lastDpoPayload, 'dpo', 'color');
@@ -3364,7 +3425,7 @@
                     crosshairMarkerVisible: false,
                     priceFormat: { type: 'price', precision: 2, minMove: 0.01 },
                 }, paneIndex);
-                s.setData(data.map((p) => ({ time: p.time, value: p.value })));
+                s.setData(mapClippedLinePoints(data));
                 classicLineSeries[key] = s;
             };
             addRaviLine('ravi', ser.ravi, st.color_ravi, true);
@@ -3395,7 +3456,7 @@
                     crosshairMarkerVisible: false,
                     priceFormat: { type: 'price', precision: 2, minMove: 0.01 },
                 }, paneIndex);
-                s.setData(data.map((p) => ({ time: p.time, value: p.value })));
+                s.setData(mapClippedLinePoints(data));
                 classicLineSeries[key] = s;
             };
             addCogLine('cog', ser.cog, st.color_cog, true);
@@ -3425,7 +3486,7 @@
                     crosshairMarkerVisible: false,
                     priceFormat: { type: 'price', precision: 2, minMove: 0.01 },
                 }, paneIndex);
-                s.setData(data.map((p) => ({ time: p.time, value: p.value })));
+                s.setData(mapClippedLinePoints(data));
                 classicLineSeries[key] = s;
             };
             addMiLine('mass_index_mi', ser.mi, st.color_mi, true);
@@ -3457,7 +3518,7 @@
                     crosshairMarkerVisible: false,
                     priceFormat: { type: 'price', precision: 2, minMove: 0.01 },
                 }, paneIndex);
-                s.setData(data.map((p) => ({ time: p.time, value: p.value })));
+                s.setData(mapClippedLinePoints(data));
                 classicLineSeries[okey] = s;
             };
             addOscLine('va_vol', ser.volatility, st.color_volatility, true);
@@ -3486,7 +3547,7 @@
                     crosshairMarkerVisible: false,
                     priceFormat: { type: 'price', precision: 2, minMove: 0.01 },
                 }, paneIndex);
-                s.setData(data.map((p) => ({ time: p.time, value: p.value })));
+                s.setData(mapClippedLinePoints(data));
                 classicLineSeries[okey] = s;
             };
             addOscLine('vac_vol', ser.volatility, st.color_volatility, true);
@@ -3518,7 +3579,7 @@
                     crosshairMarkerVisible: false,
                     priceFormat: { type: 'price', precision: 2, minMove: 0.01 },
                 }, paneIndex);
-                s.setData(data.map((p) => ({ time: p.time, value: p.value })));
+                s.setData(mapClippedLinePoints(data));
                 classicLineSeries[okey] = s;
             };
             addOscLine('po', ser.po, st.color, true);
@@ -3546,7 +3607,7 @@
                     crosshairMarkerVisible: false,
                     priceFormat: { type: 'price', precision: 2, minMove: 0.01 },
                 }, paneIndex);
-                s.setData(data.map((p) => ({ time: p.time, value: p.value })));
+                s.setData(mapClippedLinePoints(data));
                 classicLineSeries[okey] = s;
             };
             addOscLine('alb', ser.alb, st.color, true);
@@ -3556,6 +3617,9 @@
             const st = lastVolatilityCandlesPayload.style || {};
             const ser = lastVolatilityCandlesPayload.series || {};
             const lineW = st.line_width || 1;
+            const vcData = ser.vc || [];
+            // length=50 → на H1 нужно ≥51 часовых баров; при короткой истории не рисуем пустую pane.
+            if (Array.isArray(vcData) && vcData.length) {
             let paneIndex = 1;
             try {
                 const pane = chart.addPane(false);
@@ -3575,10 +3639,11 @@
                     crosshairMarkerVisible: false,
                     priceFormat: { type: 'price', precision: 3, minMove: 0.001 },
                 }, paneIndex);
-                s.setData(data.map((p) => ({ time: p.time, value: p.value })));
+                s.setData(mapClippedLinePoints(data));
                 classicLineSeries[okey] = s;
             };
-            addOscLine('vc', ser.vc, st.color, true);
+            addOscLine('vc', vcData, st.color, true);
+            }
         }
 
         // VolatilityAverageTwice — вола + fast/slow SMA в отдельной pane.
@@ -3605,7 +3670,7 @@
                     crosshairMarkerVisible: false,
                     priceFormat: { type: 'price', precision: 2, minMove: 0.01 },
                 }, paneIndex);
-                s.setData(data.map((p) => ({ time: p.time, value: p.value })));
+                s.setData(mapClippedLinePoints(data));
                 classicLineSeries[okey] = s;
             };
             addOscLine('vat_vol', ser.volatility, st.color_volatility, true);
@@ -3629,7 +3694,7 @@
                     crosshairMarkerVisible: false,
                     priceFormat: { type: 'price', precision: precision, minMove: Math.pow(10, -precision) },
                 }, paneIndex);
-                s.setData(data.map((p) => ({ time: p.time, value: p.value })));
+                s.setData(mapClippedLinePoints(data));
                 classicLineSeries[okey] = s;
             };
 
@@ -3693,7 +3758,7 @@
                 crosshairMarkerVisible: false,
             }, paneIndex);
             const data = ((lastAtrPayload.series || {}).atr) || [];
-            s.setData(data.map((p) => ({ time: p.time, value: p.value })));
+            s.setData(mapClippedLinePoints(data));
             classicLineSeries['atr'] = s;
         }
 
@@ -4029,17 +4094,20 @@
 
         if (!window.PlatformChartFetch) return;
 
-        // Ключ: instrument|tf|layers — тот же набор не стартует повторно (таймер 15с).
-        const requestKey = [
-            currentInstrument,
-            String(currentTimeframeMinutes),
-            layers.slice().sort().join(','),
-        ].join('|');
+        // Ключ: instrument|tf|layers|since|limit — после loadMore (новый since) пересчитываем.
         const params = new URLSearchParams({
             instrument: currentInstrument,
             timeframe: String(currentTimeframeMinutes),
         });
         layers.forEach((l) => params.append('layers[]', l));
+        const hist = appendIndicatorHistoryParams(params);
+        const requestKey = [
+            currentInstrument,
+            String(currentTimeframeMinutes),
+            layers.slice().sort().join(','),
+            String(hist.since),
+            String(hist.limit),
+        ].join('|');
 
         PlatformChartFetch.requestJson('classic', {
             key: requestKey,
@@ -4208,8 +4276,9 @@
         }
         if (!window.PlatformChartFetch) return;
         const params = new URLSearchParams({ instrument: currentInstrument, timeframe: String(currentTimeframeMinutes) });
+        const hist = appendIndicatorHistoryParams(params);
         PlatformChartFetch.requestJson('liquidity', {
-            key: currentInstrument + '|' + String(currentTimeframeMinutes),
+            key: currentInstrument + '|' + String(currentTimeframeMinutes) + '|' + hist.since + '|' + hist.limit,
             url: LS_INDICATOR_URL + '?' + params.toString(),
             apply: (d) => {
                 try {
@@ -4237,8 +4306,9 @@
         }
         if (!window.PlatformChartFetch) return;
         const params = new URLSearchParams({ instrument: currentInstrument, timeframe: String(currentTimeframeMinutes) });
+        const hist = appendIndicatorHistoryParams(params);
         PlatformChartFetch.requestJson('smc', {
-            key: currentInstrument + '|' + String(currentTimeframeMinutes),
+            key: currentInstrument + '|' + String(currentTimeframeMinutes) + '|' + hist.since + '|' + hist.limit,
             url: SMC_INDICATOR_URL + '?' + params.toString(),
             apply: (d) => {
                 try {
@@ -4889,9 +4959,10 @@
         });
         const wantSweepRaid = !!(layerSweepRaid && layerSweepRaid.checked);
         if (wantSweepRaid) params.set('include_sweep_raid', '1');
+        const hist = appendIndicatorHistoryParams(params);
         PlatformChartFetch.requestJson('structures', {
-            // Флаг входит в key: включение слоя не должно приклеиться к in-flight ответу без событий.
-            key: currentInstrument + '|' + String(currentTimeframeMinutes) + '|' + (wantSweepRaid ? 'srl' : 'plain'),
+            // since/limit в key: после loadMore пересчитываем зоны под новую историю.
+            key: currentInstrument + '|' + String(currentTimeframeMinutes) + '|' + (wantSweepRaid ? 'srl' : 'plain') + '|' + hist.since + '|' + hist.limit,
             url: STRUCTURES_URL + '?' + params.toString(),
             apply: (data) => {
                 lastZones = data.zones || [];
@@ -5006,8 +5077,8 @@
         let since;
         let limit;
         if (kind === 'more') {
-            // Догрузка влево опирается на «потолок» истории (24ч), чтобы пользователь
-            // мог пролистать на максимально возможную глубину.
+            // Догрузка влево до потолка MAX_WINDOW_SEC (= retention из /settings).
+            // Пользователь может пролистать всю доступную в БД историю в пределах окна.
             since = Math.floor(Date.now() / 1000) - MAX_WINDOW_SEC;
             limit = LOAD_MORE_LIMIT;
         } else if (kind === 'poll') {

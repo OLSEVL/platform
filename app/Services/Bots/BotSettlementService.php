@@ -160,6 +160,18 @@ class BotSettlementService
                 $settledFallback++;
             }
 
+            // Dual DeMarker: после LOSS колена K открываем колено K+1 без нового сигнала.
+            if ((string) $trade->result === BotTrade::RESULT_LOSS) {
+                try {
+                    app(BotSignalKneeFollowUpService::class)->maybeOpenNextKnee($trade);
+                } catch (\Throwable $e) {
+                    Log::warning('knee_follow_up_failed', [
+                        'trade_id' => $trade->id,
+                        'error' => $e->getMessage(),
+                    ]);
+                }
+            }
+
             // После commit: WIN/LOSS в Telegram (ошибка отправки не откатывает settlement).
             $this->notifyTelegramTradeResult($trade);
         }

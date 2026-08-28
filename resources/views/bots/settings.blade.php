@@ -11,11 +11,16 @@
     // Отдельно выносим дефолтный prompt в переменную, чтобы не ломать Blade
     // сложной строкой с JSON-скобками внутри inline-выражения.
     $openrouterDefaultPrompt = \App\Support\OpenRouterLlmConfig::defaultTradingSystemPrompt();
-    $openrouterAnalystDefaultPrompt = \App\Support\OpenRouterChartLevelsParser::defaultAnalystSystemPromptForConfig($cfg);
-    $openrouterAnalystShortDefaultPrompt = \App\Support\OpenRouterChartLevelsParser::defaultAnalystSystemPromptShortForConfig($cfg);
+    $cfgForPrompt = $cfg;
+    $cfgForPrompt['_bot_type'] = $bot->type;
+    $openrouterAnalystDefaultPrompt = \App\Support\OpenRouterChartLevelsParser::defaultAnalystSystemPromptForConfig($cfgForPrompt);
+    $openrouterAnalystShortDefaultPrompt = \App\Support\OpenRouterChartLevelsParser::defaultAnalystSystemPromptShortForConfig($cfgForPrompt);
     $analystPromptMode = old('analyst_prompt_mode', $cfg['analyst_prompt_mode'] ?? \App\Support\OpenRouterLlmConfig::ANALYST_PROMPT_MODE_FULL);
-    $isChartAnalystBot = $bot->type === 'openrouter_llm_analyst';
-    $analystSmcFlowEnabled = $isChartAnalystBot && \App\Support\OpenRouterLlmConfig::analystSmcFlowEnabled($cfg);
+    $isChartAnalystBot = \App\Support\ChartAnalystBotTypes::isAnalyst($bot->type);
+    $isSrlAnalystBot = \App\Support\ChartAnalystBotTypes::isSrl($bot->type);
+    $analystSmcFlowEnabled = $isChartAnalystBot && ! $isSrlAnalystBot
+        && \App\Support\OpenRouterLlmConfig::analystSmcFlowEnabled($cfg);
+    $analystSrlFlowEnabled = $isSrlAnalystBot;
 @endphp
 <div class="mx-auto w-full max-w-2xl space-y-6">
     <div class="flex flex-wrap items-baseline justify-between gap-3">
@@ -196,7 +201,9 @@
             </label>
         </div>
 
-        @include('bots._scan-interval-settings', ['cfg' => $cfg])
+        @if (! \App\Support\MaxBotConfig::is($bot->type))
+            @include('bots._scan-interval-settings', ['cfg' => $cfg])
+        @endif
         @else
         <p class="text-sm text-zinc-500">
             Плановый <code class="text-zinc-400">bots:scan</code> для Chart Analyst не запускается.
@@ -1139,6 +1146,8 @@
             </div>
         @elseif (\App\Support\OsEngineWaveABotConfig::isWaveA($bot->type))
             @include('bots._wave-a-settings', ['bot' => $bot, 'cfg' => $cfg, 'chartAnalystBots' => $chartAnalystBots ?? []])
+        @elseif (\App\Support\MaxBotConfig::is($bot->type))
+            @include('bots._max-bot-settings', ['bot' => $bot, 'cfg' => $cfg, 'chartAnalystBots' => $chartAnalystBots ?? []])
         @elseif (\App\Support\OsEngineWaveBBotConfig::isWaveB($bot->type))
             @include('bots._wave-b-settings', ['bot' => $bot, 'cfg' => $cfg, 'chartAnalystBots' => $chartAnalystBots ?? []])
         @elseif ($bot->type === 'openrouter_llm')
@@ -1286,12 +1295,14 @@
                         @error('system_prompt')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                 </div>
             </div>
-        @elseif ($bot->type === 'openrouter_llm_analyst')
+        @elseif ($isChartAnalystBot)
             <div class="space-y-5 border-t border-zinc-800 pt-4">
                 <div class="space-y-2 text-sm text-zinc-400">
                     <p>
-                        <strong class="text-zinc-300">Chart Analyst</strong> —
-                    @if($analystSmcFlowEnabled)
+                        <strong class="text-zinc-300">{{ $isSrlAnalystBot ? 'Chart Analyst Sweep/Raid' : 'Chart Analyst' }}</strong> —
+                    @if($isSrlAnalystBot)
+                            ручной и Telegram-анализ: детектор находит SWEEP/RAID/PB, LLM только подтверждает или отклоняет. Экспирация ориентир 60 с.
+                    @elseif($analystSmcFlowEnabled)
                             ручной и Telegram-анализ с снимком SMC Flow в LLM + блок <code class="text-zinc-400">chart_levels</code> для графика.
                     @else
                             ручной анализ по кнопке «Сделать анализ» на графике (классический MTF без SMC в промпте).
@@ -1300,6 +1311,33 @@
                 </p>
                     <p class="text-[11px] text-zinc-500">Ответ — текст на русском + уровни для оверлея. История в <code class="text-zinc-400">bot_llm_logs</code>.</p>
                 </div>
+
+                @if ($isSrlAnalystBot)
+                <p class="text-xs font-semibold uppercase tracking-wide text-zinc-500">Sweep / Raid — кандидаты для LLM</p>
+                <div class="grid gap-4 sm:grid-cols-2">
+                    <div class="space-y-1">
+                        <label for="srl_pivot_length" class="block text-xs font-medium text-zinc-400">Pivot length (фрактал)</label>
+                        <input type="number" name="srl_pivot_length" id="srl_pivot_length" min="1" max="100" required
+                            value="{{ old('srl_pivot_length', $cfg['srl_pivot_length'] ?? 2) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        <p class="text-[11px] text-zinc-500">Тот же параметр, что у rule-based бота и индикатора SRL.</p>
+                        @error('srl_pivot_length')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                    <div class="space-y-2 sm:col-span-2">
+                        <label class="flex items-start gap-2">
+                            <input type="checkbox" name="srl_enter_sweep" value="1" class="mt-0.5 rounded border-zinc-600 bg-zinc-800 text-blue-500"
+                                @checked(old('srl_enter_sweep', ($cfg['srl_enter_sweep'] ?? true) ? '1' : '') === '1' || (old('srl_enter_sweep') === null && ($cfg['srl_enter_sweep'] ?? true)))>
+                            <span class="text-xs text-zinc-300">Кандидаты на свипе (вход сразу после валидного SWEEP)</span>
+                        </label>
+                        <label class="flex items-start gap-2">
+                            <input type="checkbox" name="srl_enter_pullback" value="1" class="mt-0.5 rounded border-zinc-600 bg-zinc-800 text-blue-500"
+                                @checked(old('srl_enter_pullback', ($cfg['srl_enter_pullback'] ?? true) ? '1' : '') === '1' || (old('srl_enter_pullback') === null && ($cfg['srl_enter_pullback'] ?? true)))>
+                            <span class="text-xs text-zinc-300">Кандидаты на первой откатной после SWEEP/RAID</span>
+                        </label>
+                        @error('srl_enter_sweep')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                </div>
+                @endif
 
                 <p class="text-xs font-semibold uppercase tracking-wide text-zinc-500">Данные для модели</p>
                 <div class="grid gap-4 sm:grid-cols-2">
@@ -2528,6 +2566,212 @@
                         <label for="stale_after_sec" class="block text-xs font-medium text-zinc-400">Свежесть текущей свечи (сек)</label>
                         <input type="number" name="stale_after_sec" id="stale_after_sec" min="5" max="600" required
                             value="{{ old('stale_after_sec', $cfg['stale_after_sec'] ?? 30) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @error('stale_after_sec')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                    <div class="space-y-1">
+                        <label for="dedupe_bucket_sec" class="block text-xs font-medium text-zinc-400">Защита от дубля (сек)</label>
+                        <input type="number" name="dedupe_bucket_sec" id="dedupe_bucket_sec" min="30" max="3600" required
+                            value="{{ old('dedupe_bucket_sec', $cfg['dedupe_bucket_sec'] ?? ($demarkerTimeframe === \App\Services\CandleService::TF_S30 ? 30 : 60)) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @error('dedupe_bucket_sec')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                </div>
+                @include('bots._strategy-telegram-settings', ['bot' => $bot, 'cfg' => $cfg])
+            </div>
+        @elseif ($bot->type === \App\Support\DemarkerDualFastConfig::BOT_TYPE)
+            @php
+                $ddf = \App\Support\DemarkerDualFastConfig::defaultConfig();
+                $demarkerTimeframe = (int) old('timeframe', $cfg['timeframe'] ?? $ddf['timeframe']);
+            @endphp
+            <div class="space-y-5 border-t border-zinc-800 pt-4">
+                <div class="space-y-2 text-sm text-zinc-400">
+                    <p>
+                        <strong class="text-zinc-300">Dual DeMarker Fast</strong> — выход основного DeMarker с дельтой,
+                        подтверждение быстрым DeM2 в окне N баров, мин. свечей в зоне и фильтр импульса.
+                        Второе колено открывается только после LOSS первого.
+                    </p>
+                </div>
+
+                <div class="grid gap-4 sm:grid-cols-2">
+                    <div class="space-y-1">
+                        <label for="timeframe" class="block text-xs font-medium text-zinc-400">Таймфрейм</label>
+                        <select name="timeframe" id="timeframe" required
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                            <option value="{{ \App\Services\CandleService::TF_S30 }}" @selected($demarkerTimeframe === \App\Services\CandleService::TF_S30)>S30 — сделка 30 сек</option>
+                            <option value="1" @selected($demarkerTimeframe === 1)>M1 — сделка 60 сек</option>
+                        </select>
+                        @error('timeframe')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                    <div class="space-y-1">
+                        <label for="count" class="block text-xs font-medium text-zinc-400">Свечей в выборке</label>
+                        <input type="number" name="count" id="count" min="10" max="5000" required
+                            value="{{ old('count', $cfg['count'] ?? $ddf['count']) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @error('count')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                    <div class="space-y-1">
+                        <label for="streak_len" class="block text-xs font-medium text-zinc-400">Свечей подряд (0 = выкл.)</label>
+                        <input type="number" name="streak_len" id="streak_len" min="0" max="30" required
+                            value="{{ old('streak_len', $cfg['streak_len'] ?? $ddf['streak_len']) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        <p class="text-[11px] text-zinc-500">Опциональный фильтр поверх dual-DeMarker: N одноцветных до входа в зону.</p>
+                        @error('streak_len')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                    <div class="space-y-1">
+                        <label for="entries_per_signal" class="block text-xs font-medium text-zinc-400">Колен на сигнал</label>
+                        <input type="number" name="entries_per_signal" id="entries_per_signal" min="1" max="5" required
+                            value="{{ old('entries_per_signal', $cfg['entries_per_signal'] ?? $ddf['entries_per_signal']) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        <p class="text-[11px] text-zinc-500">2 = после LOSS первого сразу второе колено в ту же сторону.</p>
+                        @error('entries_per_signal')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                    <div class="space-y-1">
+                        <label for="candle_strictness" class="block text-xs font-medium text-zinc-400">Строгость свечей (для streak)</label>
+                        @php $demarkerStrictness = old('candle_strictness', $cfg['candle_strictness'] ?? $ddf['candle_strictness']); @endphp
+                        <select name="candle_strictness" id="candle_strictness" required
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                            <option value="strict" @selected($demarkerStrictness === 'strict')>Строго</option>
+                            <option value="with_doji" @selected($demarkerStrictness === 'with_doji')>С доджи</option>
+                        </select>
+                        @error('candle_strictness')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                    <div class="space-y-1">
+                        <label for="min_body_to_range_ratio" class="block text-xs font-medium text-zinc-400">Мин. доля тела (streak, 0 = выкл.)</label>
+                        <input type="number" name="min_body_to_range_ratio" id="min_body_to_range_ratio" min="0" max="1" step="0.01" required
+                            value="{{ old('min_body_to_range_ratio', $cfg['min_body_to_range_ratio'] ?? $ddf['min_body_to_range_ratio']) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @error('min_body_to_range_ratio')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                </div>
+
+                <p class="text-xs font-semibold uppercase tracking-wide text-zinc-500">DeMarker 1 (основной)</p>
+                <div class="grid gap-4 rounded border border-zinc-800 bg-zinc-900/40 p-4 sm:grid-cols-4">
+                    <div class="space-y-1">
+                        <label for="demarker_period" class="block text-xs font-medium text-zinc-400">Период</label>
+                        <input type="number" name="demarker_period" id="demarker_period" min="1" max="500" required
+                            value="{{ old('demarker_period', $cfg['demarker_period'] ?? $ddf['demarker_period']) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @error('demarker_period')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                    <div class="space-y-1">
+                        <label for="demarker_oversold" class="block text-xs font-medium text-zinc-400">Нижняя зона %</label>
+                        <input type="number" name="demarker_oversold" id="demarker_oversold" min="0" max="49.99" step="0.01" required
+                            value="{{ old('demarker_oversold', $cfg['demarker_oversold'] ?? $ddf['demarker_oversold']) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @error('demarker_oversold')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                    <div class="space-y-1">
+                        <label for="demarker_overbought" class="block text-xs font-medium text-zinc-400">Верхняя зона %</label>
+                        <input type="number" name="demarker_overbought" id="demarker_overbought" min="50.01" max="100" step="0.01" required
+                            value="{{ old('demarker_overbought', $cfg['demarker_overbought'] ?? $ddf['demarker_overbought']) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @error('demarker_overbought')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                    <div class="space-y-1">
+                        <label for="demarker_level_delta" class="block text-xs font-medium text-zinc-400">LEVEL_DELTA</label>
+                        <input type="number" name="demarker_level_delta" id="demarker_level_delta" min="0" max="50" step="0.1" required
+                            value="{{ old('demarker_level_delta', $cfg['demarker_level_delta'] ?? $ddf['demarker_level_delta']) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        <p class="text-[11px] text-zinc-500">CALL: ≤OS → ≥OS+Δ; PUT: ≥OB → ≤OB−Δ.</p>
+                        @error('demarker_level_delta')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                </div>
+
+                <p class="text-xs font-semibold uppercase tracking-wide text-zinc-500">DeMarker 2 (быстрый)</p>
+                <div class="grid gap-4 rounded border border-zinc-800 bg-zinc-900/40 p-4 sm:grid-cols-3">
+                    <div class="space-y-1 sm:col-span-3">
+                        <label class="inline-flex items-center gap-2 text-xs text-zinc-300">
+                            <input type="checkbox" name="second_demarker_enabled" value="1"
+                                @checked(old('second_demarker_enabled', $cfg['second_demarker_enabled'] ?? $ddf['second_demarker_enabled']))
+                                class="rounded border-zinc-600 bg-zinc-900 text-emerald-500">
+                            Включить подтверждение DeM2
+                        </label>
+                    </div>
+                    <div class="space-y-1">
+                        <label for="second_demarker_period" class="block text-xs font-medium text-zinc-400">Период</label>
+                        <input type="number" name="second_demarker_period" id="second_demarker_period" min="1" max="500" required
+                            value="{{ old('second_demarker_period', $cfg['second_demarker_period'] ?? $ddf['second_demarker_period']) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @error('second_demarker_period')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                    <div class="space-y-1">
+                        <label for="second_demarker_oversold" class="block text-xs font-medium text-zinc-400">Нижняя %</label>
+                        <input type="number" name="second_demarker_oversold" id="second_demarker_oversold" min="0" max="49.99" step="0.01" required
+                            value="{{ old('second_demarker_oversold', $cfg['second_demarker_oversold'] ?? $ddf['second_demarker_oversold']) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @error('second_demarker_oversold')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                    <div class="space-y-1">
+                        <label for="second_demarker_overbought" class="block text-xs font-medium text-zinc-400">Верхняя %</label>
+                        <input type="number" name="second_demarker_overbought" id="second_demarker_overbought" min="50.01" max="100" step="0.01" required
+                            value="{{ old('second_demarker_overbought', $cfg['second_demarker_overbought'] ?? $ddf['second_demarker_overbought']) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @error('second_demarker_overbought')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                    <div class="space-y-1">
+                        <label for="second_demarker_level_delta" class="block text-xs font-medium text-zinc-400">LEVEL_DELTA</label>
+                        <input type="number" name="second_demarker_level_delta" id="second_demarker_level_delta" min="0" max="50" step="0.1" required
+                            value="{{ old('second_demarker_level_delta', $cfg['second_demarker_level_delta'] ?? $ddf['second_demarker_level_delta']) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @error('second_demarker_level_delta')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                    <div class="space-y-1">
+                        <label for="second_demarker_confirm_bars" class="block text-xs font-medium text-zinc-400">Окно подтверждения (баров)</label>
+                        <input type="number" name="second_demarker_confirm_bars" id="second_demarker_confirm_bars" min="1" max="30" required
+                            value="{{ old('second_demarker_confirm_bars', $cfg['second_demarker_confirm_bars'] ?? $ddf['second_demarker_confirm_bars']) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        <p class="text-[11px] text-zinc-500">DeM2 может подтвердить на текущем или на N−1 предыдущих барах.</p>
+                        @error('second_demarker_confirm_bars')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                </div>
+
+                <p class="text-xs font-semibold uppercase tracking-wide text-zinc-500">Фильтры зоны и импульса</p>
+                <div class="grid gap-4 sm:grid-cols-3">
+                    <div class="space-y-1">
+                        <label for="min_candles_in_zone" class="block text-xs font-medium text-zinc-400">Мин. свечей в зоне DeM1</label>
+                        <input type="number" name="min_candles_in_zone" id="min_candles_in_zone" min="1" max="50" required
+                            value="{{ old('min_candles_in_zone', $cfg['min_candles_in_zone'] ?? $ddf['min_candles_in_zone']) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        <p class="text-[11px] text-zinc-500">Бар выхода не считается.</p>
+                        @error('min_candles_in_zone')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                    <div class="space-y-1">
+                        <label for="max_exit_candle_ratio" class="block text-xs font-medium text-zinc-400">Макс. |H−L| / avg</label>
+                        <input type="number" name="max_exit_candle_ratio" id="max_exit_candle_ratio" min="0.1" max="20" step="0.1" required
+                            value="{{ old('max_exit_candle_ratio', $cfg['max_exit_candle_ratio'] ?? $ddf['max_exit_candle_ratio']) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @error('max_exit_candle_ratio')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                    <div class="space-y-1">
+                        <label for="exit_candle_avg_bars" class="block text-xs font-medium text-zinc-400">Баров для avg |H−L|</label>
+                        <input type="number" name="exit_candle_avg_bars" id="exit_candle_avg_bars" min="1" max="100" required
+                            value="{{ old('exit_candle_avg_bars', $cfg['exit_candle_avg_bars'] ?? $ddf['exit_candle_avg_bars']) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @error('exit_candle_avg_bars')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                </div>
+
+                <div class="grid gap-4 sm:grid-cols-2">
+                    <input type="hidden" name="expiry_sec" value="{{ $demarkerTimeframe === \App\Services\CandleService::TF_S30 ? 30 : 60 }}">
+                    <div class="space-y-1">
+                        <label for="min_confidence" class="block text-xs font-medium text-zinc-400">Мин. confidence (0–1)</label>
+                        <input type="number" name="min_confidence" id="min_confidence" min="0" max="1" step="0.01" required
+                            value="{{ old('min_confidence', $cfg['min_confidence'] ?? $ddf['min_confidence']) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @error('min_confidence')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                    <div class="space-y-1">
+                        <label for="min_payout" class="block text-xs font-medium text-zinc-400">Мин. payout (%)</label>
+                        <input type="number" name="min_payout" id="min_payout" min="0" max="100" step="0.1" required
+                            value="{{ old('min_payout', $cfg['min_payout'] ?? $ddf['min_payout']) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @error('min_payout')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                    <div class="space-y-1">
+                        <label for="stale_after_sec" class="block text-xs font-medium text-zinc-400">Свежесть текущей свечи (сек)</label>
+                        <input type="number" name="stale_after_sec" id="stale_after_sec" min="5" max="600" required
+                            value="{{ old('stale_after_sec', $cfg['stale_after_sec'] ?? $ddf['stale_after_sec']) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
                         @error('stale_after_sec')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>

@@ -9,6 +9,7 @@ use App\Models\PocketInstrument;
 use App\Services\CandleService;
 use App\Services\CandleStructureZoneDetector;
 use App\Services\CurrentCandleCacheService;
+use App\Services\DataCleanupService;
 use App\Services\Trading\ManualPocketOrderService;
 use App\Services\Indicators\AtrIndicatorService;
 use App\Services\Indicators\BollingerIndicatorService;
@@ -116,6 +117,9 @@ class DashboardController extends Controller
             ['minutes' => 240, 'label' => '4ч'],
         ];
 
+        // Окно скролла графика = retention из /settings (не хардкод 24ч).
+        $chartHistoryMaxSeconds = app(DataCleanupService::class)->chartHistoryMaxSeconds();
+
         return view('dashboard', [
             'instruments' => $instruments,
             'openTradeInstruments' => $openTradeInstruments,
@@ -125,6 +129,7 @@ class DashboardController extends Controller
             'chartIndicatorBot' => $this->chartIndicatorBotForUser(),
             // Дефолты правой панели CALL/PUT: сумма и готовность SSID из профиля.
             'manualTrade' => app(ManualPocketOrderService::class)->panelDefaults(auth()->user()),
+            'chartHistoryMaxSeconds' => $chartHistoryMaxSeconds,
         ]);
     }
 
@@ -140,44 +145,85 @@ class DashboardController extends Controller
     }
 
     /**
-     * Окно и лимит баров для оверлеев (structures / PA / LS / SMC).
-     * На S5/S15/S30 не тянем 24ч — достаточно ~500 баров для зон и индикаторов.
+     * Окно свечей для оверлеев и classic-индикаторов.
      *
-     * @return array{0: int, 1: int|null} [sinceUnix, maxBars]
+     * Фронт передаёт since/limit по уже загруженным на графике свечам (+ warmup).
+     * Иначе LWC раздувает timeScale до «лишней» истории индикатора (раньше часто ~сутки),
+     * либо линии обрываются при скролле влево дальше серверного окна.
+     *
+     * Потолок — chartHistoryMaxSeconds() из /settings (тот же, что MAX_WINDOW_SEC).
+     *
+     * @return array{0: int, 1: int} [sinceUnix, maxBars]
      */
-    private function overlayHistoryWindow(int $timeframe): array
-    {
+    private function resolveIndicatorHistoryWindow(
+        int $timeframe,
+        ?int $sinceOverride = null,
+        ?int $limitOverride = null,
+        int $defaultMaxBars = 2000,
+        int $hardMaxBars = 5000,
+    ): array {
+        $windowSec = app(DataCleanupService::class)->chartHistoryMaxSeconds();
+        $floor = time() - $windowSec;
+        $hardMaxBars = max(100, $hardMaxBars);
+        $maxBars = min($hardMaxBars, max(100, $limitOverride ?? $defaultMaxBars));
+
         if (in_array($timeframe, CandleService::DASHBOARD_SECOND_TIMEFRAMES, true)) {
             $barSec = PriceActionDgtIndicatorService::barSecondsForTimeframe($timeframe);
-            $maxBars = 500;
+            // Без since от клиента — короткий хвост (как раньше ~500 баров), не весь retention.
+            $since = $sinceOverride !== null
+                ? max($floor, $sinceOverride)
+                : time() - ($maxBars * $barSec);
 
-            return [time() - ($maxBars * $barSec), $maxBars];
+            return [max($floor, $since), $maxBars];
         }
 
-        return [time() - 86400, 5000];
+        $barSec = max(60, $timeframe * 60);
+        $since = $sinceOverride !== null
+            ? max($floor, $sinceOverride)
+            : max($floor, time() - ($maxBars * $barSec));
+
+        return [$since, $maxBars];
     }
 
     /**
-     * Окно свечей именно для /indicators/classic.
+     * Читает опциональные since/limit из query индикаторных эндпоинтов.
      *
-     * Общий overlayHistoryWindow(24ч / до 5000 баров) на M1 даёт ~1200+ минут + тяжёлые
-     * VolStages/ZigZag → ответ 10–20с. Фронт параллельно каждые 15с инвалидирует in-flight
-     * через classicIndicatorsFetchSeq — ответ никогда не применяется, нижняя pane «не появляется».
-     * Режем до ~500 баров: SMA/RSI/каналам хватает, ответ укладывается в 1–2с.
-     *
-     * @return array{0:int,1:int} [sinceUnix, maxBars]
+     * @return array{0: int|null, 1: int|null}
      */
-    private function classicIndicatorsHistoryWindow(int $timeframe): array
+    private function indicatorSinceLimitFromRequest(Request $request): array
     {
-        if (in_array($timeframe, CandleService::DASHBOARD_SECOND_TIMEFRAMES, true)) {
-            return $this->overlayHistoryWindow($timeframe);
-        }
+        $since = $request->input('since');
+        $limit = $request->input('limit');
 
-        $maxBars = 500;
-        // timeframe на дашборде — минуты (1, 5, 15…); секунды бара = minutes * 60.
-        $barSec = max(60, $timeframe * 60);
+        return [
+            $since !== null && $since !== '' ? (int) $since : null,
+            $limit !== null && $limit !== '' ? (int) $limit : null,
+        ];
+    }
 
-        return [time() - ($maxBars * $barSec), $maxBars];
+    /** @deprecated Используйте resolveIndicatorHistoryWindow — оставлено для читаемости старых вызовов. */
+    private function overlayHistoryWindow(int $timeframe, ?int $sinceOverride = null, ?int $limitOverride = null): array
+    {
+        return $this->resolveIndicatorHistoryWindow(
+            $timeframe,
+            $sinceOverride,
+            $limitOverride,
+            defaultMaxBars: 2000,
+            hardMaxBars: 12000,
+        );
+    }
+
+    /** @deprecated Используйте resolveIndicatorHistoryWindow. */
+    private function classicIndicatorsHistoryWindow(int $timeframe, ?int $sinceOverride = null, ?int $limitOverride = null): array
+    {
+        // Дефолт без since: до 1500 баров (не фикс. 500) — хватает SMA/RSI без раздувания на 7д.
+        return $this->resolveIndicatorHistoryWindow(
+            $timeframe,
+            $sinceOverride,
+            $limitOverride,
+            defaultMaxBars: 1500,
+            hardMaxBars: 5000,
+        );
     }
 
     public function instrumentsSidebarData(): JsonResponse
@@ -404,10 +450,14 @@ class DashboardController extends Controller
             // Расчёт Sweep / Raid запускаем только по запросу включённого dashboard-слоя,
             // чтобы обычное обновление OB/FVG не выполняло лишний проход по свечам.
             'include_sweep_raid' => ['nullable', 'boolean'],
+            // Окно = загруженные на графике свечи (фронт), иначе дефолт resolveIndicatorHistoryWindow.
+            'since' => ['nullable', 'integer', 'min:0'],
+            'limit' => ['nullable', 'integer', 'min:1', 'max:12000'],
         ]);
         $instrument = (string) $validated['instrument'];
         $timeframe = (int) ($validated['timeframe'] ?? 1);
-        [$since, $maxBars] = $this->overlayHistoryWindow($timeframe);
+        [$sinceOverride, $limitOverride] = $this->indicatorSinceLimitFromRequest($request);
+        [$since, $maxBars] = $this->overlayHistoryWindow($timeframe, $sinceOverride, $limitOverride);
 
         // Структуры должны использовать ту же временную ось, что и candles endpoint:
         // без повторного timezone-преобразования.
@@ -445,10 +495,13 @@ class DashboardController extends Controller
         $request->validate([
             'instrument' => ['required', 'string', 'max:64'],
             'timeframe' => ['nullable', 'integer', Rule::in(CandleService::DASHBOARD_TIMEFRAMES)],
+            'since' => ['nullable', 'integer', 'min:0'],
+            'limit' => ['nullable', 'integer', 'min:1', 'max:12000'],
         ]);
         $instrument = (string) $request->input('instrument');
         $timeframe = (int) ($request->input('timeframe') ?? 1);
-        [$since, $maxBars] = $this->overlayHistoryWindow($timeframe);
+        [$sinceOverride, $limitOverride] = $this->indicatorSinceLimitFromRequest($request);
+        [$since, $maxBars] = $this->overlayHistoryWindow($timeframe, $sinceOverride, $limitOverride);
         $rows = $candleService->seriesForDashboard($instrument, $timeframe, $since, null, $maxBars);
         $anchorBot = $this->chartIndicatorBotForUser();
         $params = $anchorBot !== null
@@ -476,10 +529,13 @@ class DashboardController extends Controller
         $request->validate([
             'instrument' => ['required', 'string', 'max:64'],
             'timeframe' => ['nullable', 'integer', Rule::in(CandleService::DASHBOARD_TIMEFRAMES)],
+            'since' => ['nullable', 'integer', 'min:0'],
+            'limit' => ['nullable', 'integer', 'min:1', 'max:12000'],
         ]);
         $instrument = (string) $request->input('instrument');
         $timeframe = (int) ($request->input('timeframe') ?? 1);
-        [$since, $maxBars] = $this->overlayHistoryWindow($timeframe);
+        [$sinceOverride, $limitOverride] = $this->indicatorSinceLimitFromRequest($request);
+        [$since, $maxBars] = $this->overlayHistoryWindow($timeframe, $sinceOverride, $limitOverride);
         $rows = $candleService->seriesForDashboard($instrument, $timeframe, $since, null, $maxBars);
         $anchorBot = $this->chartIndicatorBotForUser();
         $lsParams = $anchorBot !== null
@@ -507,10 +563,13 @@ class DashboardController extends Controller
         $request->validate([
             'instrument' => ['required', 'string', 'max:64'],
             'timeframe' => ['nullable', 'integer', Rule::in(CandleService::DASHBOARD_TIMEFRAMES)],
+            'since' => ['nullable', 'integer', 'min:0'],
+            'limit' => ['nullable', 'integer', 'min:1', 'max:12000'],
         ]);
         $instrument = (string) $request->input('instrument');
         $timeframe = (int) ($request->input('timeframe') ?? 1);
-        [$since, $maxBars] = $this->overlayHistoryWindow($timeframe);
+        [$sinceOverride, $limitOverride] = $this->indicatorSinceLimitFromRequest($request);
+        [$since, $maxBars] = $this->overlayHistoryWindow($timeframe, $sinceOverride, $limitOverride);
         $rows = $candleService->seriesForDashboard($instrument, $timeframe, $since, null, $maxBars);
         $anchorBot = $this->chartIndicatorBotForUser();
         $smcParams = $anchorBot !== null
@@ -611,6 +670,9 @@ class DashboardController extends Controller
             'layers' => ['nullable', 'array'],
             // OHLC-пакет (Donchian…Mass Index) — те же ключи, что на bots/show.
             'layers.*' => ['string', Rule::in(['bollinger', 'rsi', 'sma', 'ema', 'vwma', 'atr', 'macd', 'stochastic', 'cci', 'keltner', 'envelops', 'parabolic_sar', 'supertrend', 'adx', 'williams', 'ao', 'alligator', 'ichimoku', 'price_channel', 'nrtr', 'hma', 'aroon', 'momentum', 'roc', 'osma', 'trix', 'cmo', 'demarker', 'rvi', 'ultimate', 'smi', 'stddev', 'sma_channel', 'ivashov', 'linreg', 'linreg_channel', 'kalman', 'fractal', 'donchian', 'stoch_rsi', 'ac', 'bulls_power', 'bears_power', 'dpo', 'qstick', 'vh_filter', 'efficiency_ratio', 'ravi', 'cog', 'pivot_floor', 'mass_index', 'nrtr_watr', 'price_channel_adaptive', 'price_channel_offset', 'parabolic_bollinger', 'parabolic_price_channel', 'atr_channel', 'offset_sma', 'offset_ema', 'offset_ssma', 'volatility_average', 'volatility_average_channel', 'price_oscillator', 'dynamic_trend_detector', 'adaptive_look_back', 'linreg_channel_fast', 'volatility_candles', 'zigzag', 'volatility_average_twice', 'volatility_stages_aw'])],
+            // since/limit с графика: считаем ровно под загруженные свечи (+ warmup на фронте).
+            'since' => ['nullable', 'integer', 'min:0'],
+            'limit' => ['nullable', 'integer', 'min:1', 'max:5000'],
         ]);
 
         $instrument = (string) $validated['instrument'];
@@ -627,8 +689,8 @@ class DashboardController extends Controller
             ]);
         }
 
-        // Classic — отдельное «короткое» окно: см. classicIndicatorsHistoryWindow().
-        [$since, $maxBars] = $this->classicIndicatorsHistoryWindow($timeframe);
+        [$sinceOverride, $limitOverride] = $this->indicatorSinceLimitFromRequest($request);
+        [$since, $maxBars] = $this->classicIndicatorsHistoryWindow($timeframe, $sinceOverride, $limitOverride);
         $rows = $candleService->seriesForDashboard($instrument, $timeframe, $since, null, $maxBars);
         $anchorBot = $this->chartIndicatorBotForUser();
 

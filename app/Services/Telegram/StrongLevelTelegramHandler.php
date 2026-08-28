@@ -141,7 +141,7 @@ class StrongLevelTelegramHandler
         $analyst = Bot::query()->find($parsed['analyst_bot_id']);
         if (
             $analyst === null
-            || $analyst->type !== 'openrouter_llm_analyst'
+            || ! \App\Support\ChartAnalystBotTypes::isAnalyst($analyst->type)
             || $analyst->user_id !== $bot->user_id
         ) {
             $this->telegram->answerCallbackQuery($token, $callbackId, 'Chart Analyst не найден');
@@ -206,6 +206,7 @@ class StrongLevelTelegramHandler
         return match ($type) {
             'strong_trend_telegram' => 'Strong Trend Telegram',
             'strong_trend_demarker' => 'Strong Trend + DeMarker',
+            \App\Support\DemarkerDualFastConfig::BOT_TYPE => 'Dual DeMarker Fast',
             'sweep_raid_liquidity' => 'Sweep / Raid Liquidity',
             'candle_reversal_confirm' => 'Candle Reversal + Confirm',
             default => 'Strong Level',

@@ -107,7 +107,28 @@ final class OpenRouterLlmConfig
      */
     public static function analystSmcFlowEnabled(array $config): bool
     {
+        // SRL-пакет взаимоисключает SMC: иначе в payload уйдут оба снимка.
+        if (self::analystSrlFlowEnabled($config)) {
+            return false;
+        }
+
         return (bool) ($config['analyst_smc_flow_enabled'] ?? false);
+    }
+
+    /**
+     * Включён ли пакет Sweep / Raid для LLM-аналитика.
+     * Для type=openrouter_llm_analyst_srl всегда true (даже если ключ в config забыли).
+     *
+     * @param  array<string, mixed>  $config
+     */
+    public static function analystSrlFlowEnabled(array $config): bool
+    {
+        $botType = (string) ($config['_bot_type'] ?? '');
+        if ($botType === ChartAnalystBotTypes::SRL) {
+            return true;
+        }
+
+        return (bool) ($config['analyst_srl_flow_enabled'] ?? false);
     }
 
     /**

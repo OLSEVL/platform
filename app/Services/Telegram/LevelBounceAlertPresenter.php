@@ -3,6 +3,7 @@
 namespace App\Services\Telegram;
 
 use App\Support\LevelBounceBotTypes;
+use App\Support\MaxBotConfig;
 
 /**
  * Тексты Telegram-алертов и карточек для ботов отбития от уровня
@@ -141,6 +142,7 @@ class LevelBounceAlertPresenter
             'three_soldier_vol_adaptive' => '🕯',
             'vol_adaptive_candles' => '⚡',
             'custom_candles_impulse' => '🚀',
+            MaxBotConfig::BOT_TYPE => '⚡',
             'cci_trade' => '📐',
             'rsi_trade' => '📊',
             'rvi_trade' => '📈',
@@ -165,6 +167,7 @@ class LevelBounceAlertPresenter
             'three_soldier_vol_adaptive' => '🕯 <b>Three Soldier Vol — '.$sideEsc.'</b>',
             'vol_adaptive_candles' => '⚡ <b>Vol Adaptive Candle — '.$sideEsc.'</b>',
             'custom_candles_impulse' => '🚀 <b>Candles Impulse — '.$sideEsc.'</b>',
+            MaxBotConfig::BOT_TYPE => '⚡ <b>MaxBot — '.$sideEsc.'</b>',
             'cci_trade' => '📐 <b>CCI — '.$sideEsc.'</b>',
             'rsi_trade' => '📊 <b>RSI Trade — '.$sideEsc.'</b>',
             'rvi_trade' => '📈 <b>RVI — '.$sideEsc.'</b>',
@@ -190,6 +193,7 @@ class LevelBounceAlertPresenter
             'three_soldier_vol_adaptive' => 'Three Soldier Vol Adaptive',
             'vol_adaptive_candles' => 'Vol Adaptive Candles',
             'custom_candles_impulse' => 'Custom Candles Impulse',
+            MaxBotConfig::BOT_TYPE => 'MaxBot',
             'cci_trade' => 'CCI',
             'rsi_trade' => 'RSI Trade',
             'rvi_trade' => 'RVI',

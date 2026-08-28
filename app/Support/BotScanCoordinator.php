@@ -41,19 +41,31 @@ final class BotScanCoordinator
     /** Lock для ручного прохода всех ботов в одном процессе (без --bot_id). */
     public const ALL_BOTS_LOCK = 'bots:scan:all';
 
-    /** Как в bootstrap/app.php: bots:scan-dispatch → everyThirtySeconds. */
-    public const DISPATCH_INTERVAL_SEC = 30;
+    /** Как в bootstrap/app.php: bots:scan-dispatch → everyFiveSeconds (MaxBot live на M1). */
+    public const DISPATCH_INTERVAL_SEC = 5;
 
-    /** Интервал скана бота: S30 (каждый тик dispatch) или M1 (не чаще раза в минуту). */
+    /** Интервал скана бота (секунды). */
+    public const SCAN_INTERVAL_S5 = 5;
+
+    public const SCAN_INTERVAL_S15 = 15;
+
     public const SCAN_INTERVAL_S30 = 30;
 
     public const SCAN_INTERVAL_M1 = 60;
 
-    /** Нет ключа в config → M1, как просили для всех ботов. */
+    /** Нет ключа в config → M1 для большинства ботов. */
     public const DEFAULT_SCAN_INTERVAL_SEC = self::SCAN_INTERVAL_M1;
 
+    /** @var list<int> */
+    public const ALLOWED_SCAN_INTERVALS_SEC = [
+        self::SCAN_INTERVAL_S5,
+        self::SCAN_INTERVAL_S15,
+        self::SCAN_INTERVAL_S30,
+        self::SCAN_INTERVAL_M1,
+    ];
+
     /**
-     * Unix-время следующего тика dispatch (границы :00 и :30).
+     * Unix-время следующего тика dispatch (границы каждые DISPATCH_INTERVAL_SEC).
      * На самой границе возвращаем «сейчас»: команда как раз должна стартовать.
      */
     public static function nextDispatchUnix(?int $now = null): int
@@ -65,19 +77,29 @@ final class BotScanCoordinator
         return $mod === 0 ? $now : $now + ($interval - $mod);
     }
 
-    /** 30 или 60; всё остальное (в т.ч. мусор) → M1. */
+    /** 5 / 15 / 30 / 60; неизвестное → M1. */
     public static function normalizeScanIntervalSec(mixed $raw): int
     {
-        return (int) $raw === self::SCAN_INTERVAL_S30
-            ? self::SCAN_INTERVAL_S30
+        $value = (int) $raw;
+
+        return in_array($value, self::ALLOWED_SCAN_INTERVALS_SEC, true)
+            ? $value
             : self::SCAN_INTERVAL_M1;
+    }
+
+    /** Дефолт интервала скана для типа бота (MaxBot — 5 с live). */
+    public static function defaultScanIntervalSecForType(string $botType): int
+    {
+        return $botType === \App\Support\MaxBotConfig::BOT_TYPE
+            ? \App\Support\MaxBotConfig::DEFAULT_SCAN_INTERVAL_SEC
+            : self::DEFAULT_SCAN_INTERVAL_SEC;
     }
 
     public static function scanIntervalSecForBot(Bot $bot): int
     {
         $cfg = is_array($bot->config) ? $bot->config : [];
         if (! array_key_exists('scan_interval_sec', $cfg) || $cfg['scan_interval_sec'] === null || $cfg['scan_interval_sec'] === '') {
-            return self::DEFAULT_SCAN_INTERVAL_SEC;
+            return self::defaultScanIntervalSecForType((string) $bot->type);
         }
 
         return self::normalizeScanIntervalSec($cfg['scan_interval_sec']);
@@ -196,7 +218,7 @@ final class BotScanCoordinator
     {
         return Bot::query()
             ->where('is_active', true)
-            ->where('type', '!=', 'openrouter_llm_analyst')
+            ->whereNotIn('type', \App\Support\ChartAnalystBotTypes::all())
             ->orderBy('id')
             ->get();
     }

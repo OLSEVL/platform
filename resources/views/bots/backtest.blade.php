@@ -22,7 +22,7 @@
 
     <p class="text-sm text-zinc-400">
         Прогон текущих настроек бота по истории свечей из БД. Live-сделки, Telegram и зеркало PO не затрагиваются.
-        PnL в «юнитах ставки» при заданном payout.
+        Итог в «юнитах ставки» при заданном payout.
     </p>
 
     @unless($backtestSupported ?? true)
@@ -30,6 +30,51 @@
             Бэктест для типа «{{ $bot->type }}» не поддерживается (LLM / ручной режим).
         </div>
     @else
+    @php
+        /** Кнопка «?» с текстом расчёта для data-bb-help (общий JS-тултип на странице). */
+        $bbHelp = static fn (string $text): string => '<button type="button" class="bb-help-btn" aria-label="Как считается" aria-expanded="false" data-bb-help="'
+            .e($text).'">?</button>';
+    @endphp
+    <style>
+        /* Круглый «?» и всплывающая подсказка с формулой расчёта метрики. */
+        .bb-help-btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 14px;
+            height: 14px;
+            border-radius: 9999px;
+            border: 1px solid rgb(82 82 91);
+            background: rgb(39 39 42);
+            color: rgb(161 161 170);
+            font-size: 9px;
+            font-weight: 700;
+            line-height: 1;
+            cursor: pointer;
+            flex-shrink: 0;
+            padding: 0;
+        }
+        .bb-help-btn:hover,
+        .bb-help-btn[aria-expanded="true"] {
+            border-color: rgb(34 211 238);
+            color: rgb(34 211 238);
+            background: rgb(24 24 27);
+        }
+        .bb-help-popover {
+            position: fixed;
+            z-index: 9999;
+            max-width: min(300px, calc(100vw - 16px));
+            padding: 8px 10px;
+            border-radius: 6px;
+            border: 1px solid rgb(63 63 70);
+            background: rgb(24 24 27);
+            color: rgb(212 212 216);
+            font-size: 11px;
+            line-height: 1.45;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+        }
+        .bb-help-popover.hidden { display: none; }
+    </style>
     <div class="rounded border border-zinc-800 bg-zinc-900/80 p-4 space-y-4 text-sm">
         <div>
             <div id="bot-backtest-summary" class="font-medium text-zinc-200">Бэктест не запущен.</div>
@@ -41,9 +86,9 @@
                 Период
                 <select id="bot-backtest-preset" class="rounded border border-zinc-600 bg-zinc-800 px-2 py-1.5 text-xs text-zinc-100 normal-case tracking-normal min-w-[10rem]">
                     <option value="1">Последний 1 ч</option>
-                    <option value="6" selected>Последние 6 ч</option>
+                    <option value="6">Последние 6 ч</option>
                     <option value="24">Последние 24 ч</option>
-                    <option value="all">Вся доступная история</option>
+                    <option value="all" selected>Вся доступная история</option>
                     <option value="custom">Свой диапазон</option>
                 </select>
             </label>
@@ -70,8 +115,10 @@
             </label>
             <label class="flex flex-col gap-1 text-[10px] uppercase tracking-wide text-zinc-500">
                 Payout %
-                <input type="number" id="bot-backtest-payout" min="1" max="100" step="1" value="80"
-                    class="w-20 rounded border border-zinc-600 bg-zinc-800 px-2 py-1.5 text-xs text-zinc-100 normal-case tracking-normal">
+                {{-- 0 = без фильтра по payout (все пары); >0 = мин. payout пары + расчёт PnL --}}
+                <input type="number" id="bot-backtest-payout" min="0" max="100" step="1" value="0"
+                    class="w-20 rounded border border-zinc-600 bg-zinc-800 px-2 py-1.5 text-xs text-zinc-100 normal-case tracking-normal"
+                    title="0 — все пары; больше 0 — только пары с payout не ниже и расчёт PnL">
             </label>
             <button type="button" id="bot-backtest-run-btn"
                 class="rounded border border-cyan-700 bg-cyan-900/50 px-4 py-1.5 text-xs font-medium text-cyan-100 hover:bg-cyan-800/60">Прогнать</button>
@@ -95,35 +142,63 @@
         </div>
 
         <div id="bot-backtest-metrics" class="hidden grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-8 gap-2">
-            <div class="rounded border border-zinc-800 bg-zinc-950/60 px-3 py-2"><div class="text-[10px] text-zinc-500 uppercase">Сделок</div><div id="bb-metric-trades" class="text-base tabular-nums text-zinc-100">—</div></div>
-            <div class="rounded border border-zinc-800 bg-zinc-950/60 px-3 py-2"><div class="text-[10px] text-zinc-500 uppercase">Winrate</div><div id="bb-metric-wr" class="text-base tabular-nums text-zinc-100">—</div></div>
-            <div class="rounded border border-zinc-800 bg-zinc-950/60 px-3 py-2"><div class="text-[10px] text-zinc-500 uppercase">PnL</div><div id="bb-metric-pnl" class="text-base tabular-nums text-zinc-100">—</div></div>
-            <div class="rounded border border-zinc-800 bg-zinc-950/60 px-3 py-2"><div class="text-[10px] text-zinc-500 uppercase">PF</div><div id="bb-metric-pf" class="text-base tabular-nums text-zinc-100">—</div></div>
-            <div class="rounded border border-zinc-800 bg-zinc-950/60 px-3 py-2"><div class="text-[10px] text-zinc-500 uppercase">Max DD</div><div id="bb-metric-dd" class="text-base tabular-nums text-zinc-100">—</div></div>
-            <div class="rounded border border-zinc-800 bg-zinc-950/60 px-3 py-2"><div class="text-[10px] text-zinc-500 uppercase">W / L / D</div><div id="bb-metric-wld" class="text-base tabular-nums text-zinc-100">—</div></div>
-            <div class="rounded border border-zinc-800 bg-zinc-950/60 px-3 py-2" title="Максимум побед подряд"><div class="text-[10px] text-zinc-500 uppercase">Макс. + подряд</div><div id="bb-metric-win-streak" class="text-base tabular-nums text-emerald-400">—</div></div>
-            <div class="rounded border border-zinc-800 bg-zinc-950/60 px-3 py-2" title="Максимум поражений подряд"><div class="text-[10px] text-zinc-500 uppercase">Макс. − подряд</div><div id="bb-metric-loss-streak" class="text-base tabular-nums text-rose-400">—</div></div>
+            <div class="rounded border border-zinc-800 bg-zinc-950/60 px-3 py-2">
+                <div class="text-[10px] text-zinc-500 flex items-center gap-1"><span>Сделок</span>{!! $bbHelp('Число сделок прогона, где удалось определить результат по цене на момент expiry. Если свечи на expiry нет — сделка не создаётся.') !!}</div>
+                <div id="bb-metric-trades" class="text-base tabular-nums text-zinc-100">—</div>
+            </div>
+            <div class="rounded border border-zinc-800 bg-zinc-950/60 px-3 py-2">
+                <div class="text-[10px] text-zinc-500 flex items-center gap-1"><span>% побед</span>{!! $bbHelp('Побед ÷ (побед + поражений) × 100%. Ничьи в знаменатель не входят. Считается по всем сделкам прогона в порядке времени входа.') !!}</div>
+                <div id="bb-metric-wr" class="text-base tabular-nums text-zinc-100">—</div>
+            </div>
+            <div class="rounded border border-zinc-800 bg-zinc-950/60 px-3 py-2">
+                <div class="text-[10px] text-zinc-500 flex items-center gap-1"><span>Прибыль / убыток</span>{!! $bbHelp('Сумма PnL всех сделок в «юнитах ставки» (1 юнит = одна ставка). Победа: +payout% ÷ 100 (при 80% → +0,8). Поражение: −1. Ничья: 0. Payout задаётся в форме прогона.') !!}</div>
+                <div id="bb-metric-pnl" class="text-base tabular-nums text-zinc-100">—</div>
+            </div>
+            <div class="rounded border border-zinc-800 bg-zinc-950/60 px-3 py-2">
+                <div class="text-[10px] text-zinc-500 flex items-center gap-1"><span>Профит-фактор</span>{!! $bbHelp('Сумма PnL побед ÷ |сумма PnL поражений|. Больше 1 — выигрыши перекрывают проигрыши. Если поражений не было, а победы есть — значение не определено (показывается «—»).') !!}</div>
+                <div id="bb-metric-pf" class="text-base tabular-nums text-zinc-100">—</div>
+            </div>
+            <div class="rounded border border-zinc-800 bg-zinc-950/60 px-3 py-2">
+                <div class="text-[10px] text-zinc-500 flex items-center gap-1"><span>Макс. просадка</span>{!! $bbHelp('Максимальное падение накопленной equity от локального пика до дна. Equity после каждой сделки = сумма PnL с начала прогона (по времени входа).') !!}</div>
+                <div id="bb-metric-dd" class="text-base tabular-nums text-zinc-100">—</div>
+            </div>
+            <div class="rounded border border-zinc-800 bg-zinc-950/60 px-3 py-2">
+                <div class="text-[10px] text-zinc-500 flex items-center gap-1"><span>Победы / поражения / ничьи</span>{!! $bbHelp('Три счётчика: сколько сделок закрылись победой, поражением и ничьёй (цена на expiry совпала с ценой входа).') !!}</div>
+                <div id="bb-metric-wld" class="text-base tabular-nums text-zinc-100">—</div>
+            </div>
+            <div class="rounded border border-zinc-800 bg-zinc-950/60 px-3 py-2">
+                <div class="text-[10px] text-zinc-500 flex items-center gap-1"><span>Макс. побед подряд</span>{!! $bbHelp('Самая длинная серия побед подряд по времени входа. Поражение или ничья обрывают серию.') !!}</div>
+                <div id="bb-metric-win-streak" class="text-base tabular-nums text-emerald-400">—</div>
+            </div>
+            <div class="rounded border border-zinc-800 bg-zinc-950/60 px-3 py-2">
+                <div class="text-[10px] text-zinc-500 flex items-center gap-1"><span>Макс. поражений подряд</span>{!! $bbHelp('Самая длинная серия поражений подряд по времени входа. Победа или ничья обрывают серию.') !!}</div>
+                <div id="bb-metric-loss-streak" class="text-base tabular-nums text-rose-400">—</div>
+            </div>
         </div>
 
         <div id="bot-backtest-equity-wrap" class="hidden">
-            <div class="mb-1 text-[10px] uppercase tracking-wide text-zinc-500">Equity (юниты ставки)</div>
+            <div class="mb-1 text-[10px] tracking-wide text-zinc-500 flex items-center gap-1">
+                <span>Equity (юниты ставки)</span>{!! $bbHelp('График накопленной прибыли после каждой сделки. Для отображения точки прореживаются (до ~400), форма кривой сохраняется.') !!}
+            </div>
             <canvas id="bot-backtest-equity" height="96" class="w-full max-h-[96px] rounded border border-zinc-800 bg-zinc-950/80"></canvas>
         </div>
 
         {{-- Разбивка по парам (режим «Все» и мульти-инструмент). --}}
         <div id="bot-backtest-by-instr-wrap" class="hidden">
-            <div class="mb-1 text-[10px] uppercase tracking-wide text-zinc-500">По парам (сорт. по PnL)</div>
-            <div class="max-h-48 overflow-auto rounded border border-zinc-800">
+            <div class="mb-1 text-[10px] tracking-wide text-zinc-500 flex items-center gap-1">
+                <span>По парам (сорт. по прибыли)</span>{!! $bbHelp('Таблица метрик по каждой паре. Строки отсортированы по суммарной прибыли (убывание).') !!}
+            </div>
+            <div class="rounded border border-zinc-800">
                 <table class="w-full text-left text-xs">
-                    <thead class="sticky top-0 bg-zinc-900 text-zinc-500">
+                    <thead class="bg-zinc-900 text-zinc-500">
                         <tr>
                             <th class="px-2 py-1.5 font-medium">Пара</th>
-                            <th class="px-2 py-1.5 font-medium">Сд.</th>
-                            <th class="px-2 py-1.5 font-medium">WR</th>
-                            <th class="px-2 py-1.5 font-medium">W/L</th>
-                            <th class="px-2 py-1.5 font-medium">Макс. +</th>
-                            <th class="px-2 py-1.5 font-medium">Макс. −</th>
-                            <th class="px-2 py-1.5 font-medium">PnL</th>
+                            <th class="px-2 py-1.5 font-medium"><span class="inline-flex items-center gap-1">Сд.{!! $bbHelp('Число сделок по этой паре.') !!}</span></th>
+                            <th class="px-2 py-1.5 font-medium"><span class="inline-flex items-center gap-1">% побед{!! $bbHelp('Побед по паре ÷ (побед + поражений по паре) × 100%. Ничьи не учитываются.') !!}</span></th>
+                            <th class="px-2 py-1.5 font-medium"><span class="inline-flex items-center gap-1">Поб./пор.{!! $bbHelp('Счётчик побед и поражений по этой паре (формат: побед / поражений).') !!}</span></th>
+                            <th class="px-2 py-1.5 font-medium"><span class="inline-flex items-center gap-1">Макс. +{!! $bbHelp('Максимум побед подряд только по сделкам этой пары.') !!}</span></th>
+                            <th class="px-2 py-1.5 font-medium"><span class="inline-flex items-center gap-1">Макс. −{!! $bbHelp('Максимум поражений подряд только по сделкам этой пары.') !!}</span></th>
+                            <th class="px-2 py-1.5 font-medium"><span class="inline-flex items-center gap-1">Прибыль{!! $bbHelp('Сумма PnL всех сделок этой пары в юнитах ставки.') !!}</span></th>
                         </tr>
                     </thead>
                     <tbody id="bot-backtest-by-instr-body" class="divide-y divide-zinc-800 text-zinc-300"></tbody>
@@ -155,15 +230,15 @@
                     <button type="button" id="bot-backtest-trades-next" class="rounded border border-zinc-600 bg-zinc-800 px-2 py-0.5 text-[11px] text-zinc-300 hover:bg-zinc-700">→</button>
                 </div>
             </div>
-            <div class="max-h-72 overflow-auto rounded border border-zinc-800">
+            <div class="rounded border border-zinc-800">
                 <table class="w-full text-left text-xs">
-                    <thead class="sticky top-0 bg-zinc-900 text-zinc-500">
+                    <thead class="bg-zinc-900 text-zinc-500">
                         <tr>
                             <th class="px-2 py-1.5 font-medium">Время</th>
                             <th class="px-2 py-1.5 font-medium">Пара</th>
                             <th class="px-2 py-1.5 font-medium">Side</th>
                             <th class="px-2 py-1.5 font-medium">Результат</th>
-                            <th class="px-2 py-1.5 font-medium">PnL</th>
+                            <th class="px-2 py-1.5 font-medium"><span class="inline-flex items-center gap-1">Прибыль{!! $bbHelp('PnL этой сделки: +payout% ÷ 100 при победе, −1 при поражении, 0 при ничьей.') !!}</span></th>
                         </tr>
                     </thead>
                     <tbody id="bot-backtest-trades-body" class="divide-y divide-zinc-800 text-zinc-300"></tbody>
@@ -262,6 +337,92 @@
     let tradesTotal = 0;
     let lastCompletedRuns = [];
 
+    // --- Подсказки «?»: один popover на странице, открывается по клику. ---
+    let bbHelpPopoverEl = null;
+    let bbHelpOpenBtn = null;
+
+    function bbHelpEsc(text) {
+        return String(text)
+            .replace(/&/g, '&amp;')
+            .replace(/"/g, '&quot;')
+            .replace(/</g, '&lt;');
+    }
+
+    /** HTML кнопки «?» для динамически собираемых таблиц (сравнение). */
+    function bbHelpBtnHtml(text) {
+        return `<button type="button" class="bb-help-btn" aria-label="Как считается" aria-expanded="false" data-bb-help="${bbHelpEsc(text)}">?</button>`;
+    }
+
+    function bbHelpLabel(label, helpText) {
+        return `<span class="inline-flex items-center gap-1">${label}${bbHelpBtnHtml(helpText)}</span>`;
+    }
+
+    function ensureBbHelpPopover() {
+        if (bbHelpPopoverEl) return bbHelpPopoverEl;
+        bbHelpPopoverEl = document.createElement('div');
+        bbHelpPopoverEl.id = 'bb-help-popover';
+        bbHelpPopoverEl.className = 'bb-help-popover hidden';
+        bbHelpPopoverEl.setAttribute('role', 'tooltip');
+        document.body.appendChild(bbHelpPopoverEl);
+        return bbHelpPopoverEl;
+    }
+
+    function closeBbHelpPopover() {
+        if (bbHelpPopoverEl) bbHelpPopoverEl.classList.add('hidden');
+        if (bbHelpOpenBtn) {
+            bbHelpOpenBtn.setAttribute('aria-expanded', 'false');
+            bbHelpOpenBtn = null;
+        }
+    }
+
+    function positionBbHelpPopover(btn) {
+        const pop = ensureBbHelpPopover();
+        pop.classList.remove('hidden');
+        const margin = 8;
+        const rect = btn.getBoundingClientRect();
+        const popRect = pop.getBoundingClientRect();
+        let top = rect.bottom + margin;
+        let left = rect.left + rect.width / 2 - popRect.width / 2;
+        left = Math.max(margin, Math.min(left, window.innerWidth - popRect.width - margin));
+        if (top + popRect.height > window.innerHeight - margin) {
+            top = rect.top - popRect.height - margin;
+        }
+        pop.style.top = `${Math.max(margin, top)}px`;
+        pop.style.left = `${left}px`;
+    }
+
+    function openBbHelpPopover(btn) {
+        const text = btn.getAttribute('data-bb-help') || '';
+        const pop = ensureBbHelpPopover();
+        if (bbHelpOpenBtn === btn && !pop.classList.contains('hidden')) {
+            closeBbHelpPopover();
+            return;
+        }
+        closeBbHelpPopover();
+        pop.textContent = text;
+        positionBbHelpPopover(btn);
+        bbHelpOpenBtn = btn;
+        btn.setAttribute('aria-expanded', 'true');
+    }
+
+    document.addEventListener('click', (e) => {
+        const btn = e.target.closest('.bb-help-btn');
+        if (btn) {
+            e.preventDefault();
+            e.stopPropagation();
+            openBbHelpPopover(btn);
+            return;
+        }
+        if (!e.target.closest('#bb-help-popover')) closeBbHelpPopover();
+    });
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') closeBbHelpPopover();
+    });
+    window.addEventListener('resize', () => {
+        if (bbHelpOpenBtn) positionBbHelpPopover(bbHelpOpenBtn);
+    });
+    window.addEventListener('scroll', () => closeBbHelpPopover(), true);
+
     function fmtTsLocal(ts) {
         if (!Number.isFinite(ts) || ts <= 0) return '—';
         const d = new Date(ts * 1000);
@@ -288,7 +449,7 @@
     }
 
     function resolveBacktestRange() {
-        const preset = bbPreset ? String(bbPreset.value || '6') : '6';
+        const preset = bbPreset ? String(bbPreset.value || 'all') : 'all';
         const maxTs = backtestCandleRange.max_ts || Math.floor(Date.now() / 1000);
         const minTs = backtestCandleRange.min_ts || (maxTs - 86400);
         if (preset === 'custom') {
@@ -349,7 +510,89 @@
         bbQueueHint.classList.remove('hidden');
     }
 
-    async function loadBacktestIndex() {
+    function progressLabelForStatus(status) {
+        if (status === 'running') return 'Прогон…';
+        if (status === 'queued') return 'В очереди…';
+        return status || 'Прогон…';
+    }
+
+    /**
+     * Опрос статуса прогона + прогрессбар.
+     * Нужен и после «Прогнать», и при возврате на страницу (F5 / другая вкладка).
+     */
+    function startBacktestPoll(runId) {
+        const id = Number(runId);
+        if (!Number.isFinite(id) || id <= 0) return;
+        // Уже следим за этим же прогоном — не сбрасываем таймер.
+        if (backtestPollTimer && backtestActiveRunId === id) return;
+
+        stopBacktestPoll();
+        backtestActiveRunId = id;
+        setBacktestBusy(true);
+        let queuedSince = Date.now();
+
+        const tick = async () => {
+            try {
+                const r = await loadBacktestRun(backtestActiveRunId, { loadTrades: false });
+                setBacktestProgress(
+                    r.progress_pct || 0,
+                    progressLabelForStatus(r.status),
+                );
+                if (r.status === 'queued' && Date.now() - queuedSince > 120000) {
+                    showQueueHint({
+                        stuck_queued: true,
+                        pending_jobs: 1,
+                        worker_hint: backtestQueueHint,
+                    }, `Прогон #${r.id} всё ещё в queued.`);
+                } else if (r.status === 'running' || r.status === 'completed') {
+                    if (bbQueueHint) {
+                        bbQueueHint.classList.add('hidden');
+                        bbQueueHint.textContent = '';
+                    }
+                }
+                if (['completed', 'failed', 'cancelled'].includes(r.status)) {
+                    stopBacktestPoll();
+                    await loadBacktestRun(r.id, { loadTrades: true });
+                    await loadBacktestIndex({ skipResume: true });
+                    setBacktestBusy(false);
+                    if (r.status === 'completed') {
+                        setBacktestProgress(100, 'Готово');
+                    }
+                }
+            } catch (err) {
+                stopBacktestPoll();
+                setBacktestBusy(false);
+                if (bbSummary) {
+                    bbSummary.textContent = err.message || 'Ошибка опроса';
+                    bbSummary.classList.add('text-rose-300');
+                }
+            }
+        };
+
+        backtestPollTimer = setInterval(tick, 1000);
+        tick();
+    }
+
+    /** Если есть queued/running — показать бар и продолжить poll после ухода со страницы. */
+    async function resumeActiveBacktestIfAny(runs) {
+        if (backtestPollTimer) return;
+        // Сначала running (актуальный chunk), иначе новейший queued — список уже orderByDesc id.
+        const list = runs || [];
+        const active = list.find((r) => r.status === 'running')
+            || list.find((r) => r.status === 'queued');
+        if (!active || !active.id) return;
+        setBacktestProgress(active.progress_pct || 0, progressLabelForStatus(active.status));
+        if (bbSummary) {
+            bbSummary.textContent = `Прогон #${active.id}: ${progressLabelForStatus(active.status)}`;
+            bbSummary.classList.remove('text-emerald-300', 'text-rose-300');
+        }
+        try {
+            await loadBacktestRun(active.id, { loadTrades: false });
+        } catch (_) {}
+        startBacktestPoll(active.id);
+    }
+
+    async function loadBacktestIndex(opts = {}) {
         try {
             const res = await fetch(BOT_BACKTESTS_URL, {
                 headers: { Accept: 'application/json' },
@@ -379,6 +622,10 @@
             lastCompletedRuns = runs.filter((r) => r.status === 'completed');
             fillCompareSelects(lastCompletedRuns);
             renderBacktestRunsList(runs);
+            // После F5 / возврата на страницу — подхватить идущий прогон.
+            if (!opts.skipResume) {
+                await resumeActiveBacktestIfAny(runs);
+            }
         } catch (e) {
             if (bbRangeHint) bbRangeHint.textContent = e.message || 'Ошибка загрузки';
         }
@@ -388,7 +635,7 @@
         const opts = runs.map((r) => {
             const s = r.summary_json || r.summary || {};
             const pnl = s.pnl_units != null ? Number(s.pnl_units).toFixed(1) : '—';
-            return `<option value="${r.id}">#${r.id} · ${r.trades_total ?? 0} сд. · PnL ${pnl}</option>`;
+            return `<option value="${r.id}">#${r.id} · ${r.trades_total ?? 0} сд. · итог ${pnl}</option>`;
         }).join('');
         [bbCompareA, bbCompareB].forEach((sel, i) => {
             if (!sel) return;
@@ -415,8 +662,8 @@
                 <span class="tabular-nums text-zinc-500">${r.status}</span>
                 <span>${fmtTsLocal(r.from_ts)} → ${fmtTsLocal(r.to_ts)}</span>
                 <span class="tabular-nums">${r.trades_total ?? 0} сд.</span>
-                <span>WR ${wr}</span>
-                <span>PnL ${pnl}</span>
+                <span>% побед ${wr}</span>
+                <span>итог ${pnl}</span>
                 <button type="button" class="bb-delete-run ml-auto text-rose-300/80 hover:text-rose-200 text-[11px]" data-run-id="${r.id}" title="Удалить прогон">✕</button>
             </li>`;
         }).join('');
@@ -457,7 +704,7 @@
         if (bbSummary) {
             if (status === 'completed') {
                 const wr = summary.winrate != null ? `${(Number(summary.winrate) * 100).toFixed(1)}%` : '—';
-                bbSummary.textContent = `Прогон #${run.id}: ${summary.trades ?? run.trades_total ?? 0} сделок, WR ${wr}`;
+                bbSummary.textContent = `Прогон #${run.id}: ${summary.trades ?? run.trades_total ?? 0} сделок, % побед ${wr}`;
                 bbSummary.classList.remove('text-rose-300');
                 bbSummary.classList.add('text-emerald-300');
             } else if (status === 'failed') {
@@ -724,11 +971,11 @@
                 <table class="w-full text-left">
                     <thead><tr class="text-zinc-500"><th class="py-1 pr-2"></th><th class="pr-2">A #${a}</th><th class="pr-2">B #${b}</th><th>Δ (B−A)</th></tr></thead>
                     <tbody>
-                        <tr><td class="py-0.5 text-zinc-500">Сделок</td><td>${ma.trades ?? '—'}</td><td>${mb.trades ?? '—'}</td><td class="${deltaCls(d.trades)}">${num(d.trades, 0)}</td></tr>
-                        <tr><td class="py-0.5 text-zinc-500">WR</td><td>${pct(ma.winrate)}</td><td>${pct(mb.winrate)}</td><td class="${deltaCls(d.winrate)}">${d.winrate != null ? (Number(d.winrate) * 100).toFixed(1) + ' п.п.' : '—'}</td></tr>
-                        <tr><td class="py-0.5 text-zinc-500">PnL</td><td>${num(ma.pnl_units)}</td><td>${num(mb.pnl_units)}</td><td class="${deltaCls(d.pnl_units)}">${num(d.pnl_units)}</td></tr>
-                        <tr><td class="py-0.5 text-zinc-500">PF</td><td>${num(ma.profit_factor)}</td><td>${num(mb.profit_factor)}</td><td class="${deltaCls(d.profit_factor)}">${num(d.profit_factor)}</td></tr>
-                        <tr><td class="py-0.5 text-zinc-500">Max DD</td><td>${num(ma.max_drawdown_units)}</td><td>${num(mb.max_drawdown_units)}</td><td class="${deltaCls(d.max_drawdown_units)}">${num(d.max_drawdown_units)}</td></tr>
+                        <tr><td class="py-0.5 text-zinc-500">${bbHelpLabel('Сделок', 'Число сделок прогона.')}</td><td>${ma.trades ?? '—'}</td><td>${mb.trades ?? '—'}</td><td class="${deltaCls(d.trades)}">${num(d.trades, 0)}</td></tr>
+                        <tr><td class="py-0.5 text-zinc-500">${bbHelpLabel('% побед', 'Побед ÷ (побед + поражений) × 100%. Ничьи не входят.')}</td><td>${pct(ma.winrate)}</td><td>${pct(mb.winrate)}</td><td class="${deltaCls(d.winrate)}">${d.winrate != null ? (Number(d.winrate) * 100).toFixed(1) + ' п.п.' : '—'}</td></tr>
+                        <tr><td class="py-0.5 text-zinc-500">${bbHelpLabel('Прибыль / убыток', 'Сумма PnL в юнитах ставки: победа +payout% ÷ 100, поражение −1, ничья 0.')}</td><td>${num(ma.pnl_units)}</td><td>${num(mb.pnl_units)}</td><td class="${deltaCls(d.pnl_units)}">${num(d.pnl_units)}</td></tr>
+                        <tr><td class="py-0.5 text-zinc-500">${bbHelpLabel('Профит-фактор', 'Сумма PnL побед ÷ |сумма PnL поражений|.')}</td><td>${num(ma.profit_factor)}</td><td>${num(mb.profit_factor)}</td><td class="${deltaCls(d.profit_factor)}">${num(d.profit_factor)}</td></tr>
+                        <tr><td class="py-0.5 text-zinc-500">${bbHelpLabel('Макс. просадка', 'Макс. падение equity от пика до дна по сделкам прогона.')}</td><td>${num(ma.max_drawdown_units)}</td><td>${num(mb.max_drawdown_units)}</td><td class="${deltaCls(d.max_drawdown_units)}">${num(d.max_drawdown_units)}</td></tr>
                     </tbody>
                 </table>`;
         }
@@ -753,7 +1000,9 @@
             return;
         }
 
-        const payout = Math.max(1, Math.min(100, Number(bbPayout && bbPayout.value) || 80));
+        // 0 — все пары; не используем || fallback, иначе 0 превращается в 80.
+        const payoutRaw = Number(bbPayout && bbPayout.value);
+        const payout = Math.max(0, Math.min(100, Number.isFinite(payoutRaw) ? payoutRaw : 0));
         const spanSec = range.to_ts - range.from_ts;
         const useSync = instruments.length === 1 && spanSec <= 6 * 3600;
 
@@ -793,44 +1042,12 @@
             if (!payload.queued || run.status === 'completed') {
                 setBacktestProgress(100, 'Готово');
                 await loadBacktestRun(run.id);
-                await loadBacktestIndex();
+                await loadBacktestIndex({ skipResume: true });
                 setBacktestBusy(false);
                 return;
             }
-            stopBacktestPoll();
-            let queuedSince = Date.now();
-            backtestPollTimer = setInterval(async () => {
-                try {
-                    const r = await loadBacktestRun(backtestActiveRunId, { loadTrades: false });
-                    setBacktestProgress(r.progress_pct || 0, r.status === 'running' ? 'Прогон…' : r.status);
-                    if (r.status === 'queued' && Date.now() - queuedSince > 120000) {
-                        showQueueHint({
-                            stuck_queued: true,
-                            pending_jobs: 1,
-                            worker_hint: backtestQueueHint,
-                        }, `Прогон #${r.id} всё ещё в queued.`);
-                    } else if (r.status === 'running' || r.status === 'completed') {
-                        // Скрыть ложную «зависла», когда worker уже взял job.
-                        if (bbQueueHint) {
-                            bbQueueHint.classList.add('hidden');
-                            bbQueueHint.textContent = '';
-                        }
-                    }
-                    if (['completed', 'failed', 'cancelled'].includes(r.status)) {
-                        stopBacktestPoll();
-                        await loadBacktestRun(r.id, { loadTrades: true });
-                        await loadBacktestIndex();
-                        setBacktestBusy(false);
-                    }
-                } catch (err) {
-                    stopBacktestPoll();
-                    setBacktestBusy(false);
-                    if (bbSummary) {
-                        bbSummary.textContent = err.message || 'Ошибка опроса';
-                        bbSummary.classList.add('text-rose-300');
-                    }
-                }
-            }, 1000);
+            setBacktestProgress(run.progress_pct || 5, progressLabelForStatus(run.status));
+            startBacktestPoll(run.id);
         } catch (e) {
             setBacktestBusy(false);
             if (bbSummary) {

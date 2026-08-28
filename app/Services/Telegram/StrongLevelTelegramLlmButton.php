@@ -43,12 +43,12 @@ class StrongLevelTelegramLlmButton
     public static function supportsBotType(string $type): bool
     {
         // Эти типы шлют ту же кнопку, но не входят в CARD_AND_TELEGRAM (level-bounce).
-        return in_array($type, ['strong_trend_telegram', 'strong_trend_demarker', 'sweep_raid_liquidity'], true)
+        return in_array($type, ['strong_trend_telegram', 'strong_trend_demarker', \App\Support\DemarkerDualFastConfig::BOT_TYPE, 'sweep_raid_liquidity'], true)
             || in_array($type, self::SUPPORTED_BOT_TYPES, true);
     }
 
     /**
-     * Бот Chart Analyst для LLM-анализа (явный id или первый openrouter_llm_analyst пользователя).
+     * Бот Chart Analyst для LLM-анализа (явный id или первый analyst пользователя).
      */
     public static function resolveAnalystBot(Bot $sourceBot): ?Bot
     {
@@ -64,16 +64,30 @@ class StrongLevelTelegramLlmButton
             $configured = Bot::query()->find($configuredId);
             if (
                 $configured
-                && $configured->type === 'openrouter_llm_analyst'
+                && \App\Support\ChartAnalystBotTypes::isAnalyst($configured->type)
                 && $configured->user_id === $sourceBot->user_id
             ) {
                 return $configured;
             }
         }
 
+        $preferType = $sourceBot->type === 'sweep_raid_liquidity'
+            ? \App\Support\ChartAnalystBotTypes::SRL
+            : \App\Support\ChartAnalystBotTypes::CLASSIC;
+
+        $preferred = Bot::query()
+            ->where('user_id', $sourceBot->user_id)
+            ->where('type', $preferType)
+            ->orderByDesc('is_active')
+            ->orderBy('id')
+            ->first();
+        if ($preferred) {
+            return $preferred;
+        }
+
         return Bot::query()
             ->where('user_id', $sourceBot->user_id)
-            ->where('type', 'openrouter_llm_analyst')
+            ->whereIn('type', \App\Support\ChartAnalystBotTypes::all())
             ->orderByDesc('is_active')
             ->orderBy('id')
             ->first();
@@ -131,7 +145,7 @@ class StrongLevelTelegramLlmButton
      */
     public static function inlineKeyboardMarkupForAnalystSelf(Bot $analystBot, string $instrument, array $analystCfg): ?array
     {
-        if ($analystBot->type !== 'openrouter_llm_analyst') {
+        if (! \App\Support\ChartAnalystBotTypes::isAnalyst($analystBot->type)) {
             return null;
         }
 
