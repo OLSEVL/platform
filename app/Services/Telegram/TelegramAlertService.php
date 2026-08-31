@@ -416,7 +416,10 @@ class TelegramAlertService
         $lines[] = 'Время: '.now()->utc()->format('d.m.Y H:i').' UTC';
 
         $pngPath = null;
+        // Для Sweep / Raid — дополнительный «зум» на последние N свечей (настраивается в боте).
+        $recentPngPath = null;
         $caption = null;
+        $recentCaption = null;
         $photoOk = null;
         $photoError = null;
         $sendChart = (bool) ($config['telegram_send_chart'] ?? true);
@@ -436,8 +439,31 @@ class TelegramAlertService
                         $closedCandles,
                         IndicatorSetting::mergedSweepRaidLiquidityParams($bot),
                     );
+            } elseif ($bot->type === 'engulfing_liquidity') {
+                $chartLogKey = 'engulfing_liquidity_photo';
+                $chartLevels = app(EngulfingLiquidityChartBuilder::class)
+                    ->chartLevelsFromDecision(
+                        $decision,
+                        $closedCandles,
+                        IndicatorSetting::mergedEngulfingLiquidityParams($bot),
+                    );
             }
             if (is_array($chartLevels)) {
+                $captionBase = '📣 <b>'.htmlspecialchars($instrument, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8').'</b>';
+                if ($side !== '') {
+                    $captionBase .= ' · '.$side;
+                }
+                $captionBase .= ' · '.$timeframeLabel;
+                $setup = (string) ($decision['features']['setup'] ?? '');
+                $entryMode = (string) ($decision['features']['entry_mode'] ?? '');
+                if ($setup !== '') {
+                    $captionBase .= ' · '.htmlspecialchars($setup, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+                }
+                if ($entryMode !== '') {
+                    $captionBase .= ' · '.htmlspecialchars($entryMode, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+                }
+
+                // Полный M1-график сетапа (до ~90 свечей) — как раньше.
                 $pngPath = app(TelegramChartImageRenderer::class)->render($instrument, $closedCandles, $chartLevels, [
                     'timeframe_label' => $timeframeLabel,
                 ]);
@@ -450,22 +476,51 @@ class TelegramAlertService
                         'reason' => 'render_returned_null',
                     ]);
                 } else {
-                    $caption = '📣 <b>'.htmlspecialchars($instrument, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8').'</b>';
-                    if ($side !== '') {
-                        $caption .= ' · '.$side;
-                    }
-                    $caption .= ' · '.$timeframeLabel;
-                    $setup = (string) ($decision['features']['setup'] ?? '');
-                    $entryMode = (string) ($decision['features']['entry_mode'] ?? '');
-                    if ($setup !== '') {
-                        $caption .= ' · '.htmlspecialchars($setup, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
-                    }
-                    if ($entryMode !== '') {
-                        $caption .= ' · '.htmlspecialchars($entryMode, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+                    $caption = $captionBase;
+                }
+
+                // Sweep / Raid: второй PNG — только последние N свечей, крупнее для чтения меток.
+                if ($bot->type === 'sweep_raid_liquidity'
+                    && (bool) ($config['telegram_send_chart_recent'] ?? true)
+                    && $pngPath !== null) {
+                    $recentBars = max(5, min(90, (int) ($config['telegram_chart_recent_bars'] ?? 20)));
+                    if (count($closedCandles) >= $recentBars) {
+                        $recentPngPath = app(TelegramChartImageRenderer::class)->render($instrument, $closedCandles, $chartLevels, [
+                            'width' => 640,
+                            'height' => 360,
+                            'max_bars' => $recentBars,
+                            'margin_left' => 56,
+                            'margin_top' => 32,
+                            'margin_bottom' => 28,
+                            'font_size_title' => 10,
+                            'font_size_axis' => 8,
+                            'font_size_label' => 8,
+                            'timeframe_label' => $timeframeLabel.' · '.$recentBars.' св.',
+                        ]);
+                        if ($recentPngPath === null) {
+                            $photoOk = $photoOk === null ? false : $photoOk;
+                            $photoError = $photoError !== null ? $photoError.';recent:render_failed' : 'recent:render_failed';
+                            Log::warning('sweep_raid_liquidity_photo_recent_skipped', [
+                                'bot_id' => $bot->id,
+                                'instrument' => $instrument,
+                                'reason' => 'render_returned_null',
+                                'recent_bars' => $recentBars,
+                            ]);
+                        } else {
+                            $recentCaption = $captionBase.' · последние '.$recentBars.' св.';
+                        }
+                    } else {
+                        Log::info('sweep_raid_liquidity_photo_recent_skipped', [
+                            'bot_id' => $bot->id,
+                            'instrument' => $instrument,
+                            'reason' => 'not_enough_candles',
+                            'candle_count' => count($closedCandles),
+                            'recent_bars' => $recentBars,
+                        ]);
                     }
                 }
             }
-        } elseif ($sendChart && in_array($bot->type, ['strong_trend_demarker', \App\Support\DemarkerDualFastConfig::BOT_TYPE, 'sweep_raid_liquidity'], true) && ! extension_loaded('gd')) {
+        } elseif ($sendChart && in_array($bot->type, ['strong_trend_demarker', \App\Support\DemarkerDualFastConfig::BOT_TYPE, 'sweep_raid_liquidity', 'engulfing_liquidity'], true) && ! extension_loaded('gd')) {
             $photoOk = false;
             $photoError = 'gd_extension_missing';
         }
@@ -479,7 +534,9 @@ class TelegramAlertService
         $messageResult = $this->broadcastToRecipients($token, $recipients, function (string $chatId) use (
             $token,
             $pngPath,
+            $recentPngPath,
             $caption,
+            $recentCaption,
             $text,
             $llmMarkup,
             $bot,
@@ -503,6 +560,21 @@ class TelegramAlertService
                     ]);
                 }
             }
+            if ($recentPngPath !== null && $recentCaption !== null) {
+                $recentPhotoResult = $this->sendPhoto($token, $chatId, $recentPngPath, $recentCaption);
+                $recentOk = (bool) ($recentPhotoResult['ok'] ?? false);
+                $photoOk = $photoOk === null ? $recentOk : ($photoOk && $recentOk);
+                if (! $recentOk) {
+                    $recentErr = (string) ($recentPhotoResult['error'] ?? 'telegram_photo_failed');
+                    $photoError = $photoError !== null ? $photoError.';recent:'.$recentErr : 'recent:'.$recentErr;
+                    Log::warning('sweep_raid_liquidity_photo_recent_failed', [
+                        'bot_id' => $bot->id,
+                        'instrument' => $instrument,
+                        'chat_id' => $chatId,
+                        'error' => $recentErr,
+                    ]);
+                }
+            }
 
             return $llmMarkup !== null
                 ? $this->sendMessageWithMarkup($token, $chatId, $text, $llmMarkup)
@@ -511,6 +583,9 @@ class TelegramAlertService
 
         if ($pngPath !== null) {
             @unlink($pngPath);
+        }
+        if ($recentPngPath !== null) {
+            @unlink($recentPngPath);
         }
 
         if (! ($messageResult['ok'] ?? false)) {

@@ -27,8 +27,8 @@ return Application::configure(basePath: dirname(__DIR__))
         $schedule->command('bots:scan-dispatch')->everyFiveSeconds()->withoutOverlapping(2);
         // Зависший scan (живой PID) блокирует dispatch навсегда — reap по wall-time.
         $schedule->command('bots:scan-watchdog')->everyFiveMinutes()->withoutOverlapping(5);
-        // Виртуальные S30-сделки должны быть рассчитаны до следующего scan той же пары.
-        $schedule->command('bots:settle')->everyThirtySeconds()->withoutOverlapping(10);
+        // Paper/virtual settle: каждые 5 с (как scan-dispatch) + settle в конце dispatch.
+        $schedule->command('bots:settle')->everyFiveSeconds()->withoutOverlapping(3);
         // Sticky warm pool: после рестарта proxy и при обрыве WS — догрев зеркальных сессий.
         $schedule->command('mirror:warm-pool')->everyMinute()->withoutOverlapping(5);
         // Chart Analyst: /menu и inline-список пар требуют long polling + queue worker.

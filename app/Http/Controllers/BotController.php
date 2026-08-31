@@ -19,6 +19,7 @@ use App\Services\Indicators\AtrIndicatorService;
 use App\Services\Indicators\BollingerIndicatorService;
 use App\Services\Indicators\EmaIndicatorService;
 use App\Services\Indicators\LiquiditySwingsIndicatorService;
+use App\Services\Indicators\EngulfingLiquidityIndicatorService;
 use App\Services\Indicators\SweepRaidLiquidityIndicatorService;
 use App\Services\Indicators\MacdIndicatorService;
 use App\Services\Indicators\PriceActionDgtIndicatorService;
@@ -1010,7 +1011,7 @@ class BotController extends Controller
         ]);
     }
 
-    public function settings(Bot $bot, OpenRouterClient $openRouterClient): View
+    public function settings(Bot $bot, OpenRouterClient $openRouterClient, DataCleanupService $dataCleanup): View
     {
         $this->ensureBotOwner($bot);
 
@@ -1021,8 +1022,10 @@ class BotController extends Controller
 
         return view('bots.settings', [
             'bot' => $bot,
+            // Текущий объём истории бота по таблицам — для блока «Очистка истории».
+            'botCleanupRowCounts' => $dataCleanup->countBotScopedRows($bot->id),
             'openrouterModels' => $openrouterModels,
-            'chartAnalystBots' => in_array($bot->type, array_merge(LevelBounceBotTypes::CARD_AND_TELEGRAM, ['strong_trend_telegram', 'strong_trend_demarker', \App\Support\DemarkerDualFastConfig::BOT_TYPE, 'sweep_raid_liquidity']), true)
+            'chartAnalystBots' => in_array($bot->type, array_merge(LevelBounceBotTypes::CARD_AND_TELEGRAM, ['strong_trend_telegram', 'strong_trend_demarker', \App\Support\DemarkerDualFastConfig::BOT_TYPE, 'sweep_raid_liquidity', 'engulfing_liquidity']), true)
                 ? Bot::query()
                     ->where('user_id', $bot->user_id)
                     ->whereIn('type', ChartAnalystBotTypes::all())
@@ -1031,10 +1034,11 @@ class BotController extends Controller
                 : collect(),
             // Для гибрида Chart Analyst — список ботов пользователя, чьи сигналы можно слушать.
             'hybridSourceBots' => ChartAnalystBotTypes::isAnalyst($bot->type)
-                ? Bot::query()
-                    ->where('user_id', $bot->user_id)
-                    ->whereIn('type', \App\Support\HybridAnalystConfig::SOURCE_BOT_TYPES)
-                    ->orderBy('name')
+                ? \App\Support\HybridAnalystConfig::applySourceBotQuery(
+                    Bot::query()
+                        ->where('user_id', $bot->user_id)
+                )
+                    ->orderBy('id')
                     ->get(['id', 'name', 'type', 'is_active'])
                 : collect(),
         ]);
@@ -1592,10 +1596,16 @@ class BotController extends Controller
                 'srl_pivot_length' => ['required', 'integer', 'min:1', 'max:100'],
                 'srl_enter_sweep' => ['sometimes', 'boolean'],
                 'srl_enter_pullback' => ['sometimes', 'boolean'],
+                'srl_demarker_enabled' => ['sometimes', 'boolean'],
+                'srl_demarker_period' => ['required', 'integer', 'min:1', 'max:500'],
+                'srl_demarker_oversold' => ['required', 'numeric', 'min:0', 'max:49.99'],
+                'srl_demarker_overbought' => ['required', 'numeric', 'min:50.01', 'max:100'],
                 'telegram_enabled' => ['sometimes', 'boolean'],
                 'telegram_notify_result' => ['sometimes', 'boolean'],
                 'telegram_notify_on' => ['required', 'string', Rule::in(['signal_trade', 'off'])],
                 'telegram_send_chart' => ['required', 'string', Rule::in(['1', '0'])],
+                'telegram_send_chart_recent' => ['sometimes', 'boolean'],
+                'telegram_chart_recent_bars' => ['required', 'integer', 'min:5', 'max:90'],
                 'telegram_bot_token' => ['nullable', 'string', 'max:128'],
                 'telegram_chat_id' => ['nullable', 'string', 'max:64'],
                 'telegram_analyst_llm_enabled' => ['sometimes', 'boolean'],
@@ -1618,10 +1628,17 @@ class BotController extends Controller
                 'srl_pivot_length' => (int) $extra['srl_pivot_length'],
                 'srl_enter_sweep' => $request->boolean('srl_enter_sweep'),
                 'srl_enter_pullback' => $request->boolean('srl_enter_pullback'),
+                'srl_demarker_enabled' => $request->boolean('srl_demarker_enabled'),
+                'srl_demarker_period' => (int) $extra['srl_demarker_period'],
+                'srl_demarker_oversold' => (float) $extra['srl_demarker_oversold'],
+                'srl_demarker_overbought' => (float) $extra['srl_demarker_overbought'],
                 'telegram_enabled' => $request->boolean('telegram_enabled'),
                 'telegram_notify_result' => $request->boolean('telegram_notify_result'),
                 'telegram_notify_on' => (string) $extra['telegram_notify_on'],
                 'telegram_send_chart' => ($extra['telegram_send_chart'] ?? '1') === '1',
+                // Второй PNG: зум на последние N свечей (по умолчанию 20).
+                'telegram_send_chart_recent' => $request->boolean('telegram_send_chart_recent'),
+                'telegram_chart_recent_bars' => (int) $extra['telegram_chart_recent_bars'],
                 // Пустое поле на форме не затирает уже сохранённый токен.
                 'telegram_bot_token' => $tokenInput !== '' ? $tokenInput : $existingToken,
                 'telegram_chat_id' => trim((string) ($extra['telegram_chat_id'] ?? '')),
@@ -1633,6 +1650,57 @@ class BotController extends Controller
                     'telegram_analyst_llm_question' => $extra['telegram_analyst_llm_question'] ?? null,
                 ]),
                 'version' => 'sweep_raid_liquidity_v1',
+            ]);
+            $config = TelegramBotConfigFields::mergeFromRequest($request, $config, $bot->config ?? []);
+        } elseif ($bot->type === 'engulfing_liquidity') {
+            // 3-шаговое поглощение: вход только на close контр-pogloщения (не на первом engulf).
+            $extra = $request->validate([
+                'count' => ['required', 'integer', 'min:30', 'max:5000'],
+                'expiry_sec' => ['required', 'integer', 'min:60', 'max:900'],
+                'min_confidence' => ['required', 'numeric', 'min:0', 'max:1'],
+                'min_payout' => ['required', 'numeric', 'min:0', 'max:100'],
+                'stale_after_sec' => ['required', 'integer', 'min:5', 'max:600'],
+                'eng_allow_classic' => ['sometimes', 'boolean'],
+                'eng_allow_same_color' => ['sometimes', 'boolean'],
+                'telegram_enabled' => ['sometimes', 'boolean'],
+                'telegram_notify_result' => ['sometimes', 'boolean'],
+                'telegram_notify_on' => ['required', 'string', Rule::in(['signal_trade', 'off'])],
+                'telegram_send_chart' => ['required', 'string', Rule::in(['1', '0'])],
+                'telegram_bot_token' => ['nullable', 'string', 'max:128'],
+                'telegram_chat_id' => ['nullable', 'string', 'max:64'],
+                'telegram_analyst_llm_enabled' => ['sometimes', 'boolean'],
+                'telegram_analyst_bot_id' => ['nullable', 'integer', 'min:1'],
+                'telegram_analyst_llm_question' => ['nullable', 'string', 'max:500'],
+            ] + TelegramBotConfigFields::validationRules());
+            if (! $request->boolean('eng_allow_classic') && ! $request->boolean('eng_allow_same_color')) {
+                throw ValidationException::withMessages([
+                    'eng_allow_classic' => 'Включите хотя бы один тип поглощения: классическое или same-color.',
+                ]);
+            }
+            $existingToken = trim((string) (($bot->config ?? [])['telegram_bot_token'] ?? ''));
+            $tokenInput = trim((string) ($extra['telegram_bot_token'] ?? ''));
+            $config = array_merge($bot->config ?? [], [
+                'count' => (int) $extra['count'],
+                'expiry_sec' => (int) $extra['expiry_sec'],
+                'min_confidence' => (float) $extra['min_confidence'],
+                'min_payout' => (float) $extra['min_payout'],
+                'stale_after_sec' => (int) $extra['stale_after_sec'],
+                'eng_allow_classic' => $request->boolean('eng_allow_classic'),
+                'eng_allow_same_color' => $request->boolean('eng_allow_same_color'),
+                'telegram_enabled' => $request->boolean('telegram_enabled'),
+                'telegram_notify_result' => $request->boolean('telegram_notify_result'),
+                'telegram_notify_on' => (string) $extra['telegram_notify_on'],
+                'telegram_send_chart' => ($extra['telegram_send_chart'] ?? '1') === '1',
+                'telegram_bot_token' => $tokenInput !== '' ? $tokenInput : $existingToken,
+                'telegram_chat_id' => trim((string) ($extra['telegram_chat_id'] ?? '')),
+                'telegram_analyst_llm_enabled' => $request->boolean('telegram_analyst_llm_enabled'),
+                'telegram_analyst_bot_id' => ! empty($extra['telegram_analyst_bot_id'])
+                    ? (int) $extra['telegram_analyst_bot_id']
+                    : null,
+                'telegram_analyst_llm_question' => StrongLevelTelegramLlmButton::llmQuestionFromConfig([
+                    'telegram_analyst_llm_question' => $extra['telegram_analyst_llm_question'] ?? null,
+                ]),
+                'version' => 'engulfing_liquidity_v1',
             ]);
             $config = TelegramBotConfigFields::mergeFromRequest($request, $config, $bot->config ?? []);
         } elseif ($bot->type === 'smc_flow') {
@@ -2058,12 +2126,21 @@ class BotController extends Controller
                 'srl_pivot_length' => ['sometimes', 'integer', 'min:1', 'max:100'],
                 'srl_enter_sweep' => ['sometimes', 'boolean'],
                 'srl_enter_pullback' => ['sometimes', 'boolean'],
+                'eng_allow_classic' => ['sometimes', 'boolean'],
+                'eng_allow_same_color' => ['sometimes', 'boolean'],
             ]);
             if (ChartAnalystBotTypes::isSrl($bot->type)
                 && ! $request->boolean('srl_enter_sweep')
                 && ! $request->boolean('srl_enter_pullback')) {
                 return back()->withInput()->withErrors([
                     'srl_enter_sweep' => 'Включите хотя бы один путь: свип или первая откатная.',
+                ]);
+            }
+            if (ChartAnalystBotTypes::isEngulf($bot->type)
+                && ! $request->boolean('eng_allow_classic')
+                && ! $request->boolean('eng_allow_same_color')) {
+                return back()->withInput()->withErrors([
+                    'eng_allow_classic' => 'Включите хотя бы один тип поглощения: classic или same-color.',
                 ]);
             }
             $existingToken = trim((string) (($bot->config ?? [])['telegram_bot_token'] ?? ''));
@@ -2080,11 +2157,11 @@ class BotController extends Controller
             $hybridSourceId = (int) ($extra['hybrid_source_bot_id'] ?? 0);
             $hybridSourceOk = false;
             if ($hybridSourceId > 0) {
-                $hybridSourceOk = Bot::query()
-                    ->whereKey($hybridSourceId)
-                    ->where('user_id', $bot->user_id)
-                    ->whereIn('type', \App\Support\HybridAnalystConfig::SOURCE_BOT_TYPES)
-                    ->exists();
+                $hybridSourceOk = \App\Support\HybridAnalystConfig::applySourceBotQuery(
+                    Bot::query()
+                        ->whereKey($hybridSourceId)
+                        ->where('user_id', $bot->user_id)
+                )->exists();
             }
             // Фиксированный source обязателен только в режиме fixed.
             if (
@@ -2138,9 +2215,10 @@ class BotController extends Controller
                 'telegram_analyst_llm_question' => StrongLevelTelegramLlmButton::llmQuestionFromConfig([
                     'telegram_analyst_llm_question' => $extra['telegram_analyst_llm_question'] ?? null,
                 ]),
-                // SRL-пакет: для type=SRL всегда включён; SMC выключен, чтобы пакеты не смешивались.
+                // SRL / Engulf-пакеты: для соответствующих type всегда включены; SMC выключен.
                 'analyst_srl_flow_enabled' => ChartAnalystBotTypes::isSrl($bot->type),
-                'analyst_smc_flow_enabled' => ChartAnalystBotTypes::isSrl($bot->type)
+                'analyst_engulf_flow_enabled' => ChartAnalystBotTypes::isEngulf($bot->type),
+                'analyst_smc_flow_enabled' => (ChartAnalystBotTypes::isSrl($bot->type) || ChartAnalystBotTypes::isEngulf($bot->type))
                     ? false
                     : (bool) (($bot->config ?? [])['analyst_smc_flow_enabled'] ?? false),
                 'srl_pivot_length' => ChartAnalystBotTypes::isSrl($bot->type)
@@ -2152,9 +2230,17 @@ class BotController extends Controller
                 'srl_enter_pullback' => ChartAnalystBotTypes::isSrl($bot->type)
                     ? $request->boolean('srl_enter_pullback')
                     : (bool) (($bot->config ?? [])['srl_enter_pullback'] ?? true),
-                'version' => ChartAnalystBotTypes::isSrl($bot->type)
-                    ? 'openrouter_llm_analyst_srl_v1'
-                    : 'openrouter_llm_analyst_v1',
+                'eng_allow_classic' => ChartAnalystBotTypes::isEngulf($bot->type)
+                    ? $request->boolean('eng_allow_classic')
+                    : (bool) (($bot->config ?? [])['eng_allow_classic'] ?? true),
+                'eng_allow_same_color' => ChartAnalystBotTypes::isEngulf($bot->type)
+                    ? $request->boolean('eng_allow_same_color')
+                    : (bool) (($bot->config ?? [])['eng_allow_same_color'] ?? true),
+                'version' => match (true) {
+                    ChartAnalystBotTypes::isSrl($bot->type) => 'openrouter_llm_analyst_srl_v1',
+                    ChartAnalystBotTypes::isEngulf($bot->type) => 'openrouter_llm_analyst_engulf_v1',
+                    default => 'openrouter_llm_analyst_v1',
+                },
             ]));
             // Плановый scan для аналитика не выполняется (scanBot сразу выходит).
             // is_active=true при гибриде — чтобы бот был «active» в списке/аналитике.
@@ -2284,7 +2370,7 @@ class BotController extends Controller
         $this->ensureBotOwner($bot);
         $telegramAllowedTypes = array_merge(
             LevelBounceBotTypes::CARD_AND_TELEGRAM,
-            array_merge(['strong_trend_telegram', 'strong_trend_demarker', \App\Support\DemarkerDualFastConfig::BOT_TYPE, 'sweep_raid_liquidity'], ChartAnalystBotTypes::all())
+            array_merge(['strong_trend_telegram', 'strong_trend_demarker', \App\Support\DemarkerDualFastConfig::BOT_TYPE, 'sweep_raid_liquidity', 'engulfing_liquidity'], ChartAnalystBotTypes::all())
         );
         if (! in_array($bot->type, $telegramAllowedTypes, true)) {
             return response()->json(['ok' => false, 'error' => 'unsupported_bot_type'], 422);
@@ -2303,7 +2389,7 @@ class BotController extends Controller
         $this->ensureBotOwner($bot);
         $telegramAllowedTypes = array_merge(
             LevelBounceBotTypes::CARD_AND_TELEGRAM,
-            array_merge(['strong_trend_telegram', 'strong_trend_demarker', \App\Support\DemarkerDualFastConfig::BOT_TYPE, 'sweep_raid_liquidity'], ChartAnalystBotTypes::all())
+            array_merge(['strong_trend_telegram', 'strong_trend_demarker', \App\Support\DemarkerDualFastConfig::BOT_TYPE, 'sweep_raid_liquidity', 'engulfing_liquidity'], ChartAnalystBotTypes::all())
         );
         if (! in_array($bot->type, $telegramAllowedTypes, true)) {
             return response()->json(['ok' => false, 'error' => 'unsupported_bot_type'], 422);
@@ -2364,9 +2450,11 @@ class BotController extends Controller
             MaxBotConfig::BOT_TYPE => '@candle_reversal_confirm_bot',
             'openrouter_llm_analyst' => '@chart_analyct_smc_flow_bot',
             ChartAnalystBotTypes::SRL => '@chart_analyst_sweep_raid_bot',
+            ChartAnalystBotTypes::ENGULF => '@chart_analyst_engulf_bot',
             'strong_trend_demarker' => '@strong_DeMarker_bot',
             \App\Support\DemarkerDualFastConfig::BOT_TYPE => '@strong_DeMarker_bot',
             'sweep_raid_liquidity' => 'боту Sweep из сохранённого token (не @trend1123_bot)',
+            'engulfing_liquidity' => 'боту Engulfing из сохранённого token',
             default => '@trend1123_bot',
         };
         if ($chats === []) {
@@ -2439,11 +2527,21 @@ class BotController extends Controller
         return response()->json($result, ($result['ok'] ?? false) ? 200 : 422);
     }
 
-    public function cleanupRecent(Bot $bot, DataCleanupService $dataCleanup): RedirectResponse
+    public function cleanupRecent(Request $request, Bot $bot, DataCleanupService $dataCleanup): RedirectResponse
     {
         $this->ensureBotOwner($bot);
 
-        $result = $dataCleanup->purgeOlderThan(DataCleanupService::DEFAULT_RETENTION_HOURS, $bot->id);
+        // Окно хранения из селекта «Удалить данные старше» на странице настроек бота.
+        $validated = $request->validate([
+            'retention_hours' => 'nullable|integer|in:'.implode(',', DataCleanupService::ALLOWED_RETENTION_HOURS),
+        ]);
+
+        $retentionHours = $dataCleanup->normalizeRetentionHours(
+            (int) ($validated['retention_hours'] ?? DataCleanupService::DEFAULT_RETENTION_HOURS)
+        );
+
+        // Только данные этого бота; свечи instrument_candles не затрагиваются (общие для платформы).
+        $result = $dataCleanup->purgeOlderThan($retentionHours, $bot->id);
 
         return redirect()
             ->route('bots.settings', $bot)
@@ -2456,6 +2554,7 @@ class BotController extends Controller
 
         // Analyst тоже может иметь hybrid paper/signals — показываем activity как у остальных.
         $targetTradeId = request()->integer('trade_id');
+        $targetTradeWithoutSignal = null;
 
         $q = $bot->signals()
             ->with('trade')
@@ -2471,10 +2570,24 @@ class BotController extends Controller
 
         $signalsWithTrades = $q->get();
 
+        // Ручные / PO-сделки могут существовать без bot_signal_id — тогда whereHas('trade') пустой.
+        if ($targetTradeId > 0 && $signalsWithTrades->isEmpty()) {
+            $orphan = $bot->trades()->with('signal')->find($targetTradeId);
+            if ($orphan) {
+                if ($orphan->signal) {
+                    $orphan->signal->setRelation('trade', $orphan);
+                    $signalsWithTrades = collect([$orphan->signal]);
+                } else {
+                    $targetTradeWithoutSignal = $orphan;
+                }
+            }
+        }
+
         return view('bots.activity', [
             'bot' => $bot,
             'signalsWithTrades' => $signalsWithTrades,
             'targetTradeId' => $targetTradeId > 0 ? $targetTradeId : null,
+            'targetTradeWithoutSignal' => $targetTradeWithoutSignal,
         ]);
     }
 
@@ -3045,6 +3158,30 @@ class BotController extends Controller
         if ($requestedInstrument !== '') {
             $initialInstrument = $requestedInstrument;
         }
+        // ?trade_id= без bot_signal_id: подставляем пару сделки для авто-выбора и маркеров на графике.
+        $targetTradeBootstrap = null;
+        $requestedTradeId = request()->integer('trade_id');
+        if ($requestedTradeId > 0) {
+            $targetTrade = $bot->trades()->find($requestedTradeId);
+            if ($targetTrade !== null) {
+                $targetTradeBootstrap = [
+                    'id' => (int) $targetTrade->id,
+                    'instrument' => (string) $targetTrade->instrument,
+                    'side' => (string) $targetTrade->side,
+                    'entry_time' => $targetTrade->entry_time?->format('Y-m-d H:i:s'),
+                    'expiry_time' => $targetTrade->expiry_time?->format('Y-m-d H:i:s'),
+                    'entry_price' => $targetTrade->entry_price,
+                    'expiry_price' => $targetTrade->expiry_price,
+                    'result' => (string) ($targetTrade->result ?? BotTrade::RESULT_PENDING),
+                ];
+                $hasSignalForTrade = $chartSignals->contains(
+                    fn ($s) => (int) ($s->trade?->id ?? 0) === (int) $targetTrade->id
+                );
+                if (! $hasSignalForTrade && trim((string) $requestedInstrument) === '') {
+                    $initialInstrument = (string) $targetTrade->instrument;
+                }
+            }
+        }
         $timeframes = [
             // Секундные таймфреймы используют отдельные ID (4xxx), чтобы не конфликтовать
             // с минутными значениями 5/15/30, которые уже давно живут в UI/API.
@@ -3092,6 +3229,7 @@ class BotController extends Controller
             'analystSmcFlowEnabled' => $bot->type === ChartAnalystBotTypes::CLASSIC
                 && \App\Support\OpenRouterLlmConfig::analystSmcFlowEnabled(is_array($bot->config) ? $bot->config : []),
             'analystSrlFlowEnabled' => ChartAnalystBotTypes::isSrl($bot->type),
+            'analystEngulfFlowEnabled' => ChartAnalystBotTypes::isEngulf($bot->type),
             'chartSignals' => $chartSignalsPayload,
             'instruments' => $instruments,
             'timeframes' => $timeframes,
@@ -3122,6 +3260,7 @@ class BotController extends Controller
             ),
             // Pilot: дополнительные SMA/EMA (несколько линий одного типа).
             'chartIndicatorInstances' => app(ChartIndicatorInstanceService::class)->listSerialized($bot),
+            'targetTradeBootstrap' => $targetTradeBootstrap,
         ]);
     }
 
@@ -3141,6 +3280,7 @@ class BotController extends Controller
         PriceActionDgtIndicatorService $pa,
         LiquiditySwingsIndicatorService $liquiditySwings,
         SweepRaidLiquidityIndicatorService $sweepRaidLiquidity,
+        EngulfingLiquidityIndicatorService $engulfingLiquidity,
         SmcFlowIndicatorService $smcFlow,
         BollingerIndicatorService $bollinger,
         RsiIndicatorService $rsi,
@@ -3220,7 +3360,7 @@ class BotController extends Controller
             'instrument' => ['required', 'string', 'max:64'],
             'timeframe' => ['nullable', 'integer', Rule::in(CandleService::DASHBOARD_TIMEFRAMES)],
             'layers' => ['nullable', 'array'],
-            'layers.*' => ['string', Rule::in(['pa', 'ls', 'srl', 'smc', 'bollinger', 'rsi', 'sma', 'ema', 'vwma', 'atr', 'macd', 'stochastic', 'cci', 'keltner', 'envelops', 'parabolic_sar', 'supertrend', 'adx', 'williams', 'ao', 'alligator', 'ichimoku', 'price_channel', 'nrtr', 'hma', 'aroon', 'momentum', 'roc', 'osma', 'trix', 'cmo', 'demarker', 'rvi', 'ultimate', 'smi', 'stddev', 'sma_channel', 'ivashov', 'linreg', 'linreg_channel', 'kalman', 'fractal', 'donchian', 'stoch_rsi', 'ac', 'bulls_power', 'bears_power', 'dpo', 'qstick', 'vh_filter', 'efficiency_ratio', 'ravi', 'cog', 'pivot_floor', 'mass_index', 'nrtr_watr', 'price_channel_adaptive', 'price_channel_offset', 'parabolic_bollinger', 'parabolic_price_channel', 'atr_channel', 'offset_sma', 'offset_ema', 'offset_ssma', 'volatility_average', 'volatility_average_channel', 'price_oscillator', 'dynamic_trend_detector', 'adaptive_look_back', 'linreg_channel_fast', 'volatility_candles', 'zigzag', 'volatility_average_twice', 'volatility_stages_aw'])],
+            'layers.*' => ['string', Rule::in(['pa', 'ls', 'srl', 'eng', 'smc', 'bollinger', 'rsi', 'sma', 'ema', 'vwma', 'atr', 'macd', 'stochastic', 'cci', 'keltner', 'envelops', 'parabolic_sar', 'supertrend', 'adx', 'williams', 'ao', 'alligator', 'ichimoku', 'price_channel', 'nrtr', 'hma', 'aroon', 'momentum', 'roc', 'osma', 'trix', 'cmo', 'demarker', 'rvi', 'ultimate', 'smi', 'stddev', 'sma_channel', 'ivashov', 'linreg', 'linreg_channel', 'kalman', 'fractal', 'donchian', 'stoch_rsi', 'ac', 'bulls_power', 'bears_power', 'dpo', 'qstick', 'vh_filter', 'efficiency_ratio', 'ravi', 'cog', 'pivot_floor', 'mass_index', 'nrtr_watr', 'price_channel_adaptive', 'price_channel_offset', 'parabolic_bollinger', 'parabolic_price_channel', 'atr_channel', 'offset_sma', 'offset_ema', 'offset_ssma', 'volatility_average', 'volatility_average_channel', 'price_oscillator', 'dynamic_trend_detector', 'adaptive_look_back', 'linreg_channel_fast', 'volatility_candles', 'zigzag', 'volatility_average_twice', 'volatility_stages_aw'])],
             // Pilot: id экземпляров SMA/EMA (chart_indicator_instances).
             'instances' => ['nullable', 'array'],
             'instances.*' => ['integer', 'min:1'],
@@ -3254,6 +3394,9 @@ class BotController extends Controller
         }
         if (! empty($want['srl'])) {
             $json['sweep_raid_liquidity'] = $sweepRaidLiquidity->compute($rows, $this->chartOverlayParams($bot, 'srl', IndicatorSetting::mergedSweepRaidLiquidityParams($bot)));
+        }
+        if (! empty($want['eng'])) {
+            $json['engulfing_liquidity'] = $engulfingLiquidity->compute($rows, $this->chartOverlayParams($bot, 'eng', IndicatorSetting::mergedEngulfingLiquidityParams($bot)));
         }
         if (! empty($want['smc'])) {
             $json['smc_flow'] = $smcFlow->compute($rows, IndicatorSetting::mergedSmcFlowParams($bot));

@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="csrf-token" content="{{ csrf_token() }}">
     <title>@yield('title', 'Платформа')</title>
+    @include('partials.platform-timezone')
     <script src="https://cdn.tailwindcss.com"></script>
 </head>
 <body @class([
@@ -49,5 +50,6 @@
         : trim($__env->yieldContent('main_class', 'w-full max-w-none flex-1 min-h-0 overflow-y-auto py-8 px-3 sm:px-4')) }}">
         @yield('content')
     </main>
+    @include('partials.server-clock-helper')
 </body>
 </html>

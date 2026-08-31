@@ -66,11 +66,12 @@ class HybridAnalystLeaderService
         $previousId = HybridAnalystConfig::previousLeaderBotId($cfg);
         $from = Carbon::now()->subSeconds($windowSec);
 
-        $candidateIds = Bot::query()
-            ->where('user_id', $analystBot->user_id)
-            ->where('is_active', true)
-            ->whereIn('type', HybridAnalystConfig::SOURCE_BOT_TYPES)
-            ->where('id', '!=', $analystBot->id)
+        $candidateIds = HybridAnalystConfig::applySourceBotQuery(
+            Bot::query()
+                ->where('user_id', $analystBot->user_id)
+                ->where('is_active', true)
+                ->where('id', '!=', $analystBot->id)
+        )
             ->pluck('id')
             ->map(static fn ($id): int => (int) $id)
             ->all();

@@ -20,6 +20,11 @@ final class OpenRouterChartLevelsParser
      */
     public static function defaultAnalystSystemPromptForConfig(array $config): string
     {
+        // Engulf-аналитик: подтверждение 3-шагового поглощения.
+        if (OpenRouterLlmConfig::analystEngulfFlowEnabled($config)) {
+            return self::defaultAnalystSystemPromptWithEngulf();
+        }
+
         // SRL-аналитик: отдельный пакет правил (подтверждение SWEEP/RAID/PB).
         if (OpenRouterLlmConfig::analystSrlFlowEnabled($config)) {
             return self::defaultAnalystSystemPromptWithSweepRaid();
@@ -37,6 +42,10 @@ final class OpenRouterChartLevelsParser
      */
     public static function defaultAnalystSystemPromptShortForConfig(array $config): string
     {
+        if (OpenRouterLlmConfig::analystEngulfFlowEnabled($config)) {
+            return self::defaultAnalystSystemPromptShortWithEngulf();
+        }
+
         if (OpenRouterLlmConfig::analystSrlFlowEnabled($config)) {
             return self::defaultAnalystSystemPromptShortWithSweepRaid();
         }
@@ -107,6 +116,38 @@ PROMPT;
     }
 
     /**
+     * Краткий режим Engulfing: LLM только подтверждает candidates из детектора.
+     */
+    public static function defaultAnalystSystemPromptShortWithEngulf(): string
+    {
+        return <<<'PROMPT'
+Ты торговый AI-аналитик для бинарных опционов (краткий режим Engulfing Liquidity).
+Целевая экспирация: 60 секунд (1 M1-бар).
+
+Задача — подтвердить или отклонить уже найденные сетапы из engulfing_summary.candidates.
+Ты НЕ ищешь новые поглощения сам по свечам — только валидируешь кандидатов детектора.
+
+Данные в запросе:
+- engulfing_summary — снимок детектора (candidates, recent_entries, rule_reminder)
+- closed_candles_m1 / s5 / mtf.* — контекст качества (шум, импульс, конфликт)
+- expiry_focus_sec: 60
+- user_question — вопрос трейдера (может быть null)
+
+Формат ответа (строго, 2–4 строки на русском, без markdown):
+Рекомендация: CALL | PUT | NONE
+Вероятность успеха: NN%
+Причина: одно короткое предложение
+
+Правила:
+- Если candidates пуст → NONE.
+- CALL/PUT только если side совпадает с одним из candidates и цепочка ENGULF 1→2→3 валидна.
+- При сомнении / грязном контексте / «уже вышли» → NONE.
+- Вероятность успеха: целое 0–100. При NONE обычно ≤50%.
+- Пиши только по-русски (кроме CALL/PUT/NONE). Без chart_levels.
+PROMPT;
+    }
+
+    /**
      * Краткий режим Sweep/Raid: LLM только подтверждает candidates из детектора.
      */
     public static function defaultAnalystSystemPromptShortWithSweepRaid(): string
@@ -136,6 +177,45 @@ PROMPT;
 - Вероятность успеха: целое 0–100. При NONE обычно ≤50%.
 - Пиши только по-русски (кроме CALL/PUT/NONE). Без chart_levels.
 PROMPT;
+    }
+
+    /** Полный режим Engulfing: подтверждение 3-шагового поглощения + entry на график. */
+    public static function defaultAnalystSystemPromptWithEngulf(): string
+    {
+        return <<<'PROMPT'
+Ты торговый AI-аналитик для бинарных опционов по стратегии Engulfing Liquidity.
+Целевая экспирация: 60 секунд. Тайминг — закрытая M1 (+ S5 для микроконтекста).
+
+Главная задача — подтвердить или отклонить уже найденные сетапы из engulfing_summary.
+Детектор платформы уже разметил ENGULF 1/2/3. Ты НЕ изобретаешь новые паттерны «с нуля».
+
+Данные в запросе:
+- engulfing_summary:
+  candidates — входы на последней закрытой M1 (подтверждать только их side),
+  recent_entries — контекст недавних цепочек,
+  rule_reminder — правила автора (classic / same-color, 3 шага)
+- closed_candles_m1, partial_candle_m1 — M1
+- closed_candles_s5, partial_candle_s5 — S5
+- mtf.* — старшие ТФ (если mtf.enabled) только как фильтр качества, не как источник входа
+- expiry_focus_sec: 60
+- user_question — вопрос трейдера (может быть null)
+
+Правила стратегии (кратко):
+1) ENGULF 1 — первое поглощение (classic или same-color): задаёт контекст CALL/PUT, входа нет.
+2) ENGULF 2 — одна свеча реакции противоположного цвета.
+3) ENGULF 3 — контр-поглощение реакции в сторону шага 1 → вход на close 3-й свечи.
+4) Classic: зелёная съела красную → CALL; красная съела зелёную → PUT.
+5) Same-color: зелёная с high выше соседа → CALL; красная с low ниже → PUT.
+6) Нет 3 подряд свечей цепочки, слабые тела, опоздание — NONE.
+
+Обязательно в тексте анализа:
+1) Есть ли кандидат в candidates (явно: side, engulf_kind) или список пуст.
+2) Подтверждаешь или отклоняешь (почему: качество тел, реакция, конфликт MTF/шум).
+3) Явная рекомендация: CALL, PUT или NONE.
+4) Горизонт 60 секунд при CALL/PUT.
+5) Строка «Вероятность успеха: NN%».
+PROMPT
+            .self::promptInstructionsWithEngulf();
     }
 
     /** Полный режим Sweep/Raid: подтверждение SWEEP/RAID/PB + уровни на график. */
@@ -377,6 +457,31 @@ TXT
 Дополнительно для Sweep/Raid:
 - В levels указывай подтверждённые FH/FL из sweep_raid_summary.active_levels (label вида «M1 FH · price» / «M1 FL · price»).
 - entry.price бери из кандидата (entry_price), side — только CALL или PUT из candidates.
+- Не рисуй уровни, которых нет в snapshot.
+TXT;
+    }
+
+    /** Формат ответа для аналитика Engulfing (entry 60с). */
+    public static function promptInstructionsWithEngulf(): string
+    {
+        return <<<'TXT'
+
+Формат ответа (обязательно):
+1) Связный текст на русском: candidates → цепочка ENGULF 1/2/3 → качество контекста → сценарий на 60 с.
+   В конце текстового блока — строка «Рекомендация: CALL» или «Рекомендация: PUT» или «Рекомендация: NONE (причина)».
+TXT
+            .self::successProbabilityInstructionBlock()
+            .<<<'TXT'
+2) В самом конце ответа — отдельный блок для отрисовки на графике (после текста, без markdown вокруг JSON внутри блока):
+
+TXT
+            .self::chartLevelsFenceExample(includeZones: false, includeEntry: true)
+            .self::chartLevelsRulesBlock()
+            .<<<'TXT'
+
+Дополнительно для Engulfing:
+- entry.price бери из кандидата (entry_price), side — только CALL или PUT из candidates.
+- В levels можно указать цену входа (kind entry) с label «M1 вход · price».
 - Не рисуй уровни, которых нет в snapshot.
 TXT;
     }

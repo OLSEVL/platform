@@ -210,6 +210,10 @@
         return Math.floor(m / 60) + 'ч назад';
     }
 
+    function serverUnixNow() {
+        return window.PlatformServerClock ? PlatformServerClock.unixNow() : Math.floor(Date.now() / 1000);
+    }
+
     function formatCountdown(sec) {
         sec = Math.max(0, Math.floor(sec));
         const m = Math.floor(sec / 60);
@@ -218,6 +222,7 @@
     }
 
     function progressPct(card, nowSec) {
+        nowSec = nowSec != null ? nowSec : serverUnixNow();
         const entryTs = Number(card.entry_ts) || 0;
         const expiryTs = Number(card.expiry_ts) || 0;
         const total = expiryTs > entryTs ? (expiryTs - entryTs) : (Number(card.expiry_sec) || 0);
@@ -252,7 +257,7 @@
 
     function renderCard(card) {
         const barColor = card.is_up ? 'bg-emerald-500' : 'bg-rose-500';
-        const nowSec = Math.floor(Date.now() / 1000);
+        const nowSec = serverUnixNow();
         const activeSec = card.created_ts ? Math.max(0, nowSec - Number(card.created_ts)) : 0;
         const expiryLeft = card.expiry_ts ? Math.max(0, Number(card.expiry_ts) - nowSec) : 0;
         const pct = progressPct(card, nowSec);
@@ -387,7 +392,7 @@
     }
 
     function tickLive() {
-        const nowSec = Math.floor(Date.now() / 1000);
+        const nowSec = serverUnixNow();
 
         grid.querySelectorAll('article[data-card-id]').forEach(el => {
             const createdTs = Number(el.dataset.createdTs) || 0;
@@ -456,7 +461,7 @@
     }
 
     function openModal(card) {
-        const nowSec = Math.floor(Date.now() / 1000);
+        const nowSec = serverUnixNow();
         const activeSec = card.created_ts ? Math.max(0, nowSec - Number(card.created_ts)) : 0;
         const expiryLeft = card.expiry_ts ? Math.max(0, Number(card.expiry_ts) - nowSec) : 0;
 
@@ -529,6 +534,7 @@
                 throw new Error('http_' + res.status);
             }
             const data = await res.json();
+            if (window.PlatformServerClock) PlatformServerClock.sync(data.server_time);
             const cards = data.cards || [];
             const newIds = new Set(cards.map(c => c.id));
 
@@ -542,7 +548,7 @@
             liveCards = cards;
 
             syncGrid(cards);
-            meta.textContent = `Обновление: ${new Date().toLocaleTimeString()} · активных: ${data.count ?? 0}`;
+            meta.textContent = `Обновление: ${(window.PlatformTimeFormat && PlatformTimeFormat.nowHms) ? PlatformTimeFormat.nowHms() : new Date().toLocaleTimeString()} · активных: ${data.count ?? 0}`;
         } catch (err) {
             meta.textContent = 'Ошибка обновления. Повторяем…';
         }

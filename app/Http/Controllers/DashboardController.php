@@ -20,6 +20,7 @@ use App\Services\Indicators\PriceActionDgtIndicatorService;
 use App\Services\Indicators\RsiIndicatorService;
 use App\Services\Indicators\SmaIndicatorService;
 use App\Services\Indicators\SmcFlowIndicatorService;
+use App\Services\Indicators\EngulfingLiquidityIndicatorService;
 use App\Services\Indicators\SweepRaidLiquidityIndicatorService;
 use App\Services\Indicators\CciIndicatorService;
 use App\Services\Indicators\StochasticIndicatorService;
@@ -416,14 +417,13 @@ class DashboardController extends Controller
             ? M1CandleCountdown::secondsToClose($lastOpen, $serverUnix)
             : null;
 
-        // Микро-цены (NGN/LBP OTC и т.п.): единые 8 знаков вместо фиксированных 5.
-        $priceDecimals = PriceScale::resolveFromCandles($data);
+        // PO и candles.* — decimal(20,8): отдаём OHLC как есть (8 знаков), без урезания до 5.
         $data = array_map(static fn (array $c) => [
             'time' => $c['time'],
-            'open' => PriceScale::roundPrice((float) $c['open'], $priceDecimals),
-            'high' => PriceScale::roundPrice((float) $c['high'], $priceDecimals),
-            'low' => PriceScale::roundPrice((float) $c['low'], $priceDecimals),
-            'close' => PriceScale::roundPrice((float) $c['close'], $priceDecimals),
+            'open' => PriceScale::normalizeChartPrice((float) $c['open']),
+            'high' => PriceScale::normalizeChartPrice((float) $c['high']),
+            'low' => PriceScale::normalizeChartPrice((float) $c['low']),
+            'close' => PriceScale::normalizeChartPrice((float) $c['close']),
             'volume' => round((float) ($c['volume'] ?? 0), 2),
             'is_partial' => (bool) ($c['is_partial'] ?? false),
         ], $data);
@@ -433,7 +433,7 @@ class DashboardController extends Controller
             'server_unix' => $serverUnix,
             'feed_debug' => $feedDebug,
             'm1_seconds_to_close' => $m1SecondsToClose,
-            'price_scale' => PriceScale::chartFormat($priceDecimals),
+            'price_scale' => PriceScale::chartFormat(PriceScale::chartDecimals()),
         ]);
     }
 
@@ -442,6 +442,7 @@ class DashboardController extends Controller
         CandleStructureZoneDetector $detector,
         CandleService $candleService,
         SweepRaidLiquidityIndicatorService $sweepRaidLiquidity,
+        EngulfingLiquidityIndicatorService $engulfingLiquidity,
     ): JsonResponse
     {
         $validated = $request->validate([
@@ -450,6 +451,7 @@ class DashboardController extends Controller
             // Расчёт Sweep / Raid запускаем только по запросу включённого dashboard-слоя,
             // чтобы обычное обновление OB/FVG не выполняло лишний проход по свечам.
             'include_sweep_raid' => ['nullable', 'boolean'],
+            'include_engulfing' => ['nullable', 'boolean'],
             // Окно = загруженные на графике свечи (фронт), иначе дефолт resolveIndicatorHistoryWindow.
             'since' => ['nullable', 'integer', 'min:0'],
             'limit' => ['nullable', 'integer', 'min:1', 'max:12000'],
@@ -478,6 +480,12 @@ class DashboardController extends Controller
                 ? IndicatorSetting::mergedSweepRaidLiquidityParams($anchorBot)
                 : SweepRaidLiquidityIndicatorService::defaultParams();
             $json['sweep_raid_liquidity'] = $sweepRaidLiquidity->compute($rows, $sweepRaidParams);
+        }
+        if ((bool) ($validated['include_engulfing'] ?? false)) {
+            $engulfParams = $anchorBot !== null
+                ? IndicatorSetting::mergedEngulfingLiquidityParams($anchorBot)
+                : EngulfingLiquidityIndicatorService::defaultParams();
+            $json['engulfing_liquidity'] = $engulfingLiquidity->compute($rows, $engulfParams);
         }
 
         return response()->json($json);
@@ -1314,6 +1322,7 @@ class DashboardController extends Controller
             ->limit(50)
             ->get([
                 'id',
+                'bot_id',
                 'instrument',
                 'side',
                 'entry_price',
@@ -1347,6 +1356,7 @@ class DashboardController extends Controller
                 'id' => $sig !== null ? (int) $sig->id : 0,
                 'instrument' => (string) $t->instrument,
                 'side' => (string) $t->side,
+                'bot_id' => (int) $t->bot_id,
                 // Время входа: signal_at предпочтительнее entry_time (как на bots/show).
                 'signal_at' => optional($sig?->signal_at ?? $t->entry_time)->toIso8601String(),
                 'expiry_time' => optional($t->expiry_time)->toIso8601String(),
@@ -1369,6 +1379,7 @@ class DashboardController extends Controller
                 'id' => (int) $t->id,
                 'instrument' => (string) $t->instrument,
                 'side' => (string) $t->side,
+                'bot_id' => (int) $t->bot_id,
                 'entry_price' => $t->entry_price !== null ? (float) $t->entry_price : null,
                 'entry_ts' => optional($t->entry_time)?->timestamp,
                 'expiry_ts' => optional($t->expiry_time)?->timestamp,

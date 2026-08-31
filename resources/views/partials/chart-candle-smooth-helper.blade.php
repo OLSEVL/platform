@@ -70,12 +70,14 @@
 
         function pushToSeries(bar) {
             const s = series();
-            if (!s || !bar) return;
+            if (!s || !bar) return false;
             try {
                 s.update(paintBar(bar));
+                return true;
             } catch (e) {
                 // Не валим график: следующий poll/setData восстановит.
                 console.error('[candle-smooth] update', e);
+                return false;
             }
         }
 
@@ -107,7 +109,7 @@
 
         /** Мгновенно показать бар (новый бар / fullResync / смена инструмента). */
         function snap(bar) {
-            if (!bar || bar.time == null) return;
+            if (!bar || bar.time == null) return false;
             cancel();
             barTime = bar.time;
             target = {
@@ -119,7 +121,7 @@
             };
             displayClose = bar.close;
             fromClose = bar.close;
-            pushToSeries(target);
+            return pushToSeries(target);
         }
 
         /**
@@ -127,11 +129,10 @@
          * Если time сменился — snap (рождение нового бара).
          */
         function toward(bar) {
-            if (!bar || bar.time == null) return;
+            if (!bar || bar.time == null) return false;
 
             if (barTime == null || bar.time !== barTime) {
-                snap(bar);
-                return;
+                return snap(bar);
             }
 
             target = {
@@ -151,13 +152,13 @@
             if (Math.abs(fromClose - bar.close) < 1e-12) {
                 displayClose = bar.close;
                 cancel();
-                pushToSeries(target);
-                return;
+                return pushToSeries(target);
             }
 
             if (rafId == null) {
                 rafId = requestAnimationFrame(frame);
             }
+            return true;
         }
 
         /**

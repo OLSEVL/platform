@@ -16,6 +16,7 @@ class SweepRaidLiquidityStrategyTest extends TestCase
                 'srl_pivot_length' => 1,
                 'srl_enter_sweep' => true,
                 'srl_enter_pullback' => false,
+                'srl_demarker_enabled' => false,
                 'expiry_sec' => 60,
             ],
             'payout' => 85.0,
@@ -25,6 +26,25 @@ class SweepRaidLiquidityStrategyTest extends TestCase
         $this->assertSame('PUT', $decision['side']);
         $this->assertSame('sweep_high', $decision['features']['setup']);
         $this->assertSame(60, $decision['expiry_sec']);
+    }
+
+    public function test_demarker_filter_blocks_sweep_without_zone_crossing(): void
+    {
+        $strategy = new SweepRaidLiquidityStrategy;
+        $decision = $strategy->analyze($this->highSweepCandles(), null, [
+            'config' => [
+                'srl_pivot_length' => 1,
+                'srl_enter_sweep' => true,
+                'srl_enter_pullback' => false,
+                'srl_demarker_enabled' => true,
+                'srl_demarker_period' => 6,
+                'srl_demarker_oversold' => 10,
+                'srl_demarker_overbought' => 90,
+                'expiry_sec' => 60,
+            ],
+        ]);
+
+        $this->assertNull($decision);
     }
 
     public function test_enters_call_on_first_red_pullback_after_low_raid(): void

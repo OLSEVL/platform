@@ -15,6 +15,28 @@ class BotTradingChartLayersTest extends TestCase
         $this->assertSame(['layer-sweep-raid-liquidity'], BotTradingChartLayers::layerIds($bot));
     }
 
+    public function test_sweep_raid_with_demarker_adds_demarker_layer(): void
+    {
+        $bot = $this->bot('sweep_raid_liquidity', [
+            'srl_demarker_enabled' => true,
+            'srl_demarker_period' => 6,
+            'srl_demarker_oversold' => 10,
+            'srl_demarker_overbought' => 90,
+        ]);
+        $this->assertSame(
+            ['layer-sweep-raid-liquidity', 'layer-demarker'],
+            BotTradingChartLayers::layerIds($bot)
+        );
+        $out = BotTradingChartLayers::overlayParams($bot, 'demarker', [
+            'period' => 14,
+            'level_oversold' => 0.3,
+            'level_overbought' => 0.7,
+        ]);
+        $this->assertSame(6, $out['period']);
+        $this->assertEqualsWithDelta(0.1, $out['level_oversold'], 1e-9);
+        $this->assertEqualsWithDelta(0.9, $out['level_overbought'], 1e-9);
+    }
+
     public function test_srl_analyst_enables_llm_and_srl_layers(): void
     {
         $bot = $this->bot(\App\Support\ChartAnalystBotTypes::SRL, [
@@ -37,6 +59,25 @@ class BotTradingChartLayersTest extends TestCase
         $this->assertSame(3, $params['pivot_length']);
         $this->assertTrue($params['show_sweeps']);
         $this->assertFalse($params['show_pullback_entries']);
+    }
+
+    public function test_engulf_analyst_enables_llm_and_engulf_layers(): void
+    {
+        $bot = $this->bot(\App\Support\ChartAnalystBotTypes::ENGULF, [
+            'eng_allow_classic' => true,
+            'eng_allow_same_color' => false,
+        ]);
+
+        $this->assertSame(
+            ['layer-llm-levels', 'layer-engulfing-liquidity'],
+            BotTradingChartLayers::layerIds($bot)
+        );
+        $params = BotTradingChartLayers::overlayParams($bot, 'eng', [
+            'allow_classic' => false,
+            'allow_same_color' => true,
+        ]);
+        $this->assertTrue($params['allow_classic']);
+        $this->assertFalse($params['allow_same_color']);
     }
 
     public function test_demarker_enables_demarker_layer(): void

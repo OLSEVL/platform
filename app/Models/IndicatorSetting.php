@@ -94,6 +94,9 @@ class IndicatorSetting extends Model
     /** Отдельный оверлей стратегии: фракталы, свипы, рейды и первая откатная. */
     public const KEY_SWEEP_RAID_LIQUIDITY = 'sweep_raid_liquidity';
 
+    /** Оверлей 3-шагового поглощения (ENGULF 1/2/3). */
+    public const KEY_ENGULFING_LIQUIDITY = 'engulfing_liquidity';
+
     /** Ордерблоки LuxAlgo (orderblock.txt) — ключи OrderBlocksIndicatorService::defaultParams(). */
     public const KEY_ORDER_BLOCKS = 'order_blocks';
 
@@ -385,6 +388,27 @@ class IndicatorSetting extends Model
         $row = static::query()
             ->where('bot_id', $bot->id)
             ->where('indicator_key', self::KEY_SWEEP_RAID_LIQUIDITY)
+            ->first();
+        $db = is_array($row?->settings) ? $row->settings : [];
+
+        return array_replace($defaults, $legacy, $db);
+    }
+
+    /**
+     * Параметры оверлея Engulfing Liquidity (3-шаговое поглощение).
+     *
+     * @return array<string, mixed>
+     */
+    public static function mergedEngulfingLiquidityParams(Bot $bot): array
+    {
+        $defaults = \App\Services\Indicators\EngulfingLiquidityIndicatorService::defaultParams();
+        $botConfig = is_array($bot->config) ? $bot->config : [];
+        $legacy = isset($botConfig[self::KEY_ENGULFING_LIQUIDITY]) && is_array($botConfig[self::KEY_ENGULFING_LIQUIDITY])
+            ? $botConfig[self::KEY_ENGULFING_LIQUIDITY]
+            : [];
+        $row = static::query()
+            ->where('bot_id', $bot->id)
+            ->where('indicator_key', self::KEY_ENGULFING_LIQUIDITY)
             ->first();
         $db = is_array($row?->settings) ? $row->settings : [];
 

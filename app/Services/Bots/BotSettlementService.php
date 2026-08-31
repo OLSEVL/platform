@@ -132,12 +132,14 @@ class BotSettlementService
                 }
             }
 
+            // settled_at = момент экспирации (конец сделки), а не когда cron успел записать итог.
+            // Так «Закрыта» в UI совпадает с expiry_time; задержка settle — только внутренняя.
             $updatePayload = [
                 'status' => BotTrade::STATUS_SETTLED,
                 'result' => $result,
                 'expiry_price' => $expiry,
                 'pnl' => $pnl,
-                'settled_at' => now(),
+                'settled_at' => $trade->expiry_time,
                 'meta_json' => $meta,
             ];
 

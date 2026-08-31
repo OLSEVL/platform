@@ -52,6 +52,7 @@ final class BotAlgorithmSummary
             'rvi_trade' => 'RVI Trade',
             'smc_flow' => 'SMC Flow',
             'sweep_raid_liquidity' => 'Sweep / Raid Liquidity',
+            'engulfing_liquidity' => 'Engulfing Liquidity',
             'strong_level' => 'Strong Level',
             'strong_trend_telegram' => 'Strong Trend Telegram',
             'strong_trend_demarker' => 'Strong Trend + DeMarker',
@@ -60,6 +61,7 @@ final class BotAlgorithmSummary
             'openrouter_llm' => 'OpenRouter LLM',
             'openrouter_llm_analyst' => 'OpenRouter Chart Analyst',
             ChartAnalystBotTypes::SRL => 'OpenRouter Chart Analyst Sweep/Raid',
+            ChartAnalystBotTypes::ENGULF => 'OpenRouter Chart Analyst Engulfing',
             default => $type,
         };
     }
@@ -82,7 +84,8 @@ final class BotAlgorithmSummary
             'strong_level', 'candle_reversal_confirm' => 'level_bounce',
             'smc_flow' => 'smc_flow',
             'sweep_raid_liquidity' => 'level_bounce',
-            'openrouter_llm', 'openrouter_llm_analyst', ChartAnalystBotTypes::SRL => 'llm',
+            'engulfing_liquidity' => 'counter_three',
+            'openrouter_llm', 'openrouter_llm_analyst', ChartAnalystBotTypes::SRL, ChartAnalystBotTypes::ENGULF => 'llm',
             default => 'generic',
         };
     }
@@ -162,6 +165,9 @@ final class BotAlgorithmSummary
             'smc_flow' => "Три фильтра на закрытой M1 должны совпасть:\n"
                 ."UT Bot (свежий Buy/Sell) + 3BR confirm + цена в LuxAlgo OB.\n"
                 .'Только при полном совпадении стороны → CALL или PUT.',
+            'engulfing_liquidity' => "3-шаговое поглощение на закрытой M1:\n"
+                ."Шаг1 engulf (контекст) → шаг2 реакция → шаг3 контр-pogloщение → вход.\n"
+                .'Не на первом engulf. Классика и same-color. Экспирация 60 с.',
             'strong_level' => "Строит сильные уровни из нескольких источников (конфлюенс).\n"
                 ."Ждёт касание цены и подтверждение отскока/пробоя на M5/M1.\n"
                 .'Отбой/пробой задаёт CALL или PUT; есть карточки и Telegram.',
@@ -186,6 +192,9 @@ final class BotAlgorithmSummary
             ChartAnalystBotTypes::SRL => "Chart Analyst + Sweep/Raid: LLM только подтверждает SWEEP/RAID/PB детектора.\n"
                 ."Экспирация ориентир 60 с. Плановый scan выключен (ручной / Telegram / hybrid).\n"
                 .'Rule-based бот sweep_raid_liquidity остаётся отдельным.',
+            ChartAnalystBotTypes::ENGULF => "Chart Analyst + Engulfing: LLM только подтверждает цепочку ENGULF 1/2/3.\n"
+                ."Экспирация ориентир 60 с. Плановый scan выключен (ручной / Telegram / hybrid).\n"
+                .'Rule-based бот engulfing_liquidity остаётся отдельным.',
             default => 'Алгоритм не описан для типа «'.$type.'».',
         };
     }
@@ -386,6 +395,13 @@ final class BotAlgorithmSummary
                 $s('Пример', 'На схеме — три галочки; если любой фильтр «нет» — входа нет.'),
                 $s('Важно', 'Строгий AND — сигналов мало, зато идея «структура + зона».'),
             ],
+            'engulfing_liquidity' => [
+                $s('Идея', 'Поглощение в 3 шага: engulf (контекст) → реакция одной свечой → контр-pogloщение. Вход на close 3-й свечи.'),
+                $s('Когда CALL', 'Бычий engulf → красная реакция → зелёная контр-pogloщение (classic или same-color).'),
+                $s('Когда PUT', 'Медвежий engulf → зелёная реакция → красная контр-pogloщение.'),
+                $s('Пример', '10:01 engulf ↑, 10:02 откат ↓, 10:03 контр-pogloщение ↑ → CALL на close 10:03, expiry 60 с.'),
+                $s('Важно', 'Один engulf без цепочки — не вход. FH/FL не нужны. Same-color можно отключить в настройках.'),
+            ],
             'openrouter_llm' => [
                 $s('Идея', 'Торговое решение принимает LLM по JSON (side, confidence, reasons). Индикаторных правил нет.'),
                 $s('Когда CALL / PUT', 'Модель сама выбирает сторону по свечам M1 и опционально MTF.'),
@@ -404,6 +420,13 @@ final class BotAlgorithmSummary
                 $s('Когда PUT', 'Кандидат PUT: свип хая или откат после снятия сверху (первая зелёная).'),
                 $s('Пример', 'На M1 FH снят зелёной тенью → candidate PUT → LLM подтверждает → рекомендация PUT на 60 с.'),
                 $s('Важно', 'Пустой candidates → NONE. Два закрытия за уровнем = уровень съеден. Rule-based бот SRL отдельно.'),
+            ],
+            ChartAnalystBotTypes::ENGULF => [
+                $s('Идея', 'Как Chart Analyst, но входная логика — 3-шаговое поглощение. Детектор находит ENGULF 1/2/3, LLM только подтверждает или отклоняет.'),
+                $s('Когда CALL', 'Кандидат CALL: classic или same-color с high выше соседа + реакция + контр-pogloщение.'),
+                $s('Когда PUT', 'Кандидат PUT: classic или same-color с low ниже соседа + реакция + контр-pogloщение.'),
+                $s('Пример', 'ENGULF 1 → ENGULF 2 реакция → ENGULF 3 контр → candidate CALL → LLM подтверждает на 60 с.'),
+                $s('Важно', 'Пустой candidates → NONE. Первое поглощение без цепочки — не вход. Rule-based engulfing_liquidity отдельно.'),
             ],
             default => [
                 $s('Описание', 'Для типа «'.$type.'» подробная карточка ещё не заполнена.'),

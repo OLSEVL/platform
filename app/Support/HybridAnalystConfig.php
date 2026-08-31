@@ -70,26 +70,33 @@ final class HybridAnalystConfig
     public const LEADER_CACHE_TTL_SEC = 60;
 
     /**
-     * Типы source-ботов, чьи CALL/PUT могут триггерить гибрид.
+     * Типы ботов, которые не могут быть source для гибрида:
+     * Chart Analyst (приёмник) и ручной дашборд (нет авто CALL/PUT).
      *
-     * @var list<string>
+     * @return list<string>
      */
-    public const SOURCE_BOT_TYPES = [
-        'strong_level',
-        'strong_trend_telegram',
-        'candle_reversal_confirm',
-        'rsi_contrtrend',
-        'bollinger_contrtrend',
-        'pinbar_trade',
-        'williams_range_trade',
-        'three_soldier',
-        'cci_trade',
-        'rsi_trade',
-        'rvi_trade',
-        'smc_flow',
-        'three_candles_in_row',
-        'openrouter_llm',
-    ];
+    public static function excludedSourceBotTypes(): array
+    {
+        return array_values(array_unique(array_merge(
+            ChartAnalystBotTypes::all(),
+            [ManualTradeConfig::BOT_TYPE],
+        )));
+    }
+
+    /** Может ли бот с таким type быть source гибрида. */
+    public static function isSourceBotType(string $type): bool
+    {
+        return ! in_array($type, self::excludedSourceBotTypes(), true);
+    }
+
+    /**
+     * @param  \Illuminate\Database\Eloquent\Builder<\App\Models\Bot>  $query
+     * @return \Illuminate\Database\Eloquent\Builder<\App\Models\Bot>
+     */
+    public static function applySourceBotQuery($query)
+    {
+        return $query->whereNotIn('type', self::excludedSourceBotTypes());
+    }
 
     /**
      * @param  array<string, mixed>  $config

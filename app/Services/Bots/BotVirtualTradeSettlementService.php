@@ -68,7 +68,8 @@ class BotVirtualTradeSettlementService
                     'status' => BotVirtualTrade::STATUS_SETTLED,
                     'result' => $result,
                     'expiry_price' => $expiryPrice,
-                    'settled_at' => now(),
+                    // Как у paper: фиксируем момент экспирации, не время cron.
+                    'settled_at' => $fresh->expiry_time,
                 ]);
                 $this->lossState->recordResult($fresh->bot, (string) $fresh->instrument, $result);
             });

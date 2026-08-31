@@ -38,7 +38,7 @@
                     <th class="px-4 py-3 text-left" title="Когда ордер ушёл на Pocket Option">На PO</th>
                     <th class="px-4 py-3 text-left">Цена завершения</th>
                     <th class="px-4 py-3 text-left" title="Вход + длительность сделки (expiry_sec)">Экспирация</th>
-                    <th class="px-4 py-3 text-left" title="Когда платформа зафиксировала итог (bots:settle)">Закрыта (факт)</th>
+                    <th class="px-4 py-3 text-left" title="Момент экспирации сделки (= expiry_time). Итог в БД пишется bots:settle сразу после экспирации.">Закрыта</th>
                     <th class="px-4 py-3 text-left">До конца</th>
                     <th class="px-4 py-3 text-left" title="Итог paper-сделки по свечам платформы">Paper</th>
                     <th class="px-4 py-3 text-left" title="Итог на Pocket Option (для мартингейла)">PO</th>

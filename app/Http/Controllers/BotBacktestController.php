@@ -363,7 +363,9 @@ class BotBacktestController extends Controller
         $firstPair = $byInstr !== [] ? reset($byInstr) : null;
         $needsStreaks = ! array_key_exists('max_win_streak', $summary)
             || ! array_key_exists('max_loss_streak', $summary)
-            || ($firstPair !== null && ! array_key_exists('max_win_streak', $firstPair));
+            || ! array_key_exists('streak_distribution', $summary)
+            || ($firstPair !== null && ! array_key_exists('max_win_streak', $firstPair))
+            || ($firstPair !== null && ! array_key_exists('streak_distribution', $firstPair));
         if (
             $run->status === BotBacktestRun::STATUS_COMPLETED
             && (int) $run->trades_total > 0

@@ -16,12 +16,15 @@ final class ChartAnalystBotTypes
     /** Аналитик подтверждения сетапов Sweep / Raid Liquidity. */
     public const SRL = 'openrouter_llm_analyst_srl';
 
+    /** Аналитик подтверждения 3-шагового поглощения (Engulfing Liquidity). */
+    public const ENGULF = 'openrouter_llm_analyst_engulf';
+
     /**
      * @return list<string>
      */
     public static function all(): array
     {
-        return [self::CLASSIC, self::SRL];
+        return [self::CLASSIC, self::SRL, self::ENGULF];
     }
 
     public static function isAnalyst(string $type): bool
@@ -34,11 +37,17 @@ final class ChartAnalystBotTypes
         return $type === self::SRL;
     }
 
+    public static function isEngulf(string $type): bool
+    {
+        return $type === self::ENGULF;
+    }
+
     /** Человекочитаемое имя для UI / seed. */
     public static function label(string $type): string
     {
         return match ($type) {
             self::SRL => 'OpenRouter Chart Analyst Sweep/Raid',
+            self::ENGULF => 'OpenRouter Chart Analyst Engulfing',
             default => 'OpenRouter Chart Analyst',
         };
     }

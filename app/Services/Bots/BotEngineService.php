@@ -27,6 +27,7 @@ use App\Services\Bots\Strategies\StrongLevelStrategy;
 use App\Services\Bots\Strategies\DemarkerDualFastStrategy;
 use App\Services\Bots\Strategies\StrongTrendDemarkerStrategy;
 use App\Services\Bots\Strategies\StrongTrendTelegramStrategy;
+use App\Services\Bots\Strategies\EngulfingLiquidityStrategy;
 use App\Services\Bots\Strategies\SweepRaidLiquidityStrategy;
 use App\Support\DemarkerDualFastConfig;
 use App\Services\Bots\Strategies\ThreeCandlesInRowStrategy;
@@ -52,8 +53,10 @@ use App\Support\BotScanProgress;
 use App\Support\ChartAnalystBotTypes;
 use App\Support\LevelBounceBotTypes;
 use App\Support\MaxBotConfig;
+use App\Support\EngulfingLlmSnapshot;
 use App\Support\SmcFlowLlmSnapshot;
 use App\Support\SweepRaidLlmSnapshot;
+use App\Services\Indicators\EngulfingLiquidityIndicatorService;
 use App\Services\Indicators\SweepRaidLiquidityIndicatorService;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -256,7 +259,7 @@ class BotEngineService
                     $decisionExpirySec = $expirySec;
                     if (in_array($bot->type, ['smc_flow', 'strong_level', 'candle_reversal_confirm'], true) && isset($decision['expiry_sec'])) {
                         $decisionExpirySec = max(120, min(600, (int) $decision['expiry_sec']));
-                    } elseif ($bot->type === 'sweep_raid_liquidity' && isset($decision['expiry_sec'])) {
+                    } elseif (in_array($bot->type, ['sweep_raid_liquidity', 'engulfing_liquidity'], true) && isset($decision['expiry_sec'])) {
                         // Свип/рейд на M1 допускает стандартную минутную экспирацию.
                         $decisionExpirySec = max(60, min(900, (int) $decision['expiry_sec']));
                     }
@@ -583,7 +586,7 @@ class BotEngineService
                     // Telegram только после настоящей paper-сделки: виртуальные проверки
                     // Strong Trend + DeMarker не должны создавать торговые уведомления.
                     $telegramResult = null;
-                    if (in_array($bot->type, ['strong_trend_demarker', DemarkerDualFastConfig::BOT_TYPE, 'sweep_raid_liquidity'], true)) {
+                    if (in_array($bot->type, ['strong_trend_demarker', DemarkerDualFastConfig::BOT_TYPE, 'sweep_raid_liquidity', 'engulfing_liquidity'], true)) {
                         $telegramResult = app(TelegramAlertService::class)->sendStrategyAlert(
                             $bot,
                             $instrument,
@@ -745,13 +748,18 @@ class BotEngineService
         $mtf = $this->openRouterMtfSeries($instrument, $config, true);
         $analystSrlEnabled = ChartAnalystBotTypes::isSrl($bot->type)
             || \App\Support\OpenRouterLlmConfig::analystSrlFlowEnabled($config);
-        $analystSmcEnabled = ! $analystSrlEnabled
+        $analystEngulfEnabled = ChartAnalystBotTypes::isEngulf($bot->type)
+            || \App\Support\OpenRouterLlmConfig::analystEngulfFlowEnabled($config);
+        $analystSmcEnabled = ! $analystSrlEnabled && ! $analystEngulfEnabled
             && \App\Support\OpenRouterLlmConfig::analystSmcFlowEnabled($config);
         $smcFlowPack = $analystSmcEnabled
             ? $this->buildAnalystSmcFlowPack($bot, $instrument, $count)
             : null;
         $srlPack = $analystSrlEnabled
             ? $this->buildAnalystSweepRaidPack($bot, $instrument, $count, $config)
+            : null;
+        $engulfPack = $analystEngulfEnabled
+            ? $this->buildAnalystEngulfPack($bot, $instrument, $count, $config)
             : null;
 
         $analyzeContext = [
@@ -765,12 +773,16 @@ class BotEngineService
             'user_question' => mb_substr(trim($userQuestion), 0, 2000),
             'analyst_smc_flow_enabled' => $analystSmcEnabled,
             'analyst_srl_flow_enabled' => $analystSrlEnabled,
+            'analyst_engulf_flow_enabled' => $analystEngulfEnabled,
         ];
         if ($analystSmcEnabled && is_array($smcFlowPack)) {
             $analyzeContext['smc_flow_summary'] = $smcFlowPack['snapshot'];
         }
         if ($analystSrlEnabled && is_array($srlPack)) {
             $analyzeContext['sweep_raid_summary'] = $srlPack['snapshot'];
+        }
+        if ($analystEngulfEnabled && is_array($engulfPack)) {
+            $analyzeContext['engulfing_summary'] = $engulfPack['snapshot'];
         }
         // Гибрид: полный прогноз source-бота уходит в payload LLM (+ секция в system prompt).
         if (is_array($hybridSourceSignal) && $hybridSourceSignal !== []) {
@@ -820,12 +832,14 @@ class BotEngineService
             'billing_label' => OpenRouterClient::formatBillingLabel($billing),
             'analyst_smc_flow_enabled' => $analystSmcEnabled,
             'analyst_srl_flow_enabled' => $analystSrlEnabled,
+            'analyst_engulf_flow_enabled' => $analystEngulfEnabled,
             'analyst_prompt_mode' => (string) ($features['analyst_prompt_mode'] ?? \App\Support\OpenRouterLlmConfig::analystPromptMode($config)),
             'smc_flow' => $analystSmcEnabled && is_array($smcFlowPack) ? $smcFlowPack['overlay'] : null,
             'smc_flow_modules' => $analystSmcEnabled && is_array($smcFlowPack)
                 ? ($smcFlowPack['overlay']['modules'] ?? [])
                 : [],
             'sweep_raid_liquidity' => $analystSrlEnabled && is_array($srlPack) ? $srlPack['overlay'] : null,
+            'engulfing_liquidity' => $analystEngulfEnabled && is_array($engulfPack) ? $engulfPack['overlay'] : null,
             'hybrid_mode' => is_array($hybridSourceSignal) && $hybridSourceSignal !== [],
         ];
     }
@@ -918,6 +932,55 @@ class BotEngineService
 
         return [
             'snapshot' => SweepRaidLlmSnapshot::build($rows, $options),
+            'overlay' => $overlay,
+            'bar_count' => count($rows),
+        ];
+    }
+
+    /**
+     * Engulfing на M1 для аналитика: overlay ENGULF 1/2/3 + snapshot кандидатов для LLM.
+     *
+     * @param  array<string, mixed>  $config
+     * @return array{snapshot:array<string,mixed>,overlay:array<string,mixed>,bar_count:int}
+     */
+    private function buildAnalystEngulfPack(Bot $bot, string $instrument, int $m1BarCount, array $config): array
+    {
+        $emptyOverlay = [
+            'lines' => [],
+            'labels' => [],
+            'label_size' => 'small',
+        ];
+
+        $candleService = app(CandleService::class);
+        $engService = app(EngulfingLiquidityIndicatorService::class);
+
+        $engBars = min(5000, max($m1BarCount, 500));
+        $since = time() - max(86400, $engBars * 60);
+        $rows = $candleService->seriesForDashboard($instrument, 1, $since, null, $engBars);
+        $options = [
+            'allow_classic' => (bool) ($config['eng_allow_classic'] ?? true),
+            'allow_same_color' => (bool) ($config['eng_allow_same_color'] ?? true),
+        ];
+
+        if ($rows === []) {
+            return [
+                'snapshot' => EngulfingLlmSnapshot::build([], $options),
+                'overlay' => $emptyOverlay,
+                'bar_count' => 0,
+            ];
+        }
+
+        $params = IndicatorSetting::mergedEngulfingLiquidityParams($bot);
+        $params = \App\Support\BotTradingChartLayers::overlayParams($bot, 'eng', $params);
+        $params['allow_classic'] = $options['allow_classic'];
+        $params['allow_same_color'] = $options['allow_same_color'];
+        $params['show_step1'] = (bool) ($config['eng_show_step1'] ?? $params['show_step1'] ?? true);
+        $params['show_step2'] = (bool) ($config['eng_show_step2'] ?? $params['show_step2'] ?? true);
+        $params['show_step3'] = (bool) ($config['eng_show_step3'] ?? $params['show_step3'] ?? true);
+        $overlay = $engService->compute($rows, $params);
+
+        return [
+            'snapshot' => EngulfingLlmSnapshot::build($rows, $options),
             'overlay' => $overlay,
             'bar_count' => count($rows),
         ];
@@ -1231,10 +1294,12 @@ class BotEngineService
             'smc_flow' => 500,
             // Длинная история нужна для подтверждённых фракталов и активных уровней ликвидности.
             'sweep_raid_liquidity' => 500,
+            'engulfing_liquidity' => 500,
             'strong_level' => 500,
             'candle_reversal_confirm' => 500,
             'openrouter_llm_analyst' => 120,
             ChartAnalystBotTypes::SRL => 120,
+            ChartAnalystBotTypes::ENGULF => 120,
             'strong_trend_telegram' => 120,
             'strong_trend_demarker' => 120,
             DemarkerDualFastConfig::BOT_TYPE => 120,
@@ -1251,12 +1316,14 @@ class BotEngineService
             'openrouter_llm' => \App\Support\OpenRouterLlmConfig::m1BarCount($config, 120, 20),
             'openrouter_llm_analyst' => \App\Support\OpenRouterLlmConfig::m1BarCount($config),
             ChartAnalystBotTypes::SRL => \App\Support\OpenRouterLlmConfig::m1BarCount($config),
+            ChartAnalystBotTypes::ENGULF => \App\Support\OpenRouterLlmConfig::m1BarCount($config),
             default => max(10, min(5000, (int) ($config['count'] ?? $defaultCount))),
         };
         $expirySec = match ($bot->type) {
             'three_candles_in_row' => (int) ($config['expiry_sec'] ?? 60),
             'smc_flow' => (int) ($config['expiry_sec'] ?? 180),
             'sweep_raid_liquidity' => (int) ($config['expiry_sec'] ?? 60),
+            'engulfing_liquidity' => (int) ($config['expiry_sec'] ?? 60),
             'strong_trend_telegram' => (int) ($config['expiry_sec'] ?? 60),
             'strong_trend_demarker' => (int) ($config['expiry_sec'] ?? 30),
             DemarkerDualFastConfig::BOT_TYPE => (int) ($config['expiry_sec'] ?? 30),
@@ -1304,6 +1371,7 @@ class BotEngineService
         $minClosedBars = match ($bot->type) {
             'smc_flow' => 80,
             'sweep_raid_liquidity' => max(10, (int) ($config['min_closed_bars'] ?? 30)),
+            'engulfing_liquidity' => max(4, (int) ($config['min_closed_bars'] ?? 30)),
             'strong_level' => max(80, (int) ($config['min_closed_bars'] ?? 200)),
             'strong_trend_telegram' => $trendPatternBars,
             'strong_trend_demarker' => max(
@@ -1365,6 +1433,7 @@ class BotEngineService
             // Аналитик: ручной запрос без порога «минимум баров».
             'openrouter_llm_analyst' => 0,
             ChartAnalystBotTypes::SRL => 0,
+            ChartAnalystBotTypes::ENGULF => 0,
             default => 3,
         };
         // Указываем таймфрейм входного потока для стратегии.
@@ -1386,7 +1455,7 @@ class BotEngineService
             'strong_trend_telegram' => max(60, min(3600, (int) ($config['dedupe_bucket_sec'] ?? 300))),
             'strong_trend_demarker', DemarkerDualFastConfig::BOT_TYPE => max(30, min(3600, (int) ($config['dedupe_bucket_sec'] ?? $expirySec))),
             MaxBotConfig::BOT_TYPE => max(5, min(3600, (int) ($config['dedupe_bucket_sec'] ?? $expirySec))),
-            'smc_flow', 'strong_level', 'openrouter_llm', 'candle_reversal_confirm', 'sweep_raid_liquidity' => max(60, min(900, $expirySec)),
+            'smc_flow', 'strong_level', 'openrouter_llm', 'candle_reversal_confirm', 'sweep_raid_liquidity', 'engulfing_liquidity' => max(60, min(900, $expirySec)),
             default => LevelBounceBotTypes::isOsEngineBinary($bot->type)
                 ? max(60, min(900, $expirySec))
                 : max(60, min(3600, (int) ($config['dedupe_bucket_sec'] ?? 60))),
@@ -1466,8 +1535,10 @@ class BotEngineService
             'openrouter_llm' => new OpenRouterLlmStrategy($this->openRouterClient),
             'openrouter_llm_analyst' => new OpenRouterLlmAnalystStrategy($this->openRouterClient),
             ChartAnalystBotTypes::SRL => new OpenRouterLlmAnalystStrategy($this->openRouterClient),
+            ChartAnalystBotTypes::ENGULF => new OpenRouterLlmAnalystStrategy($this->openRouterClient),
             'smc_flow' => new SmcFlowStrategy($this->smcFlowBotSignalAnalyzer),
             'sweep_raid_liquidity' => new SweepRaidLiquidityStrategy,
+            'engulfing_liquidity' => new EngulfingLiquidityStrategy,
             'strong_level' => new StrongLevelStrategy,
             'strong_trend_telegram' => new StrongTrendTelegramStrategy,
             'strong_trend_demarker' => new StrongTrendDemarkerStrategy(new DemarkerIndicatorService),

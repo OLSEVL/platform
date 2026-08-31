@@ -43,7 +43,7 @@ class StrongLevelTelegramLlmButton
     public static function supportsBotType(string $type): bool
     {
         // Эти типы шлют ту же кнопку, но не входят в CARD_AND_TELEGRAM (level-bounce).
-        return in_array($type, ['strong_trend_telegram', 'strong_trend_demarker', \App\Support\DemarkerDualFastConfig::BOT_TYPE, 'sweep_raid_liquidity'], true)
+        return in_array($type, ['strong_trend_telegram', 'strong_trend_demarker', \App\Support\DemarkerDualFastConfig::BOT_TYPE, 'sweep_raid_liquidity', 'engulfing_liquidity'], true)
             || in_array($type, self::SUPPORTED_BOT_TYPES, true);
     }
 
@@ -71,9 +71,11 @@ class StrongLevelTelegramLlmButton
             }
         }
 
-        $preferType = $sourceBot->type === 'sweep_raid_liquidity'
-            ? \App\Support\ChartAnalystBotTypes::SRL
-            : \App\Support\ChartAnalystBotTypes::CLASSIC;
+        $preferType = match ($sourceBot->type) {
+            'sweep_raid_liquidity' => \App\Support\ChartAnalystBotTypes::SRL,
+            'engulfing_liquidity' => \App\Support\ChartAnalystBotTypes::ENGULF,
+            default => \App\Support\ChartAnalystBotTypes::CLASSIC,
+        };
 
         $preferred = Bot::query()
             ->where('user_id', $sourceBot->user_id)

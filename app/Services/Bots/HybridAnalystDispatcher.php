@@ -50,7 +50,7 @@ class HybridAnalystDispatcher
         }
 
         // Кандидат должен быть допустимого типа (Chart Analyst сам себя не слушает).
-        if (! in_array($sourceBot->type, HybridAnalystConfig::SOURCE_BOT_TYPES, true)) {
+        if (! HybridAnalystConfig::isSourceBotType((string) $sourceBot->type)) {
             return;
         }
 

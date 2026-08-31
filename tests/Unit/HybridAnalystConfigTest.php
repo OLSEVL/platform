@@ -204,4 +204,14 @@ class HybridAnalystConfigTest extends TestCase
         $this->assertStringContainsString('• touch', $text);
         $this->assertStringContainsString('• rsi', $text);
     }
+
+    public function test_is_source_bot_type_excludes_chart_analyst_and_manual_only(): void
+    {
+        $this->assertTrue(HybridAnalystConfig::isSourceBotType('strong_level'));
+        $this->assertTrue(HybridAnalystConfig::isSourceBotType('sweep_raid_liquidity'));
+        $this->assertTrue(HybridAnalystConfig::isSourceBotType('max_bot'));
+        $this->assertFalse(HybridAnalystConfig::isSourceBotType('openrouter_llm_analyst'));
+        $this->assertFalse(HybridAnalystConfig::isSourceBotType('openrouter_llm_analyst_srl'));
+        $this->assertFalse(HybridAnalystConfig::isSourceBotType('manual_dashboard'));
+    }
 }

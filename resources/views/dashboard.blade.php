@@ -18,6 +18,29 @@
         background: #52525b;
         border-radius: 4px;
     }
+    /* Свободный кроссхейр (как на bots/show): линии в HTML поверх всех оверлеев. */
+    #chart-crosshair-hline {
+        border-top: 1px dashed #94a3b8;
+    }
+    #chart-crosshair-vline {
+        border-left: 1px dashed #94a3b8;
+    }
+    .chart-crosshair-axis-label {
+        font-size: 11px;
+        line-height: 1.2;
+        color: #f4f4f5;
+        background: #334155;
+        padding: 2px 6px;
+        border-radius: 2px;
+        text-align: center;
+        white-space: nowrap;
+        pointer-events: none;
+    }
+    /* Оверлей сделок не перехватывает мышь — кроссхейр LWC и клик идут на canvas. */
+    #trade-duration-overlay,
+    #trade-duration-overlay * {
+        pointer-events: none !important;
+    }
 </style>
 {{-- Классы ниже нужны Tailwind CDN (выставляются из JS / кастомный switch «Торговля») --}}
 <span class="sr-only pointer-events-none bg-blue-900/40 bg-blue-900/50 bg-stone-800/45 text-stone-200 bg-emerald-600 peer-checked:bg-emerald-600 peer-checked:translate-x-4 translate-x-4 peer-focus-visible:ring-2 peer-focus-visible:ring-emerald-500/50" aria-hidden="true"></span>
@@ -147,14 +170,26 @@
             <div id="liquidity-swings-overlay" class="absolute inset-0 z-[6] pointer-events-none overflow-visible hidden"></div>
             {{-- Автономный dashboard-слой событий Sweep / Raid; не смешиваем его с Liquidity Swings. --}}
             <div id="sweep-raid-liquidity-overlay" class="absolute inset-0 z-[6] pointer-events-none overflow-visible hidden"></div>
+            <div id="engulfing-liquidity-overlay" class="absolute inset-0 z-[6] pointer-events-none overflow-visible hidden"></div>
             {{-- Оверлей индикатора DGT выше зон OB/FVG (как на странице бота). --}}
             <div id="price-action-overlay" class="absolute inset-0 z-[7] pointer-events-none overflow-visible hidden"></div>
             {{-- SMC Flow (UT Bot): поверх DGT, отдельный слой — не смешиваем с Price Action. --}}
             <div id="smc-flow-overlay" class="absolute inset-0 z-[8] pointer-events-none overflow-visible hidden"></div>
             {{-- PO-стиль: горизонтальные лучи открытых сделок (точка входа + линия до экспирации). --}}
             <div id="po-open-trades-overlay" class="absolute inset-0 z-[8] pointer-events-none overflow-hidden hidden"></div>
+            {{-- Paper-сделки ботов: горизонталь entry→expiry на уровне цены входа (как на странице бота). --}}
+            <div id="trade-duration-overlay" class="absolute inset-0 z-[8] pointer-events-none overflow-hidden hidden"></div>
             {{-- Названия включённых индикаторов (оверлеи на основной pane + лейблы осцилляторов). --}}
             <div id="classic-indicator-labels" class="absolute inset-0 z-[9] pointer-events-none overflow-hidden hidden"></div>
+            {{-- Линейка секунд на оси времени (деления :SS при zoom). --}}
+            <div id="chart-time-ruler-overlay" class="absolute inset-0 z-[9] pointer-events-none overflow-visible hidden"></div>
+            {{-- Кроссхейр в стиле TradingView: свободное движение (Normal), линии поверх оверлеев. --}}
+            <div id="chart-crosshair-overlay" class="absolute inset-0 z-[10] pointer-events-none overflow-visible hidden">
+                <div id="chart-crosshair-hline" class="absolute left-0 hidden h-0 w-0"></div>
+                <div id="chart-crosshair-vline" class="absolute top-0 hidden h-0 w-0"></div>
+                <span id="chart-crosshair-price" class="chart-crosshair-axis-label absolute hidden"></span>
+                <span id="chart-crosshair-time" class="chart-crosshair-axis-label absolute hidden"></span>
+            </div>
             <div id="candle-timer-overlay"
                 class="pointer-events-none absolute z-[6] hidden h-0 w-0 overflow-visible"
                 title="До закрытия текущей минутной свечи (по времени открытия бара с графика, мм:сс)">
@@ -438,6 +473,10 @@
     const LIVE_TRADES_URL = '{{ route("bots.live-trades.data") }}';
     const LIVE_TRADES_ACTIVITY_TMPL = '{{ route("bots.activity", ["bot" => "__BOT_ID__"]) }}';
 
+    function serverUnixNow() {
+        return window.PlatformServerClock ? PlatformServerClock.unixNow() : Math.floor(Date.now() / 1000);
+    }
+
     // Окна загрузки разделены на три режима, чтобы переключение между инструментами
     // было быстрым, но при этом сохранялись lazy-догрузка истории и live-обновление.
     //
@@ -486,12 +525,11 @@
     let m1CloseCountdownAnchorPerfMs = null;
     let tfCloseCountdownAnchorSec = null;
     let tfCloseCountdownAnchorPerfMs = null;
-    /** Точность оси цены; синхронизируется с price_scale из /candles (NGN/LBP → 8 знаков). */
-    let chartPricePrecision = 5;
+    /** Точность оси цены; синхронизируется с price_scale из /candles (единые 8 знаков, как PO). */
+    let chartPricePrecision = 8;
 
     /**
-     * Применяем precision/minMove с API к candlestick-серии.
-     * Без этого дашборд оставался на hardcoded 5 знаках и микро-пары (NGN/USD OTC) рисовались плоской линией.
+     * Применяем precision/minMove с API к candlestick-серии (8 знаков для всех инструментов).
      */
     function applyPriceScaleFromPayload(payload) {
         if (!candlestickSeries || !payload || !payload.price_scale) return;
@@ -572,6 +610,8 @@
     const structureOverlay = document.getElementById('structure-overlay');
     // PO-лучи открытых сделок (точка входа + горизонталь до экспирации).
     const poOpenTradesOverlay = document.getElementById('po-open-trades-overlay');
+    // Paper-сделки ботов: полосы длительности entry→expiry (не PO).
+    const tradeDurationOverlay = document.getElementById('trade-duration-overlay');
     const candleTimerOverlay = document.getElementById('candle-timer-overlay');
     const chartTitle = document.getElementById('chart-title');
     const chartTitlePayoutEl = document.getElementById('chart-title-payout');
@@ -588,6 +628,7 @@
     const layerPa = document.getElementById('layer-pa-dgt');
     const layerLiquidity = document.getElementById('layer-liquidity-swings');
     const layerSweepRaid = document.getElementById('layer-sweep-raid-liquidity');
+    const layerEngulfing = document.getElementById('layer-engulfing-liquidity');
     const layerSmc = document.getElementById('layer-smc-flow');
     const layerBollinger = document.getElementById('layer-bollinger');
     const layerRsi = document.getElementById('layer-rsi');
@@ -665,8 +706,15 @@
     const priceActionOverlay = document.getElementById('price-action-overlay');
     const liquiditySwingsOverlay = document.getElementById('liquidity-swings-overlay');
     const sweepRaidLiquidityOverlay = document.getElementById('sweep-raid-liquidity-overlay');
+    const engulfingLiquidityOverlay = document.getElementById('engulfing-liquidity-overlay');
     const smcFlowOverlay = document.getElementById('smc-flow-overlay');
     const classicIndicatorLabelsEl = document.getElementById('classic-indicator-labels');
+    const chartCrosshairOverlay = document.getElementById('chart-crosshair-overlay');
+    const chartTimeRulerOverlay = document.getElementById('chart-time-ruler-overlay');
+    const chartCrosshairHLine = document.getElementById('chart-crosshair-hline');
+    const chartCrosshairVLine = document.getElementById('chart-crosshair-vline');
+    const chartCrosshairPrice = document.getElementById('chart-crosshair-price');
+    const chartCrosshairTime = document.getElementById('chart-crosshair-time');
     const instrumentSearchInput = document.getElementById('instrument-search');
     const instrumentSearchClearBtn = document.getElementById('instrument-search-clear');
     const instrumentListEl = document.getElementById('instrument-list');
@@ -825,6 +873,7 @@
             if (layerPa && typeof o.paDgt === 'boolean') layerPa.checked = o.paDgt;
             if (layerLiquidity && typeof o.liquiditySwings === 'boolean') layerLiquidity.checked = o.liquiditySwings;
             if (layerSweepRaid && typeof o.sweepRaidLiquidity === 'boolean') layerSweepRaid.checked = o.sweepRaidLiquidity;
+            if (layerEngulfing && typeof o.engulfingLiquidity === 'boolean') layerEngulfing.checked = o.engulfingLiquidity;
             if (layerSmc && typeof o.smcFlow === 'boolean') layerSmc.checked = o.smcFlow;
             if (layerBollinger && typeof o.bollinger === 'boolean') layerBollinger.checked = o.bollinger;
             if (layerRsi && typeof o.rsi === 'boolean') layerRsi.checked = o.rsi;
@@ -912,6 +961,7 @@
                 liquiditySwings: layerLiquidity ? layerLiquidity.checked : false,
                 // Отдельный ключ не связывает видимость Sweep / Raid с похожим Liquidity Swings.
                 sweepRaidLiquidity: layerSweepRaid ? layerSweepRaid.checked : false,
+                engulfingLiquidity: layerEngulfing ? layerEngulfing.checked : false,
                 smcFlow: layerSmc ? layerSmc.checked : false,
                 bollinger: layerBollinger ? layerBollinger.checked : false,
                 rsi: layerRsi ? layerRsi.checked : false,
@@ -1007,6 +1057,8 @@
     let currentTimeframeMinutes = 1;
     let oldestLoadedTime = null;
     let allChartData = [];
+    /** Сколько баров реально лежит в candlestickSeries LWC (для детекта рассинхрона с allChartData). */
+    let candleSeriesBarCount = 0;
     let loadingMore = false;
     let refreshInterval = null;
     // Отдельный таймер для тяжёлых оверлеев (структуры и Price Action DGT).
@@ -1028,6 +1080,7 @@
     let lastLsPayload = null;
     /** События общего детектора: sweep/raid и первые pullback-входы. */
     let lastSweepRaidPayload = null;
+    let lastEngulfingPayload = null;
     let lastSmcPayload = null;
     /** Сигналы/сделки для маркеров (формат как на bots/show). */
     let lastChartSignals = [];
@@ -1133,13 +1186,14 @@
         add('layer-pa-dgt', 'Price Action (DGT)');
         add('layer-liquidity-swings', 'Liquidity Swings');
         add('layer-sweep-raid-liquidity', 'Sweep / Raid Liquidity');
+        add('layer-engulfing-liquidity', 'Engulfing Liquidity');
         add('layer-smc-flow', 'SMC Flow');
         return out;
     }
 
     /**
      * Лейбл классики: title из API («RSI 14») + слой для иконок карандаш/×.
-     * @returns {{name:string,color:string,layerId:string,settingsUrl:?string}|null}
+     * @returns @{{name:string,color:string,layerId:string,settingsUrl:?string}|null}
      */
     function classicIndicatorLabel(on, payload, fallbackName, layerId) {
         if (!on) return null;
@@ -1185,7 +1239,7 @@
     }
 
     function tickSidebarTradeTimers() {
-        const nowSec = Math.floor(Date.now() / 1000);
+        const nowSec = serverUnixNow();
         document.querySelectorAll('.instrument-trade-timer[data-expiry-ts]').forEach((el) => {
             const ts = Number(el.dataset.expiryTs);
             if (!Number.isFinite(ts)) return;
@@ -1310,7 +1364,7 @@
                 const timer = document.createElement('span');
                 timer.className = 'instrument-trade-timer shrink-0 text-xs font-mono tabular-nums text-stone-200';
                 timer.dataset.expiryTs = String(inst.expiry_ts);
-                const nowSec = Math.floor(Date.now() / 1000);
+                const nowSec = serverUnixNow();
                 timer.textContent = formatMmSs(Number(inst.expiry_ts) - nowSec);
                 nameWrap.appendChild(timer);
             }
@@ -1334,6 +1388,7 @@
             return fetch(INSTRUMENTS_SIDEBAR_URL, { headers: { 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' } })
                 .then((r) => r.json())
                 .then((d) => {
+                    if (window.PlatformServerClock) PlatformServerClock.sync(d);
                     renderInstrumentSidebarRows(d.instruments || []);
                     updateChartTitle();
                 })
@@ -1344,6 +1399,7 @@
             key: 'sidebar',
             url: INSTRUMENTS_SIDEBAR_URL,
             apply: (d) => {
+                if (window.PlatformServerClock) PlatformServerClock.sync(d);
                 renderInstrumentSidebarRows(d.instruments || []);
                 updateChartTitle();
                 if (instrumentSearchInput) {
@@ -1462,6 +1518,49 @@
         }));
     }
 
+    /**
+     * Маркеры сделок/PA вне загруженных свечей раздувают timeScale LWC (как индикаторы до clip).
+     * Оставляем только метки внутри [oldest..newest], иначе тела свечей сжимаются до нуля.
+     */
+    function clipMarkersToCandles(markers) {
+        if (!Array.isArray(markers) || !markers.length || !allChartData.length) {
+            return Array.isArray(markers) ? markers : [];
+        }
+        const t0 = allChartData[0].time;
+        const t1 = allChartData[allChartData.length - 1].time;
+        return markers.filter((m) => m && typeof m.time === 'number' && m.time >= t0 && m.time <= t1);
+    }
+
+    /**
+     * После addPane/removePane classic-индикаторов и applyMarkers LWC v5 иногда теряет
+     * отрисовку тел свечей (шкала/сетка остаются). Перезаписываем OHLC из allChartData.
+     */
+    function syncCandlestickSeriesFromCache() {
+        if (!candlestickSeries || !allChartData.length) return;
+        try {
+            applyPaBarColors({ fullResync: true });
+        } catch (e) {
+            console.error('[chart] syncCandlestickSeriesFromCache', e);
+            try {
+                resyncCandlestickSeriesFromAllChartData();
+                applyPaBarColors({ fullResync: true });
+            } catch (e2) {
+                console.error('[chart] syncCandlestickSeriesFromCache fallback', e2);
+            }
+        }
+        maintainTailViewportIfFollowing();
+    }
+
+    /** Debounce: сотни DOM-узлов paper-overlay блокируют main thread и «убивают» canvas свечей. */
+    let paperTradeOverlayRaf = null;
+    function schedulePaperTradeDurationOverlay() {
+        if (paperTradeOverlayRaf != null) return;
+        paperTradeOverlayRaf = requestAnimationFrame(() => {
+            paperTradeOverlayRaf = null;
+            renderPaperTradeDurationOverlay();
+        });
+    }
+
     /** ~кол-во свечей по горизонтали и «воздух» справа (в долях бара), как на референсе */
     const CHART_DEFAULT_VISIBLE_BARS = 110;
     const CHART_RIGHT_GAP_BARS = 22;
@@ -1505,6 +1604,42 @@
         const lastIdx = allChartData.length - 1;
         const edgeEps = 1e-3;
         return range.to >= lastIdx - edgeEps;
+    }
+
+    /**
+     * «Живой» хвост: пересчитываем viewport от lastIdx, а не сдвигаем range += addedBars.
+     * Иначе за 5–10 мин без pan накапливается drift между timeScale и allChartData —
+     * последние свечи рисуются с дырками, пока пользователь не сдвинет график.
+     */
+    function maintainTailViewportIfFollowing() {
+        if (!chart || allChartData.length === 0 || !isViewNearRightEdge()) return;
+        const n = allChartData.length;
+        const lastIdx = n - 1;
+        const visible = Math.min(CHART_DEFAULT_VISIBLE_BARS, n);
+        const wantFrom = Math.max(0, lastIdx - visible + 1);
+        const wantTo = lastIdx + CHART_RIGHT_GAP_BARS;
+        const range = chart.timeScale().getVisibleLogicalRange();
+        const tol = 0.5;
+        if (!range
+            || Math.abs(range.to - wantTo) > tol
+            || Math.abs(range.from - wantFrom) > tol) {
+            chart.timeScale().setVisibleLogicalRange({ from: wantFrom, to: wantTo });
+        }
+    }
+
+    /** Полная перезапись OHLC-серии из allChartData (после addPane, рассинхрона poll/LWC). */
+    function resyncCandlestickSeriesFromAllChartData() {
+        if (!candlestickSeries || !allChartData.length) return;
+        if (candleSmooth) candleSmooth.reset();
+        try {
+            candlestickSeries.setData(allChartData.map(paintPocketOptionDoji));
+            candleSeriesBarCount = allChartData.length;
+            if (candleSmooth && allChartData.length) {
+                candleSmooth.snap(allChartData[allChartData.length - 1]);
+            }
+        } catch (e) {
+            console.error('[chart] resyncCandlestickSeriesFromAllChartData', e);
+        }
     }
 
     /**
@@ -1614,6 +1749,7 @@
             structureOverlay.appendChild(div);
         });
         redrawSweepRaidLiquidityOverlay();
+        redrawEngulfingLiquidityOverlay();
         requestAnimationFrame(redrawPriceActionOverlay);
     }
 
@@ -1668,6 +1804,37 @@
             label.style.fontWeight = '700';
             label.style.whiteSpace = 'nowrap';
             sweepRaidLiquidityOverlay.appendChild(label);
+        });
+    }
+
+    /** Метки ENGULF 1/2/3 — тот же формат labels, что у Sweep/Raid (без линий). */
+    function redrawEngulfingLiquidityOverlay() {
+        if (!engulfingLiquidityOverlay || !chart || !candlestickSeries) return;
+        engulfingLiquidityOverlay.innerHTML = '';
+        if (!layerEngulfing || !layerEngulfing.checked || !lastEngulfingPayload || !allChartData.length) return;
+
+        const timeScale = chart.timeScale();
+        const labels = Array.isArray(lastEngulfingPayload.labels) ? lastEngulfingPayload.labels : [];
+        const fontSize = { tiny: '8px', small: '9px', normal: '11px' }[lastEngulfingPayload.label_size] || '9px';
+
+        labels.forEach((item) => {
+            const x = timeScale.timeToCoordinate(Number(item.time));
+            const y = candlestickSeries.priceToCoordinate(Number(item.price));
+            if (![x, y].every(Number.isFinite)) return;
+            const below = String(item.position).toLowerCase() === 'below';
+            const label = document.createElement('span');
+            label.textContent = String(item.text || '');
+            label.style.position = 'absolute';
+            label.style.left = (x + 4) + 'px';
+            label.style.top = (y + (below ? 5 : -18)) + 'px';
+            label.style.padding = '2px 4px';
+            label.style.borderRadius = '3px';
+            label.style.background = 'rgba(15,23,42,0.88)';
+            label.style.color = paCssColor(item.color);
+            label.style.fontSize = fontSize;
+            label.style.fontWeight = '700';
+            label.style.whiteSpace = 'nowrap';
+            engulfingLiquidityOverlay.appendChild(label);
         });
     }
 
@@ -1791,22 +1958,93 @@
         const open = (showTrades && typeof PCM.buildOpenTradeMarkers === 'function')
             ? PCM.buildOpenTradeMarkers(lastOpenTrades, {
                 instrument: currentInstrument,
-                nowSec: Math.floor(Date.now() / 1000),
+                nowSec: serverUnixNow(),
                 barSec: timeframeSeconds(currentTimeframeMinutes),
             })
             : [];
         const paMk = (layerPa && layerPa.checked && lastPaPayload && Array.isArray(lastPaPayload.markers))
             ? lastPaPayload.markers
             : [];
-        const all = typeof PCM.mergeMarkers === 'function'
+        const merged = typeof PCM.mergeMarkers === 'function'
             ? PCM.mergeMarkers(history, open, paMk)
             : [...history, ...open, ...paMk].sort((a, b) => a.time - b.time);
+        const all = clipMarkersToCandles(merged);
 
         if (typeof PCM.applyMarkers === 'function') {
             PCM.applyMarkers(candlestickMarkers, all);
         }
-        // Параллельно маркерам — горизонтальные лучи как на Pocket Option.
+        // Параллельно маркерам — PO-лучи; paper-полосы откладываем (тяжёлый DOM).
         renderPoOpenTradeRaysOverlay();
+        schedulePaperTradeDurationOverlay();
+        renderChartTimeRulerOverlay();
+    }
+
+    /**
+     * Горизонтальные полосы Paper-сделок (entry → expiry) на уровне цены входа.
+     * Отдельно от PO-лучей: те рисуют только открытые сделки в стиле Pocket Option.
+     */
+    function renderPaperTradeDurationOverlay() {
+        const PCM = window.PlatformChartMarkers;
+        if (!PCM || typeof PCM.renderTradeDurationOverlay !== 'function') return;
+        const durations = (typeof PCM.buildTradeDurationsFromSignals === 'function')
+            ? PCM.buildTradeDurationsFromSignals(lastChartSignals, {
+                instrument: currentInstrument,
+                nowSec: serverUnixNow(),
+                openTrades: lastOpenTrades,
+            })
+            : [];
+        PCM.renderTradeDurationOverlay({
+            overlayEl: tradeDurationOverlay,
+            chartWrapperEl: chartWrapper,
+            chart,
+            series: candlestickSeries,
+            candleData: allChartData,
+            barSec: timeframeSeconds(currentTimeframeMinutes),
+            show: !!showTrades,
+            durations,
+        });
+    }
+
+    function buildDashboardTradeDurations() {
+        const PCM = window.PlatformChartMarkers;
+        if (!PCM || typeof PCM.buildTradeDurationsFromSignals !== 'function' || !currentInstrument) {
+            return [];
+        }
+        return PCM.buildTradeDurationsFromSignals(lastChartSignals, {
+            instrument: currentInstrument,
+            nowSec: serverUnixNow(),
+            openTrades: lastOpenTrades,
+        });
+    }
+
+    function goToDashboardTradeDetails(pick) {
+        const tradeId = Number(pick && pick.tradeId);
+        if (!Number.isFinite(tradeId) || tradeId <= 0) return;
+        const botId = Number(pick && pick.botId);
+        if (Number.isFinite(botId) && botId > 0 && LIVE_TRADES_ACTIVITY_TMPL) {
+            window.location.href = `${LIVE_TRADES_ACTIVITY_TMPL.replace('__BOT_ID__', encodeURIComponent(String(botId)))}?trade_id=${encodeURIComponent(String(tradeId))}`;
+            return;
+        }
+        window.location.href = `{{ route('bots.live-trades') }}?trade_id=${encodeURIComponent(String(tradeId))}`;
+    }
+
+    function pickDashboardTradeFromChartClick(param) {
+        const PCM = window.PlatformChartMarkers;
+        if (!PCM || !param || !showTrades) return null;
+        const durations = buildDashboardTradeDurations();
+        if (typeof PCM.resolveTradePickAtChartPoint === 'function' && param.point) {
+            const pick = PCM.resolveTradePickAtChartPoint({
+                chart,
+                series: candlestickSeries,
+                candleData: allChartData,
+                barSec: timeframeSeconds(currentTimeframeMinutes),
+                x: param.point.x,
+                y: param.point.y,
+                durations,
+            });
+            if (pick && pick.tradeId) return pick;
+        }
+        return null;
     }
 
     /**
@@ -1824,7 +2062,7 @@
             trades: lastOpenTrades,
             instrument: currentInstrument,
             barSec: timeframeSeconds(currentTimeframeMinutes),
-            nowSec: Math.floor(Date.now() / 1000),
+            nowSec: serverUnixNow(),
             show: !!showTrades,
         });
     }
@@ -3871,6 +4109,9 @@
 
         lastClassicNameState = { overlays, oscillators };
         requestAnimationFrame(() => renderAllIndicatorNameLabels());
+        // addPane/removePane classic-слоёв иногда сбрасывает canvas свечей — восстанавливаем OHLC, затем маркеры.
+        syncCandlestickSeriesFromCache();
+        renderChartMarkers();
     }
 
     /** Тянем только включённые classic-слои и рисуем series/panes. */
@@ -4799,6 +5040,7 @@
             if (fullResync) {
                 if (candleSmooth) candleSmooth.reset();
                 try { candlestickSeries.setData(plain); } catch (e) { console.error('[PA] setData plain', e); }
+                candleSeriesBarCount = allChartData.length;
                 if (candleSmooth && allChartData.length) {
                     candleSmooth.snap(allChartData[allChartData.length - 1]);
                 }
@@ -4825,23 +5067,20 @@
             } catch (e) {
                 try { candlestickSeries.setData(plain); } catch (e2) { console.error('[PA] fallback', e2); }
             }
+            candleSeriesBarCount = allChartData.length;
             if (candleSmooth && allChartData.length) {
                 candleSmooth.snap(allChartData[allChartData.length - 1]);
             }
             return;
         }
-        const barSec = timeframeSeconds(currentTimeframeMinutes);
-        const lastT = allChartData[allChartData.length - 1].time;
-        const tailFrom = lastT - barSec * 2;
-        for (const c of allChartData) {
-            if (c.time >= tailFrom) {
-                // Хвост без последнего бара: его ведёт candleSmooth.toward / RAF.
-                if (c.time === lastT && candleSmooth && candleSmooth.isAnimating()) {
-                    continue;
-                }
-                try { candlestickSeries.update(paintBar(c)); } catch (e) { console.error('[PA] update', e); }
-            }
+        // LWC update() — только для ПОСЛЕДНЕГО бара. Хвост из 2 баров ломал canvas
+        // (Cannot update oldest data) после закрытия новой свечи при простое ~5–10 мин.
+        const lastBar = allChartData[allChartData.length - 1];
+        if (!lastBar) return;
+        if (candleSmooth && candleSmooth.isAnimating()) {
+            return;
         }
+        try { candlestickSeries.update(paintBar(lastBar)); } catch (e) { console.error('[PA] update', e); }
     }
 
     /** Цвета DGT для одного бара — в update-пути плавной анимации. */
@@ -4958,16 +5197,20 @@
             timeframe: String(currentTimeframeMinutes)
         });
         const wantSweepRaid = !!(layerSweepRaid && layerSweepRaid.checked);
+        const wantEngulfing = !!(layerEngulfing && layerEngulfing.checked);
         if (wantSweepRaid) params.set('include_sweep_raid', '1');
+        if (wantEngulfing) params.set('include_engulfing', '1');
         const hist = appendIndicatorHistoryParams(params);
         PlatformChartFetch.requestJson('structures', {
-            // since/limit в key: после loadMore пересчитываем зоны под новую историю.
-            key: currentInstrument + '|' + String(currentTimeframeMinutes) + '|' + (wantSweepRaid ? 'srl' : 'plain') + '|' + hist.since + '|' + hist.limit,
+            key: currentInstrument + '|' + String(currentTimeframeMinutes) + '|' + (wantSweepRaid ? 'srl' : '') + (wantEngulfing ? 'eng' : '') + '|' + hist.since + '|' + hist.limit,
             url: STRUCTURES_URL + '?' + params.toString(),
             apply: (data) => {
                 lastZones = data.zones || [];
                 lastSweepRaidPayload = wantSweepRaid && data && data.sweep_raid_liquidity
                     ? data.sweep_raid_liquidity
+                    : null;
+                lastEngulfingPayload = wantEngulfing && data && data.engulfing_liquidity
+                    ? data.engulfing_liquidity
                     : null;
                 requestAnimationFrame(redrawStructureOverlay);
             },
@@ -4987,23 +5230,13 @@
                     const candles = data.candles || [];
                     if (candles.length === 0) return;
                     const newData = buildChartData(candles);
-                    const newLastT = newData[newData.length - 1].time;
                     const prevLastT = allChartData.length ? allChartData[allChartData.length - 1].time : null;
-                    // Снимаем диапазон сразу перед setData/update, чтобы не ловить рассинхрон после await fetch.
                     const followTail = isViewNearRightEdge();
-                    const rangeBefore = followTail && chart ? chart.timeScale().getVisibleLogicalRange() : null;
                     applyIncrementalChartUpdate(newData);
                     tickCandleCloseTimer();
-                    // Вместо scrollToRealTime(): он пересобирает отступ справа по правилам библиотеки и «прыгает».
-                    // Сдвигаем тот же логический viewport на число новых баров — картинка для «режима следования» остаётся плавной.
-                    if (followTail && rangeBefore && chart && prevLastT !== null && newLastT > prevLastT) {
-                        const addedBars = newData.filter(c => c.time > prevLastT).length;
-                        if (addedBars > 0 && Number.isFinite(rangeBefore.from) && Number.isFinite(rangeBefore.to)) {
-                            chart.timeScale().setVisibleLogicalRange({
-                                from: rangeBefore.from + addedBars,
-                                to: rangeBefore.to + addedBars,
-                            });
-                        }
+                    // Абсолютный пересчёт viewport у «живого» хвоста — без накопления drift (range += addedBars).
+                    if (followTail) {
+                        maintainTailViewportIfFollowing();
                     }
                     // Перерисовываем DOM-оверлей структуры на основании уже имеющихся
                     // в памяти зон (lastZones). Сами зоны при этом НЕ перезапрашиваем —
@@ -5175,6 +5408,7 @@
             oldestLoadedTime = Math.min(...allChartData.map(c => c.time));
             if (candleSmooth) candleSmooth.reset();
             candlestickSeries.setData(allChartData.map(paintPocketOptionDoji));
+            candleSeriesBarCount = allChartData.length;
             // Зафиксировать стартовую точку tween на последнем баре.
             if (candleSmooth && allChartData.length) {
                 candleSmooth.snap(allChartData[allChartData.length - 1]);
@@ -5185,6 +5419,7 @@
             return;
         }
 
+        const prevDataLen = allChartData.length;
         const prevOldest = allChartData[0].time;
         const prevLast = allChartData[allChartData.length - 1].time;
 
@@ -5195,6 +5430,7 @@
 
         const prependedOlder = merged.length > 0 && merged[0].time < prevOldest;
         const newestTime = merged[merged.length - 1].time;
+        const appendedNewBars = merged.length > prevDataLen;
         // LightweightCharts.update() допускает только последний бар или новый бар после него.
         // Нельзя update() «середину» ряда — иначе Cannot update oldest data и артефакты на графике.
         let updateFailed = false;
@@ -5205,9 +5441,13 @@
             try {
                 if (c.time === newestTime && candleSmooth) {
                     // Тот же или новый хвост: toward сам сделает snap при смене time.
-                    candleSmooth.toward(c);
+                    const ok = candleSmooth.toward(c);
+                    if (ok === false) updateFailed = true;
                 } else {
                     candlestickSeries.update(paintPocketOptionDoji(c));
+                    if (c.time > prevLast) {
+                        candleSeriesBarCount += 1;
+                    }
                 }
             } catch (e) {
                 updateFailed = true;
@@ -5220,12 +5460,9 @@
             ? merged[0].time
             : Math.min(oldestLoadedTime, merged[0].time);
 
-        if (prependedOlder || updateFailed) {
-            if (candleSmooth) candleSmooth.reset();
-            candlestickSeries.setData(allChartData.map(paintPocketOptionDoji));
-            if (candleSmooth && allChartData.length) {
-                candleSmooth.snap(allChartData[allChartData.length - 1]);
-            }
+        // Закрылась новая свеча / append провалился / LWC отстал от allChartData → полный setData.
+        if (prependedOlder || updateFailed || appendedNewBars || candleSeriesBarCount !== merged.length) {
+            resyncCandlestickSeriesFromAllChartData();
             applyPaBarColors({ fullResync: true });
         } else {
             applyPaBarColors();
@@ -5260,7 +5497,8 @@
                 console.error('[chart] dom overlay sync', e);
             }
             try {
-                // Лучи PO привязаны к price/time координатам — синхроним с pan/zoom вместе с structure.
+                // PO-лучи — лёгкий слой, можно синхронить на каждом кадре pan/zoom.
+                // Paper-полосы (до сотен DOM-узлов) — только при смене данных/диапазона, иначе main thread блокируется и «пропадают» свечи.
                 renderPoOpenTradeRaysOverlay();
             } catch (ePo) {
                 console.error('[chart] po open trade rays sync', ePo);
@@ -5270,6 +5508,11 @@
                     positionCandleTimerOverlay();
                 } catch (e2) {
                     console.error('[chart] candle timer overlay sync', e2);
+                }
+                try {
+                    renderChartTimeRulerOverlay();
+                } catch (e3) {
+                    console.error('[chart] time ruler overlay sync', e3);
                 }
             });
         });
@@ -5295,6 +5538,208 @@
         };
     }
 
+    function renderChartTimeRulerOverlay() {
+        const PCM = window.PlatformChartMarkers;
+        if (!PCM || typeof PCM.renderTimeRulerOverlay !== 'function' || !chartTimeRulerOverlay || !chart) return;
+        const b = computeChartPlotBounds();
+        PCM.renderTimeRulerOverlay({
+            overlayEl: chartTimeRulerOverlay,
+            chart,
+            candleData: allChartData,
+            barSec: timeframeSeconds(currentTimeframeMinutes),
+            plotW: b.plotW,
+            plotH: b.vLineH,
+            timeH: b.timeH,
+            show: !!currentInstrument && allChartData.length > 0,
+        });
+    }
+
+    /** Границы области графика для HTML-кроссхейра (основной pane + шкалы). */
+    function computeChartPlotBounds() {
+        const cw = chartWrapper ? chartWrapper.clientWidth : 0;
+        const ch = chartWrapper ? chartWrapper.clientHeight : 0;
+        let scaleW = 78;
+        try {
+            if (candlestickSeries && typeof candlestickSeries.priceScale === 'function') {
+                const w = Number(candlestickSeries.priceScale().width());
+                if (Number.isFinite(w) && w > 0) scaleW = w;
+            }
+        } catch (_) {}
+        let timeH = 28;
+        try {
+            if (chart && typeof chart.timeScale === 'function') {
+                const h = Number(chart.timeScale().height());
+                if (Number.isFinite(h) && h > 0) timeH = h;
+            }
+        } catch (_) {}
+        let plotH = Math.max(1, ch - timeH);
+        try {
+            if (chart && typeof chart.panes === 'function') {
+                const panes = chart.panes();
+                if (panes && panes[0] && typeof panes[0].getHeight === 'function') {
+                    const ph = Number(panes[0].getHeight());
+                    if (Number.isFinite(ph) && ph > 0) plotH = ph;
+                }
+            }
+        } catch (_) {}
+        const vLineH = Math.max(plotH, ch - timeH);
+        return {
+            plotW: Math.max(1, cw - scaleW),
+            plotH,
+            vLineH,
+            scaleW,
+            timeH,
+            cw,
+            ch,
+        };
+    }
+
+    function hideChartCrosshairOverlay() {
+        [chartCrosshairHLine, chartCrosshairVLine, chartCrosshairPrice, chartCrosshairTime].forEach((el) => {
+            if (el) el.classList.add('hidden');
+        });
+    }
+
+    function formatChartCrosshairPrice(price) {
+        if (!Number.isFinite(Number(price))) return '';
+        return Number(price).toFixed(chartPricePrecision);
+    }
+
+    function formatChartCrosshairTime(time) {
+        if (time == null) return '';
+        const sec = Math.floor(Number(typeof time === 'number' ? time : Number(time)));
+        if (!Number.isFinite(sec)) return '';
+        const TF = window.PlatformTimeFormat;
+        if (TF && typeof TF.crosshairDateTime === 'function') {
+            return TF.crosshairDateTime(sec);
+        }
+        const d = new Date(sec * 1000);
+        const p = (n) => String(n).padStart(2, '0');
+        return `${p(d.getUTCDate())} ${p(d.getUTCHours())}:${p(d.getUTCMinutes())}:${p(d.getUTCSeconds())}`;
+    }
+
+    function chartTimezoneCreateOptions(timeScaleBase) {
+        const PCM = window.PlatformChartMarkers;
+        if (PCM && typeof PCM.buildChartTimezoneOptions === 'function') {
+            return PCM.buildChartTimezoneOptions(timeScaleBase);
+        }
+        const TF = window.PlatformTimeFormat;
+        if (TF && typeof TF.buildChartTimezoneOptions === 'function') {
+            return TF.buildChartTimezoneOptions(timeScaleBase);
+        }
+        return { timeScale: timeScaleBase || {} };
+    }
+
+    function resolveChartCrosshairUnixTime(param) {
+        const PCM = window.PlatformChartMarkers;
+        if (!PCM || typeof PCM.resolveCrosshairUnixTime !== 'function' || !chart) {
+            return param && param.time;
+        }
+        return PCM.resolveCrosshairUnixTime(
+            param,
+            chart.timeScale(),
+            allChartData,
+            timeframeSeconds(currentTimeframeMinutes),
+            candlestickSeries,
+        );
+    }
+
+    /**
+     * LWC v5: y в param.point может быть относительным к pane осциллятора.
+     * Переводим в абсолютные пиксели контейнера, как на bots/show.
+     */
+    function crosshairAbsoluteY(param) {
+        const y = Number(param && param.point ? param.point.y : NaN);
+        if (!Number.isFinite(y) || y < 0) return null;
+        const paneIndex = Number(param.paneIndex);
+        if (!Number.isFinite(paneIndex) || paneIndex <= 0 || !chart || typeof chart.panes !== 'function') {
+            return y;
+        }
+        let offsetY = 0;
+        try {
+            const panes = chart.panes() || [];
+            for (let i = 0; i < paneIndex && i < panes.length; i += 1) {
+                const h = Number(panes[i] && typeof panes[i].getHeight === 'function' ? panes[i].getHeight() : NaN);
+                if (Number.isFinite(h) && h > 0) offsetY += h;
+            }
+        } catch (_) {
+            return y;
+        }
+        if (y >= offsetY - 0.5) return y;
+        return offsetY + y;
+    }
+
+    /**
+     * Свободный кроссхейр (CrosshairMode.Normal): линии рисуем в HTML, нативные линии LWC скрыты.
+     * Раньше mode:1 (Magnet) «прилипал» к OHLC свечей.
+     */
+    function setupChartCrosshairOverlay() {
+        if (!chartCrosshairOverlay || !chart) return;
+        chartCrosshairOverlay.classList.remove('hidden');
+        chart.subscribeCrosshairMove((param) => {
+            if (!param || !param.point || !candlestickSeries) {
+                hideChartCrosshairOverlay();
+                return;
+            }
+            const x = Number(param.point.x);
+            if (!Number.isFinite(x) || x < 0) {
+                hideChartCrosshairOverlay();
+                return;
+            }
+            const b = computeChartPlotBounds();
+            if (x > b.plotW) {
+                hideChartCrosshairOverlay();
+                return;
+            }
+            const absY = crosshairAbsoluteY(param);
+            if (absY == null || absY > b.vLineH) {
+                hideChartCrosshairOverlay();
+                return;
+            }
+
+            const paneIndex = Number(param.paneIndex);
+            const onMainPane = !Number.isFinite(paneIndex) || paneIndex <= 0;
+
+            if (chartCrosshairVLine) {
+                chartCrosshairVLine.classList.remove('hidden');
+                chartCrosshairVLine.style.top = '0';
+                chartCrosshairVLine.style.left = x + 'px';
+                chartCrosshairVLine.style.height = b.vLineH + 'px';
+            }
+
+            if (chartCrosshairHLine) {
+                chartCrosshairHLine.classList.remove('hidden');
+                chartCrosshairHLine.style.left = '0';
+                chartCrosshairHLine.style.top = absY + 'px';
+                chartCrosshairHLine.style.width = b.plotW + 'px';
+            }
+
+            if (chartCrosshairPrice) {
+                if (onMainPane && absY <= b.plotH) {
+                    let price = null;
+                    try {
+                        price = candlestickSeries.coordinateToPrice(absY);
+                    } catch (_) {}
+                    chartCrosshairPrice.classList.remove('hidden');
+                    chartCrosshairPrice.textContent = formatChartCrosshairPrice(price);
+                    chartCrosshairPrice.style.right = '0';
+                    chartCrosshairPrice.style.width = b.scaleW + 'px';
+                    chartCrosshairPrice.style.top = Math.max(0, Math.min(b.ch - 18, absY - 9)) + 'px';
+                } else {
+                    chartCrosshairPrice.classList.add('hidden');
+                }
+            }
+
+            if (chartCrosshairTime) {
+                chartCrosshairTime.classList.remove('hidden');
+                chartCrosshairTime.textContent = formatChartCrosshairTime(resolveChartCrosshairUnixTime(param));
+                const labelW = 84;
+                chartCrosshairTime.style.top = b.vLineH + 'px';
+                chartCrosshairTime.style.left = Math.max(0, Math.min(b.plotW - labelW, x - labelW / 2)) + 'px';
+            }
+        });
+    }
+
     function createChart() {
         // Останавливаем tween предыдущего графика (смена инструмента / TF / rebuild).
         if (candleSmooth) {
@@ -5303,14 +5748,31 @@
         }
         if (chart) chart.remove();
         chartWrapper.innerHTML = '';
+        candleSeriesBarCount = 0;
         chartWrapper.classList.remove('hidden');
         structureOverlay.classList.remove('hidden');
         if (liquiditySwingsOverlay) liquiditySwingsOverlay.classList.remove('hidden');
         if (sweepRaidLiquidityOverlay) sweepRaidLiquidityOverlay.classList.remove('hidden');
+        if (engulfingLiquidityOverlay) engulfingLiquidityOverlay.classList.remove('hidden');
         if (priceActionOverlay) priceActionOverlay.classList.remove('hidden');
         if (smcFlowOverlay) smcFlowOverlay.classList.remove('hidden');
         if (classicIndicatorLabelsEl) classicIndicatorLabelsEl.classList.remove('hidden');
         chartPlaceholder.classList.add('hidden');
+
+        // Normal = свободное движение; линии/подписи — в #chart-crosshair-overlay (как bots/show).
+        const crosshairOptions = {
+            mode: LightweightCharts.CrosshairMode.Normal,
+            vertLine: { visible: false, labelVisible: false },
+            horzLine: { visible: false, labelVisible: false },
+        };
+
+        const timeScaleBase = {
+            borderColor: '#3f3f46',
+            timeVisible: true,
+            // Минуты — на HTML-линейке; секунды — в кроссхейре.
+            secondsVisible: false,
+        };
+        const chartTz = chartTimezoneCreateOptions(timeScaleBase);
 
         chart = LightweightCharts.createChart(chartWrapper, {
             layout: {
@@ -5321,12 +5783,9 @@
             },
             grid: { vertLines: { color: '#27272a' }, horzLines: { color: '#27272a' } },
             rightPriceScale: { borderColor: '#3f3f46', scaleMargins: { top: 0.1, bottom: 0.2 } },
-            timeScale: {
-                borderColor: '#3f3f46',
-                timeVisible: true,
-                secondsVisible: false
-            },
-            crosshair: { mode: 1 },
+            localization: chartTz.localization,
+            timeScale: chartTz.timeScale,
+            crosshair: crosshairOptions,
             width: chartWrapper.clientWidth,
             height: chartWrapper.clientHeight
         });
@@ -5372,12 +5831,25 @@
             classicIndicatorLabelsEl.innerHTML = '';
             classicIndicatorLabelsEl.classList.remove('hidden');
         }
+        if (chartCrosshairOverlay) {
+            chartCrosshairOverlay.classList.remove('hidden');
+        }
+        if (chartTimeRulerOverlay) {
+            chartTimeRulerOverlay.classList.remove('hidden');
+        }
 
         try {
             candlestickSeries.attachPrimitive(createChartDomOverlaySyncPrimitive());
         } catch (e) {
             console.error('[chart] attachPrimitive(dom overlay sync)', e);
         }
+
+        setupChartCrosshairOverlay();
+
+        chart.subscribeClick((param) => {
+            const pick = pickDashboardTradeFromChartClick(param);
+            if (pick && pick.tradeId) goToDashboardTradeDetails(pick);
+        });
 
         chart.timeScale().subscribeVisibleLogicalRangeChange(() => {
             const range = chart.timeScale().getVisibleLogicalRange();
@@ -5389,6 +5861,8 @@
             requestAnimationFrame(redrawPriceActionOverlay);
             requestAnimationFrame(positionCandleTimerOverlay);
             requestAnimationFrame(renderPoOpenTradeRaysOverlay);
+            schedulePaperTradeDurationOverlay();
+            renderChartTimeRulerOverlay();
         });
     }
 
@@ -5413,6 +5887,7 @@
                 oldestLoadedTime = Math.min(...allChartData.map(c => c.time));
                 if (candleSmooth) candleSmooth.cancel();
                 candlestickSeries.setData(allChartData.map(paintPocketOptionDoji));
+                candleSeriesBarCount = allChartData.length;
                 if (candleSmooth && allChartData.length) {
                     candleSmooth.snap(allChartData[allChartData.length - 1]);
                 }
@@ -5442,6 +5917,7 @@
                     oldestLoadedTime = Math.min(...allChartData.map(c => c.time));
                     if (candleSmooth) candleSmooth.reset();
                     candlestickSeries.setData(allChartData.map(paintPocketOptionDoji));
+                    candleSeriesBarCount = allChartData.length;
                     if (candleSmooth) candleSmooth.snap(allChartData[allChartData.length - 1]);
                     applyDefaultChartViewport();
                     fetchStructures();
@@ -5453,6 +5929,7 @@
                 } else {
                     if (candleSmooth) candleSmooth.reset();
                     candlestickSeries.setData([]);
+                    candleSeriesBarCount = 0;
                     lastZones = [];
                     structureOverlay.innerHTML = '';
                     lastPaPayload = null;
@@ -5576,7 +6053,9 @@
                     oldestLoadedTime = Math.min(...allChartData.map(c => c.time));
                     if (candleSmooth) candleSmooth.reset();
                     candlestickSeries.setData(allChartData.map(paintPocketOptionDoji));
+                    candleSeriesBarCount = allChartData.length;
                     if (candleSmooth) candleSmooth.snap(allChartData[allChartData.length - 1]);
+                    applyPaBarColors({ fullResync: true });
                     applyDefaultChartViewport();
                     // startAutoRefresh внутри уже стартует и медленный таймер оверлеев.
                     startAutoRefresh();
@@ -5674,7 +6153,17 @@
                 lastSweepRaidPayload = null;
                 redrawSweepRaidLiquidityOverlay();
             }
-            // Повторно используем structures endpoint: он условно добавляет только payload этого слоя.
+            fetchStructures();
+            renderAllIndicatorNameLabels();
+        });
+    }
+    if (layerEngulfing) {
+        layerEngulfing.addEventListener('change', () => {
+            saveLayerPrefs();
+            if (!layerEngulfing.checked) {
+                lastEngulfingPayload = null;
+                redrawEngulfingLiquidityOverlay();
+            }
             fetchStructures();
             renderAllIndicatorNameLabels();
         });
@@ -5858,6 +6347,8 @@
         // Обновляем только текст таймеров на лучах (полный recalculate не нужен каждый кадр,
         // но координаты могли сдвинуться из‑за live-свечи — перерисовываем раз в секунду).
         renderPoOpenTradeRaysOverlay();
+        // Paper-полосы — debounce, иначе main thread блокируется и пропадают свечи.
+        schedulePaperTradeDurationOverlay();
     }, 1000);
     tickSidebarTradeTimers();
     // Правая панель CALL/PUT: слушатели + первичный расчёт выплаты.
@@ -6458,7 +6949,7 @@
                 return '<span class="text-zinc-600">готово</span>';
             }
             if (!t.expiry_ts) return '<span class="text-zinc-600">—</span>';
-            const left = t.expiry_ts - Math.floor(Date.now() / 1000);
+            const left = t.expiry_ts - serverUnixNow();
             if (left <= 0) return '<span class="text-amber-400 font-mono">00:00</span>';
             return '<span class="text-cyan-300 font-mono tabular-nums">' + secondsToClock(left) + '</span>';
         }
@@ -6545,7 +7036,7 @@
                     timerEl.innerHTML = '<span class="text-zinc-600">—</span>';
                     return;
                 }
-                const left = ts - Math.floor(Date.now() / 1000);
+                const left = ts - serverUnixNow();
                 if (left <= 0) {
                     timerEl.innerHTML = '<span class="text-amber-400 font-mono">00:00</span>';
                     return;
@@ -6575,6 +7066,7 @@
                 });
                 if (!res.ok) throw new Error('HTTP ' + res.status);
                 const data = await res.json();
+                if (window.PlatformServerClock) PlatformServerClock.sync(data.server_time);
                 const all = data.trades || [];
                 const mirrored = all.filter(isMirroredToPo);
                 renderCards(all);

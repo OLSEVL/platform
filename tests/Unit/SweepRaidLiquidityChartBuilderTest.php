@@ -135,6 +135,91 @@ class SweepRaidLiquidityChartBuilderTest extends TestCase
         $this->assertSame(24, $chart['entry']['time']);
     }
 
+    public function test_builder_adds_demarker_oscillator_when_filter_enabled(): void
+    {
+        $candles = $this->highSweepCandles();
+        $decision = (new SweepRaidLiquidityStrategy)->analyze($candles, null, [
+            'config' => [
+                'srl_pivot_length' => 1,
+                'srl_enter_sweep' => true,
+                'srl_enter_pullback' => false,
+                'srl_demarker_enabled' => false,
+                'expiry_sec' => 60,
+            ],
+        ]);
+        $this->assertIsArray($decision);
+
+        $decision['features']['srl_demarker_enabled'] = true;
+        $decision['features']['srl_demarker_period'] = 6;
+        $decision['features']['srl_demarker_oversold'] = 0.1;
+        $decision['features']['srl_demarker_overbought'] = 0.9;
+        $decision['features']['demarker_previous'] = 0.92;
+        $decision['features']['demarker_current'] = 0.85;
+
+        $chart = (new SweepRaidLiquidityChartBuilder)
+            ->chartLevelsFromDecision($decision, $candles);
+
+        $this->assertArrayHasKey('oscillator', $chart);
+        $this->assertSame('DeMarker(6)', $chart['oscillator']['label']);
+        $this->assertEqualsWithDelta(0.1, $chart['oscillator']['oversold'], 1e-9);
+        $this->assertEqualsWithDelta(0.9, $chart['oscillator']['overbought'], 1e-9);
+        $this->assertStringContainsString('DeMarker(6)', $chart['subtitle']);
+    }
+
+    public function test_renderer_draws_recent_zoom_png_when_gd_available(): void
+    {
+        if (! extension_loaded('gd')) {
+            $this->markTestSkipped('GD extension not installed');
+        }
+
+        $candles = [];
+        for ($i = 1; $i <= 30; $i++) {
+            $p = 10.0 + $i * 0.01;
+            $candles[] = $this->candle($i, $p, $p + 0.02, $p - 0.01, $p + 0.005);
+        }
+        $decision = (new SweepRaidLiquidityStrategy)->analyze($candles, null, [
+            'config' => [
+                'srl_pivot_length' => 1,
+                'srl_enter_sweep' => true,
+                'srl_enter_pullback' => false,
+                'expiry_sec' => 60,
+            ],
+        ]);
+        if (! is_array($decision)) {
+            $decision = [
+                'side' => 'PUT',
+                'features' => [
+                    'setup' => 'sweep_high',
+                    'entry_mode' => 'sweep',
+                    'level_price' => 10.2,
+                    'entry_price' => 10.3,
+                    'event_time' => 30,
+                    'level_time' => 28,
+                    'takedown_time' => 30,
+                    'takedown_price' => 10.32,
+                ],
+            ];
+        }
+
+        $chart = (new SweepRaidLiquidityChartBuilder)
+            ->chartLevelsFromDecision($decision, $candles);
+
+        $recentBars = 20;
+        $path = (new TelegramChartImageRenderer)->render('EURUSD_otc', $candles, $chart, [
+            'width' => 640,
+            'height' => 360,
+            'max_bars' => $recentBars,
+            'timeframe_label' => 'M1 · '.$recentBars.' св.',
+        ]);
+        $this->assertNotNull($path);
+        $this->assertFileExists($path);
+        $info = getimagesize($path);
+        $this->assertIsArray($info);
+        $this->assertSame(640, $info[0]);
+        $this->assertSame(360, $info[1]);
+        @unlink($path);
+    }
+
     public function test_renderer_skips_markers_before_visible_window(): void
     {
         if (! extension_loaded('gd')) {

@@ -312,6 +312,81 @@ class OpenRouterLlmAnalystTest extends TestCase
         $this->assertArrayNotHasKey('smc_flow_summary', $payload);
     }
 
+    public function test_engulf_analyst_sends_engulfing_summary_and_skips_scan(): void
+    {
+        if (! Schema::hasTable('bot_llm_logs')) {
+            $this->markTestSkipped('bot_llm_logs table missing');
+        }
+
+        Http::fake([
+            'https://openrouter.ai/api/v1/chat/completions' => Http::response([
+                'choices' => [
+                    ['message' => ['content' => "Рекомендация: NONE\nВероятность успеха: 40%\nПричина: candidates пуст."]],
+                ],
+                'usage' => ['prompt_tokens' => 5, 'completion_tokens' => 4, 'total_tokens' => 9, 'cost' => 0.0001],
+            ], 200),
+            'https://openrouter.ai/api/v1/credits' => Http::response([
+                'data' => ['total_credits' => 10, 'total_usage' => 1],
+            ], 200),
+        ]);
+
+        $user = User::factory()->create();
+        $bot = Bot::query()->create([
+            'user_id' => $user->id,
+            'name' => 'Engulf Analyst',
+            'type' => \App\Support\ChartAnalystBotTypes::ENGULF,
+            'is_active' => true,
+            'config' => [
+                'count' => 10,
+                's5_take' => 24,
+                'model' => 'openai/gpt-5.2',
+                'temperature' => 0,
+                'max_tokens' => 200,
+                'mtf_enabled' => false,
+                'analyst_engulf_flow_enabled' => true,
+                'eng_allow_classic' => true,
+                'eng_allow_same_color' => true,
+                'system_prompt' => \App\Support\OpenRouterChartLevelsParser::defaultAnalystSystemPromptWithEngulf(),
+                'system_prompt_short' => \App\Support\OpenRouterChartLevelsParser::defaultAnalystSystemPromptShortWithEngulf(),
+                'analyst_prompt_mode' => 'short',
+                'max_tokens_short' => 120,
+                'openrouter_timeout_sec' => 120,
+                'version' => 'openrouter_llm_analyst_engulf_v1',
+            ],
+        ]);
+        PocketInstrument::query()->create([
+            'instrument' => 'EURUSD',
+            'display_name' => 'EUR/USD',
+            'is_active' => true,
+            'priority' => 1,
+            'current_payout' => 85.0,
+        ]);
+
+        $summary = app(BotEngineService::class)->scanBot($bot->fresh());
+        $this->assertSame(['processed' => 0, 'signals' => 0, 'trades' => 0], $summary);
+
+        $this->actingAs($user);
+        $response = $this->getJson(route('bots.analysis.data', $bot).'?'.http_build_query([
+            'instrument' => 'EURUSD',
+        ]));
+        $response->assertOk();
+        $response->assertJsonPath('analyst_engulf_flow_enabled', true);
+        $response->assertJsonPath('analyst_srl_flow_enabled', false);
+        $response->assertJsonPath('analyst_smc_flow_enabled', false);
+
+        $log = \Illuminate\Support\Facades\DB::table('bot_llm_logs')
+            ->where('bot_id', $bot->id)
+            ->latest('id')
+            ->first();
+        $this->assertNotNull($log);
+        $request = json_decode((string) ($log->request_json ?? ''), true);
+        $payload = $request['payload'] ?? [];
+        $this->assertArrayHasKey('engulfing_summary', $payload);
+        $this->assertSame(60, $payload['expiry_focus_sec'] ?? null);
+        $this->assertArrayNotHasKey('sweep_raid_summary', $payload);
+        $this->assertArrayNotHasKey('smc_flow_summary', $payload);
+    }
+
     private function makeAnalystBot(?User $user = null, bool $smcFlowEnabled = true): Bot
     {
         $user ??= User::factory()->create();

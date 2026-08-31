@@ -728,6 +728,43 @@ Artisan::command('bots:sweep-raid-liquidity-bootstrap', function () {
     $this->info("Sweep / Raid Liquidity: #{$bot->id} {$bot->name} ({$bot->type}) — сначала проверьте paper-режим.");
 })->purpose('Создать выключенного M1-бота Sweep / Raid Liquidity (60 сек)');
 
+Artisan::command('bots:engulfing-liquidity-bootstrap', function () {
+    $user = \App\Models\User::query()->orderBy('id')->first();
+    if (! $user) {
+        $this->error('Нет пользователей. Сначала зарегистрируйте пользователя.');
+
+        return;
+    }
+
+    $bot = Bot::query()->firstOrCreate(
+        ['user_id' => $user->id, 'name' => 'Engulfing Liquidity', 'type' => 'engulfing_liquidity'],
+        [
+            'is_active' => false,
+            'config' => [
+                'count' => 500,
+                'expiry_sec' => 60,
+                'min_confidence' => 0.0,
+                'min_payout' => 80.0,
+                'stale_after_sec' => 60,
+                'eng_allow_classic' => true,
+                'eng_allow_same_color' => true,
+                'telegram_enabled' => false,
+                'telegram_notify_result' => true,
+                'telegram_notify_on' => 'signal_trade',
+                'telegram_send_chart' => true,
+                'telegram_chat_id' => '',
+                'telegram_auto_subscribe' => true,
+                'telegram_analyst_llm_enabled' => true,
+                'telegram_analyst_bot_id' => null,
+                'telegram_analyst_llm_question' => \App\Services\Telegram\StrongLevelTelegramLlmButton::DEFAULT_LLM_QUESTION,
+                'version' => 'engulfing_liquidity_v1',
+            ],
+        ],
+    );
+
+    $this->info("Engulfing Liquidity: #{$bot->id} {$bot->name} ({$bot->type}) — проверьте ENGULF 1/2/3 на графике.");
+})->purpose('Создать выключенного M1-бота Engulfing Liquidity (60 сек, 3 шага)');
+
 Artisan::command('bots:strong-trend-telegram-bootstrap', function () {
     $user = User::query()->orderBy('id')->first();
     if (! $user) {
@@ -982,6 +1019,11 @@ Artisan::command('bots:openrouter-analyst-sync-prompt', function () {
         if (ChartAnalystBotTypes::isSrl($bot->type)) {
             $config['analyst_srl_flow_enabled'] = true;
             $config['analyst_smc_flow_enabled'] = false;
+            $config['analyst_engulf_flow_enabled'] = false;
+        } elseif (ChartAnalystBotTypes::isEngulf($bot->type)) {
+            $config['analyst_engulf_flow_enabled'] = true;
+            $config['analyst_smc_flow_enabled'] = false;
+            $config['analyst_srl_flow_enabled'] = false;
         }
         $config['system_prompt'] = OpenRouterChartLevelsParser::defaultAnalystSystemPromptForConfig($config);
         $config['system_prompt_short'] = OpenRouterChartLevelsParser::defaultAnalystSystemPromptShortForConfig($config);
@@ -989,9 +1031,11 @@ Artisan::command('bots:openrouter-analyst-sync-prompt', function () {
         unset($config['_bot_type']);
         $bot->config = $config;
         $bot->save();
-        $pack = ChartAnalystBotTypes::isSrl($bot->type)
-            ? 'SRL'
-            : (\App\Support\OpenRouterLlmConfig::analystSmcFlowEnabled($config) ? 'SMC' : 'classic');
+        $pack = ChartAnalystBotTypes::isEngulf($bot->type)
+            ? 'Engulf'
+            : (ChartAnalystBotTypes::isSrl($bot->type)
+                ? 'SRL'
+                : (\App\Support\OpenRouterLlmConfig::analystSmcFlowEnabled($config) ? 'SMC' : 'classic'));
         $this->line("Обновлён #{$bot->id} {$bot->name} ({$pack})");
     }
 
@@ -1116,6 +1160,63 @@ Artisan::command('bots:openrouter-analyst-srl-bootstrap', function () {
     return 0;
 })->purpose('Создать бота OpenRouter Chart Analyst Sweep/Raid (LLM подтверждает SWEEP/RAID/PB)');
 
+Artisan::command('bots:openrouter-analyst-engulf-bootstrap', function () {
+    $user = User::query()->orderBy('id')->first();
+    if (! $user) {
+        $this->error('Нет пользователей. Сначала зарегистрируйте пользователя.');
+
+        return 1;
+    }
+
+    $name = ChartAnalystBotTypes::label(ChartAnalystBotTypes::ENGULF);
+    $config = [
+        'count' => 120,
+        's5_take' => 240,
+        'model' => 'openai/gpt-5.2',
+        'temperature' => 0.2,
+        'max_tokens' => 900,
+        'max_tokens_short' => OpenRouterLlmConfig::ANALYST_SHORT_MAX_TOKENS_DEFAULT,
+        'openrouter_timeout_sec' => 180,
+        'mtf_enabled' => true,
+        'm5_take' => 96,
+        'm15_take' => 64,
+        'h1_take' => 24,
+        'analyst_smc_flow_enabled' => false,
+        'analyst_srl_flow_enabled' => false,
+        'analyst_engulf_flow_enabled' => true,
+        'eng_allow_classic' => true,
+        'eng_allow_same_color' => true,
+        'eng_show_step1' => true,
+        'eng_show_step2' => true,
+        'eng_show_step3' => true,
+        'analyst_prompt_mode' => OpenRouterLlmConfig::ANALYST_PROMPT_MODE_FULL,
+        'system_prompt' => OpenRouterChartLevelsParser::defaultAnalystSystemPromptWithEngulf(),
+        'system_prompt_short' => OpenRouterChartLevelsParser::defaultAnalystSystemPromptShortWithEngulf(),
+        'version' => 'openrouter_llm_analyst_engulf_v1',
+    ];
+
+    $bot = Bot::query()->firstOrCreate(
+        [
+            'user_id' => $user->id,
+            'name' => $name,
+            'type' => ChartAnalystBotTypes::ENGULF,
+        ],
+        [
+            'is_active' => false,
+            'config' => $config,
+        ]
+    );
+
+    $existing = is_array($bot->config) ? $bot->config : [];
+    $bot->config = array_merge($existing, $config);
+    $bot->save();
+
+    $this->info("Engulf Chart Analyst: #{$bot->id} {$bot->name} ({$bot->type})");
+    $this->line('System prompt Engulfing записан. Проверьте OPENROUTER_API_KEY и Telegram token.');
+
+    return 0;
+})->purpose('Создать бота OpenRouter Chart Analyst Engulfing (LLM подтверждает ENGULF 1/2/3)');
+
 Artisan::command('bots:openrouter-list-models', function (OpenRouterClient $client) {
     // Проверка доступности каталога OpenRouter (тот же запрос, что на странице настроек LLM-бота).
     try {
@@ -1185,6 +1286,27 @@ Artisan::command('bots:scan-dispatch', function () {
         $skippedInterval,
         $bots->count()
     ));
+
+    // Сразу закрываем просроченные paper/virtual — не ждём отдельного tick bots:settle (раньше до +30 с).
+    try {
+        $settlement = app(BotSettlementService::class);
+        $virtualSettlement = app(BotVirtualTradeSettlementService::class);
+        $paper = $settlement->settleDueTrades(null, 500);
+        $virtual = $virtualSettlement->settleDueVirtualTrades(null, 500);
+        $closed = (int) ($paper['settled'] ?? 0) + (int) ($virtual['settled'] ?? 0);
+        if ($closed > 0) {
+            $this->line(sprintf(
+                'Settle: paper=%d virtual=%d (пропущено paper=%d).',
+                (int) ($paper['settled'] ?? 0),
+                (int) ($virtual['settled'] ?? 0),
+                (int) ($paper['skipped'] ?? 0),
+            ));
+        }
+    } catch (\Throwable $e) {
+        \Illuminate\Support\Facades\Log::warning('bots:scan-dispatch settle failed', [
+            'error' => $e->getMessage(),
+        ]);
+    }
 })->purpose('Запустить параллельный bots:scan для каждого активного бота (cron каждую минуту)');
 
 Artisan::command('bots:scan {--bot_id=} {--active-only=1}', function (BotEngineService $engine) {
@@ -1386,6 +1508,7 @@ Artisan::command('telegram:analyst-poll {--bot= : ID бота Chart Analyst} {--
         $candidates = Bot::query()->whereIn('type', ChartAnalystBotTypes::all())->orderBy('id')->get();
         $bot = $candidates->first(function (Bot $b): bool {
             return ChartAnalystBotTypes::isSrl($b->type)
+                || ChartAnalystBotTypes::isEngulf($b->type)
                 || \App\Support\OpenRouterLlmConfig::analystSmcFlowEnabled(is_array($b->config) ? $b->config : []);
         }) ?? $candidates->first();
         if ($bot === null) {
@@ -1474,7 +1597,7 @@ Artisan::command('telegram:strong-level-poll {--bot= : ID бота с Telegram (
     if ($botId <= 0) {
         $supportedTypes = array_values(array_unique(array_merge(
             \App\Services\Telegram\StrongLevelTelegramLlmButton::SUPPORTED_BOT_TYPES,
-            ['strong_trend_telegram', 'strong_trend_demarker', \App\Support\DemarkerDualFastConfig::BOT_TYPE, 'sweep_raid_liquidity'],
+            ['strong_trend_telegram', 'strong_trend_demarker', \App\Support\DemarkerDualFastConfig::BOT_TYPE, 'sweep_raid_liquidity', 'engulfing_liquidity'],
         )));
         $bot = Bot::query()->whereIn('type', $supportedTypes)->where('is_active', true)->orderBy('id')->first();
         if ($bot === null) {

@@ -3,34 +3,35 @@
 namespace App\Support;
 
 /**
- * Масштаб цены для микро-инструментов (NGN/USD OTC ~0.00071, LBP/USD OTC ~0.00001).
- * Фиксированные 5–6 знаков после запятой схлопывают OHLC в одну линию:
- * при цене 0.00070976 и шаге бара ~1e-7 округление до 6 знаков даёт 0.000710 на всём OHLC.
+ * Масштаб цены для графика и индикаторов.
+ *
+ * Раньше для FX (цена ≥ 0.01) использовали 5 знаков — из‑за этого UAH/USD и др. «почти-доджи»
+ * с телом 0.000002 схлопывались в идеальный доджi на графике, хотя PO рисует микро-тело.
+ * PO и candles в БД — decimal(20,8); для всех инструментов единый формат 8 знаков.
  */
 final class PriceScale
 {
     /**
-     * Единая точность для величин в единицах цены / разностей MA (AO, BB-полосы, StdDev, зоны).
-     * round(..., 5|6) на NGN/LBP обнуляет осцилляторы и схлопывает каналы.
+     * Точность OHLC и ценовых индикаторов: совпадает с PO/ingest и колонками candles.*.
+     * round(..., 5) на NGN/LBP обнуляет осцилляторы; round(..., 8) — нет.
      */
     public const MARKET_DECIMALS = 8;
 
     /**
-     * Сколько знаков после запятой нужно для величины цены.
-     * Для всех микро-цен (&lt; 0.01) — всегда 8: это покрывает NGN и LBP без схлопывания свечей.
-     * Обычные FX/крипто (&gt;= 0.01) остаются на 5 знаках.
+     * Знаков после запятой для оси графика (Lightweight Charts priceFormat).
+     * Всегда 8 — как у PO и в БД; не зависит от величины цены.
+     */
+    public static function chartDecimals(): int
+    {
+        return self::MARKET_DECIMALS;
+    }
+
+    /**
+     * @deprecated Используйте chartDecimals(); оставлено для совместимости тестов/вызовов.
      */
     public static function decimalsForMagnitude(float $absPrice): int
     {
-        if ($absPrice <= 0) {
-            return 5;
-        }
-        // NGN (~0.00071), LBP (~0.00001) и аналоги: единый формат 8 знаков.
-        if ($absPrice < 0.01) {
-            return self::MARKET_DECIMALS;
-        }
-
-        return 5;
+        return self::MARKET_DECIMALS;
     }
 
     /**
@@ -43,20 +44,19 @@ final class PriceScale
     }
 
     /**
-     * Берём максимум |OHLC| по серии и по нему выбираем precision/minMove для графика.
+     * OHLC для API графика: только обрезка float-шума до 8 знаков (как в БД), без урезания до 5.
      *
      * @param  list<array<string, mixed>>  $candles
      */
     public static function resolveFromCandles(array $candles): int
     {
-        $maxAbs = 0.0;
-        foreach ($candles as $candle) {
-            foreach (['open', 'high', 'low', 'close'] as $field) {
-                $maxAbs = max($maxAbs, abs((float) ($candle[$field] ?? 0)));
-            }
-        }
+        return self::chartDecimals();
+    }
 
-        return self::decimalsForMagnitude($maxAbs);
+    /** OHLC с графика: 8 знаков, без потери sub-tick тел свечей. */
+    public static function normalizeChartPrice(float $price): float
+    {
+        return self::roundMarket($price);
     }
 
     public static function roundPrice(float $price, int $decimals): float

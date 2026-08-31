@@ -21,7 +21,7 @@ class StrongLevelTelegramProcessManager
     public static function pollSupported(string $botType): bool
     {
         return StrongLevelTelegramLlmButton::supportsBotType($botType)
-            || in_array($botType, ['strong_trend_demarker', \App\Support\DemarkerDualFastConfig::BOT_TYPE, 'sweep_raid_liquidity'], true);
+            || in_array($botType, ['strong_trend_demarker', \App\Support\DemarkerDualFastConfig::BOT_TYPE, 'sweep_raid_liquidity', 'engulfing_liquidity'], true);
     }
 
     /**
@@ -284,6 +284,7 @@ class StrongLevelTelegramProcessManager
             'strong_trend_demarker' => 'Strong Trend + DeMarker',
             \App\Support\DemarkerDualFastConfig::BOT_TYPE => 'Dual DeMarker Fast',
             'sweep_raid_liquidity' => 'Sweep / Raid Liquidity',
+            'engulfing_liquidity' => 'Engulfing Liquidity',
             'candle_reversal_confirm' => 'Candle Reversal + Confirm',
             'rsi_contrtrend' => 'RSI Contrtrend',
             'bollinger_contrtrend' => 'Bollinger Contrtrend',

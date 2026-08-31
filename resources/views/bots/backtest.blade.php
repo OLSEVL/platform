@@ -183,6 +183,25 @@
             <canvas id="bot-backtest-equity" height="96" class="w-full max-h-[96px] rounded border border-zinc-800 bg-zinc-950/80"></canvas>
         </div>
 
+        {{-- Сколько раз завершилась серия ровно N побед / поражений (глобально по всем парам). --}}
+        <div id="bot-backtest-streak-dist-wrap" class="hidden">
+            <div class="mb-1 text-[10px] tracking-wide text-zinc-500 flex items-center gap-1">
+                <span>Распределение серий (все пары)</span>{!! $bbHelp('Сколько раз в прогоне завершилась серия ровно N побед или поражений подряд. Сделки всех пар в порядке времени входа; ничья обрывает серию. Пример: «3 плюса» = 2 раза означает две отдельные серии из трёх побед.') !!}
+            </div>
+            <div class="rounded border border-zinc-800 max-w-md">
+                <table class="w-full text-left text-xs">
+                    <thead class="bg-zinc-900 text-zinc-500">
+                        <tr>
+                            <th class="px-2 py-1.5 font-medium">Подряд</th>
+                            <th class="px-2 py-1.5 font-medium text-emerald-400/90">Побед (раз)</th>
+                            <th class="px-2 py-1.5 font-medium text-rose-400/90">Поражений (раз)</th>
+                        </tr>
+                    </thead>
+                    <tbody id="bot-backtest-streak-dist-body" class="divide-y divide-zinc-800 text-zinc-300"></tbody>
+                </table>
+            </div>
+        </div>
+
         {{-- Разбивка по парам (режим «Все» и мульти-инструмент). --}}
         <div id="bot-backtest-by-instr-wrap" class="hidden">
             <div class="mb-1 text-[10px] tracking-wide text-zinc-500 flex items-center gap-1">
@@ -310,6 +329,8 @@
     const bbMetrics = document.getElementById('bot-backtest-metrics');
     const bbEquityWrap = document.getElementById('bot-backtest-equity-wrap');
     const bbEquityCanvas = document.getElementById('bot-backtest-equity');
+    const bbStreakDistWrap = document.getElementById('bot-backtest-streak-dist-wrap');
+    const bbStreakDistBody = document.getElementById('bot-backtest-streak-dist-body');
     const bbByInstrWrap = document.getElementById('bot-backtest-by-instr-wrap');
     const bbByInstrBody = document.getElementById('bot-backtest-by-instr-body');
     const bbTradesWrap = document.getElementById('bot-backtest-trades-wrap');
@@ -424,6 +445,10 @@
     window.addEventListener('scroll', () => closeBbHelpPopover(), true);
 
     function fmtTsLocal(ts) {
+        const TF = window.PlatformTimeFormat;
+        if (TF && typeof TF.ymdHm === 'function') {
+            return TF.ymdHm(ts);
+        }
         if (!Number.isFinite(ts) || ts <= 0) return '—';
         const d = new Date(ts * 1000);
         const p = (n) => String(n).padStart(2, '0');
@@ -431,6 +456,10 @@
     }
 
     function tsToDatetimeLocalValue(ts) {
+        const TF = window.PlatformTimeFormat;
+        if (TF && typeof TF.datetimeLocalValue === 'function') {
+            return TF.datetimeLocalValue(ts);
+        }
         const d = new Date(ts * 1000);
         const p = (n) => String(n).padStart(2, '0');
         return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
@@ -669,6 +698,32 @@
         }).join('');
     }
 
+    function renderStreakDistribution(summary) {
+        if (!bbStreakDistWrap || !bbStreakDistBody) return;
+        const dist = summary && summary.streak_distribution ? summary.streak_distribution : null;
+        const wins = dist && dist.wins ? dist.wins : {};
+        const losses = dist && dist.losses ? dist.losses : {};
+        const lengths = [...new Set([
+            ...Object.keys(wins).map((k) => Number(k)),
+            ...Object.keys(losses).map((k) => Number(k)),
+        ])].filter((n) => Number.isFinite(n) && n > 0).sort((a, b) => a - b);
+        if (!lengths.length) {
+            bbStreakDistWrap.classList.add('hidden');
+            bbStreakDistBody.innerHTML = '';
+            return;
+        }
+        bbStreakDistWrap.classList.remove('hidden');
+        bbStreakDistBody.innerHTML = lengths.map((len) => {
+            const w = wins[len] != null ? Number(wins[len]) : 0;
+            const l = losses[len] != null ? Number(losses[len]) : 0;
+            return `<tr class="hover:bg-zinc-900/80">
+                <td class="px-2 py-1 tabular-nums">${len}</td>
+                <td class="px-2 py-1 tabular-nums text-emerald-400">${w > 0 ? w : '—'}</td>
+                <td class="px-2 py-1 tabular-nums text-rose-400">${l > 0 ? l : '—'}</td>
+            </tr>`;
+        }).join('');
+    }
+
     function renderByInstrument(summary) {
         if (!bbByInstrWrap || !bbByInstrBody) return;
         const by = summary && summary.by_instrument ? summary.by_instrument : null;
@@ -740,6 +795,7 @@
             el('bb-metric-win-streak', summary.max_win_streak != null ? String(summary.max_win_streak) : '—');
             el('bb-metric-loss-streak', summary.max_loss_streak != null ? String(summary.max_loss_streak) : '—');
             drawBacktestEquity(Array.isArray(summary.equity_curve) ? summary.equity_curve : []);
+            renderStreakDistribution(summary);
             renderByInstrument(summary);
         }
     }
@@ -919,6 +975,7 @@
             if (bbSummary) bbSummary.textContent = 'Прогон удалён.';
             if (bbMetrics) bbMetrics.classList.add('hidden');
             if (bbByInstrWrap) bbByInstrWrap.classList.add('hidden');
+            if (bbStreakDistWrap) bbStreakDistWrap.classList.add('hidden');
             if (bbTradesWrap) bbTradesWrap.classList.add('hidden');
             if (bbEquityWrap) bbEquityWrap.classList.add('hidden');
             if (bbChartLink) bbChartLink.classList.add('hidden');
@@ -938,6 +995,7 @@
         if (bbSummary) bbSummary.textContent = 'Все прогоны удалены.';
         if (bbMetrics) bbMetrics.classList.add('hidden');
         if (bbByInstrWrap) bbByInstrWrap.classList.add('hidden');
+        if (bbStreakDistWrap) bbStreakDistWrap.classList.add('hidden');
         if (bbTradesWrap) bbTradesWrap.classList.add('hidden');
         if (bbEquityWrap) bbEquityWrap.classList.add('hidden');
         await loadBacktestIndex();

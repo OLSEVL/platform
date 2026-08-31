@@ -42,7 +42,11 @@ final class BotTradingChartLayers
         $cfg = self::config($bot);
 
         return match ($type) {
-            'sweep_raid_liquidity' => ['layer-sweep-raid-liquidity'],
+            'sweep_raid_liquidity' => array_values(array_filter([
+                'layer-sweep-raid-liquidity',
+                (bool) ($cfg['srl_demarker_enabled'] ?? false) ? 'layer-demarker' : null,
+            ])),
+            'engulfing_liquidity' => ['layer-engulfing-liquidity'],
             // DeMarker / RSI / MACD+… — через chart_indicator_instances (syncTradingInstances).
             'strong_trend_demarker' => [],
             DemarkerDualFastConfig::BOT_TYPE => [],
@@ -66,6 +70,7 @@ final class BotTradingChartLayers
             'pinbar_trade' => ['layer-sma'],
             'openrouter_llm_analyst' => self::analystLayerIds($cfg),
             ChartAnalystBotTypes::SRL => ['layer-llm-levels', 'layer-sweep-raid-liquidity'],
+            ChartAnalystBotTypes::ENGULF => ['layer-llm-levels', 'layer-engulfing-liquidity'],
             'strong_trend_telegram' => self::telegramPullbackLayerIds($cfg),
             // Свечные паттерны без оверлей-индикатора: three_candles, three_soldier, Wave B impulse и т.п.
             default => [],
@@ -103,6 +108,7 @@ final class BotTradingChartLayers
 
         return match ($layerKey) {
             'srl' => self::overlaySrl($type, $cfg, $params),
+            'eng' => self::overlayEng($type, $cfg, $params),
             'demarker' => self::overlayDemarker($type, $cfg, $params),
             'bollinger' => self::overlayBollinger($type, $cfg, $params),
             'rsi' => self::overlayRsi($type, $cfg, $params),
@@ -169,6 +175,32 @@ final class BotTradingChartLayers
      * @param  array<string, mixed>  $params
      * @return array<string, mixed>
      */
+    /**
+     * Engulfing Liquidity: оверлей ENGULF 1/2/3 совпадает с флагами входа бота.
+     *
+     * @param  array<string, mixed>  $cfg
+     * @param  array<string, mixed>  $params
+     * @return array<string, mixed>
+     */
+    private static function overlayEng(string $type, array $cfg, array $params): array
+    {
+        if (! in_array($type, ['engulfing_liquidity', ChartAnalystBotTypes::ENGULF], true)) {
+            return $params;
+        }
+        $params['allow_classic'] = (bool) ($cfg['eng_allow_classic'] ?? true);
+        $params['allow_same_color'] = (bool) ($cfg['eng_allow_same_color'] ?? true);
+        $params['show_step1'] = (bool) ($cfg['eng_show_step1'] ?? true);
+        $params['show_step2'] = (bool) ($cfg['eng_show_step2'] ?? true);
+        $params['show_step3'] = (bool) ($cfg['eng_show_step3'] ?? true);
+
+        return $params;
+    }
+
+    /**
+     * @param  array<string, mixed>  $cfg
+     * @param  array<string, mixed>  $params
+     * @return array<string, mixed>
+     */
     private static function overlaySrl(string $type, array $cfg, array $params): array
     {
         if (! in_array($type, ['sweep_raid_liquidity', ChartAnalystBotTypes::SRL], true)) {
@@ -193,6 +225,18 @@ final class BotTradingChartLayers
      */
     private static function overlayDemarker(string $type, array $cfg, array $params): array
     {
+        if ($type === 'sweep_raid_liquidity') {
+            if (! (bool) ($cfg['srl_demarker_enabled'] ?? false)) {
+                return $params;
+            }
+            $params['period'] = max(1, min(500, (int) ($cfg['srl_demarker_period'] ?? $params['period'] ?? 6)));
+            $params['level_oversold'] = max(0.0, min(1.0, (float) ($cfg['srl_demarker_oversold'] ?? 10) / 100));
+            $params['level_overbought'] = max(0.0, min(1.0, (float) ($cfg['srl_demarker_overbought'] ?? 90) / 100));
+            $params['show_levels'] = true;
+
+            return $params;
+        }
+
         if (! in_array($type, ['strong_trend_demarker', DemarkerDualFastConfig::BOT_TYPE], true)) {
             return $params;
         }

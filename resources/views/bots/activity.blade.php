@@ -96,7 +96,64 @@
                     @endif
                 </div>
             @empty
-                <div class="px-4 py-6 text-sm text-zinc-500">Сигналов пока нет.</div>
+                @if(!empty($targetTradeWithoutSignal))
+                    @php
+                        $t = $targetTradeWithoutSignal;
+                    @endphp
+                    {{-- Сделка без bot_signal_id (ручная / PO): показываем только данные сделки. --}}
+                    <div data-trade-id="{{ (int) $t->id }}"
+                         class="px-4 py-3 text-sm space-y-2 @if(!empty($targetTradeId) && (int) $targetTradeId === (int) $t->id) bg-amber-900/40 ring-1 ring-amber-500/50 @endif">
+                        <div class="flex flex-wrap items-start justify-between gap-2">
+                            <div class="space-y-0.5 min-w-0">
+                                <div class="font-medium text-zinc-100">
+                                    {{ $t->instrument }}
+                                    <span class="text-zinc-500">·</span>
+                                    {{ $t->side }}
+                                    <span class="text-zinc-500 font-normal text-xs">· без сигнала</span>
+                                </div>
+                                <div class="text-xs text-zinc-500">
+                                    Сделка: {{ optional($t->entry_time)->format('Y-m-d H:i:s') }}
+                                    @if($t->status === 'settled' && $t->settled_at)
+                                        <span class="text-zinc-600">→</span> закрыта {{ $t->settled_at->format('Y-m-d H:i:s') }}
+                                    @endif
+                                </div>
+                            </div>
+                            <div class="shrink-0 text-right space-y-0.5">
+                                <div>
+                                    @if($t->result === 'win')
+                                        <span class="inline-flex rounded px-2 py-0.5 text-xs font-medium bg-emerald-950 text-emerald-300 border border-emerald-800">win</span>
+                                    @elseif($t->result === 'loss')
+                                        <span class="inline-flex rounded px-2 py-0.5 text-xs font-medium bg-rose-950 text-rose-300 border border-rose-800">loss</span>
+                                    @elseif($t->result === 'draw')
+                                        <span class="inline-flex rounded px-2 py-0.5 text-xs font-medium bg-amber-950 text-amber-200 border border-amber-800">draw</span>
+                                    @else
+                                        <span class="inline-flex rounded px-2 py-0.5 text-xs font-medium bg-zinc-800 text-zinc-300 border border-zinc-700">pending</span>
+                                    @endif
+                                    @if($t->status === 'open')
+                                        <span class="text-zinc-500 ml-1 text-xs">открыта</span>
+                                    @endif
+                                </div>
+                                <div class="text-zinc-400 tabular-nums text-xs">
+                                    PnL: {{ $t->pnl !== null ? number_format((float) $t->pnl, 4) : '—' }}
+                                    @if($t->entry_price !== null && $t->expiry_price !== null)
+                                        <span class="text-zinc-600">·</span>
+                                        {{ number_format((float) $t->entry_price, 5) }}
+                                        →
+                                        {{ number_format((float) $t->expiry_price, 5) }}
+                                    @endif
+                                </div>
+                                <div class="pt-1">
+                                    <a href="{{ route('bots.show', ['bot' => $bot->id, 'trade_id' => $t->id]) }}"
+                                        class="inline-flex items-center rounded border border-zinc-700 bg-zinc-800 px-2 py-1 text-xs text-zinc-200 hover:bg-zinc-700">
+                                        Открыть на графике
+                                    </a>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                @else
+                    <div class="px-4 py-6 text-sm text-zinc-500">Сигналов пока нет.</div>
+                @endif
             @endforelse
         </div>
     </div>

@@ -2,6 +2,7 @@
 
 namespace App\Services\Telegram;
 
+use App\Services\Indicators\DemarkerIndicatorService;
 use App\Services\Indicators\SweepRaidLiquidityIndicatorService;
 
 /**
@@ -9,9 +10,13 @@ use App\Services\Indicators\SweepRaidLiquidityIndicatorService;
  *
  * На картинке только сетап текущего входа: фрактал, снятие и (если нужно) откат.
  * Исторические SWEEP/RAID/PB не рисуем — иначе они забивают график и левый край.
+ * При включённом DeMarker добавляется панель осциллятора с уровнями 0.1 / 0.9.
  */
 class SweepRaidLiquidityChartBuilder
 {
+    public function __construct(
+        private readonly ?DemarkerIndicatorService $demarker = null,
+    ) {}
 
     /**
      * @param  array<string, mixed>  $decision
@@ -24,7 +29,9 @@ class SweepRaidLiquidityChartBuilder
      *     segments:list<array<string,mixed>>,
      *     markers:list<array<string,mixed>>,
      *     subtitle:string,
-     *     legend:string
+     *     legend:string,
+     *     oscillator?:array<string,mixed>,
+     *     oscillator_guides?:list<array<string,mixed>>
      * }
      */
     public function chartLevelsFromDecision(array $decision, array $closedCandles, array $indicatorParams = []): array
@@ -120,15 +127,63 @@ class SweepRaidLiquidityChartBuilder
             ];
         }
 
-        return [
+        $subtitle = $this->whySubtitle($side, $kind, $location, $entryMode, $levelPrice);
+        $legend = 'FH/FL фрактал · SWEEP свип тенью · RAID рейд/возврат · PB первая откатная · точка = вход бота';
+
+        $result = [
             'levels' => $levels,
             'zones' => [],
             'entry' => $entry,
             'segments' => $segments,
             'markers' => $markers,
-            'subtitle' => $this->whySubtitle($side, $kind, $location, $entryMode, $levelPrice),
-            'legend' => 'FH/FL фрактал · SWEEP свип тенью · RAID рейд/возврат · PB первая откатная · точка = вход бота',
+            'subtitle' => $subtitle,
+            'legend' => $legend,
         ];
+
+        // Панель DeMarker — только если фильтр включён в настройках бота (сигнал уже прошёл пересечение).
+        if ((bool) ($features['srl_demarker_enabled'] ?? false)) {
+            $period = max(1, min(500, (int) ($features['srl_demarker_period'] ?? 6)));
+            $oversold = max(0.0, min(1.0, (float) ($features['srl_demarker_oversold'] ?? 0.10)));
+            $overbought = max(0.0, min(1.0, (float) ($features['srl_demarker_overbought'] ?? 0.90)));
+            $service = $this->demarker ?? new DemarkerIndicatorService;
+            $values = $closedCandles !== []
+                ? $service->computeSeries($closedCandles, ['period' => $period])
+                : [];
+
+            $result['oscillator'] = [
+                'label' => sprintf('DeMarker(%d)', $period),
+                'values' => $values,
+                'min' => 0.0,
+                'max' => 1.0,
+                'oversold' => $oversold,
+                'overbought' => $overbought,
+            ];
+            $result['oscillator_guides'] = [];
+            if ($entryTime > 0 && $entryPrice > 0) {
+                $result['oscillator_guides'][] = [
+                    'time' => $entryTime,
+                    'price' => $entryPrice,
+                    'kind' => 'entry',
+                    'label' => $side,
+                ];
+            }
+
+            $prev = (float) ($features['demarker_previous'] ?? 0);
+            $curr = (float) ($features['demarker_current'] ?? 0);
+            if ($prev > 0 || $curr > 0) {
+                $zone = $side === 'CALL' ? 'перепроданности' : 'перекупленности';
+                $result['subtitle'] .= sprintf(
+                    ' · DeMarker(%d) выход из %s: %.0f%%→%.0f%%',
+                    $period,
+                    $zone,
+                    $prev * 100,
+                    $curr * 100
+                );
+            }
+            $result['legend'] .= ' · DeMarker внизу';
+        }
+
+        return $result;
     }
 
     /** @return array{0:string,1:string} */

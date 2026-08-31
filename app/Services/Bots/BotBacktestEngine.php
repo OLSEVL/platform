@@ -27,6 +27,7 @@ class BotBacktestEngine
         'openrouter_llm',
         'openrouter_llm_analyst',
         \App\Support\ChartAnalystBotTypes::SRL,
+        \App\Support\ChartAnalystBotTypes::ENGULF,
         'manual_dashboard',
     ];
 
@@ -553,6 +554,11 @@ class BotBacktestEngine
         $curLossStreak = 0;
         $maxWinStreak = 0;
         $maxLossStreak = 0;
+        // Распределение: сколько раз завершилась серия ровно N побед / поражений (глобально).
+        /** @var array<int, int> $globalWinStreakDist */
+        $globalWinStreakDist = [];
+        /** @var array<int, int> $globalLossStreakDist */
+        $globalLossStreakDist = [];
 
         foreach ($trades as $t) {
             $pnl = (float) ($t->pnl ?? 0);
@@ -568,18 +574,16 @@ class BotBacktestEngine
                 default => $draws++,
             };
 
-            if ($t->result === BotTrade::RESULT_WIN) {
-                $curWinStreak++;
-                $curLossStreak = 0;
-                $maxWinStreak = max($maxWinStreak, $curWinStreak);
-            } elseif ($t->result === BotTrade::RESULT_LOSS) {
-                $curLossStreak++;
-                $curWinStreak = 0;
-                $maxLossStreak = max($maxLossStreak, $curLossStreak);
-            } else {
-                $curWinStreak = 0;
-                $curLossStreak = 0;
-            }
+            // Глобальная серия: все пары в порядке entry_ts.
+            $this->applyTradeStreak(
+                (string) $t->result,
+                $curWinStreak,
+                $curLossStreak,
+                $maxWinStreak,
+                $maxLossStreak,
+                $globalWinStreakDist,
+                $globalLossStreakDist,
+            );
 
             $inst = (string) $t->instrument;
             if (! isset($byInstrument[$inst])) {
@@ -595,38 +599,64 @@ class BotBacktestEngine
                     'cur_loss_streak' => 0,
                     'max_win_streak' => 0,
                     'max_loss_streak' => 0,
+                    // Распределение длин серий только внутри этой пары.
+                    'win_streak_dist' => [],
+                    'loss_streak_dist' => [],
                 ];
             }
             $byInstrument[$inst]['trades']++;
             $byInstrument[$inst]['pnl'] += $pnl;
             if ($t->result === BotTrade::RESULT_WIN) {
                 $byInstrument[$inst]['wins']++;
-                $byInstrument[$inst]['cur_win_streak']++;
-                $byInstrument[$inst]['cur_loss_streak'] = 0;
-                $byInstrument[$inst]['max_win_streak'] = max(
-                    (int) $byInstrument[$inst]['max_win_streak'],
-                    (int) $byInstrument[$inst]['cur_win_streak']
-                );
             } elseif ($t->result === BotTrade::RESULT_LOSS) {
                 $byInstrument[$inst]['losses']++;
-                $byInstrument[$inst]['cur_loss_streak']++;
-                $byInstrument[$inst]['cur_win_streak'] = 0;
-                $byInstrument[$inst]['max_loss_streak'] = max(
-                    (int) $byInstrument[$inst]['max_loss_streak'],
-                    (int) $byInstrument[$inst]['cur_loss_streak']
-                );
             } else {
                 $byInstrument[$inst]['draws']++;
-                $byInstrument[$inst]['cur_win_streak'] = 0;
-                $byInstrument[$inst]['cur_loss_streak'] = 0;
             }
+            /** @var array<int, int> $instWinDist */
+            $instWinDist = $byInstrument[$inst]['win_streak_dist'];
+            /** @var array<int, int> $instLossDist */
+            $instLossDist = $byInstrument[$inst]['loss_streak_dist'];
+            $instCurWin = (int) $byInstrument[$inst]['cur_win_streak'];
+            $instCurLoss = (int) $byInstrument[$inst]['cur_loss_streak'];
+            $instMaxWin = (int) $byInstrument[$inst]['max_win_streak'];
+            $instMaxLoss = (int) $byInstrument[$inst]['max_loss_streak'];
+            $this->applyTradeStreak(
+                (string) $t->result,
+                $instCurWin,
+                $instCurLoss,
+                $instMaxWin,
+                $instMaxLoss,
+                $instWinDist,
+                $instLossDist,
+            );
+            $byInstrument[$inst]['cur_win_streak'] = $instCurWin;
+            $byInstrument[$inst]['cur_loss_streak'] = $instCurLoss;
+            $byInstrument[$inst]['max_win_streak'] = $instMaxWin;
+            $byInstrument[$inst]['max_loss_streak'] = $instMaxLoss;
+            $byInstrument[$inst]['win_streak_dist'] = $instWinDist;
+            $byInstrument[$inst]['loss_streak_dist'] = $instLossDist;
 
             // Точка equity на каждую сделку — ниже прореживаем перед записью в JSON.
             $equityCurve[] = ['ts' => (int) $t->entry_ts, 'equity' => round($equity, 4)];
         }
 
+        // Незавершённые серии в конце прогона тоже попадают в распределение.
+        $this->flushStreakDistributions($curWinStreak, $curLossStreak, $globalWinStreakDist, $globalLossStreakDist);
+
         // Досчёт WR и округление PnL; убираем временные cur_* из ответа.
         foreach ($byInstrument as $inst => $row) {
+            /** @var array<int, int> $pairWinDist */
+            $pairWinDist = is_array($row['win_streak_dist'] ?? null) ? $row['win_streak_dist'] : [];
+            /** @var array<int, int> $pairLossDist */
+            $pairLossDist = is_array($row['loss_streak_dist'] ?? null) ? $row['loss_streak_dist'] : [];
+            $this->flushStreakDistributions(
+                (int) ($row['cur_win_streak'] ?? 0),
+                (int) ($row['cur_loss_streak'] ?? 0),
+                $pairWinDist,
+                $pairLossDist,
+            );
+
             $dec = (int) $row['wins'] + (int) $row['losses'];
             $byInstrument[$inst]['pnl'] = round((float) $row['pnl'], 4);
             $byInstrument[$inst]['winrate'] = $dec > 0
@@ -634,7 +664,16 @@ class BotBacktestEngine
                 : null;
             $byInstrument[$inst]['max_win_streak'] = (int) ($row['max_win_streak'] ?? 0);
             $byInstrument[$inst]['max_loss_streak'] = (int) ($row['max_loss_streak'] ?? 0);
-            unset($byInstrument[$inst]['cur_win_streak'], $byInstrument[$inst]['cur_loss_streak']);
+            $byInstrument[$inst]['streak_distribution'] = [
+                'wins' => $this->normalizeStreakDistribution($pairWinDist),
+                'losses' => $this->normalizeStreakDistribution($pairLossDist),
+            ];
+            unset(
+                $byInstrument[$inst]['cur_win_streak'],
+                $byInstrument[$inst]['cur_loss_streak'],
+                $byInstrument[$inst]['win_streak_dist'],
+                $byInstrument[$inst]['loss_streak_dist'],
+            );
         }
         uasort($byInstrument, static fn ($a, $b) => ((float) $b['pnl']) <=> ((float) $a['pnl']));
 
@@ -654,10 +693,105 @@ class BotBacktestEngine
             // Макс. подряд плюсов / минусов (draw обрывает серию).
             'max_win_streak' => $maxWinStreak,
             'max_loss_streak' => $maxLossStreak,
+            // Сколько раз завершилась серия ровно N побед / поражений (все пары, entry_ts).
+            'streak_distribution' => [
+                'wins' => $this->normalizeStreakDistribution($globalWinStreakDist),
+                'losses' => $this->normalizeStreakDistribution($globalLossStreakDist),
+            ],
             'by_instrument' => $byInstrument,
             // Лимит точек: иначе summary_json раздувается и ломает SELECT списка (MySQL sort memory).
             'equity_curve' => $this->downsampleEquityCurve($equityCurve, 400),
         ];
+    }
+
+    /**
+     * Обновить текущие серии и распределение после одной сделки.
+     * При смене результата закрытая серия записывается: distribution[length]++.
+     *
+     * @param  array<int, int>  $winDist
+     * @param  array<int, int>  $lossDist
+     */
+    private function applyTradeStreak(
+        string $result,
+        int &$curWinStreak,
+        int &$curLossStreak,
+        int &$maxWinStreak,
+        int &$maxLossStreak,
+        array &$winDist,
+        array &$lossDist,
+    ): void {
+        if ($result === BotTrade::RESULT_WIN) {
+            if ($curLossStreak > 0) {
+                $this->recordStreakLength($lossDist, $curLossStreak);
+                $curLossStreak = 0;
+            }
+            $curWinStreak++;
+            $maxWinStreak = max($maxWinStreak, $curWinStreak);
+        } elseif ($result === BotTrade::RESULT_LOSS) {
+            if ($curWinStreak > 0) {
+                $this->recordStreakLength($winDist, $curWinStreak);
+                $curWinStreak = 0;
+            }
+            $curLossStreak++;
+            $maxLossStreak = max($maxLossStreak, $curLossStreak);
+        } else {
+            if ($curWinStreak > 0) {
+                $this->recordStreakLength($winDist, $curWinStreak);
+            }
+            if ($curLossStreak > 0) {
+                $this->recordStreakLength($lossDist, $curLossStreak);
+            }
+            $curWinStreak = 0;
+            $curLossStreak = 0;
+        }
+    }
+
+    /** @param  array<int, int>  $dist */
+    private function recordStreakLength(array &$dist, int $length): void
+    {
+        if ($length <= 0) {
+            return;
+        }
+        $dist[$length] = ($dist[$length] ?? 0) + 1;
+    }
+
+    /**
+     * Закрыть незавершённые серии в конце прогона (последняя серия без «обрыва»).
+     *
+     * @param  array<int, int>  $winDist
+     * @param  array<int, int>  $lossDist
+     */
+    private function flushStreakDistributions(
+        int $curWinStreak,
+        int $curLossStreak,
+        array &$winDist,
+        array &$lossDist,
+    ): void {
+        if ($curWinStreak > 0) {
+            $this->recordStreakLength($winDist, $curWinStreak);
+        }
+        if ($curLossStreak > 0) {
+            $this->recordStreakLength($lossDist, $curLossStreak);
+        }
+    }
+
+    /**
+     * @param  array<int, int>  $dist
+     * @return array<int, int>
+     */
+    private function normalizeStreakDistribution(array $dist): array
+    {
+        $out = [];
+        foreach ($dist as $len => $cnt) {
+            $length = (int) $len;
+            $count = (int) $cnt;
+            if ($length > 0 && $count > 0) {
+                $out[$length] = $count;
+            }
+        }
+        ksort($out, SORT_NUMERIC);
+
+        return $out;
     }
 
     /**
@@ -807,6 +941,9 @@ class BotBacktestEngine
             return max(120, min(600, (int) $decision['expiry_sec']));
         }
         if ($botType === 'sweep_raid_liquidity' && isset($decision['expiry_sec'])) {
+            return max(60, min(900, (int) $decision['expiry_sec']));
+        }
+        if ($botType === 'engulfing_liquidity' && isset($decision['expiry_sec'])) {
             return max(60, min(900, (int) $decision['expiry_sec']));
         }
 

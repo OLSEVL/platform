@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\InstrumentCandle;
 use Carbon\Carbon;
+use Carbon\CarbonInterface;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
@@ -539,6 +540,59 @@ class DataCleanupService
     }
 
     /**
+     * Считает текущее число строк по каждой таблице, которую затрагивает очистка одного бота.
+     * Используется на странице настроек бота — чтобы видеть объём данных до purge.
+     *
+     * @return array{
+     *     signals: int,
+     *     trades: int,
+     *     analysis_runs: int,
+     *     llm_logs: int,
+     *     bot_runs: int,
+     *     backtest_runs: int,
+     *     backtest_trades: int,
+     *     total: int
+     * }
+     */
+    public function countBotScopedRows(int $botId): array
+    {
+        $signals = $this->countByBotScope('bot_signals', $botId);
+        $trades = $this->countByBotScope('bot_trades', $botId);
+        $analysisRuns = Schema::hasTable('bot_analysis_runs')
+            ? $this->countByBotScope('bot_analysis_runs', $botId)
+            : 0;
+        $llmLogs = Schema::hasTable('bot_llm_logs')
+            ? $this->countByBotScope('bot_llm_logs', $botId)
+            : 0;
+        $botRuns = Schema::hasTable('bot_runs')
+            ? $this->countByBotScope('bot_runs', $botId)
+            : 0;
+        $backtestRuns = Schema::hasTable('bot_backtest_runs')
+            ? $this->countByBotScope('bot_backtest_runs', $botId)
+            : 0;
+
+        // Сделки бэктеста не имеют bot_id — считаем через join с прогонами этого бота.
+        $backtestTrades = 0;
+        if (Schema::hasTable('bot_backtest_trades') && Schema::hasTable('bot_backtest_runs')) {
+            $backtestTrades = (int) DB::table('bot_backtest_trades')
+                ->join('bot_backtest_runs', 'bot_backtest_runs.id', '=', 'bot_backtest_trades.bot_backtest_run_id')
+                ->where('bot_backtest_runs.bot_id', $botId)
+                ->count();
+        }
+
+        return [
+            'signals' => $signals,
+            'trades' => $trades,
+            'analysis_runs' => $analysisRuns,
+            'llm_logs' => $llmLogs,
+            'bot_runs' => $botRuns,
+            'backtest_runs' => $backtestRuns,
+            'backtest_trades' => $backtestTrades,
+            'total' => $signals + $trades + $analysisRuns + $llmLogs + $botRuns + $backtestRuns + $backtestTrades,
+        ];
+    }
+
+    /**
      * Удаляет строки из таблицы бота с учётом опционального фильтра bot_id.
      */
     private function deleteByBotScope(
@@ -570,5 +624,17 @@ class DataCleanupService
             "DELETE FROM {$table} WHERE bot_id = ? AND {$timeColumn} < ?",
             [$botId, $cutoff],
         );
+    }
+
+    /**
+     * COUNT(*) по bot_id для таблиц с прямой привязкой к боту.
+     */
+    private function countByBotScope(string $table, int $botId): int
+    {
+        if (! Schema::hasTable($table)) {
+            return 0;
+        }
+
+        return (int) DB::table($table)->where('bot_id', $botId)->count();
     }
 }

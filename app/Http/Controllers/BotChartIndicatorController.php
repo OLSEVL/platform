@@ -23,12 +23,14 @@ use App\Services\Indicators\PriceActionDgtIndicatorService;
 use App\Services\Indicators\RsiIndicatorService;
 use App\Services\Indicators\SmaIndicatorService;
 use App\Services\Indicators\SmcFlowIndicatorService;
+use App\Services\Indicators\EngulfingLiquidityIndicatorService;
 use App\Services\Indicators\SweepRaidLiquidityIndicatorService;
 use App\Support\LiquiditySwingsSettingsForm;
 use App\Support\PriceActionDgtSettingsForm;
 use App\Support\RsiSettingsForm;
 use App\Support\SmaSettingsForm;
 use App\Support\SmcFlowSettingsForm;
+use App\Support\EngulfingLiquiditySettingsForm;
 use App\Support\SweepRaidLiquiditySettingsForm;
 use App\Support\VwmaSettingsForm;
 use App\Services\Indicators\VwmaIndicatorService;
@@ -314,6 +316,33 @@ class BotChartIndicatorController extends Controller
 
         return redirect()->route('bots.indicators.sweep-raid-liquidity.edit', $bot)
             ->with('status', 'Настройки Sweep / Raid Liquidity сохранены.');
+    }
+
+    public function editEngulfingLiquidity(Bot $bot): View
+    {
+        $this->ensureBotOwner($bot);
+
+        return view('bots.indicators.engulfing-liquidity', [
+            'bot' => $bot,
+            'eng' => IndicatorSetting::mergedEngulfingLiquidityParams($bot),
+        ]);
+    }
+
+    public function updateEngulfingLiquidity(Request $request, Bot $bot): RedirectResponse
+    {
+        $this->ensureBotOwner($bot);
+        $params = EngulfingLiquiditySettingsForm::buildFromRequest($request);
+        IndicatorSetting::updateOrCreate(
+            ['bot_id' => $bot->id, 'indicator_key' => IndicatorSetting::KEY_ENGULFING_LIQUIDITY],
+            ['settings' => $params],
+        );
+
+        $config = is_array($bot->config) ? $bot->config : [];
+        unset($config[IndicatorSetting::KEY_ENGULFING_LIQUIDITY]);
+        $bot->update(['config' => $config]);
+
+        return redirect()->route('bots.indicators.engulfing-liquidity.edit', $bot)
+            ->with('status', 'Настройки Engulfing Liquidity сохранены.');
     }
 
     public function editSmcFlow(Bot $bot): View

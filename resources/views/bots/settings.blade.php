@@ -18,9 +18,11 @@
     $analystPromptMode = old('analyst_prompt_mode', $cfg['analyst_prompt_mode'] ?? \App\Support\OpenRouterLlmConfig::ANALYST_PROMPT_MODE_FULL);
     $isChartAnalystBot = \App\Support\ChartAnalystBotTypes::isAnalyst($bot->type);
     $isSrlAnalystBot = \App\Support\ChartAnalystBotTypes::isSrl($bot->type);
-    $analystSmcFlowEnabled = $isChartAnalystBot && ! $isSrlAnalystBot
+    $isEngulfAnalystBot = \App\Support\ChartAnalystBotTypes::isEngulf($bot->type);
+    $analystSmcFlowEnabled = $isChartAnalystBot && ! $isSrlAnalystBot && ! $isEngulfAnalystBot
         && \App\Support\OpenRouterLlmConfig::analystSmcFlowEnabled($cfg);
     $analystSrlFlowEnabled = $isSrlAnalystBot;
+    $analystEngulfFlowEnabled = $isEngulfAnalystBot;
 @endphp
 <div class="mx-auto w-full max-w-2xl space-y-6">
     <div class="flex flex-wrap items-baseline justify-between gap-3">
@@ -41,6 +43,8 @@
                 class="inline-flex items-center rounded border border-zinc-600 bg-zinc-800 px-2.5 py-1 text-xs font-medium text-zinc-200 shadow-sm transition-colors hover:bg-zinc-700 hover:border-zinc-500 hover:text-zinc-50 focus:outline-none focus:ring-2 focus:ring-blue-500/50">Liquidity Swings</a>
             <a href="{{ route('bots.indicators.sweep-raid-liquidity.edit', $bot) }}"
                 class="inline-flex items-center rounded border border-zinc-600 bg-zinc-800 px-2.5 py-1 text-xs font-medium text-zinc-200 shadow-sm transition-colors hover:bg-zinc-700 hover:border-zinc-500 hover:text-zinc-50 focus:outline-none focus:ring-2 focus:ring-blue-500/50">Sweep / Raid Liquidity</a>
+            <a href="{{ route('bots.indicators.engulfing-liquidity.edit', $bot) }}"
+                class="inline-flex items-center rounded border border-zinc-600 bg-zinc-800 px-2.5 py-1 text-xs font-medium text-zinc-200 shadow-sm transition-colors hover:bg-zinc-700 hover:border-zinc-500 hover:text-zinc-50 focus:outline-none focus:ring-2 focus:ring-blue-500/50">Engulfing Liquidity</a>
             <a href="{{ route('bots.indicators.smc-flow.edit', $bot) }}"
                 class="inline-flex items-center rounded border border-zinc-600 bg-zinc-800 px-2.5 py-1 text-xs font-medium text-zinc-200 shadow-sm transition-colors hover:bg-zinc-700 hover:border-zinc-500 hover:text-zinc-50 focus:outline-none focus:ring-2 focus:ring-blue-500/50">SMC Flow</a>
             <a href="{{ route('bots.indicators.bollinger.edit', $bot) }}"
@@ -1038,6 +1042,102 @@
                         <span><span class="text-sm font-medium text-zinc-200">Вход на первой откатной</span><span class="mt-0.5 block text-[11px] text-zinc-500">После свипа или рейда: сверху первая зелёная → PUT; снизу первая красная → CALL.</span></span>
                     </label>
                 </div>
+                <div class="space-y-3 rounded border border-zinc-800 bg-zinc-900/40 p-4">
+                    <p class="text-xs font-semibold uppercase tracking-wide text-zinc-500">DeMarker (фильтр)</p>
+                    <input type="hidden" name="srl_demarker_enabled" value="0">
+                    <label class="flex items-start gap-2">
+                        <input type="checkbox" name="srl_demarker_enabled" value="1" @checked(old('srl_demarker_enabled', $cfg['srl_demarker_enabled'] ?? false))
+                            class="mt-0.5 rounded border-zinc-600 bg-zinc-900 text-blue-500">
+                        <span>
+                            <span class="text-sm font-medium text-zinc-200">Фильтровать по DeMarker</span>
+                            <span class="mt-0.5 block text-[11px] text-zinc-500">Сделка только если на баре входа осциллятор пересёк зону: CALL — выход вверх из нижней; PUT — выход вниз из верхней.</span>
+                        </span>
+                    </label>
+                    <div class="grid gap-4 sm:grid-cols-3">
+                        <div class="space-y-1">
+                            <label for="srl_demarker_period" class="block text-xs font-medium text-zinc-400">Период</label>
+                            <input type="number" name="srl_demarker_period" id="srl_demarker_period" min="1" max="500" required
+                                value="{{ old('srl_demarker_period', $cfg['srl_demarker_period'] ?? 6) }}"
+                                class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                            @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('srl_demarker_period')])
+                            @error('srl_demarker_period')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                        </div>
+                        <div class="space-y-1">
+                            <label for="srl_demarker_oversold" class="block text-xs font-medium text-zinc-400">Нижняя зона (%)</label>
+                            <input type="number" name="srl_demarker_oversold" id="srl_demarker_oversold" min="0" max="49.99" step="0.01" required
+                                value="{{ old('srl_demarker_oversold', $cfg['srl_demarker_oversold'] ?? 10) }}"
+                                class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                            @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('srl_demarker_oversold')])
+                            @error('srl_demarker_oversold')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                        </div>
+                        <div class="space-y-1">
+                            <label for="srl_demarker_overbought" class="block text-xs font-medium text-zinc-400">Верхняя зона (%)</label>
+                            <input type="number" name="srl_demarker_overbought" id="srl_demarker_overbought" min="50.01" max="100" step="0.01" required
+                                value="{{ old('srl_demarker_overbought', $cfg['srl_demarker_overbought'] ?? 90) }}"
+                                class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                            @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('srl_demarker_overbought')])
+                            @error('srl_demarker_overbought')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                        </div>
+                    </div>
+                    <p class="text-[11px] text-zinc-500">При включении DeMarker отображается на веб-графике и в PNG Telegram-алерта.</p>
+                </div>
+                @include('bots._strategy-telegram-settings', ['bot' => $bot, 'cfg' => $cfg])
+            </div>
+        @elseif ($bot->type === 'engulfing_liquidity')
+            <div class="space-y-5 border-t border-zinc-800 pt-4">
+                <div class="space-y-2 text-sm text-zinc-400">
+                    <p>
+                        <strong class="text-zinc-300">Поглощение (3 шага)</strong> — rule-based бот по стратегии автора:
+                        engulf → реакция → контр-pogloщение. Вход на close 3-й свечи, не на первом engulf.
+                    </p>
+                    <p class="text-[11px] text-zinc-500">
+                        Оверлей ENGULF 1/2/3 —
+                        <a href="{{ route('bots.indicators.engulfing-liquidity.edit', $bot) }}" class="text-blue-400 hover:underline">Engulfing Liquidity</a>.
+                        Экспирация по умолчанию — 60 секунд.
+                    </p>
+                </div>
+                <div class="grid gap-4 sm:grid-cols-2">
+                    <div class="space-y-1">
+                        <label for="count" class="block text-xs font-medium text-zinc-400">Свечей M1 (count)</label>
+                        <input type="number" name="count" id="count" min="30" max="5000" required value="{{ old('count', $cfg['count'] ?? 500) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                    </div>
+                    <div class="space-y-1">
+                        <label for="expiry_sec" class="block text-xs font-medium text-zinc-400">Экспирация (сек)</label>
+                        <input type="number" name="expiry_sec" id="expiry_sec" min="60" max="900" required value="{{ old('expiry_sec', $cfg['expiry_sec'] ?? 60) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                    </div>
+                    <div class="space-y-1">
+                        <label for="min_payout" class="block text-xs font-medium text-zinc-400">Мин. payout (%)</label>
+                        <input type="number" name="min_payout" id="min_payout" min="0" max="100" step="0.1" required value="{{ old('min_payout', $cfg['min_payout'] ?? 80) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                    </div>
+                    <div class="space-y-1">
+                        <label for="min_confidence" class="block text-xs font-medium text-zinc-400">Мин. confidence (0–1)</label>
+                        <input type="number" name="min_confidence" id="min_confidence" min="0" max="1" step="0.01" required value="{{ old('min_confidence', $cfg['min_confidence'] ?? 0) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                    </div>
+                    <div class="space-y-1">
+                        <label for="stale_after_sec" class="block text-xs font-medium text-zinc-400">Свежесть текущей свечи (сек)</label>
+                        <input type="number" name="stale_after_sec" id="stale_after_sec" min="5" max="600" required value="{{ old('stale_after_sec', $cfg['stale_after_sec'] ?? 60) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                    </div>
+                </div>
+                <div class="space-y-3 rounded border border-zinc-800 bg-zinc-900/40 p-4">
+                    <p class="text-xs font-semibold uppercase tracking-wide text-zinc-500">Типы поглощения (шаг 1)</p>
+                    <input type="hidden" name="eng_allow_classic" value="0">
+                    <label class="flex items-start gap-2">
+                        <input type="checkbox" name="eng_allow_classic" value="1" @checked(old('eng_allow_classic', $cfg['eng_allow_classic'] ?? true))
+                            class="mt-0.5 rounded border-zinc-600 bg-zinc-900 text-blue-500">
+                        <span><span class="text-sm font-medium text-zinc-200">Классическое engulf</span><span class="mt-0.5 block text-[11px] text-zinc-500">Противоположный цвет: зелёная съела красную (CALL) или красная зелёную (PUT).</span></span>
+                    </label>
+                    <input type="hidden" name="eng_allow_same_color" value="0">
+                    <label class="flex items-start gap-2">
+                        <input type="checkbox" name="eng_allow_same_color" value="1" @checked(old('eng_allow_same_color', $cfg['eng_allow_same_color'] ?? true))
+                            class="mt-0.5 rounded border-zinc-600 bg-zinc-900 text-blue-500">
+                        <span><span class="text-sm font-medium text-zinc-200">Same-color engulf</span><span class="mt-0.5 block text-[11px] text-zinc-500">Тот же цвет + снятие high/low соседа (как на стриме AED/CNY).</span></span>
+                    </label>
+                </div>
                 @include('bots._strategy-telegram-settings', ['bot' => $bot, 'cfg' => $cfg])
             </div>
         @elseif ($bot->type === 'smc_flow')
@@ -1299,8 +1399,10 @@
             <div class="space-y-5 border-t border-zinc-800 pt-4">
                 <div class="space-y-2 text-sm text-zinc-400">
                     <p>
-                        <strong class="text-zinc-300">{{ $isSrlAnalystBot ? 'Chart Analyst Sweep/Raid' : 'Chart Analyst' }}</strong> —
-                    @if($isSrlAnalystBot)
+                        <strong class="text-zinc-300">{{ $isEngulfAnalystBot ? 'Chart Analyst Engulfing' : ($isSrlAnalystBot ? 'Chart Analyst Sweep/Raid' : 'Chart Analyst') }}</strong> —
+                    @if($isEngulfAnalystBot)
+                            ручной и Telegram-анализ: детектор находит ENGULF 1/2/3, LLM только подтверждает или отклоняет. Экспирация ориентир 60 с.
+                    @elseif($isSrlAnalystBot)
                             ручной и Telegram-анализ: детектор находит SWEEP/RAID/PB, LLM только подтверждает или отклоняет. Экспирация ориентир 60 с.
                     @elseif($analystSmcFlowEnabled)
                             ручной и Telegram-анализ с снимком SMC Flow в LLM + блок <code class="text-zinc-400">chart_levels</code> для графика.
@@ -1336,6 +1438,23 @@
                         </label>
                         @error('srl_enter_sweep')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
+                </div>
+                @endif
+
+                @if ($isEngulfAnalystBot)
+                <p class="text-xs font-semibold uppercase tracking-wide text-zinc-500">Engulfing — кандидаты для LLM</p>
+                <div class="space-y-2 sm:col-span-2">
+                    <label class="flex items-start gap-2">
+                        <input type="checkbox" name="eng_allow_classic" value="1" class="mt-0.5 rounded border-zinc-600 bg-zinc-800 text-blue-500"
+                            @checked(old('eng_allow_classic', ($cfg['eng_allow_classic'] ?? true) ? '1' : '') === '1' || (old('eng_allow_classic') === null && ($cfg['eng_allow_classic'] ?? true)))>
+                        <span class="text-xs text-zinc-300">Classic engulf — противоположный цвет (зелёная съела красную / наоборот)</span>
+                    </label>
+                    <label class="flex items-start gap-2">
+                        <input type="checkbox" name="eng_allow_same_color" value="1" class="mt-0.5 rounded border-zinc-600 bg-zinc-800 text-blue-500"
+                            @checked(old('eng_allow_same_color', ($cfg['eng_allow_same_color'] ?? true) ? '1' : '') === '1' || (old('eng_allow_same_color') === null && ($cfg['eng_allow_same_color'] ?? true)))>
+                        <span class="text-xs text-zinc-300">Same-color engulf — снятие high/low соседа тем же цветом</span>
+                    </label>
+                    @error('eng_allow_classic')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                 </div>
                 @endif
 
@@ -1521,6 +1640,9 @@
                         $hybridLeaderWindow = (int) old('hybrid_leader_window_sec', $cfg['hybrid_leader_window_sec'] ?? \App\Support\HybridAnalystConfig::LEADER_WINDOW_1H);
                         $hybridLeaderMinTrades = (int) old('hybrid_leader_min_trades', $cfg['hybrid_leader_min_trades'] ?? \App\Support\HybridAnalystConfig::LEADER_MIN_TRADES_DEFAULT);
                         $hybridLeaderId = (int) ($cfg['hybrid_leader_bot_id'] ?? 0);
+                        // Длинный список ботов: нативный popup <select> обрезается из-за overflow-hidden на body.
+                        $hybridSourceBotOptionCount = count($hybridSourceBots ?? []) + 1;
+                        $hybridSourceSelectNeedsScroll = $hybridSourceBotOptionCount > 8;
                     @endphp
                     <div class="grid gap-4 sm:grid-cols-2">
                         <div class="space-y-1 sm:col-span-2">
@@ -1537,6 +1659,7 @@
                         <div class="space-y-1 sm:col-span-2" id="hybrid-source-bot-wrap">
                             <label for="hybrid_source_bot_id" class="block text-xs font-medium text-zinc-400">Бот первичного анализа</label>
                             <select name="hybrid_source_bot_id" id="hybrid_source_bot_id"
+                                @if ($hybridSourceSelectNeedsScroll) data-scrollable-select="1" data-scrollable-select-max="32" data-scrollable-select-max-height="48rem" @endif
                                 class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 disabled:opacity-50 disabled:cursor-not-allowed">
                                 <option value="">— не выбран —</option>
                                 @foreach ($hybridSourceBots ?? [] as $srcBot)
@@ -1665,6 +1788,38 @@
                     const hintEl = document.getElementById('hybrid-source-bot-hint');
                     const leaderBlocks = document.querySelectorAll('.hybrid-leader-only');
                     if (!modeEl || !sourceEl) return;
+
+                    // Длинный список: вместо нативного popup (который режется overflow-hidden)
+                    // раскрываем listbox с max-height и overflow-y-auto прямо в разметке.
+                    if (sourceEl.dataset.scrollableSelect === '1') {
+                        const maxVisible = Math.max(4, parseInt(sourceEl.dataset.scrollableSelectMax || '32', 10) || 32);
+                        const maxHeight = sourceEl.dataset.scrollableSelectMaxHeight || '48rem';
+                        const optionCount = sourceEl.options.length;
+
+                        function expandSourceSelect() {
+                            // size + overflow в DOM: нативный popup режется body { overflow: hidden }.
+                            sourceEl.size = Math.min(optionCount, maxVisible);
+                            sourceEl.style.maxHeight = maxHeight;
+                            sourceEl.style.overflowY = 'auto';
+                        }
+
+                        function collapseSourceSelect() {
+                            sourceEl.removeAttribute('size');
+                            sourceEl.style.maxHeight = '';
+                            sourceEl.style.overflowY = '';
+                        }
+
+                        sourceEl.addEventListener('focus', expandSourceSelect);
+                        sourceEl.addEventListener('mousedown', function () {
+                            if (!sourceEl.hasAttribute('size')) {
+                                expandSourceSelect();
+                            }
+                        });
+                        sourceEl.addEventListener('blur', function () {
+                            window.setTimeout(collapseSourceSelect, 120);
+                        });
+                        sourceEl.addEventListener('change', collapseSourceSelect);
+                    }
 
                     function sync() {
                         const auto = modeEl.value === 'best_winrate';
@@ -3265,17 +3420,105 @@
         </div>
     </form>
 
-    <form method="post"
-          action="{{ route('bots.cleanup-recent', $bot) }}"
-          class="inline-flex"
-          onsubmit="return confirm('Удалить у этого бота все записи, которые старше 24 часов? Действие необратимо.');">
-        @csrf
-        {{-- Отдельная форма нужна, чтобы не конфликтовать с PUT-формой сохранения настроек.
-             Кнопка запускает именно POST-очистку старых записей (trade/signal/llm logs). --}}
-        <button type="submit"
-                class="rounded bg-rose-700 px-4 py-2 text-sm font-medium text-white hover:bg-rose-600 focus:outline-none focus:ring-2 focus:ring-rose-400">
-            Очистить всё старше 24 часов
-        </button>
-    </form>
+    {{-- Отдельная форма очистки: не внутри PUT-формы сохранения настроек, иначе submit уйдёт не туда. --}}
+    @php
+        // Счётчики строк из DataCleanupService::countBotScopedRows() — только для этого бота.
+        $cleanupCounts = isset($botCleanupRowCounts) && is_array($botCleanupRowCounts)
+            ? $botCleanupRowCounts
+            : ['signals' => 0, 'trades' => 0, 'analysis_runs' => 0, 'llm_logs' => 0, 'bot_runs' => 0, 'backtest_runs' => 0, 'backtest_trades' => 0, 'total' => 0];
+        $fmtCleanupCount = static fn (int $n): string => number_format($n, 0, ',', ' ');
+    @endphp
+    <section class="space-y-4 rounded border border-rose-900/50 bg-zinc-950/40 p-6">
+        <div>
+            <h2 class="text-lg font-medium text-zinc-100">Очистка истории бота</h2>
+            <p class="mt-2 text-sm text-zinc-400">
+                Удаляет исторические записи <strong class="font-medium text-zinc-300">только этого бота</strong>
+                ({{ $bot->name }}, id={{ $bot->id }}), старше выбранного периода. Действие необратимо.
+            </p>
+        </div>
+
+        <div class="rounded border border-zinc-800 bg-zinc-900/40 px-4 py-3 text-sm text-zinc-400">
+            <div class="flex flex-wrap items-baseline justify-between gap-2">
+                <p class="mb-2 font-medium text-zinc-300">Что удаляется</p>
+                <p class="text-xs text-zinc-500">
+                    Сейчас в БД: <span class="font-medium tabular-nums text-zinc-300">{{ $fmtCleanupCount((int) $cleanupCounts['total']) }}</span> строк
+                </p>
+            </div>
+            <ul class="mt-2 space-y-1.5 text-xs leading-relaxed">
+                <li class="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-0.5">
+                    <span><code class="text-zinc-300">bot_signals</code> — сигналы (<code class="text-zinc-400">signal_at</code>)</span>
+                    <span class="shrink-0 tabular-nums text-zinc-300">{{ $fmtCleanupCount((int) $cleanupCounts['signals']) }}</span>
+                </li>
+                <li class="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-0.5">
+                    <span><code class="text-zinc-300">bot_trades</code> — сделки (<code class="text-zinc-400">entry_time</code>)</span>
+                    <span class="shrink-0 tabular-nums text-zinc-300">{{ $fmtCleanupCount((int) $cleanupCounts['trades']) }}</span>
+                </li>
+                <li class="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-0.5">
+                    <span><code class="text-zinc-300">bot_analysis_runs</code> — прогоны анализа LLM (<code class="text-zinc-400">started_at</code>)</span>
+                    <span class="shrink-0 tabular-nums text-zinc-300">{{ $fmtCleanupCount((int) $cleanupCounts['analysis_runs']) }}</span>
+                </li>
+                <li class="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-0.5">
+                    <span><code class="text-zinc-300">bot_llm_logs</code> — сырые LLM-логи (<code class="text-zinc-400">created_at</code>)</span>
+                    <span class="shrink-0 tabular-nums text-zinc-300">{{ $fmtCleanupCount((int) $cleanupCounts['llm_logs']) }}</span>
+                </li>
+                <li class="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-0.5">
+                    <span><code class="text-zinc-300">bot_runs</code> — записи запусков движка (<code class="text-zinc-400">started_at</code>)</span>
+                    <span class="shrink-0 tabular-nums text-zinc-300">{{ $fmtCleanupCount((int) $cleanupCounts['bot_runs']) }}</span>
+                </li>
+                <li class="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-0.5">
+                    <span>
+                        <code class="text-zinc-300">bot_backtest_runs</code> — прогоны бэктеста (<code class="text-zinc-400">created_at</code>)
+                        @if ((int) $cleanupCounts['backtest_trades'] > 0)
+                            <span class="text-zinc-500">+ <code class="text-zinc-400">bot_backtest_trades</code> каскадом</span>
+                        @endif
+                    </span>
+                    <span class="shrink-0 tabular-nums text-zinc-300">
+                        {{ $fmtCleanupCount((int) $cleanupCounts['backtest_runs']) }}
+                        @if ((int) $cleanupCounts['backtest_trades'] > 0)
+                            <span class="text-zinc-500">/ {{ $fmtCleanupCount((int) $cleanupCounts['backtest_trades']) }}</span>
+                        @endif
+                    </span>
+                </li>
+            </ul>
+            <p class="mt-3 text-xs text-zinc-500">
+                Вариант «0 часов» стирает <strong class="text-zinc-400">всю</strong> историю бота в перечисленных таблицах.
+                Остальные варианты оставляют данные за последние N часов от текущего момента.
+                Цифры справа — полное количество строк <strong class="text-zinc-400">сейчас</strong>, не только старше выбранного окна.
+            </p>
+        </div>
+
+        <div class="rounded border border-zinc-800 bg-zinc-900/20 px-4 py-3 text-xs text-zinc-500">
+            <p class="font-medium text-zinc-400">Что не удаляется</p>
+            <ul class="mt-2 list-inside list-disc space-y-1">
+                <li>Свечи <code class="text-zinc-400">instrument_candles</code> — общие для всей платформы</li>
+                <li>Настройки и конфигурация бота (<code class="text-zinc-400">bots</code>, индикаторы и т.д.)</li>
+                <li>Данные других ботов</li>
+            </ul>
+        </div>
+
+        <form method="post"
+              action="{{ route('bots.cleanup-recent', $bot) }}"
+              class="flex flex-wrap items-end gap-3"
+              onsubmit="const h=this.retention_hours.value; const botName=@json($bot->name); return confirm(h==='0' ? 'Удалить ВСЮ историю бота «' + botName + '» без исключения? Действие необратимо.' : 'Удалить у бота «' + botName + '» все записи старше выбранного периода? Действие необратимо.');">
+            @csrf
+            <label class="flex flex-col gap-1 text-sm text-zinc-200">
+                <span>Удалить данные старше</span>
+                <select name="retention_hours"
+                        class="min-w-[10rem] rounded border border-zinc-600 bg-zinc-950 px-2 py-2 text-zinc-100 focus:border-transparent focus:ring-2 focus:ring-rose-600">
+                    <option value="0">0 часов (всё)</option>
+                    <option value="1">1 час</option>
+                    <option value="3">3 часа</option>
+                    <option value="6">6 часов</option>
+                    <option value="12">12 часов</option>
+                    <option value="24" selected>24 часа</option>
+                    <option value="48">48 часов</option>
+                </select>
+            </label>
+            <button type="submit"
+                    class="inline-flex items-center justify-center rounded bg-rose-700 px-4 py-2 text-sm font-medium text-white hover:bg-rose-600 focus:outline-none focus:ring-2 focus:ring-rose-400">
+                Очистить историю
+            </button>
+        </form>
+    </section>
 </div>
 @endsection

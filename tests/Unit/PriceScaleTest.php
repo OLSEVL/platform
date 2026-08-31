@@ -23,10 +23,22 @@ class PriceScaleTest extends TestCase
         $this->assertSame(8, PriceScale::MARKET_DECIMALS);
     }
 
-    public function test_regular_fx_keeps_five_decimals(): void
+    public function test_all_instruments_use_eight_chart_decimals(): void
     {
-        $this->assertSame(5, PriceScale::decimalsForMagnitude(1.08543));
-        $this->assertSame(5, PriceScale::decimalsForMagnitude(0.01));
+        // EUR/USD и UAH/USD — те же 8 знаков, что PO и decimal(20,8) в БД.
+        $this->assertSame(8, PriceScale::decimalsForMagnitude(1.08543));
+        $this->assertSame(8, PriceScale::decimalsForMagnitude(0.025531));
+        $this->assertSame(8, PriceScale::chartDecimals());
+    }
+
+    public function test_normalize_chart_price_preserves_micro_doji_body(): void
+    {
+        $this->assertEqualsWithDelta(0.025531, PriceScale::normalizeChartPrice(0.025531), 1e-12);
+        $this->assertEqualsWithDelta(0.025529, PriceScale::normalizeChartPrice(0.025529), 1e-12);
+        $this->assertNotEquals(
+            PriceScale::normalizeChartPrice(0.025531),
+            PriceScale::normalizeChartPrice(0.025529)
+        );
     }
 
     public function test_resolve_from_candles_uses_max_abs_price(): void

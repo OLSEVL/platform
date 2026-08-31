@@ -18,7 +18,8 @@
         Уведомление о новой paper-сделке и, при включённой опции, её результате.
         Получатели: Chat ID из настроек + чаты, которые написали <span class="font-mono">/start</span> (если автоподписка включена).
         Сначала сохраните token.
-        Для Sweep / Raid Liquidity к алерту прикрепляется график M1 с фракталами, SWEEP/RAID/PB и точкой входа.
+        Для Sweep / Raid Liquidity к алерту прикрепляется график M1 с фракталами, SWEEP/RAID/PB и точкой входа
+        (и опционально второй — зум на последние N свечей).
         Для Strong Trend + DeMarker — график свечей с панелью DeMarker.
     </p>
 
@@ -57,7 +58,32 @@
             </select>
             <p class="text-[11px] text-zinc-500">Sweep / Raid: FH/FL, свип, рейд, откат и точка входа. DeMarker: свечи + панель осциллятора.</p>
         </div>
-        @if (in_array($bot->type ?? '', ['strong_trend_demarker', \App\Support\DemarkerDualFastConfig::BOT_TYPE, 'sweep_raid_liquidity'], true))
+        @if (($bot->type ?? '') === 'sweep_raid_liquidity')
+            <div class="space-y-1">
+                <label class="flex items-start gap-2">
+                    <input type="hidden" name="telegram_send_chart_recent" value="0">
+                    <input type="checkbox" name="telegram_send_chart_recent" id="telegram_send_chart_recent_strategy" value="1"
+                        class="mt-0.5 rounded border-zinc-600 bg-zinc-800 text-blue-500"
+                        @checked(old('telegram_send_chart_recent', $cfg['telegram_send_chart_recent'] ?? true))>
+                    <span>
+                        <span class="text-sm font-medium text-zinc-300">Второй график: зум на последние свечи</span>
+                        <span class="mt-0.5 block text-[11px] font-normal text-zinc-500">Компактный PNG только с хвостом рынка — удобнее смотреть метки входа на телефоне.</span>
+                    </span>
+                </label>
+                @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('telegram_send_chart_recent')])
+                @error('telegram_send_chart_recent')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+            </div>
+            <div class="space-y-1">
+                <label for="telegram_chart_recent_bars_strategy" class="block text-xs font-medium text-zinc-400">Свечей на зум-графике</label>
+                <input type="number" name="telegram_chart_recent_bars" id="telegram_chart_recent_bars_strategy"
+                    min="5" max="90" required
+                    value="{{ old('telegram_chart_recent_bars', $cfg['telegram_chart_recent_bars'] ?? 20) }}"
+                    class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('telegram_chart_recent_bars')])
+                @error('telegram_chart_recent_bars')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+            </div>
+        @endif
+        @if (in_array($bot->type ?? '', ['strong_trend_demarker', \App\Support\DemarkerDualFastConfig::BOT_TYPE, 'sweep_raid_liquidity', 'engulfing_liquidity'], true))
             {{-- Те же LLM-поля, что у Candle Reversal + Confirm: кнопка SMC Flow, выбор Chart Analyst и вопрос. --}}
             @php
                 $llmCallbackBotHint = match ($bot->type ?? '') {

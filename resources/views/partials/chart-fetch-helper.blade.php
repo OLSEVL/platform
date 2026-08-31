@@ -125,6 +125,10 @@
                 return r.json();
             })
             .then((data) => {
+                // Любой JSON с server_time подстраивает таймеры expiry под сервер.
+                if (data && data.server_time && global.PlatformServerClock) {
+                    global.PlatformServerClock.sync(data);
+                }
                 // Устаревший ответ (invalidate / новый запрос в том же канале).
                 if (seq !== ch.seq) return undefined;
                 if (typeof options.apply === 'function') {

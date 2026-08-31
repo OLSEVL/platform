@@ -57,6 +57,10 @@
     let lastIds = new Set();
     let timer = null;
 
+    function serverUnixNow() {
+        return window.PlatformServerClock ? PlatformServerClock.unixNow() : Math.floor(Date.now() / 1000);
+    }
+
     // Нормализуем сторону сделки для интерфейса:
     // PUT = сделка на понижение ("ВНИЗ"), CALL = сделка на повышение ("ВВЕРХ").
     // Если придет иное значение, показываем исходный код, чтобы не потерять диагностическую информацию.
@@ -123,7 +127,7 @@
         if (!t.expiry_ts) {
             return '<span class="text-zinc-500">—</span>';
         }
-        const left = t.expiry_ts - Math.floor(Date.now() / 1000);
+        const left = t.expiry_ts - serverUnixNow();
         if (left <= 0) {
             return '<span class="text-amber-400">00:00</span>';
         }
@@ -191,12 +195,13 @@
                 cache: 'no-store',
             });
             const data = await res.json();
+            if (window.PlatformServerClock) PlatformServerClock.sync(data.server_time);
             renderRows(data.trades || []);
             const now = new Date();
             const targetHint = (targetTradeId !== null && !targetTradeScrolled)
                 ? ` • ищем сделку #${targetTradeId}`
                 : '';
-            meta.textContent = `Обновление: ${now.toLocaleTimeString()} • записей: ${data.count ?? 0}${targetHint}`;
+            meta.textContent = `Обновление: ${(window.PlatformTimeFormat && PlatformTimeFormat.nowHms) ? PlatformTimeFormat.nowHms() : new Date().toLocaleTimeString()} • записей: ${data.count ?? 0}${targetHint}`;
         } catch (_) {
             meta.textContent = 'Ошибка обновления. Повторяем…';
         }

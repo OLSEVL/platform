@@ -107,8 +107,8 @@ final class OpenRouterLlmConfig
      */
     public static function analystSmcFlowEnabled(array $config): bool
     {
-        // SRL-пакет взаимоисключает SMC: иначе в payload уйдут оба снимка.
-        if (self::analystSrlFlowEnabled($config)) {
+        // SRL / Engulf-пакеты взаимоисключают SMC: иначе в payload уйдут несколько снимков.
+        if (self::analystSrlFlowEnabled($config) || self::analystEngulfFlowEnabled($config)) {
             return false;
         }
 
@@ -129,6 +129,22 @@ final class OpenRouterLlmConfig
         }
 
         return (bool) ($config['analyst_srl_flow_enabled'] ?? false);
+    }
+
+    /**
+     * Включён ли пакет Engulfing Liquidity для LLM-аналитика.
+     * Для type=openrouter_llm_analyst_engulf всегда true (даже если ключ в config забыли).
+     *
+     * @param  array<string, mixed>  $config
+     */
+    public static function analystEngulfFlowEnabled(array $config): bool
+    {
+        $botType = (string) ($config['_bot_type'] ?? '');
+        if ($botType === ChartAnalystBotTypes::ENGULF) {
+            return true;
+        }
+
+        return (bool) ($config['analyst_engulf_flow_enabled'] ?? false);
     }
 
     /**

@@ -66,6 +66,11 @@ class OpenRouterLlmAnalystStrategy implements BotStrategyInterface
         $sweepRaidSummary = $analystSrlEnabled && is_array($context['sweep_raid_summary'] ?? null)
             ? $context['sweep_raid_summary']
             : [];
+        $analystEngulfEnabled = (bool) ($context['analyst_engulf_flow_enabled'] ?? false);
+        /** @var array<string,mixed> $engulfingSummary */
+        $engulfingSummary = $analystEngulfEnabled && is_array($context['engulfing_summary'] ?? null)
+            ? $context['engulfing_summary']
+            : [];
 
         // Гибрид: полный decision source-бота (runtime), без изменения сохранённого system_prompt.
         /** @var array<string,mixed>|null $hybridSourceSignal */
@@ -108,6 +113,10 @@ class OpenRouterLlmAnalystStrategy implements BotStrategyInterface
             $payload['sweep_raid_summary'] = $sweepRaidSummary;
             $payload['expiry_focus_sec'] = 60;
         }
+        if ($analystEngulfEnabled) {
+            $payload['engulfing_summary'] = $engulfingSummary;
+            $payload['expiry_focus_sec'] = 60;
+        }
         if ($hybridSourceSignal !== null) {
             $payload['hybrid_source_signal'] = $hybridSourceSignal;
         }
@@ -121,6 +130,10 @@ class OpenRouterLlmAnalystStrategy implements BotStrategyInterface
                 $userContent = "Гибридный разбор: сначала независимый вердикт по рынку (без hybrid_source_signal), "
                     ."затем сверка с source и итоговая Рекомендация. Ответ — связный текст на русском.\n";
             }
+        } elseif ($analystEngulfEnabled && $shortPromptMode) {
+            $userContent = "Подтверди или отклони candidates из engulfing_summary: CALL/PUT/NONE и вероятность успеха.\n";
+        } elseif ($analystEngulfEnabled) {
+            $userContent = "Подтверди или отклони уже найденные цепочки ENGULF 1/2/3 из engulfing_summary. Ответ — связный текст на русском.\n";
         } elseif ($analystSrlEnabled && $shortPromptMode) {
             $userContent = "Подтверди или отклони candidates из sweep_raid_summary: CALL/PUT/NONE и вероятность успеха.\n";
         } elseif ($analystSrlEnabled) {
@@ -235,6 +248,10 @@ class OpenRouterLlmAnalystStrategy implements BotStrategyInterface
                 'analyst_srl_flow_enabled' => $analystSrlEnabled,
                 'srl_candidates_count' => $analystSrlEnabled
                     ? count($sweepRaidSummary['candidates'] ?? [])
+                    : 0,
+                'analyst_engulf_flow_enabled' => $analystEngulfEnabled,
+                'engulf_candidates_count' => $analystEngulfEnabled
+                    ? count($engulfingSummary['candidates'] ?? [])
                     : 0,
                 'mtf_enabled' => $mtfEnabled,
                 'm1_bars_sent' => count($m1),

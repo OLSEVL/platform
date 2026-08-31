@@ -1006,10 +1006,15 @@ document.addEventListener('DOMContentLoaded', () => {
         );
         statusNode.textContent = status;
 
-        // Время фиксируем на клиенте в локальном часовом поясе: это момент завершения теста.
-        const now = new Date();
-        const pad2 = (n) => String(n).padStart(2, '0');
-        timeNode.textContent = `${pad2(now.getDate())}.${pad2(now.getMonth() + 1)}.${now.getFullYear()} ${pad2(now.getHours())}:${pad2(now.getMinutes())}:${pad2(now.getSeconds())}`;
+        // Время завершения теста — в APP_TIMEZONE платформы (как PHP/Carbon).
+        const TF = window.PlatformTimeFormat;
+        if (TF && typeof TF.dmyHms === 'function') {
+            timeNode.textContent = TF.dmyHms(Math.floor(Date.now() / 1000));
+        } else {
+            const now = new Date();
+            const pad2 = (n) => String(n).padStart(2, '0');
+            timeNode.textContent = `${pad2(now.getDate())}.${pad2(now.getMonth() + 1)}.${now.getFullYear()} ${pad2(now.getHours())}:${pad2(now.getMinutes())}:${pad2(now.getSeconds())}`;
+        }
         timeNode.classList.remove('text-zinc-600');
         timeNode.classList.add('text-zinc-500');
 
@@ -1022,6 +1027,10 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
     const formatDate = (isoString) => {
+        const TF = window.PlatformTimeFormat;
+        if (TF && typeof TF.dmyHmsFromIso === 'function') {
+            return TF.dmyHmsFromIso(isoString);
+        }
         if (!isoString) return '—';
         const d = new Date(isoString);
         if (Number.isNaN(d.getTime())) return '—';
