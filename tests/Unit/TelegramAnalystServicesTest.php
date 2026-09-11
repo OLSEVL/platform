@@ -363,6 +363,64 @@ class TelegramAnalystServicesTest extends TestCase
         $this->assertSame('EURUSD_otc', $parsed['instrument']);
     }
 
+    public function test_cards_button_available_when_analyst_exists(): void
+    {
+        $user = User::factory()->create();
+        Bot::query()->create([
+            'user_id' => $user->id,
+            'name' => 'Chart Analyst',
+            'type' => 'openrouter_llm_analyst',
+            'is_active' => true,
+            'config' => [],
+        ]);
+        $strong = Bot::query()->create([
+            'user_id' => $user->id,
+            'name' => 'Strong Level',
+            'type' => 'strong_level',
+            'is_active' => true,
+            'config' => ['telegram_analyst_llm_enabled' => true],
+        ]);
+
+        $this->assertTrue(StrongLevelTelegramLlmButton::isAvailableOnCards($strong));
+        $this->assertNotNull(StrongLevelTelegramLlmButton::resolveAnalystBotForCards($strong));
+    }
+
+    public function test_cards_button_hidden_when_telegram_llm_disabled(): void
+    {
+        $user = User::factory()->create();
+        Bot::query()->create([
+            'user_id' => $user->id,
+            'name' => 'Chart Analyst',
+            'type' => 'openrouter_llm_analyst',
+            'is_active' => true,
+            'config' => [],
+        ]);
+        $strong = Bot::query()->create([
+            'user_id' => $user->id,
+            'name' => 'Strong Level',
+            'type' => 'strong_level',
+            'is_active' => true,
+            'config' => ['telegram_analyst_llm_enabled' => false],
+        ]);
+
+        $this->assertFalse(StrongLevelTelegramLlmButton::isAvailableOnCards($strong));
+    }
+
+    public function test_cards_button_hidden_without_analyst(): void
+    {
+        $user = User::factory()->create();
+        $strong = Bot::query()->create([
+            'user_id' => $user->id,
+            'name' => 'Strong Level',
+            'type' => 'strong_level',
+            'is_active' => true,
+            'config' => ['telegram_analyst_llm_enabled' => true],
+        ]);
+
+        $this->assertFalse(StrongLevelTelegramLlmButton::isAvailableOnCards($strong));
+        $this->assertNull(StrongLevelTelegramLlmButton::resolveAnalystBotForCards($strong));
+    }
+
     public function test_strong_trend_telegram_llm_button_callback_markup(): void
     {
         $user = User::factory()->create();
@@ -454,6 +512,38 @@ class TelegramAnalystServicesTest extends TestCase
         $this->assertNotNull($parsed);
         $this->assertSame($analyst->id, $parsed['analyst_bot_id']);
         $this->assertSame('AUDCAD_otc', $parsed['instrument']);
+    }
+
+    public function test_smc_flow_llm_button_callback_markup(): void
+    {
+        $user = User::factory()->create();
+        $analyst = Bot::query()->create([
+            'user_id' => $user->id,
+            'name' => 'Chart Analyst',
+            'type' => 'openrouter_llm_analyst',
+            'is_active' => true,
+            'config' => [],
+        ]);
+        $smc = Bot::query()->create([
+            'user_id' => $user->id,
+            'name' => 'SMC Flow bot',
+            'type' => 'smc_flow',
+            'is_active' => true,
+            'config' => ['telegram_analyst_llm_enabled' => true],
+        ]);
+
+        $this->assertTrue(StrongLevelTelegramLlmButton::supportsBotType('smc_flow'));
+        $markup = StrongLevelTelegramLlmButton::inlineKeyboardMarkup(
+            $smc->config,
+            $smc,
+            'EURUSD_otc',
+        );
+
+        $this->assertNotNull($markup);
+        $parsed = StrongLevelTelegramLlmButton::parseCallbackData($markup['inline_keyboard'][0][0]['callback_data']);
+        $this->assertNotNull($parsed);
+        $this->assertSame($analyst->id, $parsed['analyst_bot_id']);
+        $this->assertSame('EURUSD_otc', $parsed['instrument']);
     }
 
     public function test_hybrid_analyst_self_llm_button_markup(): void

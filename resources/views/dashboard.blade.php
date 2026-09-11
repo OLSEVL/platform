@@ -137,8 +137,22 @@
                     ])
                 </div>
             </div>
-            {{-- Справа: переключатель показа торговли + статус загрузки. --}}
+            {{-- Справа: свободная шкала / торговля / статус загрузки. --}}
             <div class="flex items-center gap-3 shrink-0">
+                {{-- Выкл по умолчанию: при zoom-out autoScale держит свечи в кадре.
+                     Вкл — ЛКМ-drag вверх/вниз как в TradingView (цена может «уехать» при сильном zoom-out). --}}
+                <label
+                    for="free-price-scale-toggle"
+                    class="inline-flex items-center gap-2 cursor-pointer select-none"
+                    title="Свободная шкала цены: можно двигать график вверх/вниз мышкой. Выключите, если при уменьшении зума свечи пропадают."
+                >
+                    <span id="free-price-scale-label" class="text-xs text-zinc-500">Своб. шкала</span>
+                    <span class="relative inline-block h-5 w-9 shrink-0">
+                        <input type="checkbox" id="free-price-scale-toggle" class="peer sr-only">
+                        <span class="block h-5 w-9 rounded-full bg-zinc-700 transition-colors peer-checked:bg-sky-600 peer-focus-visible:ring-2 peer-focus-visible:ring-sky-500/50"></span>
+                        <span class="pointer-events-none absolute left-0.5 top-0.5 h-4 w-4 rounded-full bg-zinc-100 shadow transition-transform peer-checked:translate-x-4"></span>
+                    </span>
+                </label>
                 <label
                     for="show-trades-toggle"
                     class="inline-flex items-center gap-2 cursor-pointer select-none"
@@ -527,16 +541,20 @@
     let tfCloseCountdownAnchorPerfMs = null;
     /** Точность оси цены; синхронизируется с price_scale из /candles (единые 8 знаков, как PO). */
     let chartPricePrecision = 8;
+    let chartPriceMinMove = 0.00001;
 
     /**
      * Применяем precision/minMove с API к candlestick-серии (8 знаков для всех инструментов).
+     * Вызывается на каждом poll — без guard applyOptions дергает LWC canvas ~2 раза/с и ломает хвост.
      */
     function applyPriceScaleFromPayload(payload) {
         if (!candlestickSeries || !payload || !payload.price_scale) return;
         const precision = Number(payload.price_scale.precision);
         const minMove = Number(payload.price_scale.min_move);
         if (!Number.isFinite(precision) || !Number.isFinite(minMove) || precision <= 0 || minMove <= 0) return;
+        if (precision === chartPricePrecision && minMove === chartPriceMinMove) return;
         chartPricePrecision = precision;
+        chartPriceMinMove = minMove;
         try {
             candlestickSeries.applyOptions({
                 priceFormat: { type: 'price', precision, minMove },
@@ -832,7 +850,11 @@
             lastOpenTrades = [];
             // Инвалидируем late-ответы fetchChartTrades через общий helper.
             if (window.PlatformChartFetch) window.PlatformChartFetch.invalidate('chart-trades');
-            renderChartMarkers();
+            // Убираем markers-plugin — с ним poll setData ломает canvas даже без маркеров.
+            detachCandlestickMarkersPlugin();
+            // После detach живой хвост снова через series.update(), не setData всего ряда.
+            lastSyncedTailKey = '';
+            pushCandlestickSeriesIfTailChanged({ preserveRange: true });
             hideSidebarTradeChrome();
             return;
         }
@@ -1059,8 +1081,30 @@
     let allChartData = [];
     /** Сколько баров реально лежит в candlestickSeries LWC (для детекта рассинхрона с allChartData). */
     let candleSeriesBarCount = 0;
+    /** OHLC хвоста (2 бара), уже отданного в LWC — poll без series.update(). */
+    let lastSyncedTailKey = '';
+    /** Poll merge: только последние N баров; шире — сервер ревизит OHLC и ломает canvas LWC. */
+    const POLL_MERGE_TAIL_BARS = 2;
+    /** Throttle setData формирующегося бара — не чаще 1 раз/с (новая свеча — сразу). */
+    const TAIL_SERIES_UPDATE_MIN_MS = 1000;
+    let lastTailSeriesUpdateMs = 0;
+    /** Периодический heal: LWC v5 иногда теряет тела свечей даже при корректном setData. */
+    const CANDLE_HEAL_RESYNC_MS = 30000;
+    let candleHealInterval = null;
+    /** Авто-следование за «живым» хвостом; сбрасывается при ручном pan/zoom пользователя. */
+    let tailFollowActive = true;
+    /** Счётчик подавления: setVisibleLogicalRange из кода, не от пользователя. */
+    let viewportChangeSuppressDepth = 0;
+    /** setData/update серии — не считаем ручным pan/zoom. */
+    let dataSeriesUpdateDepth = 0;
     let loadingMore = false;
     let refreshInterval = null;
+    /** Смена инструмента/TF: игнорируем устаревшие ответы fetchCandles. */
+    let chartLoadSeq = 0;
+    /** Инкремент при каждом poll и при смене пары — отбрасываем in-flight poll. */
+    let pollSeq = 0;
+    /** true между setData и фиксацией viewport — poll не дергает maintainTail/setData. */
+    let chartViewportSettling = false;
     // Отдельный таймер для тяжёлых оверлеев (структуры и Price Action DGT).
     // Они меняются редко, но каждый запрос /structures и /indicators/price-action-dgt
     // заметно нагружает сервер (последний при дефолтных параметрах тянет до 5000 свечей
@@ -1163,6 +1207,19 @@
     let classicOscPaneCount = 0;
     /** overlays — основная pane; oscillators — в порядке addPane (pane 1..n). */
     let lastClassicNameState = { overlays: [], oscillators: [] };
+    /** Сигнатура включённых classic-слоёв: при неизменной — patch setData без removePane. */
+    let lastClassicLayersSig = '';
+    /** Throttle DOM-оверлеев от attachPrimitive (poll/update не должен пересобирать DOM каждый кадр). */
+    const CHART_DOM_OVERLAY_SYNC_MIN_MS = 200;
+    let chartDomOverlaySyncLastMs = 0;
+    /** RAF-tween close → series.update() ~60fps: LWC v5 теряет хвостовые свечи и дёргает ось времени. */
+    const CHART_LIVE_SMOOTH_CLOSE = false;
+    /** Флаг «грязных» HTML-оверлеев: attachPrimitive только помечает, DOM — раз в CHART_DOM_OVERLAY_TICK_MS. */
+    let chartDomOverlayDirty = false;
+    let chartDomOverlayTickTimer = null;
+    const CHART_DOM_OVERLAY_TICK_MS = 400;
+    /** HTML-линейка секунд поверх LWC — дёргает ось времени; включается только при явном zoom (pan). */
+    const CHART_HTML_TIME_RULER_ENABLED = false;
 
     /**
      * Названия structural-слоёв (OB/FVG/PA/…) при включённом чекбоксе.
@@ -1331,8 +1388,52 @@
         requestAnimationFrame(positionCandleTimerOverlay);
     }
 
+    /**
+     * Обновляет payout/таймеры в уже отрисованном списке без replaceChildren().
+     * Полная пересборка каждую секунду давала layout-reflow и chart.resize() → «чёрная полоса» под графиком.
+     */
+    function patchInstrumentSidebarRows(instruments) {
+        if (!instrumentListEl || !instruments.length) return false;
+        const btns = instrumentListEl.querySelectorAll('.instrument-btn');
+        if (btns.length !== instruments.length) return false;
+        const nowSec = serverUnixNow();
+        for (let i = 0; i < instruments.length; i++) {
+            const inst = instruments[i];
+            const btn = btns[i];
+            if (!btn || btn.dataset.instrument !== inst.instrument) return false;
+            const showOpenTrade = !!(showTrades && inst.open_trade);
+            btn.classList.toggle('bg-stone-800/45', showOpenTrade);
+            btn.dataset.openTrade = inst.open_trade ? '1' : '0';
+            const payout = btn.querySelector('.instrument-payout');
+            if (payout) {
+                const pv = inst.current_payout;
+                const n = (pv === null || pv === undefined) ? null : Number(pv);
+                payout.dataset.payout = (n == null || Number.isNaN(n)) ? '' : String(n);
+                payout.textContent = (n == null || Number.isNaN(n)) ? '—' : `${Math.round(n)}%`;
+                payout.className = 'instrument-payout text-xs font-medium ' + payoutClassByValue(n);
+            }
+            let timerEl = btn.querySelector('.instrument-trade-timer');
+            if (showOpenTrade && inst.expiry_ts) {
+                if (!timerEl) {
+                    timerEl = document.createElement('span');
+                    timerEl.className = 'instrument-trade-timer shrink-0 text-xs font-mono tabular-nums text-stone-200';
+                    const nameWrap = btn.querySelector('.flex.min-w-0.flex-1');
+                    if (nameWrap) nameWrap.appendChild(timerEl);
+                }
+                timerEl.dataset.expiryTs = String(inst.expiry_ts);
+                timerEl.textContent = formatMmSs(Number(inst.expiry_ts) - nowSec);
+            } else if (timerEl) {
+                timerEl.remove();
+            }
+        }
+        return true;
+    }
+
     function renderInstrumentSidebarRows(instruments) {
         if (!instrumentListEl) return;
+        if (instruments.length && patchInstrumentSidebarRows(instruments)) {
+            return;
+        }
         instrumentListEl.replaceChildren();
         if (!instruments.length) {
             const li = document.createElement('li');
@@ -1536,19 +1637,29 @@
      * отрисовку тел свечей (шкала/сетка остаются). Перезаписываем OHLC из allChartData.
      */
     function syncCandlestickSeriesFromCache() {
-        if (!candlestickSeries || !allChartData.length) return;
-        try {
-            applyPaBarColors({ fullResync: true });
-        } catch (e) {
-            console.error('[chart] syncCandlestickSeriesFromCache', e);
-            try {
-                resyncCandlestickSeriesFromAllChartData();
-                applyPaBarColors({ fullResync: true });
-            } catch (e2) {
-                console.error('[chart] syncCandlestickSeriesFromCache fallback', e2);
-            }
+        resyncCandlestickSeriesFromAllChartData();
+    }
+
+    /** Единый mapper OHLC для setData: doji + optional PA-цвета + tween close последнего бара. */
+    function mapBarForCandlestickSeries(c) {
+        const src = candleSmooth ? candleSmooth.visualFor(c) : c;
+        const bc = lastPaPayload && lastPaPayload.bar_colors ? lastPaPayload.bar_colors : null;
+        const paOn = layerPa && layerPa.checked && bc && Object.keys(bc).length > 0;
+        if (!paOn) {
+            return paintPocketOptionDoji({
+                time: src.time, open: src.open, high: src.high, low: src.low, close: src.close,
+            });
         }
-        maintainTailViewportIfFollowing();
+        const o = bc[String(c.time)];
+        if (!o) {
+            return paintPocketOptionDoji({
+                time: src.time, open: src.open, high: src.high, low: src.low, close: src.close,
+            });
+        }
+        return {
+            time: src.time, open: src.open, high: src.high, low: src.low, close: src.close,
+            color: o.color, borderColor: o.borderColor || o.color, wickColor: o.wickColor || o.color,
+        };
     }
 
     /** Debounce: сотни DOM-узлов paper-overlay блокируют main thread и «убивают» canvas свечей. */
@@ -1561,9 +1672,10 @@
         });
     }
 
-    /** ~кол-во свечей по горизонтали и «воздух» справа (в долях бара), как на референсе */
+    /** ~кол-во свечей по горизонтали; «воздух» справа — через timeScale.rightOffset, не logical range > lastIdx. */
     const CHART_DEFAULT_VISIBLE_BARS = 110;
-    const CHART_RIGHT_GAP_BARS = 22;
+    /** «Воздух» справа через rightOffset; >5 баров ломает отрисовку хвоста в LWC v5. */
+    const CHART_RIGHT_GAP_BARS = 3;
     /** Первичный показ: сколько баров TF тянем (viewport + буфер слева). */
     const INITIAL_BARS = CHART_DEFAULT_VISIBLE_BARS + INITIAL_VISIBLE_BUFFER_BARS;
 
@@ -1579,67 +1691,386 @@
         return INITIAL_BARS + 10;
     }
 
-    function applyDefaultChartViewport() {
-        if (!chart || allChartData.length === 0) return;
+    /** setVisibleLogicalRange от кода — не считаем ручным pan/zoom пользователя. */
+    function withSuppressedViewportFollow(fn) {
+        viewportChangeSuppressDepth++;
+        try {
+            fn();
+        } finally {
+            requestAnimationFrame(() => {
+                viewportChangeSuppressDepth = Math.max(0, viewportChangeSuppressDepth - 1);
+            });
+        }
+    }
+
+    function withSuppressedDataSeriesViewport(fn) {
+        dataSeriesUpdateDepth++;
+        try {
+            fn();
+        } finally {
+            requestAnimationFrame(() => {
+                dataSeriesUpdateDepth = Math.max(0, dataSeriesUpdateDepth - 1);
+            });
+        }
+    }
+
+    function setChartVisibleLogicalRange(range) {
+        if (!chart || !range) return;
+        withSuppressedViewportFollow(() => {
+            chart.timeScale().setVisibleLogicalRange(range);
+        });
+    }
+
+    function defaultChartViewportRange() {
         const n = allChartData.length;
         const lastIdx = n - 1;
         const visible = Math.min(CHART_DEFAULT_VISIBLE_BARS, n);
         const from = Math.max(0, lastIdx - visible + 1);
-        const to = lastIdx + CHART_RIGHT_GAP_BARS;
+        // Пустое место справа — timeScale.rightOffset, не logical index за пределами ряда.
+        const to = lastIdx;
+        return { from, to };
+    }
+
+    /**
+     * Шкала цены свечей (правая ось) — через неё LWC включает/выключает autoScale.
+     * Пока autoScale=true, ЛКМ-drag по области свечей двигает только время (влево/вправо);
+     * вертикальный pan как в TradingView работает только при autoScale=false.
+     *
+     * Важно: autoScale=false при zoom-out фиксирует старый ценовой диапазон —
+     * свечи с другим диапазоном «уезжают» с экрана. Поэтому режим включается
+     * только переключателем «Своб. шкала» (по умолчанию выкл.).
+     */
+    const FREE_PRICE_SCALE_KEY = 'platform.chart.freePriceScale';
+    const freePriceScaleToggle = document.getElementById('free-price-scale-toggle');
+    const freePriceScaleLabel = document.getElementById('free-price-scale-label');
+
+    function loadFreePriceScalePref() {
+        try {
+            return localStorage.getItem(FREE_PRICE_SCALE_KEY) === '1';
+        } catch (_) {
+            return false;
+        }
+    }
+
+    function saveFreePriceScalePref(on) {
+        try {
+            localStorage.setItem(FREE_PRICE_SCALE_KEY, on ? '1' : '0');
+        } catch (_) {}
+    }
+
+    /** false по умолчанию — zoom-out всегда подгоняет цену под видимые свечи. */
+    let freePriceScale = loadFreePriceScalePref();
+
+    function syncFreePriceScaleToggleUi() {
+        if (freePriceScaleToggle) freePriceScaleToggle.checked = freePriceScale;
+        if (freePriceScaleLabel) {
+            freePriceScaleLabel.classList.toggle('text-zinc-400', freePriceScale);
+            freePriceScaleLabel.classList.toggle('text-zinc-500', !freePriceScale);
+        }
+    }
+
+    function mainCandlePriceScale() {
+        if (candlestickSeries && typeof candlestickSeries.priceScale === 'function') {
+            try { return candlestickSeries.priceScale(); } catch (_) {}
+        }
+        if (chart && typeof chart.priceScale === 'function') {
+            try { return chart.priceScale('right'); } catch (_) {}
+        }
+        return null;
+    }
+
+    /** Подогнать цену под видимые свечи (autoScale on). */
+    function fitPriceScaleToVisibleBars() {
+        const ps = mainCandlePriceScale();
+        if (!ps) return;
+        try {
+            if (typeof ps.setAutoScale === 'function') ps.setAutoScale(true);
+            else if (typeof ps.applyOptions === 'function') ps.applyOptions({ autoScale: true });
+        } catch (_) {}
+    }
+
+    /**
+     * Разрешить двигать график вверх/вниз мышкой (как TradingView после «отлипания» шкалы).
+     * Двойной клик по правой оси снова включает autoScale (axisDoubleClickReset).
+     */
+    function unlockVerticalMousePan() {
+        const ps = mainCandlePriceScale();
+        if (!ps) return;
+        try {
+            if (typeof ps.setAutoScale === 'function') ps.setAutoScale(false);
+            else if (typeof ps.applyOptions === 'function') ps.applyOptions({ autoScale: false });
+        } catch (_) {}
+    }
+
+    /**
+     * Применить режим шкалы: свободная (верт. pan) или авто (свечи всегда в кадре при zoom).
+     */
+    function applyPriceScalePanPref() {
+        if (freePriceScale) unlockVerticalMousePan();
+        else fitPriceScaleToVisibleBars();
+    }
+
+    function applyFreePriceScaleMode(on, { persist = true } = {}) {
+        freePriceScale = !!on;
+        if (persist) saveFreePriceScalePref(freePriceScale);
+        syncFreePriceScaleToggleUi();
+        applyPriceScalePanPref();
+    }
+
+    /** Синхронная установка viewport (сразу после setData — без кадра «весь ряд»). */
+    function applyDefaultChartViewportSync() {
+        if (!chart || allChartData.length === 0) return;
+        tailFollowActive = true;
+        setChartVisibleLogicalRange(defaultChartViewportRange());
+        // Сначала fit по цене, чтобы свечи были в кадре…
+        fitPriceScaleToVisibleBars();
+    }
+
+    /** LWC после setData иногда расширяет span — поджимаем, как на bots/show. */
+    function verifyDefaultChartViewport() {
+        if (!chart || allChartData.length === 0) return;
+        const { from, to } = defaultChartViewportRange();
+        const range = chart.timeScale().getVisibleLogicalRange();
+        if (!range || !Number.isFinite(range.from) || !Number.isFinite(range.to)) {
+            tailFollowActive = true;
+            setChartVisibleLogicalRange({ from, to });
+            return;
+        }
+        const span = range.to - range.from;
+        const expectedSpan = to - from;
+        if (span > expectedSpan + 25) {
+            tailFollowActive = true;
+            setChartVisibleLogicalRange({ from, to });
+        }
+    }
+
+    function applyDefaultChartViewport() {
+        if (!chart || allChartData.length === 0) return;
         requestAnimationFrame(() => {
             if (!chart) return;
-            chart.timeScale().setVisibleLogicalRange({ from, to });
+            applyDefaultChartViewportSync();
+            requestAnimationFrame(() => {
+                verifyDefaultChartViewport();
+                // Своб. шкала вкл → unlock; выкл → autoScale (свечи не пропадают при zoom-out).
+                applyPriceScalePanPref();
+            });
         });
     }
 
     /**
-     * Пользователь смотрит «живой» хвост: правая граница логического диапазона не левее последнего бара.
-     * Раньше было lastIdx−3 — при отступе всего на пару баров от края всё равно вызывали scrollToRealTime(),
-     * и график резко перескакивал к правому краю при закрытии новой свечи.
+     * Первичный показ после selectInstrument / reloadChartData:
+     * setData + viewport в одном подавлении dataSeriesUpdateDepth, затем verify в rAF.
+     */
+    function applyInitialChartPresentation(onSettled) {
+        if (!candlestickSeries || !allChartData.length) {
+            chartViewportSettling = false;
+            if (typeof onSettled === 'function') onSettled();
+            return;
+        }
+        chartViewportSettling = true;
+        if (candleSmooth) candleSmooth.reset();
+        lastSyncedTailKey = '';
+        withSuppressedDataSeriesViewport(() => {
+            try {
+                candlestickSeries.setData(allChartData.map(mapBarForCandlestickSeries));
+                candleSeriesBarCount = allChartData.length;
+                if (candleSmooth && allChartData.length) {
+                    candleSmooth.snap(allChartData[allChartData.length - 1]);
+                }
+            } catch (e) {
+                console.error('[chart] applyInitialChartPresentation setData', e);
+            }
+            syncLastBarKeyFromData();
+            applyDefaultChartViewportSync();
+        });
+        applyPaBarColors({ fullResync: true });
+        requestAnimationFrame(() => {
+            if (!chart) {
+                chartViewportSettling = false;
+                if (typeof onSettled === 'function') onSettled();
+                return;
+            }
+            verifyDefaultChartViewport();
+            // Своб. шкала вкл → unlock; выкл → autoScale (свечи не пропадают при zoom-out).
+            applyPriceScalePanPref();
+            chartViewportSettling = false;
+            if (typeof onSettled === 'function') onSettled();
+        });
+    }
+
+    /**
+     * Режим «следую за хвостом»: пользователь не pan/zoom'ил вручную и смотрит правую часть.
      */
     function isViewNearRightEdge() {
+        if (!tailFollowActive) return false;
         if (!chart || allChartData.length === 0) return true;
         const range = chart.timeScale().getVisibleLogicalRange();
         if (!range) return true;
         const lastIdx = allChartData.length - 1;
-        const edgeEps = 1e-3;
-        return range.to >= lastIdx - edgeEps;
+        return range.to >= lastIdx - 1e-3;
+    }
+
+    /** Сдвиг viewport при новой свече: сохраняем масштаб, правый край = lastIdx (gap через rightOffset). */
+    function maintainTailViewportIfFollowing() {
+        if (chartViewportSettling || !tailFollowActive || !chart || allChartData.length === 0) return;
+        const lastIdx = allChartData.length - 1;
+        const wantTo = lastIdx;
+        const range = chart.timeScale().getVisibleLogicalRange();
+        if (!range) return;
+        const span = range.to - range.from;
+        if (!Number.isFinite(span) || span <= 0) return;
+        const wantFrom = wantTo - span;
+        const tol = 0.25;
+        if (Math.abs(range.to - wantTo) <= tol && Math.abs(range.from - wantFrom) <= tol) {
+            return;
+        }
+        setChartVisibleLogicalRange({ from: wantFrom, to: wantTo });
+    }
+
+    /** Ключ OHLC одного бара — poll пушит setData только при изменении. */
+    function tailBarSyncKey(bar) {
+        if (!bar) return '';
+        return `${bar.time}|${bar.open}|${bar.high}|${bar.low}|${bar.close}`;
+    }
+
+    function syncLastBarKeyFromData() {
+        lastSyncedTailKey = tailPollSyncKey(allChartData);
+    }
+
+    /** Ключ OHLC хвоста poll (forming + только что закрытый). */
+    function tailPollSyncKey(data) {
+        if (!Array.isArray(data) || !data.length) return '';
+        const slice = data.slice(Math.max(0, data.length - POLL_MERGE_TAIL_BARS));
+        return slice.map(tailBarSyncKey).join(';');
     }
 
     /**
-     * «Живой» хвост: пересчитываем viewport от lastIdx, а не сдвигаем range += addedBars.
-     * Иначе за 5–10 мин без pan накапливается drift между timeScale и allChartData —
-     * последние свечи рисуются с дырками, пока пользователь не сдвинет график.
+     * LWC v5: series.update() на candlestick ломает 5–6 баров слева от хвоста.
+     * Poll: только setData всего ряда при изменении tailPollSyncKey (throttle 1с).
      */
-    function maintainTailViewportIfFollowing() {
-        if (!chart || allChartData.length === 0 || !isViewNearRightEdge()) return;
-        const n = allChartData.length;
-        const lastIdx = n - 1;
-        const visible = Math.min(CHART_DEFAULT_VISIBLE_BARS, n);
-        const wantFrom = Math.max(0, lastIdx - visible + 1);
-        const wantTo = lastIdx + CHART_RIGHT_GAP_BARS;
-        const range = chart.timeScale().getVisibleLogicalRange();
-        const tol = 0.5;
-        if (!range
-            || Math.abs(range.to - wantTo) > tol
-            || Math.abs(range.from - wantFrom) > tol) {
-            chart.timeScale().setVisibleLogicalRange({ from: wantFrom, to: wantTo });
+    function pushCandlestickSeriesIfTailChanged(opts = {}) {
+        if (!candlestickSeries || !allChartData.length) return false;
+        const key = tailPollSyncKey(allChartData);
+        if (!key || key === lastSyncedTailKey) return false;
+
+        const prevParts = lastSyncedTailKey ? lastSyncedTailKey.split(';') : [];
+        const prevLastTime = prevParts.length ? prevParts[prevParts.length - 1].split('|')[0] : '';
+        const curLastTime = String(allChartData[allChartData.length - 1].time);
+        const isNewBarTime = prevLastTime !== '' && prevLastTime !== curLastTime;
+
+        if (candleSeriesBarCount !== allChartData.length) {
+            lastSyncedTailKey = key;
+            resyncCandlestickSeriesFromAllChartData(opts);
+            return true;
         }
+
+        const now = performance.now();
+        if (!isNewBarTime && (now - lastTailSeriesUpdateMs) < TAIL_SERIES_UPDATE_MIN_MS) {
+            return false;
+        }
+
+        lastSyncedTailKey = key;
+        lastTailSeriesUpdateMs = now;
+        resyncCandlestickSeriesFromAllChartData(opts);
+        return true;
+    }
+
+    function startCandleHealLoop() {
+        if (candleHealInterval) clearInterval(candleHealInterval);
+        candleHealInterval = setInterval(() => {
+            if (chartViewportSettling || !chart || !candlestickSeries || !allChartData.length) return;
+            if (!tailFollowActive || !isViewNearRightEdge()) return;
+            // Периодический setData выравнивает canvas с allChartData (poll merge только 2 бара).
+            lastSyncedTailKey = '';
+            resyncCandlestickSeriesFromAllChartData({ preserveRange: true });
+        }, CANDLE_HEAL_RESYNC_MS);
+    }
+
+    function stopCandleHealLoop() {
+        if (!candleHealInterval) return;
+        clearInterval(candleHealInterval);
+        candleHealInterval = null;
     }
 
     /** Полная перезапись OHLC-серии из allChartData (после addPane, рассинхрона poll/LWC). */
-    function resyncCandlestickSeriesFromAllChartData() {
+    function resyncCandlestickSeriesFromAllChartData(opts = {}) {
         if (!candlestickSeries || !allChartData.length) return;
-        if (candleSmooth) candleSmooth.reset();
-        try {
-            candlestickSeries.setData(allChartData.map(paintPocketOptionDoji));
-            candleSeriesBarCount = allChartData.length;
-            if (candleSmooth && allChartData.length) {
-                candleSmooth.snap(allChartData[allChartData.length - 1]);
-            }
-        } catch (e) {
-            console.error('[chart] resyncCandlestickSeriesFromAllChartData', e);
+        const preserveRange = opts.preserveRange !== false && chart;
+        let savedRange = null;
+        if (preserveRange) {
+            try { savedRange = chart.timeScale().getVisibleLogicalRange(); } catch (_) {}
         }
+        withSuppressedDataSeriesViewport(() => {
+            if (candleSmooth) candleSmooth.reset();
+            try {
+                candlestickSeries.setData(allChartData.map(mapBarForCandlestickSeries));
+                candleSeriesBarCount = allChartData.length;
+                if (candleSmooth && allChartData.length) {
+                    candleSmooth.snap(allChartData[allChartData.length - 1]);
+                }
+            } catch (e) {
+                console.error('[chart] resyncCandlestickSeriesFromAllChartData', e);
+            }
+        });
+        syncLastBarKeyFromData();
+        if (savedRange && chart) {
+            withSuppressedViewportFollow(() => {
+                try {
+                    const lastIdx = allChartData.length - 1;
+                    if (Number.isFinite(savedRange.to) && savedRange.to <= lastIdx + 0.5) {
+                        setChartVisibleLogicalRange(savedRange);
+                    }
+                } catch (_) {}
+            });
+        }
+    }
+
+    /** Patch setData осцилляторов без removePane (15-с таймер classic indicators). */
+    function patchVolatilityCandlesSeries() {
+        const s = classicLineSeries['vc'];
+        const data = lastVolatilityCandlesPayload && lastVolatilityCandlesPayload.series
+            ? lastVolatilityCandlesPayload.series.vc
+            : null;
+        if (!s || !Array.isArray(data) || !data.length) return false;
+        s.setData(mapClippedLinePoints(data));
+        return true;
+    }
+
+    function patchRsiSeries() {
+        const s = classicLineSeries['rsi'];
+        const data = lastRsiPayload && lastRsiPayload.series ? lastRsiPayload.series.rsi : null;
+        if (!s || !Array.isArray(data) || !data.length) return false;
+        s.setData(mapClippedLinePoints(data));
+        return true;
+    }
+
+    function patchDemarkerSeries() {
+        const s = classicLineSeries['demarker'];
+        const data = lastDemarkerPayload && lastDemarkerPayload.series ? lastDemarkerPayload.series.dem : null;
+        if (!s || !Array.isArray(data) || !data.length) return false;
+        s.setData(mapClippedLinePoints(data));
+        return true;
+    }
+
+    /** Карта patch-обработчиков: только осцилляторы с отдельной pane (без overlay на свечах). */
+    const CLASSIC_SERIES_PATCH_HANDLERS = {
+        rsi: patchRsiSeries,
+        demarker: patchDemarkerSeries,
+        volatility_candles: patchVolatilityCandlesSeries,
+    };
+
+    /**
+     * Обновить classic-series на месте, если pane уже созданы.
+     * @returns {boolean} true — все включённые слои обновлены без rebuild.
+     */
+    function patchEnabledClassicSeriesData(enabledLayers) {
+        if (!chart || !Array.isArray(enabledLayers) || !enabledLayers.length) return false;
+        if (!Object.keys(classicLineSeries).length) return false;
+        for (let i = 0; i < enabledLayers.length; i++) {
+            const patch = CLASSIC_SERIES_PATCH_HANDLERS[enabledLayers[i]];
+            if (!patch || !patch()) return false;
+        }
+        return true;
     }
 
     /**
@@ -1911,7 +2342,7 @@
             lastChartSignals = [];
             lastOpenTrades = [];
             if (window.PlatformChartFetch) window.PlatformChartFetch.invalidate('chart-trades');
-            renderChartMarkers();
+            detachCandlestickMarkersPlugin();
             return;
         }
         if (!currentInstrument) {
@@ -1943,6 +2374,39 @@
      * Через PlatformChartMarkers — тот же код, что на bots/show.
      * При выключенной «Торговле» оставляем только маркеры индикаторов (например PA).
      */
+    /** Маркеры создаём лениво: createSeriesMarkers на пустой серии + poll update() ломали canvas. */
+    function detachCandlestickMarkersPlugin() {
+        if (!candlestickMarkers) return;
+        const PCM = window.PlatformChartMarkers;
+        try {
+            if (PCM && typeof PCM.detachPlugin === 'function') {
+                PCM.detachPlugin(candlestickMarkers);
+            } else if (typeof candlestickMarkers.detach === 'function') {
+                candlestickMarkers.detach();
+            }
+        } catch (e) {
+            console.error('[dashboard chart] detachCandlestickMarkersPlugin', e);
+        }
+        candlestickMarkers = null;
+    }
+
+    function ensureCandlestickMarkersPlugin() {
+        if (candlestickMarkers || !candlestickSeries) return candlestickMarkers;
+        const PCM = window.PlatformChartMarkers;
+        try {
+            if (PCM && typeof PCM.createPluginForSeries === 'function') {
+                candlestickMarkers = PCM.createPluginForSeries(candlestickSeries, []);
+            } else if (typeof LightweightCharts.createSeriesMarkers === 'function') {
+                candlestickMarkers = LightweightCharts.createSeriesMarkers(candlestickSeries, []);
+            }
+            // После attach plugin poll хвоста идёт через setData, не update().
+            if (candlestickMarkers) lastSyncedTailKey = '';
+        } catch (e) {
+            console.error('[dashboard chart] ensureCandlestickMarkersPlugin', e);
+        }
+        return candlestickMarkers;
+    }
+
     function renderChartMarkers() {
         if (!candlestickSeries || !currentInstrument) return;
         const PCM = window.PlatformChartMarkers;
@@ -1970,13 +2434,22 @@
             : [...history, ...open, ...paMk].sort((a, b) => a.time - b.time);
         const all = clipMarkersToCandles(merged);
 
+        // Пустой plugin на серии + poll setData каждые 500ms → через ~5–7 мин «дырявый» хвост.
+        if (!all.length) {
+            detachCandlestickMarkersPlugin();
+            return;
+        }
+
+        ensureCandlestickMarkersPlugin();
+
         if (typeof PCM.applyMarkers === 'function') {
             PCM.applyMarkers(candlestickMarkers, all);
         }
-        // Параллельно маркерам — PO-лучи; paper-полосы откладываем (тяжёлый DOM).
-        renderPoOpenTradeRaysOverlay();
-        schedulePaperTradeDurationOverlay();
-        renderChartTimeRulerOverlay();
+        // PO/paper — только при «Торговле»; HTML-линейку не трогаем (перерисовка оси → дёргание).
+        if (showTrades) {
+            renderPoOpenTradeRaysOverlay();
+            schedulePaperTradeDurationOverlay();
+        }
     }
 
     /**
@@ -2153,6 +2626,7 @@
             rsiLevelLines = [];
             classicOscPaneCount = 0;
             lastClassicNameState = { overlays: [], oscillators: [] };
+            lastClassicLayersSig = '';
             renderAllIndicatorNameLabels();
             return;
         }
@@ -2168,6 +2642,7 @@
         } catch (_) {}
         classicOscPaneCount = 0;
         lastClassicNameState = { overlays: [], oscillators: [] };
+        lastClassicLayersSig = '';
         try {
             chart.priceScale('right').applyOptions({
                 scaleMargins: { top: 0.08, bottom: 0.05 },
@@ -4109,8 +4584,10 @@
 
         lastClassicNameState = { overlays, oscillators };
         requestAnimationFrame(() => renderAllIndicatorNameLabels());
-        // addPane/removePane classic-слоёв иногда сбрасывает canvas свечей — восстанавливаем OHLC, затем маркеры.
-        syncCandlestickSeriesFromCache();
+        // addPane/removePane classic-слоёв сбрасывает canvas свечей LWC v5 — один setData из allChartData.
+        resyncCandlestickSeriesFromAllChartData();
+        // После rebuild panes применить режим шкалы (addPane может сбросить autoScale).
+        applyPriceScalePanPref();
         renderChartMarkers();
     }
 
@@ -4425,7 +4902,13 @@
                     lastZigZagPayload = wantZigZag && d && d.zigzag ? d.zigzag : null;
                     lastVolatilityAverageTwicePayload = wantVolatilityAverageTwice && d && d.volatility_average_twice ? d.volatility_average_twice : null;
                     lastVolatilityStagesAwPayload = wantVolatilityStagesAw && d && d.volatility_stages_aw ? d.volatility_stages_aw : null;
-                    applyClassicOsEngineSeries();
+                    const layersSig = layers.slice().sort().join(',');
+                    if (layersSig === lastClassicLayersSig && patchEnabledClassicSeriesData(layers)) {
+                        // Pane не трогаем — только setData линий; viewport не трогаем.
+                    } else {
+                        lastClassicLayersSig = layersSig;
+                        applyClassicOsEngineSeries();
+                    }
                 } catch (e) {
                     console.error('[dashboard classic indicators] apply', e);
                     lastBollingerPayload = null;
@@ -5038,12 +5521,8 @@
         const paOn = layerPa && layerPa.checked && bc && Object.keys(bc).length > 0;
         if (!paOn) {
             if (fullResync) {
-                if (candleSmooth) candleSmooth.reset();
-                try { candlestickSeries.setData(plain); } catch (e) { console.error('[PA] setData plain', e); }
+                // resyncCandlestickSeriesFromAllChartData уже сделал setData — только синхрон count.
                 candleSeriesBarCount = allChartData.length;
-                if (candleSmooth && allChartData.length) {
-                    candleSmooth.snap(allChartData[allChartData.length - 1]);
-                }
             }
             return;
         }
@@ -5068,19 +5547,14 @@
                 try { candlestickSeries.setData(plain); } catch (e2) { console.error('[PA] fallback', e2); }
             }
             candleSeriesBarCount = allChartData.length;
+            syncLastBarKeyFromData();
             if (candleSmooth && allChartData.length) {
                 candleSmooth.snap(allChartData[allChartData.length - 1]);
             }
             return;
         }
-        // LWC update() — только для ПОСЛЕДНЕГО бара. Хвост из 2 баров ломал canvas
-        // (Cannot update oldest data) после закрытия новой свечи при простое ~5–10 мин.
-        const lastBar = allChartData[allChartData.length - 1];
-        if (!lastBar) return;
-        if (candleSmooth && candleSmooth.isAnimating()) {
-            return;
-        }
-        try { candlestickSeries.update(paintBar(lastBar)); } catch (e) { console.error('[PA] update', e); }
+        // PA-цвета уже в mapBarForCandlestickSeries; update() ломает canvas LWC v5.
+        pushCandlestickSeriesIfTailChanged({ preserveRange: true });
     }
 
     /** Цвета DGT для одного бара — в update-пути плавной анимации. */
@@ -5212,7 +5686,11 @@
                 lastEngulfingPayload = wantEngulfing && data && data.engulfing_liquidity
                     ? data.engulfing_liquidity
                     : null;
-                requestAnimationFrame(redrawStructureOverlay);
+                const needStructureOverlay = (layerOb && layerOb.checked)
+                    || (layerFvg && layerFvg.checked)
+                    || wantSweepRaid
+                    || wantEngulfing;
+                if (needStructureOverlay) scheduleChartDomOverlaySyncHeavy();
             },
         });
     }
@@ -5221,36 +5699,38 @@
         if (refreshInterval) clearInterval(refreshInterval);
         // Тот же шаг, что и на странице бота: 500ms для всех TF — максимально частое обновление свечного графика через REST.
         refreshInterval = setInterval(() => {
-            if (!currentInstrument || loadingMore || !candlestickSeries) return;
+            if (chartViewportSettling || !currentInstrument || loadingMore || !candlestickSeries) return;
+            const inst = currentInstrument;
+            const seq = ++pollSeq;
             // Поллингу важен только хвост: запрашиваем узкое окно последних минут.
             // Это и снимает нагрузку с БД, и предохраняет от перетирания истории,
             // догруженной пользователем влево через loadMoreCandles.
-            fetchCandles(currentInstrument, { kind: 'poll' })
+            fetchCandles(inst, { kind: 'poll' })
                 .then(data => {
+                    if (seq !== pollSeq || inst !== currentInstrument || chartViewportSettling) return;
                     const candles = data.candles || [];
                     if (candles.length === 0) return;
                     const newData = buildChartData(candles);
-                    const prevLastT = allChartData.length ? allChartData[allChartData.length - 1].time : null;
+                    const prevDataLen = allChartData.length;
+                    const prevLastT = prevDataLen ? allChartData[prevDataLen - 1].time : null;
                     const followTail = isViewNearRightEdge();
-                    applyIncrementalChartUpdate(newData);
+                    applyIncrementalChartUpdate(newData, { liveTail: followTail, poll: true });
                     tickCandleCloseTimer();
-                    // Абсолютный пересчёт viewport у «живого» хвоста — без накопления drift (range += addedBars).
                     if (followTail) {
-                        maintainTailViewportIfFollowing();
+                        const appended = allChartData.length > prevDataLen
+                            || (prevLastT != null && allChartData.length
+                                && allChartData[allChartData.length - 1].time > prevLastT);
+                        if (appended) {
+                            maintainTailViewportIfFollowing();
+                        }
                     }
-                    // Перерисовываем DOM-оверлей структуры на основании уже имеющихся
-                    // в памяти зон (lastZones). Сами зоны при этом НЕ перезапрашиваем —
-                    // это делает отдельный медленный таймер ниже. Раньше этот блок
-                    // на каждом тике посылал тяжёлые fetchStructures() и
-                    // fetchPriceActionIndicator() (~46 KB) каждые 500мс, переполнял
-                    // браузерный fetch-pool и блокировал клик-инициированные
-                    // initial-запросы /candles при выборе инструмента.
-                    requestAnimationFrame(redrawStructureOverlay);
+                    // Зоны структуры — только медленный таймер (15с), не на каждом poll.
                 })
                 .catch(console.error);
         }, 500);
 
         startOverlaysRefresh();
+        startCandleHealLoop();
     }
 
     /**
@@ -5267,8 +5747,8 @@
             if (layerPa && layerPa.checked) fetchPriceActionIndicator();
             if (layerLiquidity && layerLiquidity.checked) fetchLiquiditySwingsIndicator();
             if (layerSmc && layerSmc.checked) fetchSmcFlowIndicator();
-            // Маркеры сделок: лёгкий JSON, обновляем вместе с оверлеями (не в 500мс poll свечей).
-            fetchChartTrades();
+            // Маркеры сделок — только при включённой «Торговле» (иначе лишний plugin на серии).
+            if (showTrades) fetchChartTrades();
             // Классика OsEngine — только если чекбоксы включены.
             if (anyClassicLayerOn()) fetchClassicIndicators();
         }, OVERLAYS_REFRESH_MS);
@@ -5400,15 +5880,17 @@
      * Последний бар: не series.update() сразу, а candleSmooth.toward() — close «плывёт»
      * к новой цене между poll-тиками (как на Pocket Option).
      */
-    function applyIncrementalChartUpdate(newData) {
+    function applyIncrementalChartUpdate(newData, opts = {}) {
+        if (chartViewportSettling) return;
         if (!candlestickSeries || !Array.isArray(newData) || newData.length === 0) return;
 
         if (allChartData.length === 0) {
             allChartData = newData;
             oldestLoadedTime = Math.min(...allChartData.map(c => c.time));
             if (candleSmooth) candleSmooth.reset();
-            candlestickSeries.setData(allChartData.map(paintPocketOptionDoji));
+            candlestickSeries.setData(allChartData.map(mapBarForCandlestickSeries));
             candleSeriesBarCount = allChartData.length;
+            syncLastBarKeyFromData();
             // Зафиксировать стартовую точку tween на последнем баре.
             if (candleSmooth && allChartData.length) {
                 candleSmooth.snap(allChartData[allChartData.length - 1]);
@@ -5425,51 +5907,50 @@
 
         const byTime = new Map();
         for (const c of allChartData) byTime.set(c.time, c);
-        for (const c of newData) byTime.set(c.time, c);
+        const isPoll = opts.poll === true;
+        if (isPoll) {
+            // Poll окно ~5 мин: сервер ревизит закрытые бары при re-aggregate S5→M1.
+            // Если merge'ить всё окно в allChartData, а в LWC пушить update() — canvas «ломается»
+            // на 5–6 барах слева от хвоста. Берём только forming + только что закрытый.
+            const mergeFromIdx = Math.max(0, allChartData.length - POLL_MERGE_TAIL_BARS);
+            const mergeFromTime = allChartData[mergeFromIdx].time;
+            for (const c of newData) {
+                if (c.time >= mergeFromTime || c.time > prevLast) {
+                    byTime.set(c.time, c);
+                }
+            }
+        } else {
+            for (const c of newData) byTime.set(c.time, c);
+        }
         const merged = Array.from(byTime.values()).sort((a, b) => a.time - b.time);
 
         const prependedOlder = merged.length > 0 && merged[0].time < prevOldest;
         const newestTime = merged[merged.length - 1].time;
         const appendedNewBars = merged.length > prevDataLen;
-        // LightweightCharts.update() допускает только последний бар или новый бар после него.
-        // Нельзя update() «середину» ряда — иначе Cannot update oldest data и артефакты на графике.
-        let updateFailed = false;
-        for (const c of newData) {
-            if (c.time < prevLast) {
-                continue;
-            }
-            try {
-                if (c.time === newestTime && candleSmooth) {
-                    // Тот же или новый хвост: toward сам сделает snap при смене time.
-                    const ok = candleSmooth.toward(c);
-                    if (ok === false) updateFailed = true;
-                } else {
-                    candlestickSeries.update(paintPocketOptionDoji(c));
-                    if (c.time > prevLast) {
-                        candleSeriesBarCount += 1;
-                    }
-                }
-            } catch (e) {
-                updateFailed = true;
-                console.error('[chart] candle update', e);
-            }
-        }
 
         allChartData = merged;
         oldestLoadedTime = oldestLoadedTime == null
             ? merged[0].time
             : Math.min(oldestLoadedTime, merged[0].time);
 
-        // Закрылась новая свеча / append провалился / LWC отстал от allChartData → полный setData.
-        if (prependedOlder || updateFailed || appendedNewBars || candleSeriesBarCount !== merged.length) {
-            resyncCandlestickSeriesFromAllChartData();
-            applyPaBarColors({ fullResync: true });
-        } else {
-            applyPaBarColors();
+        if (prependedOlder) {
+            lastSyncedTailKey = '';
+            resyncCandlestickSeriesFromAllChartData({ preserveRange: true });
+            tickCandleCloseTimer();
+            requestAnimationFrame(redrawPriceActionOverlay);
+            return;
+        }
+
+        // Poll: full setData только при догрузке слева; новая свеча — update(time), не setData(~130 баров).
+        pushCandlestickSeriesIfTailChanged({ preserveRange: true });
+        if (appendedNewBars && tailFollowActive) {
+            maintainTailViewportIfFollowing();
         }
 
         tickCandleCloseTimer();
-        requestAnimationFrame(redrawPriceActionOverlay);
+        if (layerPa && layerPa.checked) {
+            requestAnimationFrame(redrawPriceActionOverlay);
+        }
     }
 
     /**
@@ -5484,21 +5965,44 @@
      * библиотекой при любом пересчёте вида (время + цена + размеры). Здесь только планируем
      * перерисовку DOM; на canvas ничего не рисуем.
      *
-     * rAF: за кадр сливаем много вызовов updateAllViews в одну перерисовку оверлеев.
+     * rAF: за кадр сливаем события; attachPrimitive дергается на каждом кадре tween close —
+     * без throttle + без тяжёлых OB/FVG main thread блокируется и canvas свечей «пропадает».
      */
     let chartDomOverlaySyncRaf = null;
-    function scheduleChartDomOverlaySync() {
+    let chartDomOverlayHeavyRaf = null;
+
+    function markChartDomOverlayDirty() {
+        chartDomOverlayDirty = true;
+    }
+
+    /** Периодический flush «грязных» оверлеев — attachPrimitive не трогает DOM напрямую. */
+    function ensureChartDomOverlayTickLoop() {
+        if (chartDomOverlayTickTimer) return;
+        chartDomOverlayTickTimer = setInterval(() => {
+            if (!chartDomOverlayDirty || !chart) return;
+            chartDomOverlayDirty = false;
+            scheduleChartDomOverlaySyncLight(true);
+        }, CHART_DOM_OVERLAY_TICK_MS);
+    }
+
+    function stopChartDomOverlayTickLoop() {
+        if (!chartDomOverlayTickTimer) return;
+        clearInterval(chartDomOverlayTickTimer);
+        chartDomOverlayTickTimer = null;
+        chartDomOverlayDirty = false;
+    }
+
+    /** Лёгкая синхронизация (таймер, PO-лучи) — без HTML-линейки (она только при pan/zoom). */
+    function scheduleChartDomOverlaySyncLight(force) {
+        const now = performance.now();
+        if (!force && (now - chartDomOverlaySyncLastMs) < CHART_DOM_OVERLAY_SYNC_MIN_MS) {
+            return;
+        }
+        chartDomOverlaySyncLastMs = now;
         if (chartDomOverlaySyncRaf !== null) return;
         chartDomOverlaySyncRaf = requestAnimationFrame(() => {
             chartDomOverlaySyncRaf = null;
             try {
-                redrawStructureOverlay();
-            } catch (e) {
-                console.error('[chart] dom overlay sync', e);
-            }
-            try {
-                // PO-лучи — лёгкий слой, можно синхронить на каждом кадре pan/zoom.
-                // Paper-полосы (до сотен DOM-узлов) — только при смене данных/диапазона, иначе main thread блокируется и «пропадают» свечи.
                 renderPoOpenTradeRaysOverlay();
             } catch (ePo) {
                 console.error('[chart] po open trade rays sync', ePo);
@@ -5509,14 +6013,32 @@
                 } catch (e2) {
                     console.error('[chart] candle timer overlay sync', e2);
                 }
-                try {
-                    renderChartTimeRulerOverlay();
-                } catch (e3) {
-                    console.error('[chart] time ruler overlay sync', e3);
-                }
             });
         });
     }
+
+    /** Тяжёлая синхронизация (структуры/PA/линейка) — только при pan/zoom по времени. */
+    function scheduleChartDomOverlaySyncHeavy() {
+        if (chartDomOverlayHeavyRaf !== null) return;
+        chartDomOverlayHeavyRaf = requestAnimationFrame(() => {
+            chartDomOverlayHeavyRaf = null;
+            try {
+                redrawStructureOverlay();
+            } catch (e) {
+                console.error('[chart] dom overlay sync heavy', e);
+            }
+            requestAnimationFrame(() => {
+                redrawPriceActionOverlay();
+                try {
+                    renderChartTimeRulerOverlay();
+                } catch (eRuler) {
+                    console.error('[chart] time ruler overlay sync', eRuler);
+                }
+                scheduleChartDomOverlaySyncLight(true);
+            });
+        });
+    }
+
     function createChartDomOverlaySyncPrimitive() {
         const paneView = {
             renderer() {
@@ -5530,7 +6052,8 @@
         const paneViewsStable = [paneView];
         return {
             updateAllViews() {
-                scheduleChartDomOverlaySync();
+                // Не пересобираем DOM на каждом кадре LWC — только помечаем и flush раз в 400ms.
+                markChartDomOverlayDirty();
             },
             paneViews() {
                 return paneViewsStable;
@@ -5539,6 +6062,13 @@
     }
 
     function renderChartTimeRulerOverlay() {
+        if (!CHART_HTML_TIME_RULER_ENABLED) {
+            if (chartTimeRulerOverlay) {
+                chartTimeRulerOverlay.classList.add('hidden');
+                chartTimeRulerOverlay.replaceChildren();
+            }
+            return;
+        }
         const PCM = window.PlatformChartMarkers;
         if (!PCM || typeof PCM.renderTimeRulerOverlay !== 'function' || !chartTimeRulerOverlay || !chart) return;
         const b = computeChartPlotBounds();
@@ -5746,9 +6276,16 @@
             candleSmooth.reset();
             candleSmooth = null;
         }
+        stopChartDomOverlayTickLoop();
+        stopCandleHealLoop();
+        // Снимаем markers-plugin до chart.remove(), иначе на новой серии poll снова пойдёт через setData.
+        detachCandlestickMarkersPlugin();
         if (chart) chart.remove();
         chartWrapper.innerHTML = '';
         candleSeriesBarCount = 0;
+        lastSyncedTailKey = '';
+        lastTailSeriesUpdateMs = 0;
+        chartPriceMinMove = 0.00001;
         chartWrapper.classList.remove('hidden');
         structureOverlay.classList.remove('hidden');
         if (liquiditySwingsOverlay) liquiditySwingsOverlay.classList.remove('hidden');
@@ -5771,6 +6308,8 @@
             timeVisible: true,
             // Минуты — на HTML-линейке; секунды — в кроссхейре.
             secondsVisible: false,
+            // «Воздух» справа без logical range > lastIdx (иначе LWC ломает последние ~7 свечей).
+            rightOffset: CHART_RIGHT_GAP_BARS,
         };
         const chartTz = chartTimezoneCreateOptions(timeScaleBase);
 
@@ -5785,6 +6324,24 @@
             rightPriceScale: { borderColor: '#3f3f46', scaleMargins: { top: 0.1, bottom: 0.2 } },
             localization: chartTz.localization,
             timeScale: chartTz.timeScale,
+            // Как на bots/show и в TradingView: drag мышью = скролл; ось цены = масштаб/сдвиг по цене.
+            handleScroll: {
+                mouseWheel: true,
+                pressedMouseMove: true,
+                horzTouchDrag: true,
+                vertTouchDrag: true,
+            },
+            handleScale: {
+                mouseWheel: true,
+                pinch: true,
+                axisPressedMouseMove: { time: true, price: true },
+                // Двойной клик по правой оси — снова autoScale (подогнать цену).
+                axisDoubleClickReset: { time: true, price: true },
+            },
+            kineticScroll: {
+                mouse: true,
+                touch: true,
+            },
             crosshair: crosshairOptions,
             width: chartWrapper.clientWidth,
             height: chartWrapper.clientHeight
@@ -5802,27 +6359,19 @@
                 minMove: 0.00001
             }
         });
-        // Плавный close последней свечи (~200ms ease-out между poll-обновлениями).
-        if (window.PlatformCandleSmooth && typeof window.PlatformCandleSmooth.create === 'function') {
+        // Плавный close отключён (CHART_LIVE_SMOOTH_CLOSE): стабильнее для LWC v5 на длинном простое.
+        candleSmooth = null;
+        if (CHART_LIVE_SMOOTH_CLOSE
+            && window.PlatformCandleSmooth
+            && typeof window.PlatformCandleSmooth.create === 'function') {
             candleSmooth = window.PlatformCandleSmooth.create({
                 getSeries: () => candlestickSeries,
                 paintBar: paintBarForSmooth,
                 durationMs: 200,
             });
-        } else {
-            candleSmooth = null;
         }
-        // Инициализируем markers-plugin единообразно с bots/show.
+        // Маркеры — лениво в renderChartMarkers(); attachPrimitive на серии свечей убран (ломал LWC canvas).
         candlestickMarkers = null;
-        try {
-            if (window.PlatformChartMarkers && typeof window.PlatformChartMarkers.createPluginForSeries === 'function') {
-                candlestickMarkers = window.PlatformChartMarkers.createPluginForSeries(candlestickSeries, []);
-            } else if (typeof LightweightCharts.createSeriesMarkers === 'function') {
-                candlestickMarkers = LightweightCharts.createSeriesMarkers(candlestickSeries, []);
-            }
-        } catch (e) {
-            console.error('[dashboard chart] createSeriesMarkers', e);
-        }
         classicLineSeries = {};
         rsiLevelLines = [];
         classicOscPaneCount = 0;
@@ -5834,14 +6383,10 @@
         if (chartCrosshairOverlay) {
             chartCrosshairOverlay.classList.remove('hidden');
         }
+        // HTML-линейка секунд — только после pan/zoom (scheduleChartDomOverlaySyncHeavy), не при старте.
         if (chartTimeRulerOverlay) {
-            chartTimeRulerOverlay.classList.remove('hidden');
-        }
-
-        try {
-            candlestickSeries.attachPrimitive(createChartDomOverlaySyncPrimitive());
-        } catch (e) {
-            console.error('[chart] attachPrimitive(dom overlay sync)', e);
+            chartTimeRulerOverlay.classList.add('hidden');
+            chartTimeRulerOverlay.replaceChildren();
         }
 
         setupChartCrosshairOverlay();
@@ -5852,17 +6397,23 @@
         });
 
         chart.timeScale().subscribeVisibleLogicalRangeChange(() => {
+            const userViewportChange = viewportChangeSuppressDepth <= 0 && dataSeriesUpdateDepth <= 0;
+            if (userViewportChange) {
+                tailFollowActive = false;
+            }
             const range = chart.timeScale().getVisibleLogicalRange();
-            // Догрузка влево на любом TF (раньше только M1 — на M5+ история обрывалась на initial).
-            if (range && !loadingMore && oldestLoadedTime != null && range.from < 2) {
+            // Догрузка влево — только при ручном pan пользователя; иначе setData/viewport при смене пары
+            // даёт range.from < 2 и график «прыгает» (loadMore + preserveRange поверх initial viewport).
+            if (range && !chartViewportSettling && !loadingMore && oldestLoadedTime != null
+                && range.from < 2 && userViewportChange) {
                 loadMoreCandles();
             }
-            redrawStructureOverlay();
-            requestAnimationFrame(redrawPriceActionOverlay);
-            requestAnimationFrame(positionCandleTimerOverlay);
-            requestAnimationFrame(renderPoOpenTradeRaysOverlay);
-            schedulePaperTradeDurationOverlay();
-            renderChartTimeRulerOverlay();
+            if (userViewportChange) {
+                scheduleChartDomOverlaySyncHeavy();
+                if (showTrades) schedulePaperTradeDurationOverlay();
+            } else {
+                scheduleChartDomOverlaySyncLight(false);
+            }
         });
     }
 
@@ -5886,8 +6437,8 @@
                 allChartData = [...toAdd, ...allChartData].sort((a, b) => a.time - b.time);
                 oldestLoadedTime = Math.min(...allChartData.map(c => c.time));
                 if (candleSmooth) candleSmooth.cancel();
-                candlestickSeries.setData(allChartData.map(paintPocketOptionDoji));
-                candleSeriesBarCount = allChartData.length;
+                lastSyncedTailKey = '';
+                resyncCandlestickSeriesFromAllChartData({ preserveRange: true });
                 if (candleSmooth && allChartData.length) {
                     candleSmooth.snap(allChartData[allChartData.length - 1]);
                 }
@@ -5907,26 +6458,37 @@
     function reloadChartData() {
         if (!currentInstrument || !candlestickSeries) return;
         setLoading(true);
+        if (refreshInterval) {
+            clearInterval(refreshInterval);
+            refreshInterval = null;
+        }
+        stopOverlaysRefresh();
+        stopCandleHealLoop();
+        pollSeq++;
+        const loadSeq = ++chartLoadSeq;
+        chartViewportSettling = true;
+        const inst = currentInstrument;
         // Смена таймфрейма / явный reload — это «как заново выбрали инструмент»:
         // тянем только initial-окно, остальное пользователь догрузит скроллом.
-        fetchCandles(currentInstrument, { kind: 'initial' })
+        fetchCandles(inst, { kind: 'initial' })
             .then(data => {
+                if (loadSeq !== chartLoadSeq || inst !== currentInstrument) return;
                 const candles = data.candles || [];
                 allChartData = buildChartData(candles);
                 if (allChartData.length) {
                     oldestLoadedTime = Math.min(...allChartData.map(c => c.time));
-                    if (candleSmooth) candleSmooth.reset();
-                    candlestickSeries.setData(allChartData.map(paintPocketOptionDoji));
-                    candleSeriesBarCount = allChartData.length;
-                    if (candleSmooth) candleSmooth.snap(allChartData[allChartData.length - 1]);
-                    applyDefaultChartViewport();
-                    fetchStructures();
-                    fetchPriceActionIndicator();
-                    fetchLiquiditySwingsIndicator();
-                    fetchSmcFlowIndicator();
-                    fetchChartTrades();
-                    fetchClassicIndicators();
+                    applyInitialChartPresentation(() => {
+                        if (loadSeq !== chartLoadSeq || inst !== currentInstrument) return;
+                        startAutoRefresh();
+                        fetchStructures();
+                        fetchPriceActionIndicator();
+                        fetchLiquiditySwingsIndicator();
+                        fetchSmcFlowIndicator();
+                        fetchChartTrades();
+                        fetchClassicIndicators();
+                    });
                 } else {
+                    chartViewportSettling = false;
                     if (candleSmooth) candleSmooth.reset();
                     candlestickSeries.setData([]);
                     candleSeriesBarCount = 0;
@@ -5973,6 +6535,8 @@
                 setLoading(false);
             })
             .catch(() => {
+                if (loadSeq !== chartLoadSeq) return;
+                chartViewportSettling = false;
                 setLoading(false);
                 tickCandleCloseTimer();
             });
@@ -5995,8 +6559,19 @@
         if (currentInstrument === instrument) return;
         // Сброс всех in-flight: иначе ответ по старой паре может перезаписать новый график.
         if (window.PlatformChartFetch) window.PlatformChartFetch.invalidateAll();
+        if (refreshInterval) {
+            clearInterval(refreshInterval);
+            refreshInterval = null;
+        }
+        stopOverlaysRefresh();
+        stopCandleHealLoop();
+        pollSeq++;
+        const loadSeq = ++chartLoadSeq;
+        chartViewportSettling = true;
+        oldestLoadedTime = null;
         currentInstrument = instrument;
         currentDisplayName = displayName;
+        tailFollowActive = true;
         // Запоминаем пару — при F5 вернёмся к ней, а не к первой в списке.
         saveSelectedInstrument(instrument);
         document.querySelectorAll('.instrument-btn').forEach((b) => b.classList.toggle('bg-blue-900/40', b.dataset.instrument === instrument));
@@ -6047,32 +6622,32 @@
         // (старая история) подтянется по требованию через loadMoreCandles.
         fetchCandles(instrument, { kind: 'initial' })
             .then(data => {
+                if (loadSeq !== chartLoadSeq || currentInstrument !== instrument) return;
                 const candles = data.candles || [];
                 allChartData = buildChartData(candles);
                 if (allChartData.length) {
                     oldestLoadedTime = Math.min(...allChartData.map(c => c.time));
-                    if (candleSmooth) candleSmooth.reset();
-                    candlestickSeries.setData(allChartData.map(paintPocketOptionDoji));
-                    candleSeriesBarCount = allChartData.length;
-                    if (candleSmooth) candleSmooth.snap(allChartData[allChartData.length - 1]);
-                    applyPaBarColors({ fullResync: true });
-                    applyDefaultChartViewport();
-                    // startAutoRefresh внутри уже стартует и медленный таймер оверлеев.
-                    startAutoRefresh();
-                    requestAnimationFrame(() => {
-                        redrawStructureOverlay();
-                        // Один раз дёргаем «тяжёлые» эндпоинты сразу при выборе инструмента,
-                        // чтобы оверлеи появились без 15-секундной задержки таймера.
-                        fetchStructures();
-                        fetchPriceActionIndicator();
-                        fetchLiquiditySwingsIndicator();
-                        fetchSmcFlowIndicator();
-                        fetchChartTrades();
-                        fetchClassicIndicators();
+                    applyInitialChartPresentation(() => {
+                        if (loadSeq !== chartLoadSeq || currentInstrument !== instrument) return;
+                        // Poll только после фиксации viewport — иначе setData/preserveRange скачет график.
+                        startAutoRefresh();
+                        requestAnimationFrame(() => {
+                            redrawStructureOverlay();
+                            // Один раз дёргаем «тяжёлые» эндпоинты сразу при выборе инструмента,
+                            // чтобы оверлеи появились без 15-секундной задержки таймера.
+                            fetchStructures();
+                            fetchPriceActionIndicator();
+                            fetchLiquiditySwingsIndicator();
+                            fetchSmcFlowIndicator();
+                            fetchChartTrades();
+                            fetchClassicIndicators();
+                        });
                     });
                 } else {
+                    chartViewportSettling = false;
                     if (refreshInterval) clearInterval(refreshInterval);
                     stopOverlaysRefresh();
+                    stopCandleHealLoop();
                     renderChartMarkers();
                     applyClassicOsEngineSeries();
                 }
@@ -6081,6 +6656,8 @@
                 setLoading(false);
             })
             .catch(() => {
+                if (loadSeq !== chartLoadSeq) return;
+                chartViewportSettling = false;
                 setLoading(false);
                 if (refreshInterval) clearInterval(refreshInterval);
                 stopOverlaysRefresh();
@@ -6258,9 +6835,18 @@
         });
     });
 
+    let chartWrapperLastW = 0;
+    let chartWrapperLastH = 0;
     new ResizeObserver(() => {
         if (!chart || !chartWrapper.clientWidth) return;
-        chart.resize(chartWrapper.clientWidth, chartWrapper.clientHeight);
+        const w = chartWrapper.clientWidth;
+        const h = chartWrapper.clientHeight;
+        // Игнорируем «шумовые» resize от соседних панелей — иначе canvas LWC мигает осью времени.
+        if (w === chartWrapperLastW && h === chartWrapperLastH) return;
+        chartWrapperLastW = w;
+        chartWrapperLastH = h;
+        chart.resize(w, h);
+        scheduleChartDomOverlaySyncLight(true);
         requestAnimationFrame(() => {
             redrawStructureOverlay();
             redrawPriceActionOverlay();
@@ -6328,6 +6914,13 @@
             applyShowTradesMode(!!showTradesToggle.checked, { persist: true });
         });
     }
+    // «Своб. шкала»: вертикальный pan / autoScale. По умолчанию выкл — zoom-out не прячет свечи.
+    syncFreePriceScaleToggleUi();
+    if (freePriceScaleToggle) {
+        freePriceScaleToggle.addEventListener('change', () => {
+            applyFreePriceScaleMode(!!freePriceScaleToggle.checked, { persist: true });
+        });
+    }
     // SSR-список мог прийти с таймерами открытых сделок — сразу прячем, если режим выкл.
     if (!showTrades) {
         hideSidebarTradeChrome();
@@ -6344,11 +6937,11 @@
     sidebarTimerInterval = setInterval(() => {
         tickSidebarTradeTimers();
         tickCandleCloseTimer();
-        // Обновляем только текст таймеров на лучах (полный recalculate не нужен каждый кадр,
-        // но координаты могли сдвинуться из‑за live-свечи — перерисовываем раз в секунду).
-        renderPoOpenTradeRaysOverlay();
-        // Paper-полосы — debounce, иначе main thread блокируется и пропадают свечи.
-        schedulePaperTradeDurationOverlay();
+        // PO/paper-оверлеи — только при включённом режиме «Торговля» (иначе лишний DOM + дёргание).
+        if (showTrades) {
+            renderPoOpenTradeRaysOverlay();
+            schedulePaperTradeDurationOverlay();
+        }
     }, 1000);
     tickSidebarTradeTimers();
     // Правая панель CALL/PUT: слушатели + первичный расчёт выплаты.

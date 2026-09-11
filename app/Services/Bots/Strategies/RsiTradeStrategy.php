@@ -79,7 +79,6 @@ class RsiTradeStrategy implements BotStrategyInterface
         }
 
         $payout = isset($context['payout']) ? (float) $context['payout'] : null;
-        $payoutFactor = $payout !== null ? min(1.0, max(0.0, $payout / 100.0)) : 0.5;
 
         // Насколько далеко ушли за линию после кросса.
         $zoneDepth = $side === 'CALL'
@@ -87,9 +86,7 @@ class RsiTradeStrategy implements BotStrategyInterface
             : min(1.0, max(0.0, ($rsiUp - $currRsi) / max(1.0, 100.0 - $rsiUp)));
 
         $confidence = round(
-            0.50 * (0.55 + 0.45 * $zoneDepth)
-            + 0.20 * 0.7
-            + 0.30 * $payoutFactor,
+            (0.50 * (0.55 + 0.45 * $zoneDepth) + 0.20 * 0.7) / 0.70,
             4
         );
         $confidence = max(0.56, min(0.95, $confidence));

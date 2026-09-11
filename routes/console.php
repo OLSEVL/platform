@@ -677,6 +677,9 @@ Artisan::command('bots:smc-flow-bootstrap', function () {
                 'smc_three_br_confirm_max_bars' => 30,
                 'smc_three_br_allow_pattern' => true,
                 'smc_require_ob' => true,
+                'telegram_enabled' => false,
+                'telegram_notify_on' => 'signal_trade',
+                'telegram_send_chart' => true,
                 'version' => 'smc_flow_ut_3br_ob_v1',
             ],
         ]

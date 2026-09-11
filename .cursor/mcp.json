@@ -1,12 +1,11 @@
 {
   "mcpServers": {
     "context7": {
-      "command": "npx",
-      "args": ["-y", "@upstash/context7-mcp@latest"]
+      "command": "/home/o/.local/bin/context7-mcp"
     },
     "chrome-devtools": {
-      "command": "npx",
-      "args": ["-y", "chrome-devtools-mcp@latest", "--no-usage-statistics"]
+      "command": "/home/o/.local/bin/chrome-devtools-mcp",
+      "args": ["--no-usage-statistics"]
     },
     "codegraph": {
       "type": "stdio",
@@ -19,12 +18,11 @@
       ]
     },
     "agentmemory": {
-      "command": "npx",
-      "args": ["-y", "@agentmemory/mcp"],
+      "command": "/home/o/.local/bin/agentmemory-mcp",
       "env": {
-        "AGENTMEMORY_URL": "${AGENTMEMORY_URL:-http://localhost:3111}",
-        "AGENTMEMORY_SECRET": "${AGENTMEMORY_SECRET:-}",
-        "AGENTMEMORY_TOOLS": "${AGENTMEMORY_TOOLS:-all}"
+        "AGENTMEMORY_URL": "http://127.0.0.1:3111",
+        "AGENTMEMORY_FORCE_PROXY": "1",
+        "AGENTMEMORY_TOOLS": "all"
       }
     }
   }

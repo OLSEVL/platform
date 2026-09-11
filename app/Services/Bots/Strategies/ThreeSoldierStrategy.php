@@ -89,15 +89,12 @@ class ThreeSoldierStrategy implements BotStrategyInterface
         }
 
         $payout = isset($context['payout']) ? (float) $context['payout'] : null;
-        $payoutFactor = $payout !== null ? min(1.0, max(0.0, $payout / 100.0)) : 0.5;
 
-        // Глубже паттерн относительно порога → выше уверенность.
+        // Глубина паттерна относительно порога → выше уверенность.
         $zoneDepth = min(1.0, max(0.0, ($patternPct - $heightSoldiers) / max($heightSoldiers, 1e-9)));
 
         $confidence = round(
-            0.50 * (0.55 + 0.45 * $zoneDepth)
-            + 0.20 * 0.7
-            + 0.30 * $payoutFactor,
+            (0.50 * (0.55 + 0.45 * $zoneDepth) + 0.20 * 0.7) / 0.70,
             4
         );
         $confidence = max(0.56, min(0.95, $confidence));

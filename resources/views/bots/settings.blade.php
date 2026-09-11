@@ -986,24 +986,41 @@
                 <div class="space-y-2 text-sm text-zinc-400">
                     <p>
                         <strong class="text-zinc-300">Свип / рейд ликвидности</strong> — бот ищет подтверждённый фрактальный
-                        максимум или минимум, снятие ликвидности и вход на закрытой M1.
+                        максимум или минимум, снятие ликвидности и вход на закрытой свече выбранного ТФ.
                     </p>
                     <p class="text-[11px] text-zinc-500">
                         Для одинаковой визуализации и исполнения используйте слой
                         <a href="{{ route('bots.indicators.sweep-raid-liquidity.edit', $bot) }}" class="text-blue-400 hover:underline">Sweep / Raid Liquidity</a>.
-                        Экспирация по умолчанию — 60 секунд.
+                        Автор на OTC: <strong class="text-zinc-400">S15 + expiry 15с</strong>; legacy — M1 + 60с.
                     </p>
                 </div>
                 <div class="grid gap-4 sm:grid-cols-2">
                     <div class="space-y-1">
-                        <label for="count" class="block text-xs font-medium text-zinc-400">Свечей M1 (count)</label>
+                        {{-- ТФ серии для стратегии: S15 совпадает со стримами DarkSamurai на OTC. --}}
+                        <label for="timeframe" class="block text-xs font-medium text-zinc-400">Таймфрейм</label>
+                        @php $srlTf = (int) old('timeframe', $cfg['timeframe'] ?? 1); @endphp
+                        <select name="timeframe" id="timeframe" required
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                            <option value="{{ \App\Services\CandleService::TF_S15 }}" @selected($srlTf === \App\Services\CandleService::TF_S15)>S15 — как у автора (OTC)</option>
+                            <option value="1" @selected($srlTf === 1)>M1 — классика</option>
+                            <option value="{{ \App\Services\CandleService::TF_S30 }}" @selected($srlTf === \App\Services\CandleService::TF_S30)>S30</option>
+                            <option value="{{ \App\Services\CandleService::TF_S5 }}" @selected($srlTf === \App\Services\CandleService::TF_S5)>S5</option>
+                        </select>
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('timeframe', $bot->type)])
+                        @error('timeframe')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                    <div class="space-y-1">
+                        <label for="count" class="block text-xs font-medium text-zinc-400">Свечей (count)</label>
                         <input type="number" name="count" id="count" min="30" max="5000" required value="{{ old('count', $cfg['count'] ?? 500) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
                     </div>
                     <div class="space-y-1">
+                        {{-- min=15: BinaryExpiry / OTC S15; старый floor 60 ломал WR на стримах. --}}
                         <label for="expiry_sec" class="block text-xs font-medium text-zinc-400">Экспирация (сек)</label>
-                        <input type="number" name="expiry_sec" id="expiry_sec" min="60" max="900" required value="{{ old('expiry_sec', $cfg['expiry_sec'] ?? 60) }}"
+                        <input type="number" name="expiry_sec" id="expiry_sec" min="15" max="900" required value="{{ old('expiry_sec', $cfg['expiry_sec'] ?? 60) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('expiry_sec', $bot->type)])
+                        @error('expiry_sec')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                     <div class="space-y-1">
                         <label for="srl_pivot_length" class="block text-xs font-medium text-zinc-400">Фрактал: баров слева/справа</label>
@@ -1033,13 +1050,75 @@
                     <label class="flex items-start gap-2">
                         <input type="checkbox" name="srl_enter_sweep" value="1" @checked(old('srl_enter_sweep', $cfg['srl_enter_sweep'] ?? true))
                             class="mt-0.5 rounded border-zinc-600 bg-zinc-900 text-blue-500">
-                        <span><span class="text-sm font-medium text-zinc-200">Вход на свипе</span><span class="mt-0.5 block text-[11px] text-zinc-500">Зелёный свип хая → PUT; красный свип лоу → CALL.</span></span>
+                        <span><span class="text-sm font-medium text-zinc-200">Вход на свипе</span><span class="mt-0.5 block text-[11px] text-zinc-500">Зелёный свип хая → PUT; красный свип лоу → CALL (fade).</span></span>
                     </label>
                     <input type="hidden" name="srl_enter_pullback" value="0">
                     <label class="flex items-start gap-2">
                         <input type="checkbox" name="srl_enter_pullback" value="1" @checked(old('srl_enter_pullback', $cfg['srl_enter_pullback'] ?? true))
                             class="mt-0.5 rounded border-zinc-600 bg-zinc-900 text-blue-500">
                         <span><span class="text-sm font-medium text-zinc-200">Вход на первой откатной</span><span class="mt-0.5 block text-[11px] text-zinc-500">После свипа или рейда: сверху первая зелёная → PUT; снизу первая красная → CALL.</span></span>
+                    </label>
+                    <input type="hidden" name="srl_pullback_sweeps_only" value="0">
+                    <label class="flex items-start gap-2 pl-6">
+                        <input type="checkbox" name="srl_pullback_sweeps_only" value="1" @checked(old('srl_pullback_sweeps_only', $cfg['srl_pullback_sweeps_only'] ?? false))
+                            class="mt-0.5 rounded border-zinc-600 bg-zinc-900 text-blue-500">
+                        <span><span class="text-sm font-medium text-zinc-200">Откатная только после свипа</span><span class="mt-0.5 block text-[11px] text-zinc-500">Не входить по PB после рейда — меньше шума (author-like / replay K83).</span></span>
+                    </label>
+                    <input type="hidden" name="srl_enter_breakout" value="0">
+                    <label class="flex items-start gap-2">
+                        <input type="checkbox" name="srl_enter_breakout" value="1" @checked(old('srl_enter_breakout', $cfg['srl_enter_breakout'] ?? false))
+                            class="mt-0.5 rounded border-zinc-600 bg-zinc-900 text-blue-500">
+                        <span><span class="text-sm font-medium text-zinc-200">Пробой + закрепление (сценарий E)</span><span class="mt-0.5 block text-[11px] text-zinc-500">Close(s) за FH/FL без возврата → продолжение: выше FH → CALL, ниже FL → PUT. Не путать с рейдом (рейд = вернулись).</span></span>
+                    </label>
+                    <input type="hidden" name="srl_exclusive_fade_breakout" value="0">
+                    <label class="flex items-start gap-2 pl-6">
+                        <input type="checkbox" name="srl_exclusive_fade_breakout" value="1" @checked(old('srl_exclusive_fade_breakout', $cfg['srl_exclusive_fade_breakout'] ?? false))
+                            class="mt-0.5 rounded border-zinc-600 bg-zinc-900 text-blue-500">
+                        <span><span class="text-sm font-medium text-zinc-200">Exclusive fade ↔ breakout</span><span class="mt-0.5 block text-[11px] text-zinc-500">На одном баре при конфликте берём пробой, не fade/PB (как dual-mode автора).</span></span>
+                    </label>
+                    <div class="space-y-1 pl-6">
+                        <label for="srl_breakout_closes" class="block text-xs font-medium text-zinc-400">Закрытий за уровнем для пробоя</label>
+                        <input type="number" name="srl_breakout_closes" id="srl_breakout_closes" min="1" max="5" required
+                            value="{{ old('srl_breakout_closes', $cfg['srl_breakout_closes'] ?? 2) }}"
+                            class="w-full max-w-[8rem] rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        <p class="text-[11px] text-zinc-500">1 — агрессивно; 2 — как «закрепились» у автора на стриме.</p>
+                        @error('srl_breakout_closes')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                    @error('srl_enter_sweep')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                </div>
+                <div class="space-y-3 rounded border border-zinc-800 bg-zinc-900/40 p-4">
+                    <p class="text-xs font-semibold uppercase tracking-wide text-zinc-500">OTC-гэпы и сессия</p>
+                    <input type="hidden" name="srl_gap_filter_enabled" value="0">
+                    <label class="flex items-start gap-2">
+                        <input type="checkbox" name="srl_gap_filter_enabled" value="1" @checked(old('srl_gap_filter_enabled', $cfg['srl_gap_filter_enabled'] ?? false))
+                            class="mt-0.5 rounded border-zinc-600 bg-zinc-900 text-blue-500">
+                        <span><span class="text-sm font-medium text-zinc-200">Пропускать «грязную» пару с частыми гэпами</span><span class="mt-0.5 block text-[11px] text-zinc-500">Если доля баров с большим close→open разрывом выше порога — сигналов нет (стрим kAyG3wJDPBU).</span></span>
+                    </label>
+                    <div class="grid gap-4 sm:grid-cols-3">
+                        <div class="space-y-1">
+                            <label for="srl_gap_lookback" class="block text-xs font-medium text-zinc-400">Окно баров</label>
+                            <input type="number" name="srl_gap_lookback" id="srl_gap_lookback" min="5" max="500" required
+                                value="{{ old('srl_gap_lookback', $cfg['srl_gap_lookback'] ?? 40) }}"
+                                class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        </div>
+                        <div class="space-y-1">
+                            <label for="srl_gap_max_ratio" class="block text-xs font-medium text-zinc-400">Макс. доля гэпов</label>
+                            <input type="number" name="srl_gap_max_ratio" id="srl_gap_max_ratio" min="0.05" max="1" step="0.01" required
+                                value="{{ old('srl_gap_max_ratio', $cfg['srl_gap_max_ratio'] ?? 0.35) }}"
+                                class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        </div>
+                        <div class="space-y-1">
+                            <label for="srl_gap_size_mult" class="block text-xs font-medium text-zinc-400">Порог гэпа × range</label>
+                            <input type="number" name="srl_gap_size_mult" id="srl_gap_size_mult" min="0.1" max="10" step="0.1" required
+                                value="{{ old('srl_gap_size_mult', $cfg['srl_gap_size_mult'] ?? 0.5) }}"
+                                class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        </div>
+                    </div>
+                    <input type="hidden" name="srl_skip_martingale_if_session_green" value="0">
+                    <label class="flex items-start gap-2">
+                        <input type="checkbox" name="srl_skip_martingale_if_session_green" value="1" @checked(old('srl_skip_martingale_if_session_green', $cfg['srl_skip_martingale_if_session_green'] ?? false))
+                            class="mt-0.5 rounded border-zinc-600 bg-zinc-900 text-blue-500">
+                        <span><span class="text-sm font-medium text-zinc-200">Не поднимать мартингейл, если день уже в плюсе</span><span class="mt-0.5 block text-[11px] text-zinc-500">После LOSS ступень не растёт, пока paper-PnL бота за сегодня &gt; 0 (до этой сделки).</span></span>
                     </label>
                 </div>
                 <div class="space-y-3 rounded border border-zinc-800 bg-zinc-900/40 p-4">
@@ -1093,18 +1172,30 @@
                     <p class="text-[11px] text-zinc-500">
                         Оверлей ENGULF 1/2/3 —
                         <a href="{{ route('bots.indicators.engulfing-liquidity.edit', $bot) }}" class="text-blue-400 hover:underline">Engulfing Liquidity</a>.
-                        Экспирация по умолчанию — 60 секунд.
+                        Экспирация по умолчанию — 60 секунд; для OTC S15 допустимо 15с.
                     </p>
                 </div>
                 <div class="grid gap-4 sm:grid-cols-2">
                     <div class="space-y-1">
-                        <label for="count" class="block text-xs font-medium text-zinc-400">Свечей M1 (count)</label>
+                        <label for="timeframe" class="block text-xs font-medium text-zinc-400">Таймфрейм</label>
+                        @php $engTf = (int) old('timeframe', $cfg['timeframe'] ?? 1); @endphp
+                        <select name="timeframe" id="timeframe" required
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                            <option value="{{ \App\Services\CandleService::TF_S15 }}" @selected($engTf === \App\Services\CandleService::TF_S15)>S15 — OTC</option>
+                            <option value="1" @selected($engTf === 1)>M1</option>
+                            <option value="{{ \App\Services\CandleService::TF_S30 }}" @selected($engTf === \App\Services\CandleService::TF_S30)>S30</option>
+                            <option value="{{ \App\Services\CandleService::TF_S5 }}" @selected($engTf === \App\Services\CandleService::TF_S5)>S5</option>
+                        </select>
+                        @error('timeframe')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                    </div>
+                    <div class="space-y-1">
+                        <label for="count" class="block text-xs font-medium text-zinc-400">Свечей (count)</label>
                         <input type="number" name="count" id="count" min="30" max="5000" required value="{{ old('count', $cfg['count'] ?? 500) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
                     </div>
                     <div class="space-y-1">
                         <label for="expiry_sec" class="block text-xs font-medium text-zinc-400">Экспирация (сек)</label>
-                        <input type="number" name="expiry_sec" id="expiry_sec" min="60" max="900" required value="{{ old('expiry_sec', $cfg['expiry_sec'] ?? 60) }}"
+                        <input type="number" name="expiry_sec" id="expiry_sec" min="15" max="900" required value="{{ old('expiry_sec', $cfg['expiry_sec'] ?? 60) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
                     </div>
                     <div class="space-y-1">
@@ -1138,6 +1229,41 @@
                         <span><span class="text-sm font-medium text-zinc-200">Same-color engulf</span><span class="mt-0.5 block text-[11px] text-zinc-500">Тот же цвет + снятие high/low соседа (как на стриме AED/CNY).</span></span>
                     </label>
                 </div>
+                <div class="space-y-3 rounded border border-zinc-800 bg-zinc-900/40 p-4">
+                    <p class="text-xs font-semibold uppercase tracking-wide text-zinc-500">OTC-гэпы и сессия</p>
+                    <input type="hidden" name="eng_gap_filter_enabled" value="0">
+                    <label class="flex items-start gap-2">
+                        <input type="checkbox" name="eng_gap_filter_enabled" value="1" @checked(old('eng_gap_filter_enabled', $cfg['eng_gap_filter_enabled'] ?? false))
+                            class="mt-0.5 rounded border-zinc-600 bg-zinc-900 text-blue-500">
+                        <span><span class="text-sm font-medium text-zinc-200">Пропускать пару с частыми гэпами</span><span class="mt-0.5 block text-[11px] text-zinc-500">Тот же фильтр, что у Sweep/Raid: dirty OTC → нет сигналов.</span></span>
+                    </label>
+                    <div class="grid gap-4 sm:grid-cols-3">
+                        <div class="space-y-1">
+                            <label for="eng_gap_lookback" class="block text-xs font-medium text-zinc-400">Окно баров</label>
+                            <input type="number" name="eng_gap_lookback" id="eng_gap_lookback" min="5" max="500" required
+                                value="{{ old('eng_gap_lookback', $cfg['eng_gap_lookback'] ?? 40) }}"
+                                class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        </div>
+                        <div class="space-y-1">
+                            <label for="eng_gap_max_ratio" class="block text-xs font-medium text-zinc-400">Макс. доля гэпов</label>
+                            <input type="number" name="eng_gap_max_ratio" id="eng_gap_max_ratio" min="0.05" max="1" step="0.01" required
+                                value="{{ old('eng_gap_max_ratio', $cfg['eng_gap_max_ratio'] ?? 0.35) }}"
+                                class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        </div>
+                        <div class="space-y-1">
+                            <label for="eng_gap_size_mult" class="block text-xs font-medium text-zinc-400">Порог гэпа × range</label>
+                            <input type="number" name="eng_gap_size_mult" id="eng_gap_size_mult" min="0.1" max="10" step="0.1" required
+                                value="{{ old('eng_gap_size_mult', $cfg['eng_gap_size_mult'] ?? 0.5) }}"
+                                class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        </div>
+                    </div>
+                    <input type="hidden" name="eng_skip_martingale_if_session_green" value="0">
+                    <label class="flex items-start gap-2">
+                        <input type="checkbox" name="eng_skip_martingale_if_session_green" value="1" @checked(old('eng_skip_martingale_if_session_green', $cfg['eng_skip_martingale_if_session_green'] ?? false))
+                            class="mt-0.5 rounded border-zinc-600 bg-zinc-900 text-blue-500">
+                        <span><span class="text-sm font-medium text-zinc-200">Не поднимать мартингейл, если день уже в плюсе</span><span class="mt-0.5 block text-[11px] text-zinc-500">После LOSS ступень не растёт при зелёном paper-дне бота.</span></span>
+                    </label>
+                </div>
                 @include('bots._strategy-telegram-settings', ['bot' => $bot, 'cfg' => $cfg])
             </div>
         @elseif ($bot->type === 'smc_flow')
@@ -1153,6 +1279,10 @@
                         Экспирация по умолчанию 3 мин.
                     </p>
                 </div>
+
+                @if (! empty($smcFlowWorking))
+                    @include('bots._smc-flow-working-params', ['bot' => $bot, 'smcFlowWorking' => $smcFlowWorking])
+                @endif
 
                 <div class="grid gap-4 sm:grid-cols-2">
                     <div class="space-y-1">
@@ -1243,6 +1373,9 @@
                         </span>
                         </label>
                 </div>
+
+                {{-- Telegram: алерты paper-сделки, PNG с UT/3BR/OB, poll /start и LLM-кнопка Chart Analyst. --}}
+                @include('bots._strategy-telegram-settings', ['bot' => $bot, 'cfg' => $cfg])
             </div>
         @elseif (\App\Support\OsEngineWaveABotConfig::isWaveA($bot->type))
             @include('bots._wave-a-settings', ['bot' => $bot, 'cfg' => $cfg, 'chartAnalystBots' => $chartAnalystBots ?? []])
@@ -1436,6 +1569,46 @@
                                 @checked(old('srl_enter_pullback', ($cfg['srl_enter_pullback'] ?? true) ? '1' : '') === '1' || (old('srl_enter_pullback') === null && ($cfg['srl_enter_pullback'] ?? true)))>
                             <span class="text-xs text-zinc-300">Кандидаты на первой откатной после SWEEP/RAID</span>
                         </label>
+                        <label class="flex items-start gap-2">
+                            <input type="checkbox" name="srl_enter_breakout" value="1" class="mt-0.5 rounded border-zinc-600 bg-zinc-800 text-blue-500"
+                                @checked(old('srl_enter_breakout', ($cfg['srl_enter_breakout'] ?? false) ? '1' : '') === '1' || (old('srl_enter_breakout') === null && ($cfg['srl_enter_breakout'] ?? false)))>
+                            <span class="text-xs text-zinc-300">Кандидаты на пробое + закреплении (сценарий E, продолжение)</span>
+                        </label>
+                        <div class="grid gap-3 sm:grid-cols-2 pt-1">
+                            <div class="space-y-1">
+                                <label for="srl_breakout_closes" class="block text-[11px] font-medium text-zinc-400">Закрытий за уровнем</label>
+                                <input type="number" name="srl_breakout_closes" id="srl_breakout_closes" min="1" max="5"
+                                    value="{{ old('srl_breakout_closes', $cfg['srl_breakout_closes'] ?? 2) }}"
+                                    class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                            </div>
+                        </div>
+                        <label class="flex items-start gap-2 pt-1">
+                            <input type="checkbox" name="srl_gap_filter_enabled" value="1" class="mt-0.5 rounded border-zinc-600 bg-zinc-800 text-blue-500"
+                                @checked(old('srl_gap_filter_enabled', ($cfg['srl_gap_filter_enabled'] ?? false) ? '1' : '') === '1' || (old('srl_gap_filter_enabled') === null && ($cfg['srl_gap_filter_enabled'] ?? false)))>
+                            <span class="text-xs text-zinc-300">Фильтр OTC-гэпов (не слать кандидатов на «грязной» паре)</span>
+                        </label>
+                        <div class="grid gap-3 sm:grid-cols-3">
+                            <div class="space-y-1">
+                                <label class="block text-[11px] text-zinc-400">Окно</label>
+                                <input type="number" name="srl_gap_lookback" min="5" max="500" value="{{ old('srl_gap_lookback', $cfg['srl_gap_lookback'] ?? 40) }}"
+                                    class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                            </div>
+                            <div class="space-y-1">
+                                <label class="block text-[11px] text-zinc-400">Макс. доля</label>
+                                <input type="number" name="srl_gap_max_ratio" min="0.05" max="1" step="0.01" value="{{ old('srl_gap_max_ratio', $cfg['srl_gap_max_ratio'] ?? 0.35) }}"
+                                    class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                            </div>
+                            <div class="space-y-1">
+                                <label class="block text-[11px] text-zinc-400">× range</label>
+                                <input type="number" name="srl_gap_size_mult" min="0.1" max="10" step="0.1" value="{{ old('srl_gap_size_mult', $cfg['srl_gap_size_mult'] ?? 0.5) }}"
+                                    class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                            </div>
+                        </div>
+                        <label class="flex items-start gap-2">
+                            <input type="checkbox" name="srl_skip_martingale_if_session_green" value="1" class="mt-0.5 rounded border-zinc-600 bg-zinc-800 text-blue-500"
+                                @checked(old('srl_skip_martingale_if_session_green', ($cfg['srl_skip_martingale_if_session_green'] ?? false) ? '1' : '') === '1' || (old('srl_skip_martingale_if_session_green') === null && ($cfg['srl_skip_martingale_if_session_green'] ?? false)))>
+                            <span class="text-xs text-zinc-300">Не поднимать мартингейл при зелёном дне бота</span>
+                        </label>
                         @error('srl_enter_sweep')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                     </div>
                 </div>
@@ -1453,6 +1626,24 @@
                         <input type="checkbox" name="eng_allow_same_color" value="1" class="mt-0.5 rounded border-zinc-600 bg-zinc-800 text-blue-500"
                             @checked(old('eng_allow_same_color', ($cfg['eng_allow_same_color'] ?? true) ? '1' : '') === '1' || (old('eng_allow_same_color') === null && ($cfg['eng_allow_same_color'] ?? true)))>
                         <span class="text-xs text-zinc-300">Same-color engulf — снятие high/low соседа тем же цветом</span>
+                    </label>
+                    <label class="flex items-start gap-2">
+                        <input type="checkbox" name="eng_gap_filter_enabled" value="1" class="mt-0.5 rounded border-zinc-600 bg-zinc-800 text-blue-500"
+                            @checked(old('eng_gap_filter_enabled', ($cfg['eng_gap_filter_enabled'] ?? false) ? '1' : '') === '1' || (old('eng_gap_filter_enabled') === null && ($cfg['eng_gap_filter_enabled'] ?? false)))>
+                        <span class="text-xs text-zinc-300">Фильтр OTC-гэпов</span>
+                    </label>
+                    <div class="grid gap-3 sm:grid-cols-3">
+                        <input type="number" name="eng_gap_lookback" min="5" max="500" value="{{ old('eng_gap_lookback', $cfg['eng_gap_lookback'] ?? 40) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100" placeholder="окно">
+                        <input type="number" name="eng_gap_max_ratio" min="0.05" max="1" step="0.01" value="{{ old('eng_gap_max_ratio', $cfg['eng_gap_max_ratio'] ?? 0.35) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100" placeholder="доля">
+                        <input type="number" name="eng_gap_size_mult" min="0.1" max="10" step="0.1" value="{{ old('eng_gap_size_mult', $cfg['eng_gap_size_mult'] ?? 0.5) }}"
+                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100" placeholder="×range">
+                    </div>
+                    <label class="flex items-start gap-2">
+                        <input type="checkbox" name="eng_skip_martingale_if_session_green" value="1" class="mt-0.5 rounded border-zinc-600 bg-zinc-800 text-blue-500"
+                            @checked(old('eng_skip_martingale_if_session_green', ($cfg['eng_skip_martingale_if_session_green'] ?? false) ? '1' : '') === '1' || (old('eng_skip_martingale_if_session_green') === null && ($cfg['eng_skip_martingale_if_session_green'] ?? false)))>
+                        <span class="text-xs text-zinc-300">Не поднимать мартингейл при зелёном дне бота</span>
                     </label>
                     @error('eng_allow_classic')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
                 </div>
@@ -1621,7 +1812,7 @@
                         Когда выбранный бот даёт CALL/PUT, этот аналитик получает те же данные, что и обычный Chart Analyst (MTF/S5/SMC),
                         плюс полный decision source, и пишет результат в логи/Telegram.
                         Опционально — своя paper-сделка (и PO) на этом Chart Analyst, поверх сделки source.
-                        Кнопка «Доп. анализ SMC Flow» у source-ботов работает параллельно.
+                        Кнопка «Доп. анализ нейросетью» у source-ботов работает параллельно.
                         Под гибрид-алертом можно включить такую же кнопку для независимого повторного анализа.
                     </p>
                     <label class="flex items-start gap-2">

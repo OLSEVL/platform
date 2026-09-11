@@ -137,6 +137,85 @@ class SweepRaidLiquidityDetector
         return $entries;
     }
 
+    /**
+     * Сценарий E (стрим kAyG3wJDPBU): пробой уровня + закрепление close за ним.
+     *
+     * В отличие от свипа/рейда (торговля возврата), здесь вход в сторону продолжения:
+     * FH пробит и close выше → CALL; FL пробит и close ниже → PUT.
+     * confirmCloses=1 — агрессивно на первом close; 2 — как «закрепились» у автора.
+     *
+     * @param  list<array{time:int,open:float,high:float,low:float,close:float,volume:float}>  $candles
+     * @return list<array<string,mixed>>
+     */
+    public function breakoutEntries(array $candles, int $pivotLength = 2, int $confirmCloses = 2): array
+    {
+        $pivotLength = max(1, min(100, $pivotLength));
+        $confirmCloses = max(1, min(5, $confirmCloses));
+        $entries = [];
+        $activeHigh = null;
+        $activeLow = null;
+        $n = count($candles);
+
+        for ($i = 0; $i < $n; $i++) {
+            $pivotIndex = $i - $pivotLength;
+            if ($pivotIndex >= $pivotLength) {
+                if ($this->isPivotHigh($candles, $pivotIndex, $pivotLength)) {
+                    $activeHigh = [
+                        'price' => (float) $candles[$pivotIndex]['high'],
+                        'time' => (int) $candles[$pivotIndex]['time'],
+                        'index' => $pivotIndex,
+                        'outside_closes' => 0,
+                        'emitted' => false,
+                    ];
+                }
+                if ($this->isPivotLow($candles, $pivotIndex, $pivotLength)) {
+                    $activeLow = [
+                        'price' => (float) $candles[$pivotIndex]['low'],
+                        'time' => (int) $candles[$pivotIndex]['time'],
+                        'index' => $pivotIndex,
+                        'outside_closes' => 0,
+                        'emitted' => false,
+                    ];
+                }
+            }
+
+            $candle = $candles[$i];
+            $close = (float) $candle['close'];
+
+            if ($activeHigh !== null && $i > $activeHigh['index']) {
+                $level = (float) $activeHigh['price'];
+                if ($close > $level) {
+                    $activeHigh['outside_closes']++;
+                    // Закрепление выше FH → продолжение вверх (CALL), не fade PUT.
+                    if (! $activeHigh['emitted'] && $activeHigh['outside_closes'] >= $confirmCloses) {
+                        $entries[] = $this->event('breakout', 'high', 'CALL', $i, $candle, $activeHigh, $level);
+                        $activeHigh['emitted'] = true;
+                        $activeHigh = null;
+                    }
+                } else {
+                    $activeHigh['outside_closes'] = 0;
+                }
+            }
+
+            if ($activeLow !== null && $i > $activeLow['index']) {
+                $level = (float) $activeLow['price'];
+                if ($close < $level) {
+                    $activeLow['outside_closes']++;
+                    // Закрепление ниже FL → продолжение вниз (PUT).
+                    if (! $activeLow['emitted'] && $activeLow['outside_closes'] >= $confirmCloses) {
+                        $entries[] = $this->event('breakout', 'low', 'PUT', $i, $candle, $activeLow, $level);
+                        $activeLow['emitted'] = true;
+                        $activeLow = null;
+                    }
+                } else {
+                    $activeLow['outside_closes'] = 0;
+                }
+            }
+        }
+
+        return $entries;
+    }
+
     /** @param array<string,mixed> $candle @param array<string,mixed> $level */
     private function event(string $kind, string $location, string $side, int $index, array $candle, array $level, float $price): array
     {

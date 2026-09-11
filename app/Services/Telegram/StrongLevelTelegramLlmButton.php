@@ -5,14 +5,17 @@ namespace App\Services\Telegram;
 use App\Models\Bot;
 
 /**
- * Inline-кнопка «Доп. анализ SMC Flow» на алертах Strong Level, CRC, Strong Trend, DeMarker и Sweep / Raid.
+ * Inline-кнопка «Доп. анализ нейросетью» на алертах Strong Level, CRC, Strong Trend, DeMarker, Sweep / Raid, Engulfing и SMC Flow.
  */
 class StrongLevelTelegramLlmButton
 {
     /** @var list<string> */
     public const SUPPORTED_BOT_TYPES = \App\Support\LevelBounceBotTypes::CARD_AND_TELEGRAM;
 
-    public const BUTTON_LABEL = '📊 Доп. анализ SMC Flow';
+    public const BUTTON_LABEL = '📊 Доп. анализ нейросетью';
+
+    /** Подпись кнопки на веб-карточках (без emoji — компактнее в сетке). */
+    public const WEB_BUTTON_LABEL = 'Доп. анализ нейросетью';
 
     public const CALLBACK_PREFIX = 'sllm:';
 
@@ -43,7 +46,7 @@ class StrongLevelTelegramLlmButton
     public static function supportsBotType(string $type): bool
     {
         // Эти типы шлют ту же кнопку, но не входят в CARD_AND_TELEGRAM (level-bounce).
-        return in_array($type, ['strong_trend_telegram', 'strong_trend_demarker', \App\Support\DemarkerDualFastConfig::BOT_TYPE, 'sweep_raid_liquidity', 'engulfing_liquidity'], true)
+        return in_array($type, ['strong_trend_telegram', 'strong_trend_demarker', \App\Support\DemarkerDualFastConfig::BOT_TYPE, 'sweep_raid_liquidity', 'engulfing_liquidity', 'smc_flow'], true)
             || in_array($type, self::SUPPORTED_BOT_TYPES, true);
     }
 
@@ -56,6 +59,47 @@ class StrongLevelTelegramLlmButton
             return null;
         }
 
+        return self::findAnalystBotForUser($sourceBot);
+    }
+
+    /**
+     * Chart Analyst для кнопки на веб-карточках: сам бот, если это аналитик,
+     * иначе тот же поиск, что у Telegram (даже если тип не шлёт inline-кнопку).
+     */
+    public static function resolveAnalystBotForCards(Bot $sourceBot): ?Bot
+    {
+        if (\App\Support\ChartAnalystBotTypes::isAnalyst($sourceBot->type)) {
+            return $sourceBot;
+        }
+
+        return self::findAnalystBotForUser($sourceBot);
+    }
+
+    /**
+     * Показывать ли «Доп. анализ нейросетью» на карточках: нужен Chart Analyst
+     * и не выключена галка (для типов, у которых она есть в настройках).
+     */
+    public static function isAvailableOnCards(Bot $sourceBot): bool
+    {
+        /** @var array<string, mixed> $cfg */
+        $cfg = is_array($sourceBot->config) ? $sourceBot->config : [];
+
+        if (\App\Support\ChartAnalystBotTypes::isAnalyst($sourceBot->type)) {
+            return \App\Support\HybridAnalystConfig::isHybridTelegramLlmButtonEnabled($cfg);
+        }
+
+        if (self::supportsBotType($sourceBot->type) && ! self::isEnabled($cfg)) {
+            return false;
+        }
+
+        return self::resolveAnalystBotForCards($sourceBot) !== null;
+    }
+
+    /**
+     * Явный telegram_analyst_bot_id, иначе preferred type, иначе любой Chart Analyst пользователя.
+     */
+    private static function findAnalystBotForUser(Bot $sourceBot): ?Bot
+    {
         /** @var array<string, mixed> $cfg */
         $cfg = is_array($sourceBot->config) ? $sourceBot->config : [];
         $configuredId = (int) ($cfg['telegram_analyst_bot_id'] ?? 0);

@@ -212,6 +212,9 @@ final class BotTradingChartLayers
         $enterPb = (bool) ($cfg['srl_enter_pullback'] ?? true);
         $params['show_raids'] = $enterPb;
         $params['show_pullback_entries'] = $enterPb;
+        // Сценарий E: оверлей BO только если в боте включён breakout.
+        $params['show_breakout_entries'] = (bool) ($cfg['srl_enter_breakout'] ?? false);
+        $params['breakout_closes'] = max(1, min(5, (int) ($cfg['srl_breakout_closes'] ?? $params['breakout_closes'] ?? 2)));
 
         return $params;
     }

@@ -3,18 +3,20 @@
 namespace App\Services\Bots\Strategies;
 
 use App\Services\Indicators\SweepRaidLiquidityDetector;
+use App\Support\BinaryExpiry;
+use App\Support\OtcGapFilter;
 use App\Support\SweepRaidDemarkerFilter;
 
 /**
- * Стратегия «Свип / рейд ликвидности» из разобранного видео.
+ * Стратегия «Свип / рейд ликвидности» из разобранных видео.
  *
- * Уровни берутся только от подтверждённых фракталов. На закрытой M1 бот может:
- * 1) войти немедленно после валидного свипа;
- * 2) войти на первой откатной после свипа или рейда.
- * Каждый путь можно независимо выключить в настройках бота.
+ * Уровни — только от подтверждённых фракталов. На закрытой свече бот может:
+ * 1) войти на валидном свипе (fade);
+ * 2) войти на первой откатной после свипа/рейда;
+ * 3) войти на пробое + закреплении (сценарий E, стрим kAyG3wJDPBU).
  *
- * Опционально DeMarker: при включении сделка только если на баре входа
- * осциллятор пересёк зону 0.1 / 0.9 в сторону сигнала.
+ * Fade и breakout — разные режимы от одного FH/FL; включаются тумблерами.
+ * Опционально: DeMarker и фильтр OTC-гэпов.
  */
 class SweepRaidLiquidityStrategy implements BotStrategyInterface
 {
@@ -29,14 +31,24 @@ class SweepRaidLiquidityStrategy implements BotStrategyInterface
         $pivotLength = max(1, min(100, (int) ($cfg['srl_pivot_length'] ?? 2)));
         $enterSweep = (bool) ($cfg['srl_enter_sweep'] ?? true);
         $enterPullback = (bool) ($cfg['srl_enter_pullback'] ?? true);
+        $enterBreakout = (bool) ($cfg['srl_enter_breakout'] ?? false);
+        $breakoutCloses = max(1, min(5, (int) ($cfg['srl_breakout_closes'] ?? 2)));
+        // Dual-mode автор: на одном баре не мешать fade и пробой — при конфликте берём breakout.
+        $exclusiveFadeBreakout = (bool) ($cfg['srl_exclusive_fade_breakout'] ?? false);
+        // PB только после настоящего свипа (не raid) — меньше шума из replay K83.
+        $pullbackSweepsOnly = (bool) ($cfg['srl_pullback_sweeps_only'] ?? false);
         $demarker = SweepRaidDemarkerFilter::parse($cfg);
 
-        // Пивот требует бары слева/справа, затем нужен хотя бы один бар для сигнала.
         $minBars = $pivotLength * 2 + 2;
         if ($demarker['enabled']) {
             $minBars = max($minBars, $demarker['period'] + 2);
         }
-        if (count($closedCandles) < $minBars || (! $enterSweep && ! $enterPullback)) {
+        if (count($closedCandles) < $minBars || (! $enterSweep && ! $enterPullback && ! $enterBreakout)) {
+            return null;
+        }
+
+        // Грязная OTC-пара с частыми гэпами — пропуск всех путей входа.
+        if (OtcGapFilter::shouldSkip($closedCandles, $cfg, 'srl')) {
             return null;
         }
 
@@ -45,7 +57,28 @@ class SweepRaidLiquidityStrategy implements BotStrategyInterface
         $lastIndex = count($closedCandles) - 1;
         $lastCandle = $closedCandles[$lastIndex];
 
-        // Вход на свипе имеет приоритет: это прямое правило автора и самый свежий контекст.
+        $breakoutDecision = null;
+        if ($enterBreakout) {
+            $breakouts = $detector->breakoutEntries($closedCandles, $pivotLength, $breakoutCloses);
+            foreach (array_reverse($breakouts) as $entry) {
+                if ((int) $entry['bar_index'] !== $lastIndex) {
+                    continue;
+                }
+                $side = (string) $entry['side'];
+                if (! SweepRaidDemarkerFilter::passes($closedCandles, $side, $cfg)) {
+                    continue;
+                }
+                $breakoutDecision = $this->decision($entry, 'breakout', $lastCandle, $cfg, $context, $partialCandle, $closedCandles);
+                break;
+            }
+        }
+
+        // Exclusive: если на баре есть закреплённый пробой — не берём fade/PB в ту же свечу.
+        if ($breakoutDecision !== null && $exclusiveFadeBreakout) {
+            return $breakoutDecision;
+        }
+
+        // Свип (fade) — возврат после снятия ликвидности.
         if ($enterSweep) {
             foreach (array_reverse($events) as $event) {
                 if ((int) $event['bar_index'] !== $lastIndex || ($event['kind'] ?? null) !== 'sweep') {
@@ -61,8 +94,21 @@ class SweepRaidLiquidityStrategy implements BotStrategyInterface
             }
         }
 
+        // Пробой без exclusive (или когда fade не сработал) — продолжение за уровнем.
+        if ($breakoutDecision !== null) {
+            return $breakoutDecision;
+        }
+
+        // Первая откатная после снятия.
         if ($enterPullback) {
-            $pullbacks = $detector->pullbackEntries($closedCandles, $events);
+            $pbEvents = $events;
+            if ($pullbackSweepsOnly) {
+                $pbEvents = array_values(array_filter(
+                    $events,
+                    static fn (array $e): bool => ($e['kind'] ?? null) === 'sweep'
+                ));
+            }
+            $pullbacks = $detector->pullbackEntries($closedCandles, $pbEvents);
             foreach (array_reverse($pullbacks) as $entry) {
                 if ((int) $entry['bar_index'] !== $lastIndex) {
                     continue;
@@ -99,21 +145,33 @@ class SweepRaidLiquidityStrategy implements BotStrategyInterface
         $side = (string) $event['side'];
         $kind = (string) $event['kind'];
         $location = (string) $event['location'];
-        $expirySec = max(60, min(900, (int) ($cfg['expiry_sec'] ?? 60)));
+        // 15с — OTC S15 как у автора; floor 60 убран после replay K83/kAyG.
+        $expirySec = BinaryExpiry::clamp((int) ($cfg['expiry_sec'] ?? 60));
         $payout = isset($context['payout']) ? (float) $context['payout'] : null;
-        $payoutBonus = $payout === null ? 0.0 : min(0.06, max(0.0, $payout - 70.0) / 500.0);
-        $confidence = min(0.90, round(($kind === 'sweep' ? 0.67 : 0.62) + ($entryMode === 'pullback' ? 0.03 : 0.0) + $payoutBonus, 4));
+        $confidence = match ($entryMode) {
+            'breakout' => 0.64,
+            'pullback' => 0.65,
+            default => 0.67,
+        };
+        $confidence = min(0.90, round($confidence, 4));
 
         $locationRu = $location === 'high' ? 'максимума' : 'минимума';
         $directionRu = $side === 'CALL' ? 'ПОВЫШЕНИЕ (CALL)' : 'ПОНИЖЕНИЕ (PUT)';
-        $modeRu = $entryMode === 'sweep' ? 'вход на свипе' : 'первая откатная';
+        $modeRu = match ($entryMode) {
+            'breakout' => 'пробой + закрепление',
+            'pullback' => 'первая откатная',
+            default => 'вход на свипе',
+        };
 
         $reasons = [
-            sprintf('%s ликвидности %s на уровне %.8f.', ucfirst($kind), $locationRu, (float) $event['level_price']),
+            $entryMode === 'breakout'
+                ? sprintf('Пробой уровня %s (%.8f) с закреплением close за ним.', $locationRu, (float) $event['level_price'])
+                : sprintf('%s ликвидности %s на уровне %.8f.', ucfirst($kind), $locationRu, (float) $event['level_price']),
             sprintf('%s → %s.', $modeRu, $directionRu),
-            sprintf('Закрытая M1: O=%.8f, C=%.8f.', (float) $candle['open'], (float) $candle['close']),
+            sprintf('Закрытая свеча: O=%.8f, C=%.8f.', (float) $candle['open'], (float) $candle['close']),
         ];
 
+        $gapStats = OtcGapFilter::measure($closedCandles, $cfg, 'srl');
         $demarkerCross = SweepRaidDemarkerFilter::crossingOnLastBar($closedCandles, $side, $cfg);
         $features = [
             'setup' => $kind.'_'.$location,
@@ -121,7 +179,6 @@ class SweepRaidLiquidityStrategy implements BotStrategyInterface
             'level_price' => (float) $event['level_price'],
             'level_time' => (int) $event['level_time'],
             'event_time' => (int) $event['time'],
-            // Для входа на откате event_time — свеча PB; takedown_time — сам свип/рейд.
             'takedown_time' => (int) ($event['takedown_time'] ?? $event['time']),
             'takedown_price' => (float) ($event['takedown_price'] ?? $event['entry_price']),
             'entry_price' => (float) $event['entry_price'],
@@ -129,7 +186,16 @@ class SweepRaidLiquidityStrategy implements BotStrategyInterface
             'payout' => $payout,
             'partial_present' => $partialCandle !== null,
             'srl_demarker_enabled' => (bool) ($cfg['srl_demarker_enabled'] ?? false),
+            'srl_gap_filter_enabled' => (bool) ($cfg['srl_gap_filter_enabled'] ?? false),
+            'srl_exclusive_fade_breakout' => (bool) ($cfg['srl_exclusive_fade_breakout'] ?? false),
+            'srl_pullback_sweeps_only' => (bool) ($cfg['srl_pullback_sweeps_only'] ?? false),
+            'skip_martingale_if_session_green' => (bool) ($cfg['srl_skip_martingale_if_session_green'] ?? false),
         ];
+
+        if ($gapStats !== null) {
+            $features['gap_ratio'] = $gapStats['gap_ratio'];
+            $features['gap_bars'] = $gapStats['bars'];
+        }
 
         if ($demarkerCross !== null) {
             $zone = $side === 'CALL' ? 'перепроданности' : 'перекупленности';
@@ -162,7 +228,7 @@ class SweepRaidLiquidityStrategy implements BotStrategyInterface
                 $expirySec,
             ),
             'features' => $features,
-            'decision_version' => 'sweep_raid_liquidity_v1',
+            'decision_version' => 'sweep_raid_liquidity_v2',
         ];
     }
 }

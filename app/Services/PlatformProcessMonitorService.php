@@ -417,12 +417,12 @@ class PlatformProcessMonitorService
     private function defaultQueuePids(): array
     {
         return ArtisanProcessFinder::findArtisanPids(static function (string $cmd): bool {
-            if (! str_contains($cmd, 'queue:work')) {
+            // Объединённый worker из start-all.sh: --queue=backtest,mirror,default,telegram-analyst.
+            // Раньше отсекали по подстроке telegram-analyst → ложный warning после reboot.
+            if (! ArtisanProcessFinder::queueWorkHandlesAnyOf($cmd, ['default', 'mirror'])) {
                 return false;
             }
-            if (str_contains($cmd, RunTelegramAnalystAnalysisJob::QUEUE_NAME)) {
-                return false;
-            }
+
             // Старый analyst worker без --queue= — относим к telegram, не к default.
             if (str_contains($cmd, '--timeout='.TelegramAnalystProcessManager::QUEUE_TIMEOUT_SEC)
                 && ! str_contains($cmd, '--queue=')) {

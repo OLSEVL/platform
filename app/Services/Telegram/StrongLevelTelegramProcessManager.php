@@ -9,7 +9,7 @@ use Illuminate\Support\Facades\Log;
 
 /**
  * Long polling getUpdates: LLM-кнопки Strong Level и /start автоподписка
- * (в том числе Sweep / Raid и Strong Trend + DeMarker).
+ * (в том числе Sweep / Raid, Engulfing, SMC Flow и Strong Trend + DeMarker).
  */
 class StrongLevelTelegramProcessManager
 {
@@ -21,7 +21,7 @@ class StrongLevelTelegramProcessManager
     public static function pollSupported(string $botType): bool
     {
         return StrongLevelTelegramLlmButton::supportsBotType($botType)
-            || in_array($botType, ['strong_trend_demarker', \App\Support\DemarkerDualFastConfig::BOT_TYPE, 'sweep_raid_liquidity', 'engulfing_liquidity'], true);
+            || in_array($botType, ['strong_trend_demarker', \App\Support\DemarkerDualFastConfig::BOT_TYPE, 'sweep_raid_liquidity', 'engulfing_liquidity', 'smc_flow'], true);
     }
 
     /**
@@ -285,6 +285,7 @@ class StrongLevelTelegramProcessManager
             \App\Support\DemarkerDualFastConfig::BOT_TYPE => 'Dual DeMarker Fast',
             'sweep_raid_liquidity' => 'Sweep / Raid Liquidity',
             'engulfing_liquidity' => 'Engulfing Liquidity',
+            'smc_flow' => 'SMC Flow',
             'candle_reversal_confirm' => 'Candle Reversal + Confirm',
             'rsi_contrtrend' => 'RSI Contrtrend',
             'bollinger_contrtrend' => 'Bollinger Contrtrend',

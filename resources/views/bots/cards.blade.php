@@ -4,7 +4,9 @@
 <div class="space-y-4" id="bot-cards-app"
     data-data-url="{{ route('bots.cards.data', $bot) }}"
     data-bot-id="{{ $bot->id }}"
-    data-bot-name="{{ $bot->name }}">
+    data-bot-name="{{ $bot->name }}"
+    data-smc-flow-enabled="{{ !empty($smcFlowAnalysisEnabled) ? '1' : '0' }}"
+    data-smc-flow-label="{{ $smcFlowAnalysisButtonLabel ?? 'Доп. анализ нейросетью' }}">
     <div class="flex flex-wrap items-center justify-between gap-3">
         <div class="flex flex-wrap items-center gap-3">
             <h1 class="text-2xl font-semibold">Карточки — {{ $bot->name }}</h1>
@@ -105,6 +107,7 @@
     const modal = document.getElementById('card-modal');
     const modalBackdrop = document.getElementById('card-modal-backdrop');
     const modalClose = document.getElementById('card-modal-close');
+    const SMC_FLOW_BTN_LABEL = root.dataset.smcFlowLabel || 'Доп. анализ нейросетью';
 
     const SOUND_KEY = 'bot_cards_sound_' + BOT_ID;
     let knownIds = new Set();
@@ -113,6 +116,11 @@
     let firstLoad = true;
     let pollTimer = null;
     let tickTimer = null;
+    let currentModalCard = null;
+    /** cardId → {kind, payload} — чтобы live-poll сетки не стирал текст анализа. */
+    let analysisByCardId = new Map();
+    /** cardId → {timer, count} */
+    let smcPolls = new Map();
 
     soundToggle.checked = localStorage.getItem(SOUND_KEY) !== '0';
     soundToggle.addEventListener('change', () => {
@@ -269,24 +277,21 @@
                 data-entry-ts="${card.entry_ts ?? ''}"
                 data-expiry-ts="${card.expiry_ts ?? ''}"
                 data-expiry-sec="${card.expiry_sec ?? ''}">
-                <div class="flex items-start justify-between gap-2">
-                    <div>
+                <div class="flex items-center justify-between gap-2">
+                    <div class="flex min-w-0 flex-wrap items-baseline gap-x-2">
                         <a href="${escapeHtml(card.show_url)}"
-                            class="card-pair-link text-base font-semibold text-cyan-400 hover:text-cyan-300 hover:underline"
+                            class="card-pair-link truncate text-base font-semibold text-cyan-400 hover:text-cyan-300 hover:underline"
                             data-stop-card="1">${escapeHtml(card.instrument)}</a>
-                        <div class="mt-1 text-xs text-zinc-500">ТФ ${escapeHtml(card.timeframe)}</div>
+                        <span class="shrink-0 text-xs text-zinc-500">ТФ ${escapeHtml(card.timeframe)}</span>
+                        <span class="card-price shrink-0 font-mono text-base font-semibold tracking-tight text-zinc-50">${escapeHtml(card.current_price ?? card.entry_price ?? '—')}</span>
                     </div>
                     ${sideBadge(card)}
                 </div>
 
-                <div class="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-zinc-400">
+                <div class="card-meta mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-zinc-400">
                     <span class="text-emerald-400 card-active-label">● активна ${escapeHtml(formatActiveSec(activeSec))}</span>
                     <span class="font-mono text-cyan-300 card-expiry-left">${formatCountdown(expiryLeft)}</span>
                     <span>Выплата <span class="text-zinc-200 card-payout">${escapeHtml(card.payout_label)}</span></span>
-                </div>
-
-                <div class="mt-3 font-mono text-2xl font-semibold tracking-tight text-zinc-50 card-price">
-                    ${escapeHtml(card.current_price ?? card.entry_price ?? '—')}
                 </div>
 
                 ${cardThumbSrc(card) ? `
@@ -301,6 +306,22 @@
                 </div>`}
 
                 ${strategyAnalysisHtml(card, true)}
+
+                ${card.smc_flow_analysis_enabled && card.smc_flow_analysis_url ? `
+                <button type="button" data-stop-card="1" data-smc-analysis="1"
+                    class="mt-3 w-full rounded border border-cyan-800/70 bg-cyan-950/50 px-3 py-1.5 text-xs font-medium text-cyan-200 transition hover:bg-cyan-900/60">
+                    ${escapeHtml(SMC_FLOW_BTN_LABEL)}
+                </button>
+                {{-- Панель ответа LLM прямо в карточке (не в модалке): статус, текст, модель/биллинг, повтор. --}}
+                <div class="card-smc-panel mt-3 hidden rounded-lg border border-cyan-900/40 bg-zinc-950/80 p-3" data-stop-card="1">
+                    <p class="card-smc-status text-xs text-cyan-300"></p>
+                    <pre class="card-smc-text mt-2 hidden max-h-72 overflow-y-auto whitespace-pre-wrap break-words text-xs leading-relaxed text-zinc-200"></pre>
+                    <p class="card-smc-meta mt-1 hidden text-[11px] leading-snug text-zinc-500"></p>
+                    <button type="button" data-stop-card="1" data-smc-retry="1"
+                        class="card-smc-retry mt-2 hidden rounded border border-zinc-600 bg-zinc-800 px-2 py-1 text-[11px] text-zinc-200 hover:bg-zinc-700">
+                        Повторить анализ
+                    </button>
+                </div>` : ''}
 
                 <div class="mt-4 h-1.5 overflow-hidden rounded-full bg-zinc-800">
                     <div class="${barColor} card-progress-inner h-full rounded-full transition-[width] duration-1000 ease-linear" style="width:${pct}%"></div>
@@ -322,8 +343,9 @@
             if (missing) {
                 missing.remove();
             }
-            const priceEl = el.querySelector('.card-price');
-            if (!priceEl) {
+            // Цена теперь в шапке карточки — график вставляем после строки статуса, не после цены.
+            const metaEl = el.querySelector('.card-meta');
+            if (!metaEl) {
                 return;
             }
             const box = document.createElement('div');
@@ -333,7 +355,7 @@
             thumbEl.className = 'card-chart-thumb block min-h-[120px] w-full object-cover';
             thumbEl.loading = 'lazy';
             box.appendChild(thumbEl);
-            priceEl.insertAdjacentElement('afterend', box);
+            metaEl.insertAdjacentElement('afterend', box);
         }
         if (thumbEl.getAttribute('src') !== src) {
             thumbEl.src = src;
@@ -375,6 +397,11 @@
             technicalEl.textContent = card.technical_details ?? '';
         }
 
+        const saved = analysisByCardId.get(card.id);
+        if (saved) {
+            paintSmcPanel(el, saved.kind, saved.payload);
+        }
+
         cardsById.set(card.id, card);
     }
 
@@ -390,6 +417,19 @@
             });
         });
     }
+
+    // Делегирование: новые карточки после poll не требуют повторной привязки кнопки анализа.
+    grid.addEventListener('click', (e) => {
+        const retryBtn = e.target.closest('[data-smc-retry]');
+        const smcBtn = e.target.closest('[data-smc-analysis]');
+        if (!retryBtn && !smcBtn) return;
+        e.preventDefault();
+        e.stopPropagation();
+        const article = (retryBtn || smcBtn).closest('article[data-card-id]');
+        if (!article) return;
+        const card = cardsById.get(Number(article.getAttribute('data-card-id')));
+        if (card) startSmcAnalysis(card);
+    });
 
     function tickLive() {
         const nowSec = serverUnixNow();
@@ -419,6 +459,8 @@
 
     function syncGrid(cards) {
         if (!cards.length) {
+            // Карточки исчезли — останавливаем все опросы LLM, иначе таймеры висят в фоне.
+            stopSmcPoll();
             grid.innerHTML = '<div class="col-span-full rounded border border-zinc-800 bg-zinc-950/40 px-4 py-10 text-center text-zinc-500">Нет активных сделок.</div>';
             return;
         }
@@ -428,6 +470,7 @@
         // Первая отрисовка — целиком, дальше точечные обновления без мерцания.
         if (!grid.querySelector('article[data-card-id]')) {
             grid.innerHTML = cards.map(renderCard).join('');
+            restoreSmcPanels();
             bindCardClicks();
             tickLive();
             return;
@@ -437,7 +480,10 @@
 
         grid.querySelectorAll('article[data-card-id]').forEach(el => {
             const id = Number(el.getAttribute('data-card-id'));
-            if (!nextIds.has(id)) el.remove();
+            if (!nextIds.has(id)) {
+                stopSmcPoll(id);
+                el.remove();
+            }
         });
 
         const fragment = document.createDocumentFragment();
@@ -449,7 +495,11 @@
                 const wrap = document.createElement('div');
                 wrap.innerHTML = renderCard(card);
                 const article = wrap.firstElementChild;
-                if (article) fragment.appendChild(article);
+                if (article) {
+                    const saved = analysisByCardId.get(card.id);
+                    if (saved) paintSmcPanel(article, saved.kind, saved.payload);
+                    fragment.appendChild(article);
+                }
             }
         });
         if (fragment.childNodes.length) {
@@ -488,6 +538,8 @@
         document.getElementById('card-modal-status').textContent = card.status_label || 'Активна';
         document.getElementById('card-modal-technical').textContent = card.technical_details || '';
 
+        currentModalCard = card;
+
         const chartM1 = document.getElementById('card-modal-chart-m1');
         const chartM15 = document.getElementById('card-modal-chart-m15');
         if (chartM1) {
@@ -505,6 +557,7 @@
 
     function closeModal() {
         modal.classList.add('hidden');
+        currentModalCard = null;
         document.body.classList.remove('overflow-hidden');
         ['card-modal-chart-m1', 'card-modal-chart-m15'].forEach((id) => {
             const img = document.getElementById(id);
@@ -515,6 +568,164 @@
             }
             img.removeAttribute('src');
         });
+    }
+
+    function csrfToken() {
+        const el = document.querySelector('meta[name="csrf-token"]');
+        return el ? (el.getAttribute('content') || '') : '';
+    }
+
+    /** Останавливает poll статуса LLM. Без cardId — все карточки (уход со страницы / пустая сетка). */
+    function stopSmcPoll(cardId) {
+        if (cardId == null) {
+            smcPolls.forEach((job) => {
+                if (job && job.timer) clearInterval(job.timer);
+            });
+            smcPolls.clear();
+            return;
+        }
+        const job = smcPolls.get(cardId);
+        if (job && job.timer) clearInterval(job.timer);
+        smcPolls.delete(cardId);
+    }
+
+    function restoreSmcPanels() {
+        analysisByCardId.forEach((saved, cardId) => {
+            const el = grid.querySelector(`article[data-card-id="${cardId}"]`);
+            if (el) paintSmcPanel(el, saved.kind, saved.payload);
+        });
+    }
+
+    function paintSmcPanel(article, kind, payload) {
+        const panel = article.querySelector('.card-smc-panel');
+        if (!panel) return;
+        const statusEl = panel.querySelector('.card-smc-status');
+        const textEl = panel.querySelector('.card-smc-text');
+        const metaEl = panel.querySelector('.card-smc-meta');
+        const retryEl = panel.querySelector('.card-smc-retry');
+        const summary = (payload && payload.summary) ? String(payload.summary) : '';
+        const analysisText = (payload && payload.analysis_text) ? String(payload.analysis_text) : '';
+        const billing = (payload && payload.billing_label) ? String(payload.billing_label) : '';
+        const model = (payload && payload.model) ? String(payload.model) : '';
+        const errDetail = (payload && payload.error_detail) ? String(payload.error_detail) : '';
+
+        panel.classList.remove('hidden');
+        textEl.classList.add('hidden');
+        metaEl.classList.add('hidden');
+        retryEl.classList.add('hidden');
+        textEl.textContent = '';
+        metaEl.textContent = '';
+
+        if (kind === 'loading') {
+            statusEl.className = 'card-smc-status text-xs text-cyan-300';
+            statusEl.textContent = summary || '⏳ Запускаю LLM… Обычно 1–3 мин.';
+            return;
+        }
+        if (kind === 'error') {
+            statusEl.className = 'card-smc-status text-xs text-rose-300';
+            statusEl.textContent = summary || 'Не удалось выполнить анализ.';
+            if (errDetail) {
+                textEl.textContent = errDetail;
+                textEl.classList.remove('hidden');
+            }
+            retryEl.classList.remove('hidden');
+            return;
+        }
+        statusEl.className = 'card-smc-status text-xs text-emerald-300';
+        statusEl.textContent = summary || 'Анализ готов.';
+        if (analysisText) {
+            textEl.textContent = analysisText;
+            textEl.classList.remove('hidden');
+        }
+        const metaParts = [billing, model].filter(Boolean);
+        if (metaParts.length) {
+            metaEl.textContent = metaParts.join(' · ');
+            metaEl.classList.remove('hidden');
+        }
+        retryEl.classList.remove('hidden');
+    }
+
+    function setSmcCardView(cardId, kind, payload) {
+        analysisByCardId.set(cardId, { kind, payload: payload || {} });
+        const el = grid.querySelector(`article[data-card-id="${cardId}"]`);
+        if (el) paintSmcPanel(el, kind, payload);
+    }
+
+    function applySmcPayload(cardId, data) {
+        const status = String(data && data.status ? data.status : '');
+        if (status === 'ok') {
+            stopSmcPoll(cardId);
+            setSmcCardView(cardId, 'ok', data);
+            return true;
+        }
+        if (status === 'error') {
+            stopSmcPoll(cardId);
+            setSmcCardView(cardId, 'error', data);
+            return true;
+        }
+        setSmcCardView(cardId, 'loading', data);
+        return false;
+    }
+
+    async function pollSmcStatus(cardId, statusUrl) {
+        const job = smcPolls.get(cardId);
+        if (!job) return;
+        job.count += 1;
+        if (job.count > 300) {
+            stopSmcPoll(cardId);
+            setSmcCardView(cardId, 'error', { summary: 'Анализ слишком долгий. Проверьте queue worker telegram-analyst или повторите.' });
+            return;
+        }
+        try {
+            const res = await fetch(statusUrl, {
+                headers: { 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+                credentials: 'same-origin',
+                cache: 'no-store',
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) {
+                stopSmcPoll(cardId);
+                setSmcCardView(cardId, 'error', { summary: data.message || ('Ошибка ' + res.status) });
+                return;
+            }
+            applySmcPayload(cardId, data);
+        } catch (_) {
+            setSmcCardView(cardId, 'loading', { summary: '⏳ Жду ответ LLM… Обычно 1–3 мин.' });
+        }
+    }
+
+    async function startSmcAnalysis(card) {
+        if (!card || !card.smc_flow_analysis_url) return;
+        const cardId = Number(card.id);
+        stopSmcPoll(cardId);
+        setSmcCardView(cardId, 'loading', { summary: '⏳ Запускаю LLM… Обычно 1–3 мин.' });
+
+        try {
+            const res = await fetch(card.smc_flow_analysis_url, {
+                method: 'POST',
+                headers: {
+                    'Accept': 'application/json',
+                    'X-Requested-With': 'XMLHttpRequest',
+                    'X-CSRF-TOKEN': csrfToken(),
+                    'Content-Type': 'application/json',
+                },
+                credentials: 'same-origin',
+                body: JSON.stringify({}),
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) {
+                setSmcCardView(cardId, 'error', { summary: data.message || ('Ошибка ' + res.status) });
+                return;
+            }
+            const done = applySmcPayload(cardId, data);
+            if (!done && data.status_url) {
+                const job = { timer: null, count: 0 };
+                smcPolls.set(cardId, job);
+                job.timer = setInterval(() => pollSmcStatus(cardId, data.status_url), 2000);
+            }
+        } catch (_) {
+            setSmcCardView(cardId, 'error', { summary: 'Сеть недоступна. Повторите анализ.' });
+        }
     }
 
     modalClose.addEventListener('click', closeModal);
@@ -560,6 +771,7 @@
     window.addEventListener('beforeunload', () => {
         if (pollTimer) clearInterval(pollTimer);
         if (tickTimer) clearInterval(tickTimer);
+        stopSmcPoll();
     });
 })();
 </script>

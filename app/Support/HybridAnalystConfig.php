@@ -220,7 +220,7 @@ final class HybridAnalystConfig
     }
 
     /**
-     * Кнопка «Доп. анализ SMC Flow» под гибрид-алертом и обычным Telegram-ответом Chart Analyst.
+     * Кнопка «Доп. анализ нейросетью» под гибрид-алертом и обычным Telegram-ответом Chart Analyst.
      *
      * @param  array<string, mixed>  $config
      */

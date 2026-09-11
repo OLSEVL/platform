@@ -7,7 +7,7 @@ use App\Services\Indicators\SweepRaidLiquidityDetector;
 /**
  * Компактный снимок Sweep / Raid Liquidity для LLM-аналитика.
  *
- * Модель не ищет сетап сама: она получает уже найденные SWEEP/RAID/PB
+ * Модель не ищет сетап сама: она получает уже найденные SWEEP/RAID/PB/BO
  * (тот же детектор, что у индикатора и rule-based бота) и только
  * подтверждает или отклоняет кандидатов. Целевая экспирация — 60 секунд.
  */
@@ -21,7 +21,9 @@ final class SweepRaidLlmSnapshot
      * @param  array{
      *   pivot_length?:int,
      *   enter_sweep?:bool,
-     *   enter_pullback?:bool
+     *   enter_pullback?:bool,
+     *   enter_breakout?:bool,
+     *   breakout_closes?:int
      * }  $options
      * @return array<string, mixed>
      */
@@ -34,11 +36,14 @@ final class SweepRaidLlmSnapshot
                 'pivot_length' => (int) ($options['pivot_length'] ?? 2),
                 'enter_sweep' => (bool) ($options['enter_sweep'] ?? true),
                 'enter_pullback' => (bool) ($options['enter_pullback'] ?? true),
+                'enter_breakout' => (bool) ($options['enter_breakout'] ?? false),
+                'breakout_closes' => (int) ($options['breakout_closes'] ?? 2),
                 'current_price' => null,
                 'last_bar_time' => null,
                 'candidates' => [],
                 'recent_events' => [],
                 'recent_pullbacks' => [],
+                'recent_breakouts' => [],
                 'active_levels' => [],
             ];
         }
@@ -46,6 +51,8 @@ final class SweepRaidLlmSnapshot
         $pivotLength = max(1, min(100, (int) ($options['pivot_length'] ?? 2)));
         $enterSweep = (bool) ($options['enter_sweep'] ?? true);
         $enterPullback = (bool) ($options['enter_pullback'] ?? true);
+        $enterBreakout = (bool) ($options['enter_breakout'] ?? false);
+        $breakoutCloses = max(1, min(5, (int) ($options['breakout_closes'] ?? 2)));
 
         $last = $m1Rows[array_key_last($m1Rows)];
         $lastIndex = count($m1Rows) - 1;
@@ -56,6 +63,9 @@ final class SweepRaidLlmSnapshot
         $detector = new SweepRaidLiquidityDetector;
         $events = $detector->detect($m1Rows, $pivotLength);
         $pullbacks = $detector->pullbackEntries($m1Rows, $events);
+        $breakouts = $enterBreakout
+            ? $detector->breakoutEntries($m1Rows, $pivotLength, $breakoutCloses)
+            : [];
 
         $recentEvents = [];
         foreach ($events as $event) {
@@ -73,6 +83,14 @@ final class SweepRaidLlmSnapshot
             $recentPullbacks[] = self::compactEvent($entry, 'pullback');
         }
 
+        $recentBreakouts = [];
+        foreach ($breakouts as $entry) {
+            if ((int) ($entry['time'] ?? 0) < $cutoffTime) {
+                continue;
+            }
+            $recentBreakouts[] = self::compactEvent($entry, 'breakout');
+        }
+
         // Кандидаты на подтверждение: только то, что сработало бы на последней закрытой M1.
         $candidates = [];
         if ($enterSweep) {
@@ -84,6 +102,14 @@ final class SweepRaidLlmSnapshot
                     continue;
                 }
                 $candidates[] = self::compactEvent($event, 'sweep');
+            }
+        }
+        if ($enterBreakout) {
+            foreach (array_reverse($breakouts) as $entry) {
+                if ((int) ($entry['bar_index'] ?? -1) !== $lastIndex) {
+                    continue;
+                }
+                $candidates[] = self::compactEvent($entry, 'breakout');
             }
         }
         if ($enterPullback) {
@@ -101,6 +127,8 @@ final class SweepRaidLlmSnapshot
             'pivot_length' => $pivotLength,
             'enter_sweep' => $enterSweep,
             'enter_pullback' => $enterPullback,
+            'enter_breakout' => $enterBreakout,
+            'breakout_closes' => $breakoutCloses,
             'current_price' => $currentPrice,
             'last_bar_time' => $lastTime,
             'last_bar_index' => $lastIndex,
@@ -108,14 +136,18 @@ final class SweepRaidLlmSnapshot
             'candidates' => array_values($candidates),
             'recent_events' => array_slice($recentEvents, -20),
             'recent_pullbacks' => array_slice($recentPullbacks, -12),
+            'recent_breakouts' => array_slice($recentBreakouts, -12),
             'active_levels' => self::activeLevels($recentEvents),
             'rule_reminder' => [
-                'sweep_high' => 'зелёная свеча: тень выше FH, close ниже → PUT',
-                'sweep_low' => 'красная свеча: тень ниже FL, close выше → CALL',
+                'sweep_high' => 'зелёная свеча: тень выше FH, close ниже → PUT (fade)',
+                'sweep_low' => 'красная свеча: тень ниже FL, close выше → CALL (fade)',
                 'raid' => 'снятие без цвета свипа или возврат после закрепления телом; вход не на рейде, а на первой откатной',
                 'pullback_high' => 'после снятия сверху первая зелёная → PUT',
                 'pullback_low' => 'после снятия снизу первая красная → CALL',
-                'invalid' => 'два закрытия подряд за уровнем = уровень съеден, нужен новый фрактал',
+                'breakout_high' => 'N close подряд выше FH без возврата → CALL (продолжение, не fade)',
+                'breakout_low' => 'N close подряд ниже FL без возврата → PUT (продолжение)',
+                'dual_mode' => 'fade и breakout — разные режимы от одного FH/FL; не смешивать с рейдом',
+                'invalid' => 'в режиме fade два закрытия за уровнем = уровень съеден; в режиме breakout это вход продолжения',
             ],
         ];
     }

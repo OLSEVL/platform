@@ -416,6 +416,21 @@
     }
 
     /**
+     * Отвязывает markers-plugin от серии (LWC v5: Er.detach()).
+     * Нужно на «чистом» графике: plugin + poll setData/update со временем ломает canvas свечей.
+     */
+    function detachPlugin(plugin) {
+        if (!plugin) return;
+        try {
+            if (typeof plugin.detach === 'function') {
+                plugin.detach();
+            }
+        } catch (e) {
+            console.error('[markers-helper] detachPlugin', e);
+        }
+    }
+
+    /**
      * Создаёт непрозрачный фон для конкретной pane (например RSI),
      * чтобы визуально убрать сетку и сделать область осциллятора спокойной.
      *
@@ -519,7 +534,7 @@
         const clearLabels = () => {
             if (container.childElementCount) container.innerHTML = '';
             delete container.dataset.indicatorLabelsRenderKey;
-            container.classList.add('hidden');
+        container.classList.add('hidden');
         };
 
         const chart = opts && opts.chart;
@@ -1656,6 +1671,7 @@
         mergeMarkers,
         createPluginForSeries,
         applyMarkers,
+        detachPlugin,
         createPaneSolidBackdrop,
         attachRsiLevelLines,
         renderIndicatorNameLabels,

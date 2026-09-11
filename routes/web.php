@@ -231,6 +231,10 @@ Route::middleware('auth')->group(function () {
         Route::get('/{bot}/activity', [BotController::class, 'activity'])->name('activity');
         Route::get('/{bot}/cards', [BotController::class, 'cards'])->name('cards');
         Route::get('/{bot}/cards/data', [BotController::class, 'cardsData'])->name('cards.data');
+        Route::post('/{bot}/cards/{trade}/smc-flow-analysis', [BotController::class, 'cardsSmcFlowAnalysisStart'])->name('cards.smc-flow-analysis.start');
+        Route::get('/{bot}/cards/smc-flow-analysis/{token}', [BotController::class, 'cardsSmcFlowAnalysisStatus'])
+            ->whereUuid('token')
+            ->name('cards.smc-flow-analysis.status');
         Route::get('/{bot}/cards/{trade}/chart', [BotController::class, 'cardsChart'])->name('cards.chart');
         Route::get('/{bot}/logs', [BotController::class, 'logs'])->name('logs');
         Route::get('/{bot}/settings', [BotController::class, 'settings'])->name('settings');

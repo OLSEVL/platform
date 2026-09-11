@@ -87,6 +87,52 @@ class SweepRaidLiquidityStrategyTest extends TestCase
         $this->assertNotEmpty($sweepLabels);
     }
 
+    public function test_allows_fifteen_second_expiry(): void
+    {
+        $strategy = new SweepRaidLiquidityStrategy;
+        $decision = $strategy->analyze($this->highSweepCandles(), null, [
+            'config' => [
+                'srl_pivot_length' => 1,
+                'srl_enter_sweep' => true,
+                'srl_enter_pullback' => false,
+                'srl_demarker_enabled' => false,
+                'expiry_sec' => 15,
+            ],
+            'payout' => 85.0,
+        ]);
+
+        $this->assertIsArray($decision);
+        $this->assertSame(15, $decision['expiry_sec']);
+    }
+
+    public function test_pullback_sweeps_only_still_allows_sweep_based_pullback(): void
+    {
+        // Те же свечи, что «рейд» в комментарии старого теста: детектор помечает kind=sweep,
+        // поэтому PB-sweeps-only НЕ должен блокировать (блокирует только PB после raid).
+        $strategy = new SweepRaidLiquidityStrategy;
+        $candles = [
+            $this->candle(1, 10, 10.2, 9.8, 10.1),
+            $this->candle(2, 10.1, 10.2, 9.0, 9.5),
+            $this->candle(3, 9.5, 10.0, 9.3, 9.8),
+            $this->candle(4, 9.8, 9.9, 8.8, 9.3),
+            $this->candle(5, 9.3, 9.6, 9.1, 9.4),
+            $this->candle(6, 9.5, 9.6, 9.2, 9.3),
+        ];
+        $decision = $strategy->analyze($candles, null, [
+            'config' => [
+                'srl_pivot_length' => 1,
+                'srl_enter_sweep' => false,
+                'srl_enter_pullback' => true,
+                'srl_pullback_sweeps_only' => true,
+                'expiry_sec' => 15,
+            ],
+        ]);
+        $this->assertIsArray($decision);
+        $this->assertSame('pullback', $decision['features']['entry_mode']);
+        $this->assertTrue($decision['features']['srl_pullback_sweeps_only']);
+        $this->assertSame(15, $decision['expiry_sec']);
+    }
+
     /** @return list<array{time:int,open:float,high:float,low:float,close:float,volume:float}> */
     private function highSweepCandles(): array
     {

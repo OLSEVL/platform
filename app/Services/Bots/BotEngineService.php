@@ -50,6 +50,7 @@ use App\Services\Indicators\DemarkerIndicatorService;
 use App\Services\Mirror\MirrorTradeDispatcher;
 use App\Services\Telegram\TelegramAlertService;
 use App\Support\BotScanProgress;
+use App\Support\BinaryExpiry;
 use App\Support\ChartAnalystBotTypes;
 use App\Support\LevelBounceBotTypes;
 use App\Support\MaxBotConfig;
@@ -260,8 +261,8 @@ class BotEngineService
                     if (in_array($bot->type, ['smc_flow', 'strong_level', 'candle_reversal_confirm'], true) && isset($decision['expiry_sec'])) {
                         $decisionExpirySec = max(120, min(600, (int) $decision['expiry_sec']));
                     } elseif (in_array($bot->type, ['sweep_raid_liquidity', 'engulfing_liquidity'], true) && isset($decision['expiry_sec'])) {
-                        // Свип/рейд на M1 допускает стандартную минутную экспирацию.
-                        $decisionExpirySec = max(60, min(900, (int) $decision['expiry_sec']));
+                        // SRL/Engulf: 15–900с (авторский OTC часто 15с); не поднимаем обратно до 60.
+                        $decisionExpirySec = \App\Support\BinaryExpiry::clamp((int) $decision['expiry_sec']);
                     }
 
                     $confidence = (float) ($decision['confidence'] ?? 0);
@@ -586,7 +587,7 @@ class BotEngineService
                     // Telegram только после настоящей paper-сделки: виртуальные проверки
                     // Strong Trend + DeMarker не должны создавать торговые уведомления.
                     $telegramResult = null;
-                    if (in_array($bot->type, ['strong_trend_demarker', DemarkerDualFastConfig::BOT_TYPE, 'sweep_raid_liquidity', 'engulfing_liquidity'], true)) {
+                    if (in_array($bot->type, ['strong_trend_demarker', DemarkerDualFastConfig::BOT_TYPE, 'sweep_raid_liquidity', 'engulfing_liquidity', 'smc_flow'], true)) {
                         $telegramResult = app(TelegramAlertService::class)->sendStrategyAlert(
                             $bot,
                             $instrument,
@@ -910,6 +911,8 @@ class BotEngineService
             'pivot_length' => (int) ($config['srl_pivot_length'] ?? 2),
             'enter_sweep' => (bool) ($config['srl_enter_sweep'] ?? true),
             'enter_pullback' => (bool) ($config['srl_enter_pullback'] ?? true),
+            'enter_breakout' => (bool) ($config['srl_enter_breakout'] ?? false),
+            'breakout_closes' => max(1, min(5, (int) ($config['srl_breakout_closes'] ?? 2))),
         ];
 
         if ($rows === []) {
@@ -920,14 +923,32 @@ class BotEngineService
             ];
         }
 
+        // Грязная OTC-пара — не отдаём кандидаты LLM (тот же фильтр, что у rule-based).
+        if (\App\Support\OtcGapFilter::shouldSkip($rows, $config, 'srl')) {
+            $emptySnap = SweepRaidLlmSnapshot::build([], $options);
+            $emptySnap['gap_skip'] = true;
+            $gapStats = \App\Support\OtcGapFilter::measure($rows, $config, 'srl');
+            if ($gapStats !== null) {
+                $emptySnap['gap_ratio'] = $gapStats['gap_ratio'];
+            }
+
+            return [
+                'snapshot' => $emptySnap,
+                'overlay' => $emptyOverlay,
+                'bar_count' => count($rows),
+            ];
+        }
+
         $params = IndicatorSetting::mergedSweepRaidLiquidityParams($bot);
         $params = \App\Support\BotTradingChartLayers::overlayParams($bot, 'srl', $params);
-        // Для аналитика всегда показываем sweep/raid/pb согласно флагам входа.
+        // Для аналитика всегда показываем sweep/raid/pb/bo согласно флагам входа.
         $params['pivot_length'] = $options['pivot_length'];
         $params['show_fractals'] = true;
         $params['show_sweeps'] = $options['enter_sweep'];
         $params['show_raids'] = $options['enter_pullback'];
         $params['show_pullback_entries'] = $options['enter_pullback'];
+        $params['show_breakout_entries'] = $options['enter_breakout'];
+        $params['breakout_closes'] = $options['breakout_closes'];
         $overlay = $srlService->compute($rows, $params);
 
         return [
@@ -967,6 +988,21 @@ class BotEngineService
                 'snapshot' => EngulfingLlmSnapshot::build([], $options),
                 'overlay' => $emptyOverlay,
                 'bar_count' => 0,
+            ];
+        }
+
+        if (\App\Support\OtcGapFilter::shouldSkip($rows, $config, 'eng')) {
+            $emptySnap = EngulfingLlmSnapshot::build([], $options);
+            $emptySnap['gap_skip'] = true;
+            $gapStats = \App\Support\OtcGapFilter::measure($rows, $config, 'eng');
+            if ($gapStats !== null) {
+                $emptySnap['gap_ratio'] = $gapStats['gap_ratio'];
+            }
+
+            return [
+                'snapshot' => $emptySnap,
+                'overlay' => $emptyOverlay,
+                'bar_count' => count($rows),
             ];
         }
 
@@ -1322,8 +1358,8 @@ class BotEngineService
         $expirySec = match ($bot->type) {
             'three_candles_in_row' => (int) ($config['expiry_sec'] ?? 60),
             'smc_flow' => (int) ($config['expiry_sec'] ?? 180),
-            'sweep_raid_liquidity' => (int) ($config['expiry_sec'] ?? 60),
-            'engulfing_liquidity' => (int) ($config['expiry_sec'] ?? 60),
+            'sweep_raid_liquidity' => BinaryExpiry::clamp((int) ($config['expiry_sec'] ?? 60)),
+            'engulfing_liquidity' => BinaryExpiry::clamp((int) ($config['expiry_sec'] ?? 60)),
             'strong_trend_telegram' => (int) ($config['expiry_sec'] ?? 60),
             'strong_trend_demarker' => (int) ($config['expiry_sec'] ?? 30),
             DemarkerDualFastConfig::BOT_TYPE => (int) ($config['expiry_sec'] ?? 30),
@@ -1438,6 +1474,7 @@ class BotEngineService
         };
         // Указываем таймфрейм входного потока для стратегии.
         // Strong Trend + DeMarker поддерживает S30 по умолчанию и M1 по выбору.
+        // SRL / Engulfing: S15 (4015) как у автора на OTC; иначе M1.
         $seriesTimeframe = match ($bot->type) {
             MaxBotConfig::BOT_TYPE => MaxBotConfig::dashboardTimeframeId(
                 (int) ($config['timeframe_sec'] ?? MaxBotConfig::DEFAULT_TIMEFRAME_SEC)
@@ -1449,13 +1486,21 @@ class BotEngineService
             )
                 ? (int) ($config['timeframe'] ?? CandleService::TF_S30)
                 : CandleService::TF_S30,
+            'sweep_raid_liquidity', 'engulfing_liquidity' => in_array(
+                (int) ($config['timeframe'] ?? 1),
+                [CandleService::TF_S5, CandleService::TF_S15, CandleService::TF_S30, 1],
+                true
+            )
+                ? (int) ($config['timeframe'] ?? 1)
+                : 1,
             default => 1,
         };
         $dedupeBucketSec = match ($bot->type) {
             'strong_trend_telegram' => max(60, min(3600, (int) ($config['dedupe_bucket_sec'] ?? 300))),
             'strong_trend_demarker', DemarkerDualFastConfig::BOT_TYPE => max(30, min(3600, (int) ($config['dedupe_bucket_sec'] ?? $expirySec))),
             MaxBotConfig::BOT_TYPE => max(5, min(3600, (int) ($config['dedupe_bucket_sec'] ?? $expirySec))),
-            'smc_flow', 'strong_level', 'openrouter_llm', 'candle_reversal_confirm', 'sweep_raid_liquidity', 'engulfing_liquidity' => max(60, min(900, $expirySec)),
+            // Dedupe ≈ expiry: при 15с не держим искусственный floor 60.
+            'smc_flow', 'strong_level', 'openrouter_llm', 'candle_reversal_confirm', 'sweep_raid_liquidity', 'engulfing_liquidity' => max(15, min(900, $expirySec)),
             default => LevelBounceBotTypes::isOsEngineBinary($bot->type)
                 ? max(60, min(900, $expirySec))
                 : max(60, min(3600, (int) ($config['dedupe_bucket_sec'] ?? 60))),

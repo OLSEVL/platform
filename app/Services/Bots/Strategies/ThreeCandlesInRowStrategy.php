@@ -59,10 +59,9 @@ class ThreeCandlesInRowStrategy implements BotStrategyInterface
         }
 
         $payout = isset($context['payout']) ? (float) $context['payout'] : null;
-        $payoutFactor = $payout !== null ? min(1.0, max(0.0, $payout / 100.0)) : 0.5;
 
-        // Простая оценка для фильтра min_confidence в движке (тела свечей + доля выплаты).
-        $confidence = round(0.55 * min(1.0, $avgBody / 0.45) + 0.45 * $payoutFactor, 4);
+        // Оценка для фильтра min_confidence: только «толщина» тел свечей.
+        $confidence = round(min(1.0, $avgBody / 0.45), 4);
         $confidence = max($confidence, 0.56);
 
         $hourFrom = $this->optionalHour($cfg['trade_hour_utc_from'] ?? null);

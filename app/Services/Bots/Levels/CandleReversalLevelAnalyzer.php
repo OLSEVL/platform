@@ -192,7 +192,7 @@ class CandleReversalLevelAnalyzer
         }
 
         [$side, $reasons, $setupType, $m5Wick] = $entry;
-        $confidence = $this->scoreConfidence($nearest, $h1Bias, $payout);
+        $confidence = $this->scoreConfidence($nearest, $h1Bias);
 
         $features = [
                 'level_price' => round($nearest['price'], 8),
@@ -688,16 +688,13 @@ class CandleReversalLevelAnalyzer
         return 'bounce';
     }
 
-    private function scoreConfidence(array $cluster, string $h1Bias, ?float $payout): float
+    private function scoreConfidence(array $cluster, string $h1Bias): float
     {
         $confidence = 0.56 + min(0.22, ($cluster['strength'] - 50.0) / 200.0);
         $confidence += min(0.06, $cluster['touches'] * 0.012);
         $confidence += 0.03;
         if ($h1Bias === 'up' || $h1Bias === 'down') {
             $confidence += 0.02;
-        }
-        if ($payout !== null) {
-            $confidence += 0.05 * min(1.0, max(0.0, $payout / 100.0));
         }
 
         return round(min(0.88, max(0.58, $confidence)), 4);

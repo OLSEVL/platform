@@ -52,7 +52,7 @@ class SmcFlowStrategy implements BotStrategyInterface
     }
 
     $payout = isset($context['payout']) ? (float) $context['payout'] : null;
-    $confidence = $this->scoreConfidence($signalContext, $utSide, $confirmMaxBars, $payout, $diagnosis);
+    $confidence = $this->scoreConfidence($signalContext, $utSide, $confirmMaxBars, $diagnosis);
 
     $reasons = $this->buildReasons($signalContext, $utSide, $confirmMaxBars, $diagnosis);
 
@@ -117,7 +117,7 @@ class SmcFlowStrategy implements BotStrategyInterface
   /**
    * @param  array<string, mixed>  $signalContext
    */
-  private function scoreConfidence(array $signalContext, string $side, int $confirmMaxBars, ?float $payout, array $diagnosis): float
+  private function scoreConfidence(array $signalContext, string $side, int $confirmMaxBars, array $diagnosis): float
   {
     $confidence = 0.58;
     $barsAgo = $diagnosis['three_br_bars_ago'] ?? null;
@@ -131,10 +131,6 @@ class SmcFlowStrategy implements BotStrategyInterface
       } elseif ($barsAgo <= $confirmMaxBars) {
         $confidence += 0.02;
       }
-    }
-
-    if ($payout !== null) {
-      $confidence += 0.05 * min(1.0, max(0.0, $payout / 100.0));
     }
 
     return round(min(0.88, max(0.56, $confidence)), 4);

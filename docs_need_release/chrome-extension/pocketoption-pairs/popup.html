@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <title>PocketOption Pairs</title>
+  <style>
+    body {
+      font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+      margin: 0;
+      padding: 14px 16px;
+      min-width: 300px;
+      background: #1a1d24;
+      color: #e8eaed;
+      font-size: 13px;
+    }
+    h1 {
+      font-size: 15px;
+      margin: 0 0 10px;
+      font-weight: 600;
+    }
+    h2 {
+      font-size: 12px;
+      margin: 14px 0 8px;
+      font-weight: 600;
+      color: #9aa0a6;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+    td {
+      padding: 6px 4px;
+      border-bottom: 1px solid #2d323c;
+    }
+    td:first-child {
+      font-weight: 600;
+      color: #81c995;
+      width: 72px;
+    }
+    .hint {
+      margin-top: 12px;
+      color: #9aa0a6;
+      line-height: 1.45;
+      font-size: 12px;
+    }
+    code {
+      color: #8ab4f8;
+      font-size: 11px;
+    }
+    .settings {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .setting {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      padding: 8px 10px;
+      border-radius: 8px;
+      background: #22262f;
+      border: 1px solid #2d323c;
+      cursor: pointer;
+      user-select: none;
+    }
+    .setting:hover {
+      border-color: #3c4450;
+    }
+    .setting input {
+      margin-top: 2px;
+      accent-color: #81c995;
+      flex-shrink: 0;
+    }
+    .setting .label {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+    .setting .title {
+      font-weight: 600;
+      color: #e8eaed;
+    }
+    .setting .desc {
+      font-size: 11px;
+      color: #9aa0a6;
+      line-height: 1.35;
+    }
+    .warn {
+      display: none;
+      margin-top: 8px;
+      padding: 8px 10px;
+      border-radius: 6px;
+      background: rgba(234, 67, 53, 0.12);
+      border: 1px solid rgba(234, 67, 53, 0.45);
+      color: #f28b82;
+      font-size: 12px;
+      line-height: 1.4;
+    }
+    .warn.visible {
+      display: block;
+    }
+    .status {
+      min-height: 16px;
+      margin-top: 8px;
+      font-size: 12px;
+      color: #81c995;
+    }
+  </style>
+</head>
+<body>
+  <h1>Активы PocketOption</h1>
+  <table>
+    <tr><td>Alt + Q</td><td>Вверх по включённым категориям</td></tr>
+    <tr><td>Alt + W</td><td>Вниз по включённым категориям</td></tr>
+  </table>
+
+  <h2>Категории</h2>
+  <div class="settings">
+    <label class="setting" for="catCurrency">
+      <input type="checkbox" id="catCurrency" checked />
+      <span class="label">
+        <span class="title">Валюты</span>
+        <span class="desc">Forex-пары (EUR/USD, GBP/JPY…)</span>
+      </span>
+    </label>
+    <label class="setting" for="catCrypto">
+      <input type="checkbox" id="catCrypto" checked />
+      <span class="label">
+        <span class="title">Криптовалюты</span>
+        <span class="desc">Bitcoin, Ethereum, Cardano…</span>
+      </span>
+    </label>
+    <label class="setting" for="catStock">
+      <input type="checkbox" id="catStock" checked />
+      <span class="label">
+        <span class="title">Акции</span>
+        <span class="desc">Apple, Tesla, Intel…</span>
+      </span>
+    </label>
+  </div>
+  <div class="warn" id="warnCategories">
+    Включите хотя бы одну категорию — иначе переключать будет нечего.
+  </div>
+
+  <h2>Фильтры</h2>
+  <div class="settings">
+    <label class="setting" for="skipOtc">
+      <input type="checkbox" id="skipOtc" />
+      <span class="label">
+        <span class="title">Отключить OTC</span>
+        <span class="desc">Не переключать активы с пометкой OTC</span>
+      </span>
+    </label>
+    <label class="setting" for="skipNonOtc">
+      <input type="checkbox" id="skipNonOtc" />
+      <span class="label">
+        <span class="title">Отключить без OTC</span>
+        <span class="desc">Остаются только OTC-активы</span>
+      </span>
+    </label>
+  </div>
+  <div class="warn" id="warnBoth">
+    Оба OTC-фильтра включены — список будет пустым. Оставьте только один.
+  </div>
+  <div class="status" id="status"></div>
+
+  <p class="hint">
+    Порядок обхода внутри категории; на краю списка — переход
+    <b>Валюты → Криптовалюты → Акции</b> (без лишнего сканирования вкладок).
+    Также пропускаются недоступные и с выплатой <b>ниже 75%</b>.
+    Настройки применяются сразу (F5 не нужен).
+  </p>
+  <script src="popup.js"></script>
+</body>
+</html>

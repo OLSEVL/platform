@@ -156,8 +156,8 @@ class StrongTrendTelegramStrategy implements BotStrategyInterface
         }
 
         $payout = isset($context['payout']) ? (float) $context['payout'] : null;
-        $payoutFactor = $payout !== null ? min(1.0, max(0.0, $payout / 100.0)) : 0.5;
-        $confidence = round(0.60 * min(1.0, $avgBody / 0.45) + 0.40 * $payoutFactor, 4);
+        // Confidence только от «толщины» тел свечей серии; payout фильтруется через min_payout.
+        $confidence = round(min(1.0, $avgBody / 0.45), 4);
         $confidence = max($confidence, 0.55);
         // Небольшой бонус, если серия реально касалась MA (не голый late-chase).
         if ($requirePullback && $pullbackTouched) {

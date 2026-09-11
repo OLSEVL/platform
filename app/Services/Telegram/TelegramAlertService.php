@@ -447,6 +447,11 @@ class TelegramAlertService
                         $closedCandles,
                         IndicatorSetting::mergedEngulfingLiquidityParams($bot),
                     );
+            } elseif ($bot->type === 'smc_flow') {
+                // UT Buy/Sell + 3BR confirm + зона LuxAlgo OB на тех же закрытых M1, что дали вход.
+                $chartLogKey = 'smc_flow_photo';
+                $chartLevels = app(SmcFlowChartBuilder::class)
+                    ->chartLevelsFromDecision($decision, $closedCandles);
             }
             if (is_array($chartLevels)) {
                 $captionBase = '📣 <b>'.htmlspecialchars($instrument, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8').'</b>';
@@ -520,7 +525,7 @@ class TelegramAlertService
                     }
                 }
             }
-        } elseif ($sendChart && in_array($bot->type, ['strong_trend_demarker', \App\Support\DemarkerDualFastConfig::BOT_TYPE, 'sweep_raid_liquidity', 'engulfing_liquidity'], true) && ! extension_loaded('gd')) {
+        } elseif ($sendChart && in_array($bot->type, ['strong_trend_demarker', \App\Support\DemarkerDualFastConfig::BOT_TYPE, 'sweep_raid_liquidity', 'engulfing_liquidity', 'smc_flow'], true) && ! extension_loaded('gd')) {
             $photoOk = false;
             $photoError = 'gd_extension_missing';
         }

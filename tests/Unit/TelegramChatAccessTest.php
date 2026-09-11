@@ -149,6 +149,6 @@ class TelegramChatAccessTest extends TestCase
         $this->assertTrue(\App\Services\Telegram\StrongLevelTelegramProcessManager::pollSupported('strong_trend_demarker'));
         $this->assertTrue(\App\Services\Telegram\StrongLevelTelegramProcessManager::pollSupported('sweep_raid_liquidity'));
         $this->assertTrue(\App\Services\Telegram\StrongLevelTelegramProcessManager::pollSupported('strong_trend_telegram'));
-        $this->assertFalse(\App\Services\Telegram\StrongLevelTelegramProcessManager::pollSupported('smc_flow'));
+        $this->assertTrue(\App\Services\Telegram\StrongLevelTelegramProcessManager::pollSupported('smc_flow'));
     }
 }

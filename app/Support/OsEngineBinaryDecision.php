@@ -37,12 +37,18 @@ final class OsEngineBinaryDecision
         ];
     }
 
-    /** Confidence: база + глубина сетапа (0..1) + payout factor. */
-    public static function confidence(float $depth, ?float $payout, float $wDepth = 0.45, float $wBase = 0.25, float $wPay = 0.30): float
+    /**
+     * Confidence: база + глубина сетапа (0..1).
+     * Payout в формулу не входит — пары с низкой выплатой отсекаются отдельно через min_payout.
+     *
+     * @param  ?float  $payout  Оставлен для совместимости вызовов; не используется в расчёте.
+     */
+    public static function confidence(float $depth, ?float $payout = null, float $wDepth = 0.45, float $wBase = 0.25): float
     {
-        $payoutFactor = $payout !== null ? min(1.0, max(0.0, $payout / 100.0)) : 0.5;
         $depth = min(1.0, max(0.0, $depth));
+        // Бывший вес payout (0.30) перераспределён пропорционально между depth и base.
+        $setupScore = $wDepth * (0.55 + 0.45 * $depth) + $wBase * 0.7;
 
-        return $wDepth * (0.55 + 0.45 * $depth) + $wBase * 0.7 + $wPay * $payoutFactor;
+        return $setupScore / ($wDepth + $wBase);
     }
 }

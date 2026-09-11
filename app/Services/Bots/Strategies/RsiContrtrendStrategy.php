@@ -88,7 +88,6 @@ class RsiContrtrendStrategy implements BotStrategyInterface
         }
 
         $payout = isset($context['payout']) ? (float) $context['payout'] : null;
-        $payoutFactor = $payout !== null ? min(1.0, max(0.0, $payout / 100.0)) : 0.5;
 
         // Глубина захода в зону RSI: дальше от границы → увереннее.
         $zoneDepth = $side === 'CALL'
@@ -98,10 +97,9 @@ class RsiContrtrendStrategy implements BotStrategyInterface
         // Дистанция цены от SMA в долях ATR-независимом «относительном» виде от цены.
         $smaDist = min(1.0, abs($close - $sma) / max(abs($close), 1e-9) * 200.0);
 
+        // Без payout: бывший вес 0.30 перераспределён между RSI-глубиной и дистанцией от SMA.
         $confidence = round(
-            0.45 * (0.55 + 0.45 * $zoneDepth)
-            + 0.25 * (0.5 + 0.5 * $smaDist)
-            + 0.30 * $payoutFactor,
+            (0.45 * (0.55 + 0.45 * $zoneDepth) + 0.25 * (0.5 + 0.5 * $smaDist)) / 0.70,
             4
         );
         $confidence = max(0.56, min(0.95, $confidence));

@@ -1,0 +1,28 @@
+/* Всплывающая подсказка при смене валютной пары */
+.po-pairs-toast {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%) translateY(12px);
+  z-index: 2147483647;
+  padding: 10px 18px;
+  border-radius: 8px;
+  background: rgba(20, 24, 32, 0.95);
+  color: #e8eaed;
+  font: 600 14px/1.2 system-ui, -apple-system, "Segoe UI", sans-serif;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.45);
+  border: 1px solid rgba(66, 200, 133, 0.55);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.po-pairs-toast.po-pairs-toast--visible {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+
+.po-pairs-toast.po-pairs-toast--error {
+  border-color: rgba(234, 67, 53, 0.6);
+  color: #f28b82;
+}

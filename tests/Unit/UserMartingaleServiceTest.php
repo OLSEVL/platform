@@ -139,6 +139,47 @@ class UserMartingaleServiceTest extends TestCase
         $this->assertSame(1, (int) UserTradingSetting::query()->where('user_id', $user->id)->value('martingale_step'));
     }
 
+    public function test_skips_martingale_step_when_session_already_green(): void
+    {
+        $user = User::factory()->create();
+        UserTradingSetting::query()->create([
+            'user_id' => $user->id,
+            'pocket_ssid' => '42["auth",{"session":"x","uid":1,"isDemo":1,"platform":2}]',
+            'order_amounts' => [1.0, 2.0, 4.0],
+            'martingale_step' => 0,
+            'order_amount' => 1,
+            'mirror_trades_enabled' => true,
+        ]);
+
+        $bot = Bot::query()->create([
+            'user_id' => $user->id,
+            'name' => 'SRL',
+            'type' => 'sweep_raid_liquidity',
+            'is_active' => true,
+            'config' => ['srl_skip_martingale_if_session_green' => true],
+        ]);
+
+        // День уже в плюсе (исключая текущий минус).
+        BotTrade::query()->create([
+            'bot_id' => $bot->id,
+            'instrument' => 'EURUSD_otc',
+            'side' => 'CALL',
+            'status' => BotTrade::STATUS_SETTLED,
+            'result' => BotTrade::RESULT_WIN,
+            'entry_time' => now()->subMinutes(10),
+            'expiry_time' => now()->subMinutes(9),
+            'entry_price' => 1.0,
+            'pnl' => 0.8,
+            'meta_json' => [],
+        ]);
+
+        $loss = $this->makeTrade($bot->id, ['mirror_status' => 'executed']);
+        $loss->update(['pnl' => -1.0, 'result' => BotTrade::RESULT_LOSS]);
+
+        app(UserMartingaleService::class)->advanceAfterSettledTrade($loss->fresh(), BotTrade::RESULT_LOSS, 'executed');
+        $this->assertSame(0, (int) UserTradingSetting::query()->where('user_id', $user->id)->value('martingale_step'));
+    }
+
     /** @param  array<string, mixed>  $meta */
     private function makeTrade(int $botId, array $meta): BotTrade
     {

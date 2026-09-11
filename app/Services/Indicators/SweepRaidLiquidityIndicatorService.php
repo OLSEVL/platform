@@ -17,11 +17,15 @@ class SweepRaidLiquidityIndicatorService
         'show_sweeps' => true,
         'show_raids' => true,
         'show_pullback_entries' => true,
+        // Сценарий E: пробой + закрепление (по умолчанию скрыт — как тумблер бота).
+        'show_breakout_entries' => false,
+        'breakout_closes' => 2,
         'color_fractal_high' => '#ef4444',
         'color_fractal_low' => '#14b8a6',
         'color_sweep' => '#f59e0b',
         'color_raid' => '#a78bfa',
         'color_pullback' => '#22c55e',
+        'color_breakout' => '#38bdf8',
         'label_size' => 'small',
     ];
 
@@ -95,6 +99,21 @@ class SweepRaidLiquidityIndicatorService
                     'price' => (float) $entry['entry_price'],
                     'text' => ($isHigh ? '▼ ' : '▲ ').'PB · '.(string) $entry['side'],
                     'color' => (string) $p['color_pullback'],
+                    'position' => $isHigh ? 'above' : 'below',
+                ];
+            }
+        }
+
+        // Breakout: close(s) за уровнем → продолжение (CALL выше FH / PUT ниже FL).
+        if ((bool) $p['show_breakout_entries']) {
+            $confirmCloses = max(1, min(5, (int) ($p['breakout_closes'] ?? 2)));
+            foreach ($detector->breakoutEntries($rows, $pivotLength, $confirmCloses) as $entry) {
+                $isHigh = ($entry['location'] ?? '') === 'high';
+                $labels[] = [
+                    'time' => (int) $entry['time'],
+                    'price' => (float) $entry['entry_price'],
+                    'text' => ($isHigh ? '▲ ' : '▼ ').'BO · '.(string) $entry['side'],
+                    'color' => (string) $p['color_breakout'],
                     'position' => $isHigh ? 'above' : 'below',
                 ];
             }

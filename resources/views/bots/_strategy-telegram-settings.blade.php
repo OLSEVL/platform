@@ -21,6 +21,7 @@
         Для Sweep / Raid Liquidity к алерту прикрепляется график M1 с фракталами, SWEEP/RAID/PB и точкой входа
         (и опционально второй — зум на последние N свечей).
         Для Strong Trend + DeMarker — график свечей с панелью DeMarker.
+        Для SMC Flow — график M1 с метками UT / 3BR и зоной Order Block.
     </p>
 
     <label class="flex items-start gap-2">
@@ -56,7 +57,7 @@
                 <option value="1" @selected($telegramSendChart === '1')>Да, PNG со свечами и метками</option>
                 <option value="0" @selected($telegramSendChart === '0')>Нет, только текст</option>
             </select>
-            <p class="text-[11px] text-zinc-500">Sweep / Raid: FH/FL, свип, рейд, откат и точка входа. DeMarker: свечи + панель осциллятора.</p>
+            <p class="text-[11px] text-zinc-500">Sweep / Raid: FH/FL, свип, рейд, откат и точка входа. DeMarker: свечи + панель осциллятора. SMC Flow: UT, 3BR и зона OB.</p>
         </div>
         @if (($bot->type ?? '') === 'sweep_raid_liquidity')
             <div class="space-y-1">
@@ -83,11 +84,12 @@
                 @error('telegram_chart_recent_bars')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
             </div>
         @endif
-        @if (in_array($bot->type ?? '', ['strong_trend_demarker', \App\Support\DemarkerDualFastConfig::BOT_TYPE, 'sweep_raid_liquidity', 'engulfing_liquidity'], true))
+        @if (in_array($bot->type ?? '', ['strong_trend_demarker', \App\Support\DemarkerDualFastConfig::BOT_TYPE, 'sweep_raid_liquidity', 'engulfing_liquidity', 'smc_flow'], true))
             {{-- Те же LLM-поля, что у Candle Reversal + Confirm: кнопка SMC Flow, выбор Chart Analyst и вопрос. --}}
             @php
                 $llmCallbackBotHint = match ($bot->type ?? '') {
                     'strong_trend_demarker', \App\Support\DemarkerDualFastConfig::BOT_TYPE => '@strong_DeMarker_bot',
+                    'smc_flow' => 'этом Telegram-боте (token SMC Flow)',
                     default => 'этом Telegram-боте (token Sweep / Raid)',
                 };
             @endphp

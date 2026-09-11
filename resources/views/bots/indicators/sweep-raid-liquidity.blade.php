@@ -42,17 +42,18 @@
                 ['show_sweeps', 'Свипы', 'color_sweep', 'Цвет свипа', null, null],
                 ['show_raids', 'Рейды', 'color_raid', 'Цвет рейда', null, null],
                 ['show_pullback_entries', 'Первая откатная (PB)', 'color_pullback', 'Цвет PB', null, null],
+                ['show_breakout_entries', 'Пробой (BO)', 'color_breakout', 'Цвет пробоя', null, null],
             ] as [$toggle, $label, $firstColor, $firstLabel, $secondColor, $secondLabel])
                 <div class="rounded border border-zinc-700 bg-zinc-950/40 p-3">
                     <input type="hidden" name="{{ $toggle }}" value="0">
                     <label class="flex items-center gap-2 text-sm text-zinc-200">
                         <input type="checkbox" name="{{ $toggle }}" value="1" class="rounded border-zinc-600 bg-zinc-800 text-blue-500"
-                            @checked(old($toggle, $srl[$toggle]))>
+                            @checked(old($toggle, $srl[$toggle] ?? false))>
                         {{ $label }}
                     </label>
                     <div class="mt-2 flex items-center gap-2 text-xs text-zinc-400">
                         <span>{{ $firstLabel }}</span>
-                        <input type="color" name="{{ $firstColor }}" value="{{ old($firstColor, $srl[$firstColor]) }}" class="h-7 w-12 cursor-pointer rounded border border-zinc-600 bg-zinc-900">
+                        <input type="color" name="{{ $firstColor }}" value="{{ old($firstColor, $srl[$firstColor] ?? '#38bdf8') }}" class="h-7 w-12 cursor-pointer rounded border border-zinc-600 bg-zinc-900">
                         @if ($secondColor)
                             <span>{{ $secondLabel }}</span>
                             <input type="color" name="{{ $secondColor }}" value="{{ old($secondColor, $srl[$secondColor]) }}" class="h-7 w-12 cursor-pointer rounded border border-zinc-600 bg-zinc-900">
@@ -60,6 +61,14 @@
                     </div>
                 </div>
             @endforeach
+        </div>
+
+        <div class="space-y-1">
+            <label for="srl-breakout-closes" class="block text-xs font-medium text-zinc-400">Закрытий за уровнем (пробой)</label>
+            <input type="number" name="breakout_closes" id="srl-breakout-closes" min="1" max="5" required
+                value="{{ old('breakout_closes', $srl['breakout_closes'] ?? 2) }}"
+                class="w-full max-w-xs rounded border border-zinc-600 bg-zinc-950 px-3 py-2 text-zinc-100">
+            <p class="text-[11px] text-zinc-500">Сколько подряд close за FH/FL считать закреплением для метки BO.</p>
         </div>
 
         <div class="space-y-1">

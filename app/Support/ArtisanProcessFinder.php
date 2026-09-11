@@ -326,6 +326,46 @@ final class ArtisanProcessFinder
         return implode("\n", $output);
     }
 
+    /**
+     * Список очередей из --queue=a,b,c в cmdline queue:work.
+     * null — флаг не задан, Laravel слушает только default.
+     *
+     * @return list<string>|null
+     */
+    public static function parseQueueListFromCmdline(string $cmdline): ?array
+    {
+        if (! preg_match('/--queue=(\S+)/', $cmdline, $matches)) {
+            return null;
+        }
+
+        $raw = trim($matches[1], "'\"");
+
+        return array_values(array_filter(
+            array_map('trim', explode(',', $raw)),
+            static fn (string $queue): bool => $queue !== '',
+        ));
+    }
+
+    /**
+     * queue:work обрабатывает хотя бы одну из перечисленных очередей.
+     * Без --queue= считаем, что слушается только default.
+     *
+     * @param  list<string>  $queueNames
+     */
+    public static function queueWorkHandlesAnyOf(string $cmdline, array $queueNames): bool
+    {
+        if (! str_contains($cmdline, 'queue:work')) {
+            return false;
+        }
+
+        $queues = self::parseQueueListFromCmdline($cmdline);
+        if ($queues === null) {
+            return in_array('default', $queueNames, true);
+        }
+
+        return array_intersect($queues, $queueNames) !== [];
+    }
+
     /** Парсинг etime из ps: mm:ss, hh:mm:ss, dd-hh:mm:ss. */
     public static function parseElapsedToSeconds(string $raw): ?int
     {

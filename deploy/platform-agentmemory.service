@@ -11,8 +11,8 @@ Group=o
 WorkingDirectory=/home/o/platform
 Environment=HOME=/home/o
 Environment=PATH=/home/o/.local/bin:/usr/local/bin:/usr/bin:/bin
-# Запуск через npx: всегда подтягивает актуальный @agentmemory/agentmemory с npm.
-ExecStart=/usr/bin/npx --yes @agentmemory/agentmemory@latest
+# Стабильный бинарник из ~/.local — без npx, чтобы MCP/сервис не падали после очистки npm-кэша.
+ExecStart=/home/o/.local/bin/agentmemory
 Restart=always
 RestartSec=10
 # Даём iii-engine и памяти подняться после холодного старта.

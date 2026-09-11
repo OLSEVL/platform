@@ -197,7 +197,7 @@ class TelegramAnalystHandler
             return;
         }
 
-        // Кнопка «Доп. анализ SMC Flow» с гибрид-алерта (sllm:analystId:instrument) — без hybrid_source_signal.
+        // Кнопка «Доп. анализ нейросетью» с гибрид-алерта (sllm:analystId:instrument) — без hybrid_source_signal.
         $parsedLlm = StrongLevelTelegramLlmButton::parseCallbackData($data);
         if ($parsedLlm !== null && $parsedLlm['analyst_bot_id'] === (int) $bot->id) {
             $this->handleSelfLlmButton($bot, $token, $callbackId, $chatId, $parsedLlm);
@@ -232,6 +232,7 @@ class TelegramAnalystHandler
         $cfg = is_array($bot->config) ? $bot->config : [];
         $question = StrongLevelTelegramLlmButton::llmQuestionFromConfig($cfg);
 
+        // Каждый callback — новый LLM-запрос (без переиспользования прошлого ответа).
         try {
             RunTelegramAnalystAnalysisJob::dispatch($bot->id, $chatId, $instrument, $question);
         } catch (\Throwable $e) {
@@ -276,6 +277,7 @@ class TelegramAnalystHandler
         );
 
         try {
+            // Каждый выбор пары / вопрос — новый вызов модели, без прошлого текста.
             RunTelegramAnalystAnalysisJob::dispatch($bot->id, $chatId, $instrument, $question);
         } catch (\Throwable $e) {
             Log::error('telegram_analyst_dispatch_failed', ['error' => $e->getMessage()]);

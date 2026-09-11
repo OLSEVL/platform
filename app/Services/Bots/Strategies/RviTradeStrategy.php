@@ -96,16 +96,13 @@ class RviTradeStrategy implements BotStrategyInterface
         }
 
         $payout = isset($context['payout']) ? (float) $context['payout'] : null;
-        $payoutFactor = $payout !== null ? min(1.0, max(0.0, $payout / 100.0)) : 0.5;
 
         $sep = abs($rviUp - $rviDown);
         $zeroDist = abs($rviDown);
         $zoneDepth = min(1.0, max(0.0, 0.5 * min(1.0, $sep / 0.5) + 0.5 * min(1.0, $zeroDist / 0.5)));
 
         $confidence = round(
-            0.50 * (0.55 + 0.45 * $zoneDepth)
-            + 0.20 * 0.7
-            + 0.30 * $payoutFactor,
+            (0.50 * (0.55 + 0.45 * $zoneDepth) + 0.20 * 0.7) / 0.70,
             4
         );
         $confidence = max(0.58, min(0.95, $confidence));

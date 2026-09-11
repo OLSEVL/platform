@@ -177,6 +177,7 @@ class StrongLevelTelegramHandler
 
         $question = StrongLevelTelegramLlmButton::llmQuestionFromConfig($cfg);
 
+        // Каждый callback — новый LLM-запрос (без переиспользования прошлого ответа).
         try {
             RunTelegramAnalystAnalysisJob::dispatch($analyst->id, $chatId, $instrument, $question);
         } catch (\Throwable $e) {
@@ -208,6 +209,8 @@ class StrongLevelTelegramHandler
             'strong_trend_demarker' => 'Strong Trend + DeMarker',
             \App\Support\DemarkerDualFastConfig::BOT_TYPE => 'Dual DeMarker Fast',
             'sweep_raid_liquidity' => 'Sweep / Raid Liquidity',
+            'engulfing_liquidity' => 'Engulfing Liquidity',
+            'smc_flow' => 'SMC Flow',
             'candle_reversal_confirm' => 'Candle Reversal + Confirm',
             default => 'Strong Level',
         };

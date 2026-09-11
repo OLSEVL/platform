@@ -72,7 +72,6 @@ class BollingerContrtrendStrategy implements BotStrategyInterface
         }
 
         $payout = isset($context['payout']) ? (float) $context['payout'] : null;
-        $payoutFactor = $payout !== null ? min(1.0, max(0.0, $payout / 100.0)) : 0.5;
 
         // Глубина за пределами полосы относительно ширины канала (up−down).
         $bandWidth = max(abs($up - $down), abs($close) * 1e-9, 1e-12);
@@ -82,9 +81,7 @@ class BollingerContrtrendStrategy implements BotStrategyInterface
         $zoneDepth = min(1.0, max(0.0, $beyond / $bandWidth));
 
         $confidence = round(
-            0.50 * (0.55 + 0.45 * $zoneDepth)
-            + 0.20 * 0.7
-            + 0.30 * $payoutFactor,
+            (0.50 * (0.55 + 0.45 * $zoneDepth) + 0.20 * 0.7) / 0.70,
             4
         );
         $confidence = max(0.56, min(0.95, $confidence));

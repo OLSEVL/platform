@@ -1,0 +1,159 @@
+{
+
+  "manifest_version": 3,
+
+  "name": "PocketOption — таймфреймы",
+
+  "version": "1.8.0",
+
+  "description": "Горячие клавиши M1, M5, M15, M30, H1, S15 на pocketoption.com",
+
+  "permissions": ["storage"],
+
+  "host_permissions": [
+
+    "https://pocketoption.com/*",
+
+    "https://*.pocketoption.com/*"
+
+  ],
+
+  "background": {
+
+    "service_worker": "background.js"
+
+  },
+
+  "commands": {
+
+    "tf-m1": {
+
+      "suggested_key": {
+
+        "default": "Alt+1",
+
+        "windows": "Alt+1",
+
+        "mac": "Alt+1"
+
+      },
+
+      "description": "Таймфрейм M1"
+
+    },
+
+    "tf-m5": {
+
+      "suggested_key": {
+
+        "default": "Alt+2",
+
+        "windows": "Alt+2",
+
+        "mac": "Alt+2"
+
+      },
+
+      "description": "Таймфрейм M5"
+
+    },
+
+    "tf-m15": {
+
+      "suggested_key": {
+
+        "default": "Alt+3",
+
+        "windows": "Alt+3",
+
+        "mac": "Alt+3"
+
+      },
+
+      "description": "Таймфрейм M15"
+
+    },
+
+    "tf-m30": {
+
+      "suggested_key": {
+
+        "default": "Alt+4",
+
+        "windows": "Alt+4",
+
+        "mac": "Alt+4"
+
+      },
+
+      "description": "Таймфрейм M30"
+
+    }
+
+  },
+
+  "content_scripts": [
+
+    {
+
+      "matches": [
+
+        "https://pocketoption.com/*",
+
+        "https://*.pocketoption.com/*"
+
+      ],
+
+      "js": ["shortcuts-config.js", "content.js"],
+
+      "css": ["content.css"],
+
+      "run_at": "document_idle",
+
+      "all_frames": true
+
+    },
+
+    {
+
+      "matches": [
+
+        "https://pocketoption.com/*",
+
+        "https://*.pocketoption.com/*"
+
+      ],
+
+      "js": ["page-bridge.js"],
+
+      "run_at": "document_start",
+
+      "world": "MAIN",
+
+      "all_frames": false
+
+    }
+
+  ],
+
+  "action": {
+
+    "default_title": "PocketOption Timeframes",
+
+    "default_popup": "popup.html"
+
+  },
+
+  "icons": {
+
+    "16": "icons/icon16.png",
+
+    "48": "icons/icon48.png",
+
+    "128": "icons/icon128.png"
+
+  }
+
+}
+
+

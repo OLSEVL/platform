@@ -4,6 +4,7 @@ namespace App\Services\Mirror;
 
 use App\Models\BotTrade;
 use App\Models\UserTradingSetting;
+use App\Support\BotSessionPnl;
 use App\Support\ManualTradeConfig;
 use Illuminate\Support\Facades\DB;
 
@@ -12,6 +13,7 @@ use Illuminate\Support\Facades\DB;
  *
  * Результат для шага: предпочтительно итог PO (mirror_po_result), иначе paper.
  * Ручные сделки (source=manual) двигают шаг только при manual_advance_martingale=true.
+ * Опционально: не поднимать ступень после LOSS, если день бота уже в плюсе (стрим kAyG3wJDPBU).
  */
 class UserMartingaleService
 {
@@ -32,7 +34,7 @@ class UserMartingaleService
             return;
         }
 
-        $trade->loadMissing('bot:id,user_id');
+        $trade->loadMissing('bot');
         $userId = (int) ($trade->bot?->user_id ?? 0);
         if ($userId <= 0) {
             return;
@@ -46,6 +48,11 @@ class UserMartingaleService
             if (! (bool) $allowManual) {
                 return;
             }
+        }
+
+        // День уже зелёный — не разгоняем перекрытие после минуса (автор на стриме).
+        if ($result === BotTrade::RESULT_LOSS && $this->shouldSkipMartingaleWhenSessionGreen($trade)) {
+            return;
         }
 
         DB::transaction(function () use ($userId, $result): void {
@@ -73,6 +80,26 @@ class UserMartingaleService
 
             $settings->save();
         });
+    }
+
+    /**
+     * Флаги в config бота: srl_ / eng_ skip_martingale_if_session_green.
+     * PnL считаем без текущей сделки — «сессия была зелёной до этого минуса».
+     */
+    private function shouldSkipMartingaleWhenSessionGreen(BotTrade $trade): bool
+    {
+        $bot = $trade->bot;
+        if ($bot === null) {
+            return false;
+        }
+        $cfg = is_array($bot->config) ? $bot->config : [];
+        $enabled = (bool) ($cfg['srl_skip_martingale_if_session_green'] ?? false)
+            || (bool) ($cfg['eng_skip_martingale_if_session_green'] ?? false);
+        if (! $enabled) {
+            return false;
+        }
+
+        return BotSessionPnl::isSessionGreen($bot, null, (int) $trade->id);
     }
 
     public function resetStepForUser(int $userId): void
