@@ -190,6 +190,11 @@ class DataCleanupService
             }
         });
 
+        // Свечи удалены — старый min_ts в кэше бэктеста уже неверный.
+        if ($includeCandles && $botId === null && $deletedCandles > 0) {
+            app(CandleRangeCache::class)->rebuildAfterCleanup();
+        }
+
         return [
             'candles' => $deletedCandles,
             'logs' => $deletedLogs,
@@ -279,11 +284,12 @@ class DataCleanupService
     /**
      * Сводка по таблице свечей для блока «Очистка данных» на /settings.
      *
-     * depth_hours — возраст старейшей свечи от «сейчас»; сравнимо с окном авто-очистки.
-     * span_hours — размах MIN(time)..MAX(time) (пробелы внутри диапазона не учитываются).
+     * Не делает COUNT/MIN/MAX по всей таблице: края из CandleRangeCache,
+     * число строк — оценка InnoDB (или точный COUNT в sqlite-тестах).
      *
      * @return array{
      *     count: int,
+     *     count_is_approximate: bool,
      *     depth_hours: float|null,
      *     span_hours: float|null,
      *     oldest_at: int|null,
@@ -297,21 +303,24 @@ class DataCleanupService
             return $this->emptyCandlesStorageStats();
         }
 
-        $row = DB::table($table)
-            ->selectRaw('COUNT(*) as cnt, MIN(time) as min_time, MAX(time) as max_time')
-            ->first();
-
-        $count = (int) ($row->cnt ?? 0);
-        if ($count === 0 || $row->min_time === null || $row->max_time === null) {
+        $rangeCache = app(CandleRangeCache::class);
+        $range = $rangeCache->s5Range();
+        $oldest = $range['min_ts'];
+        $newest = $range['max_ts'];
+        if ($oldest === null || $newest === null) {
             return $this->emptyCandlesStorageStats();
         }
 
-        $oldest = (int) $row->min_time;
-        $newest = (int) $row->max_time;
+        $approx = $rangeCache->approximateRowCount();
+        $countIsApprox = $rangeCache->rowCountIsApproximate();
+        // TABLE_ROWS иногда 0 при живых данных — не прячем блок «история есть».
+        $count = $approx > 0 ? $approx : 1;
+
         $now = time();
 
         return [
             'count' => $count,
+            'count_is_approximate' => $countIsApprox,
             'depth_hours' => round(max(0, ($now - $oldest) / 3600), 1),
             'span_hours' => round(max(0, ($newest - $oldest) / 3600), 1),
             'oldest_at' => $oldest,
@@ -361,12 +370,13 @@ class DataCleanupService
     }
 
     /**
-     * @return array{count: int, depth_hours: null, span_hours: null, oldest_at: null, newest_at: null}
+     * @return array{count: int, count_is_approximate: bool, depth_hours: null, span_hours: null, oldest_at: null, newest_at: null}
      */
     private function emptyCandlesStorageStats(): array
     {
         return [
             'count' => 0,
+            'count_is_approximate' => false,
             'depth_hours' => null,
             'span_hours' => null,
             'oldest_at' => null,

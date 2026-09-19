@@ -37,7 +37,9 @@ use App\Services\Bots\Strategies\ParabolicSarTradeStrategy;
 use App\Services\Bots\Strategies\BreakLinRegChannelStrategy;
 use App\Services\Bots\Strategies\PivotPointsStrategy;
 use App\Services\Bots\Strategies\SmaStochasticStrategy;
+use App\Services\Bots\Strategies\MomentumMacdStrategy;
 use App\Services\Bots\Strategies\MaxBotStrategy;
+use App\Services\Bots\Strategies\ImpulseLvl1minStrategy;
 use App\Services\Bots\Strategies\ParabolicBollingerStrategy;
 use App\Services\Bots\Strategies\ParabolicPriceChannelStrategy;
 use App\Services\Bots\Strategies\VolAdaptiveCandlesStrategy;
@@ -49,11 +51,13 @@ use App\Services\Indicators\SmcFlowIndicatorService;
 use App\Services\Indicators\DemarkerIndicatorService;
 use App\Services\Mirror\MirrorTradeDispatcher;
 use App\Services\Telegram\TelegramAlertService;
+use App\Support\BotScanCoordinator;
 use App\Support\BotScanProgress;
 use App\Support\BinaryExpiry;
 use App\Support\ChartAnalystBotTypes;
 use App\Support\LevelBounceBotTypes;
 use App\Support\MaxBotConfig;
+use App\Support\ImpulseLvl1minConfig;
 use App\Support\EngulfingLlmSnapshot;
 use App\Support\SmcFlowLlmSnapshot;
 use App\Support\SweepRaidLlmSnapshot;
@@ -74,7 +78,7 @@ class BotEngineService
         private readonly BotInstrumentLossStateService $lossState,
     ) {}
 
-    public function scanBot(Bot $bot): array
+    public function scanBot(Bot $bot, array $scanOptions = []): array
     {
         // Бот-аналитик: только ручной запрос с графика, плановый scan не выполняем никогда.
         if (ChartAnalystBotTypes::isAnalyst($bot->type)) {
@@ -142,8 +146,7 @@ class BotEngineService
         // 2) у конкретного бота флаг analysis_runs_logging_enabled не выключен в config.
         // Такой подход даёт персональную настройку шумности/нагрузки по каждому боту.
         $analysisLogsEnabled = Schema::hasTable('bot_analysis_runs') && (bool) ($config['analysis_runs_logging_enabled'] ?? true);
-        // Считаем пары для sidebar-счётчика: whitelist/blacklist + payout не ниже min_payout.
-        $scanInstrumentTotal = 0;
+        $eligible = [];
         foreach ($instruments as $instrumentRow) {
             $instrumentKey = (string) $instrumentRow->instrument;
             if ($allowedInstrumentSet !== [] && ! isset($allowedInstrumentSet[$instrumentKey])) {
@@ -156,24 +159,19 @@ class BotEngineService
             if ($rowPayout === null || $rowPayout < $minPayout) {
                 continue;
             }
-            $scanInstrumentTotal++;
+            $eligible[] = $instrumentRow;
         }
-        // Sidebar: серые точки → red на текущей паре → green после проверки; между scan снова все серые.
+        $shardIndex = isset($scanOptions['shard_index']) ? (int) $scanOptions['shard_index'] : 0;
+        $shardCount = isset($scanOptions['shard_count']) ? (int) $scanOptions['shard_count'] : 1;
+        if ($shardCount > 1) {
+            $eligible = BotScanCoordinator::takeShard($eligible, $shardIndex, $shardCount);
+        }
+        $scanInstrumentTotal = count($eligible);
         $scanRunId = BotScanProgress::beginScan($bot->id, $scanInstrumentTotal);
         try {
-            foreach ($instruments as $instrumentRow) {
+            foreach ($eligible as $instrumentRow) {
                 $instrument = (string) $instrumentRow->instrument;
-                if ($allowedInstrumentSet !== [] && ! isset($allowedInstrumentSet[$instrument])) {
-                    continue;
-                }
-                if (isset($blockedInstrumentSet[$instrument])) {
-                    continue;
-                }
-                // Низкий payout: не участвует в scan — без серой/красной/зелёной точки и без счётчика.
                 $currentPayout = $instrumentRow->current_payout !== null ? (float) $instrumentRow->current_payout : null;
-                if ($currentPayout === null || $currentPayout < $minPayout) {
-                    continue;
-                }
                 $processed++;
                 // Пишем в cache текущую пару — sidebar бота показывает красный индикатор «идёт анализ».
                 BotScanProgress::setCurrentInstrument($bot->id, $instrument);
@@ -206,6 +204,18 @@ class BotEngineService
                                 15 => (int) ($config['m15_take'] ?? 80),
                                 60 => (int) ($config['h1_take'] ?? 12),
                             ],
+                            true,
+                            $staleAfterSec,
+                            $seriesTimeframe,
+                        );
+                        $series = $packed;
+                        $mtf = $packed['mtf'];
+                    } elseif (ImpulseLvl1minConfig::is((string) $bot->type)) {
+                        // M1 + закрытые M5/M15/M30; формирующийся HTF достраивает ImpulseLvl1minLevels из M1.
+                        $packed = $this->botDataService->seriesWithMtf(
+                            $instrument,
+                            $count,
+                            ImpulseLvl1minConfig::mtfTakeMap($config),
                             true,
                             $staleAfterSec,
                             $seriesTimeframe,
@@ -286,6 +296,96 @@ class BotEngineService
                         continue;
                     }
 
+                    if (ImpulseLvl1minConfig::is((string) $bot->type)) {
+                        $impulseHits = $this->impulseLvlDecisionHits($decision);
+                        $blocksPaper = ImpulseLvl1minConfig::flag($config, 'occupancy_blocks_paper', true);
+                        $blocksAlerts = ImpulseLvl1minConfig::flag($config, 'occupancy_blocks_alerts', false);
+                        $openQuery = BotTrade::query()
+                            ->where('bot_id', $bot->id)
+                            ->where('status', BotTrade::STATUS_OPEN);
+                        if (ImpulseLvl1minConfig::occupancyScope($config) !== 'bot') {
+                            $openQuery->where('instrument', $instrument);
+                        }
+                        $hasOpenImpulseTrade = $openQuery->exists();
+                        if ($blocksAlerts && $hasOpenImpulseTrade) {
+                            $this->finishAnalysisRun($analysisRun, BotAnalysisRun::STATUS_SKIPPED, 'occupancy', [
+                                'decision' => $decision,
+                            ]);
+                            continue;
+                        }
+                        $impulseOpen = $blocksPaper && $hasOpenImpulseTrade;
+                        $preferLive = ImpulseLvl1minConfig::flag($config, 'paper_prefer_live', true);
+                        $hasLiveHit = false;
+                        foreach ($impulseHits as $impulseHit) {
+                            $hitFeat = is_array($impulseHit['features'] ?? null) ? $impulseHit['features'] : [];
+                            if (empty($hitFeat['is_prev'])) {
+                                $hasLiveHit = true;
+                                break;
+                            }
+                        }
+                        $paperDone = false;
+                        $emitted = 0;
+                        $lastTelegram = null;
+                        $lastSkip = null;
+                        $lastDecision = $decision;
+                        $entryPrice = (float) (($partial['close'] ?? null) ?? end($closed)['close']);
+                        $payoutSnapshot = $instrumentRow->current_payout !== null ? (float) $instrumentRow->current_payout : null;
+                        foreach ($impulseHits as $impulseHit) {
+                            $hitConf = (float) ($impulseHit['confidence'] ?? 0);
+                            if ($hitConf < $minConfidence) {
+                                $lastSkip = 'confidence_below_threshold';
+                                continue;
+                            }
+                            $hitSide = (string) ($impulseHit['side'] ?? '');
+                            if (! in_array($hitSide, ['CALL', 'PUT'], true)) {
+                                $lastSkip = 'invalid_side';
+                                continue;
+                            }
+                            $hitFeat = is_array($impulseHit['features'] ?? null) ? $impulseHit['features'] : [];
+                            $isPrev = (bool) ($hitFeat['is_prev'] ?? false);
+                            $wantPaper = ! $impulseOpen && ! $paperDone && (! $preferLive || ! $hasLiveHit || ! $isPrev);
+                            $commit = $this->commitImpulseLvlHit(
+                                $bot,
+                                $instrument,
+                                $impulseHit,
+                                $payoutSnapshot,
+                                $decisionExpirySec,
+                                $entryPrice,
+                                $closed,
+                                $dedupeBucketSec,
+                                $wantPaper,
+                            );
+                            if (! ($commit['ok'] ?? false)) {
+                                $lastSkip = (string) ($commit['skip'] ?? 'dedupe');
+                                continue;
+                            }
+                            $emitted++;
+                            $signals++;
+                            if ((int) ($commit['trade_id'] ?? 0) > 0) {
+                                $trades++;
+                            }
+                            $lastDecision = $impulseHit;
+                            $lastTelegram = $commit['telegram'] ?? null;
+                            if ($wantPaper && (int) ($commit['trade_id'] ?? 0) > 0) {
+                                $paperDone = true;
+                                $impulseOpen = true;
+                            }
+                        }
+                        if ($emitted === 0) {
+                            $this->finishAnalysisRun($analysisRun, BotAnalysisRun::STATUS_SKIPPED, $lastSkip ?? 'dedupe', [
+                                'decision' => $lastDecision,
+                            ]);
+                            continue;
+                        }
+                        $this->finishAnalysisRun($analysisRun, BotAnalysisRun::STATUS_OK, null, [
+                            'decision' => $lastDecision,
+                            'impulse_alerts' => $emitted,
+                            'impulse_paper' => $paperDone,
+                            'telegram' => $lastTelegram,
+                        ]);
+                        continue;
+                    }
+
                     // Dedupe-окно привязываем к фактической экспирации конкретного сигнала,
                     // чтобы логика "один сигнал на окно" корректно работала и для 2/3/4/5 минут.
                     $signalDedupeBucketSec = in_array($bot->type, ['smc_flow', 'strong_level', 'candle_reversal_confirm'], true)
@@ -298,7 +398,7 @@ class BotEngineService
                     $dedupeSuffix = match ($bot->type) {
                         'strong_trend_telegram' => $trendKey,
                         'strong_level', 'candle_reversal_confirm' => sprintf('%s:%.5f', $side, $levelPrice),
-                        MaxBotConfig::BOT_TYPE => sprintf(
+                        MaxBotConfig::BOT_TYPE, ImpulseLvl1minConfig::BOT_TYPE => sprintf(
                             '%s:%d',
                             (string) (($decision['features']['strategy_id'] ?? '') ?: 'max'),
                             (int) ($decision['features']['signal_timestamp'] ?? 0)
@@ -1127,6 +1227,17 @@ class BotEngineService
             );
             $series = $packed;
             $mtf = $packed['mtf'];
+        } elseif (ImpulseLvl1minConfig::is((string) $bot->type)) {
+            $packed = $this->botDataService->seriesWithMtf(
+                $instrument,
+                $runtime['count'],
+                ImpulseLvl1minConfig::mtfTakeMap($runtime['config']),
+                true,
+                $runtime['stale_after_sec'],
+                (int) ($runtime['series_timeframe'] ?? 1),
+            );
+            $series = $packed;
+            $mtf = $packed['mtf'];
         } else {
             $series = $this->botDataService->series(
                 $instrument,
@@ -1240,6 +1351,7 @@ class BotEngineService
                     'three_soldier_vol_adaptive' => 'Нет Three Soldiers (vola-adaptive): 3 свечи одного цвета и высоты.',
                     'custom_candles_impulse' => 'Нет импульса: N свечей подряд в одну сторону за TimeSpan.',
                     MaxBotConfig::BOT_TYPE => 'Нет импульса MaxBot: серия + ratio тел к историческому максимуму.',
+                    ImpulseLvl1minConfig::BOT_TYPE => 'Нет импульса 1min: профиль/MAX + касание LVL.',
                     default => '',
                 },
                 'reasons_short' => [],
@@ -1288,7 +1400,18 @@ class BotEngineService
             $blockers[] = 'Сработал dedupe: похожий сигнал уже был в текущем окне экспирации.';
         }
         if ($hasOpenTrade) {
-            $blockers[] = 'По этой паре уже есть открытая сделка у данного бота.';
+            $impulseCfg = is_array($runtime['config'] ?? null) ? $runtime['config'] : [];
+            if (ImpulseLvl1minConfig::is((string) $bot->type)) {
+                $alertsBlocked = ImpulseLvl1minConfig::flag($impulseCfg, 'occupancy_blocks_alerts', false);
+                $paperBlocked = ImpulseLvl1minConfig::flag($impulseCfg, 'occupancy_blocks_paper', true);
+                if ($alertsBlocked) {
+                    $blockers[] = 'Открытая paper режет и алерты, и новую сделку (галочка «занятость режет алерты»).';
+                } elseif ($paperBlocked) {
+                    $blockers[] = 'Paper по занятости уже открыт — алерты уйдут, вторая сделка нет.';
+                }
+            } else {
+                $blockers[] = 'По этой паре уже есть открытая сделка у данного бота.';
+            }
         }
 
         $canEnter = $blockers === [];
@@ -1343,6 +1466,7 @@ class BotEngineService
                 MaxBotConfig::enabledStrategies($config),
                 (int) ($config['count'] ?? MaxBotConfig::DEFAULT_HISTORY_BARS)
             )),
+            ImpulseLvl1minConfig::BOT_TYPE => max(400, (int) ($config['count'] ?? 400)),
             // Wave B vola-adaptive: нужна ~1 день M1 для AdaptSoldiersHeight / AdaptSignalCandleHeight.
             'vol_adaptive_candles', 'three_soldier_vol_adaptive', 'pivot_points' => 2000,
             default => LevelBounceBotTypes::isOsEngineBinary($bot->type) ? 150 : 120,
@@ -1364,6 +1488,7 @@ class BotEngineService
             'strong_trend_demarker' => (int) ($config['expiry_sec'] ?? 30),
             DemarkerDualFastConfig::BOT_TYPE => (int) ($config['expiry_sec'] ?? 30),
             MaxBotConfig::BOT_TYPE => (int) ($config['expiry_sec'] ?? 60),
+            ImpulseLvl1minConfig::BOT_TYPE => (int) ($config['expiry_sec'] ?? 60),
             'strong_level' => (int) ($config['expiry_sec_bounce'] ?? 180),
             // По ТЗ для MTF-разворота вход идёт на 5 минут независимо от рыночной фазы.
             'candle_reversal_confirm' => (int) ($config['expiry_sec'] ?? 300),
@@ -1382,6 +1507,7 @@ class BotEngineService
             'strong_trend_demarker' => 80.0,
             DemarkerDualFastConfig::BOT_TYPE => 80.0,
             MaxBotConfig::BOT_TYPE => 90.0,
+            ImpulseLvl1minConfig::BOT_TYPE => 80.0,
             default => LevelBounceBotTypes::isOsEngineBinary($bot->type) ? 75.0 : 80.0,
         });
         $staleAfterSec = (int) ($config['stale_after_sec'] ?? (LevelBounceBotTypes::isOsEngineBinary($bot->type) ? 60 : 30));
@@ -1463,6 +1589,7 @@ class BotEngineService
                 is_array($config['strategies'] ?? null) ? $config['strategies'] : MaxBotConfig::defaultStrategies(),
                 max(MaxBotConfig::DEFAULT_HISTORY_BARS, (int) ($config['count'] ?? 0) - 10)
             ),
+            ImpulseLvl1minConfig::BOT_TYPE => ImpulseLvl1minConfig::DEFAULT_HISTORY_BARS,
             // LLM-боту нужен достаточно широкий контекст последних свечей,
             // иначе модель чаще даёт шумные и нестабильные решения.
             'openrouter_llm' => 20,
@@ -1478,6 +1605,9 @@ class BotEngineService
         $seriesTimeframe = match ($bot->type) {
             MaxBotConfig::BOT_TYPE => MaxBotConfig::dashboardTimeframeId(
                 (int) ($config['timeframe_sec'] ?? MaxBotConfig::DEFAULT_TIMEFRAME_SEC)
+            ),
+            ImpulseLvl1minConfig::BOT_TYPE => ImpulseLvl1minConfig::dashboardTimeframeId(
+                (int) ($config['timeframe_sec'] ?? ImpulseLvl1minConfig::DEFAULT_TIMEFRAME_SEC)
             ),
             'strong_trend_demarker', DemarkerDualFastConfig::BOT_TYPE => in_array(
                 (int) ($config['timeframe'] ?? CandleService::TF_S30),
@@ -1499,6 +1629,7 @@ class BotEngineService
             'strong_trend_telegram' => max(60, min(3600, (int) ($config['dedupe_bucket_sec'] ?? 300))),
             'strong_trend_demarker', DemarkerDualFastConfig::BOT_TYPE => max(30, min(3600, (int) ($config['dedupe_bucket_sec'] ?? $expirySec))),
             MaxBotConfig::BOT_TYPE => max(5, min(3600, (int) ($config['dedupe_bucket_sec'] ?? $expirySec))),
+            ImpulseLvl1minConfig::BOT_TYPE => max(5, min(3600, (int) ($config['dedupe_bucket_sec'] ?? $expirySec))),
             // Dedupe ≈ expiry: при 15с не держим искусственный floor 60.
             'smc_flow', 'strong_level', 'openrouter_llm', 'candle_reversal_confirm', 'sweep_raid_liquidity', 'engulfing_liquidity' => max(15, min(900, $expirySec)),
             default => LevelBounceBotTypes::isOsEngineBinary($bot->type)
@@ -1589,6 +1720,7 @@ class BotEngineService
             'strong_trend_demarker' => new StrongTrendDemarkerStrategy(new DemarkerIndicatorService),
             DemarkerDualFastConfig::BOT_TYPE => new DemarkerDualFastStrategy(new DemarkerIndicatorService),
             MaxBotConfig::BOT_TYPE => new MaxBotStrategy,
+            ImpulseLvl1minConfig::BOT_TYPE => new ImpulseLvl1minStrategy,
             default => null,
         };
     }
@@ -1661,5 +1793,172 @@ class BotEngineService
             $run->decision_json = $decisionJson;
         }
         $run->save();
+    }
+
+    /**
+     * MAX + все профили + prev: отдельные decision для алертов (без вложенных extra_alerts).
+     *
+     * @param  array<string, mixed>  $decision
+     * @return list<array<string, mixed>>
+     */
+    private function impulseLvlDecisionHits(array $decision): array
+    {
+        $features = is_array($decision['features'] ?? null) ? $decision['features'] : [];
+        $extras = is_array($features['extra_alerts'] ?? null) ? $features['extra_alerts'] : [];
+        $primary = $decision;
+        if (! isset($primary['features']) || ! is_array($primary['features'])) {
+            $primary['features'] = [];
+        }
+        unset($primary['features']['extra_alerts']);
+        $hits = [$primary];
+        foreach ($extras as $extra) {
+            if (! is_array($extra) || ! in_array((string) ($extra['side'] ?? ''), ['CALL', 'PUT'], true)) {
+                continue;
+            }
+            if (isset($extra['features']) && is_array($extra['features'])) {
+                unset($extra['features']['extra_alerts']);
+            }
+            $hits[] = $extra;
+        }
+
+        return $hits;
+    }
+
+    /**
+     * Сигнал + Telegram; paper только если $createTrade (занятость / второй профиль — без пачки сделок).
+     *
+     * @param  array<string, mixed>  $decision
+     * @param  list<array<string, mixed>>  $closed
+     * @return array{ok:bool,skip?:string,signal_id?:int,trade_id?:int,telegram?:array<string,mixed>|null}
+     */
+    private function commitImpulseLvlHit(
+        Bot $bot,
+        string $instrument,
+        array $decision,
+        ?float $payoutSnapshot,
+        int $expirySec,
+        float $entryPrice,
+        array $closed,
+        int $dedupeBucketSec,
+        bool $createTrade,
+    ): array {
+        $side = (string) ($decision['side'] ?? '');
+        $confidence = (float) ($decision['confidence'] ?? 0);
+        $bucket = intdiv(time(), max(5, $dedupeBucketSec)) * max(5, $dedupeBucketSec);
+        $feat = is_array($decision['features'] ?? null) ? $decision['features'] : [];
+        $dedupeSuffix = sprintf(
+            '%s:%d:%s',
+            (string) (($feat['strategy_id'] ?? '') ?: 'max'),
+            (int) ($feat['signal_timestamp'] ?? 0),
+            ! empty($feat['is_prev']) ? 'prev' : 'live'
+        );
+        $dedupeKey = sprintf('%d:%s:%d:%s', $bot->id, $instrument, $bucket, $dedupeSuffix);
+        if (BotSignal::query()->where('dedupe_key', $dedupeKey)->exists()) {
+            return ['ok' => false, 'skip' => 'dedupe'];
+        }
+
+        $entryAt = now();
+        $expiryAt = $entryAt->copy()->addSeconds($expirySec);
+        $createdSignalId = 0;
+        $createdTradeId = 0;
+        DB::transaction(function () use (
+            $bot,
+            $instrument,
+            $side,
+            $confidence,
+            $payoutSnapshot,
+            $entryAt,
+            $expiryAt,
+            $expirySec,
+            $decision,
+            $dedupeKey,
+            $entryPrice,
+            $createTrade,
+            &$createdSignalId,
+            &$createdTradeId
+        ): void {
+            $features = is_array($decision['features'] ?? null) ? $decision['features'] : [];
+            unset($features['extra_alerts']);
+            $signal = BotSignal::query()->create([
+                'bot_id' => $bot->id,
+                'instrument' => $instrument,
+                'side' => $side,
+                'confidence' => $confidence,
+                'payout_snapshot' => $payoutSnapshot,
+                'signal_at' => $entryAt,
+                'expiry_time' => $expiryAt,
+                'reasons_json' => $decision['reasons_short'] ?? [],
+                'analysis_text' => (string) ($decision['analysis_text'] ?? ''),
+                'features_json' => $features,
+                'decision_version' => (string) ($decision['decision_version'] ?? 'v1'),
+                'dedupe_key' => $dedupeKey,
+            ]);
+            $createdSignalId = (int) $signal->id;
+            if (! $createTrade) {
+                return;
+            }
+            $trade = BotTrade::query()->create([
+                'bot_id' => $bot->id,
+                'bot_signal_id' => $signal->id,
+                'instrument' => $instrument,
+                'side' => $side,
+                'status' => BotTrade::STATUS_OPEN,
+                'result' => BotTrade::RESULT_PENDING,
+                'entry_time' => $entryAt,
+                'expiry_time' => $expiryAt,
+                'entry_price' => $entryPrice,
+                'payout_snapshot' => $payoutSnapshot,
+                'meta_json' => [
+                    'confidence' => $confidence,
+                    'decision_version' => $signal->decision_version,
+                    'expiry_sec_used' => $expirySec,
+                ],
+            ]);
+            $createdTradeId = (int) $trade->id;
+            DB::afterCommit(function () use ($createdTradeId): void {
+                app(MirrorTradeDispatcher::class)->dispatch($createdTradeId);
+            });
+        });
+
+        if ($createdSignalId > 0 && $createdTradeId > 0) {
+            $hybrid = app(HybridAnalystDispatcher::class);
+            $hybrid->maybeDispatch(
+                $bot,
+                $createdSignalId,
+                $instrument,
+                $side,
+                $confidence,
+                $decision,
+                \App\Support\HybridAnalystConfig::TRIGGER_ON_SIGNAL,
+                $createdTradeId,
+            );
+            $hybrid->maybeDispatch(
+                $bot,
+                $createdSignalId,
+                $instrument,
+                $side,
+                $confidence,
+                $decision,
+                \App\Support\HybridAnalystConfig::TRIGGER_ON_PO_MIRROR,
+                $createdTradeId,
+            );
+        }
+
+        $telegramResult = app(TelegramAlertService::class)->sendStrongLevelAlert(
+            $bot,
+            $instrument,
+            $decision,
+            $payoutSnapshot,
+            $expirySec,
+            $entryPrice,
+            $closed
+        );
+
+        return [
+            'ok' => true,
+            'signal_id' => $createdSignalId,
+            'trade_id' => $createdTradeId,
+            'telegram' => $telegramResult,
+        ];
     }
 }

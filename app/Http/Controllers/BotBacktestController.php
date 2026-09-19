@@ -8,6 +8,7 @@ use App\Models\BotBacktestRun;
 use App\Models\BotBacktestTrade;
 use App\Models\PocketInstrument;
 use App\Services\Bots\BotBacktestEngine;
+use App\Services\CandleRangeCache;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -59,11 +60,8 @@ class BotBacktestController extends Controller
         $this->ensureBotOwner($bot);
         $this->ensureTables();
 
-        // Подсказка UI: какой кусок истории реально есть в candles (S5).
-        $candleRange = DB::table('candles')
-            ->where('timeframe', \App\Services\CandleService::TF_S5)
-            ->selectRaw('MIN(time) as min_ts, MAX(time) as max_ts')
-            ->first();
+        // Границы S5 из кэша (ingest/очистка), без MIN/MAX по всей таблице candles.
+        $candleRange = app(CandleRangeCache::class)->s5Range();
 
         $queueConnection = (string) config('queue.default', 'sync');
         // Старые queued без job в таблице jobs — помечаем failed (иначе вечная «зависла» подсказка).
@@ -131,8 +129,8 @@ class BotBacktestController extends Controller
             'unsupported_types' => BotBacktestEngine::unsupportedTypes(),
             'bot_supported' => ! in_array($bot->type, BotBacktestEngine::unsupportedTypes(), true),
             'candle_range' => [
-                'min_ts' => $candleRange && $candleRange->min_ts !== null ? (int) $candleRange->min_ts : null,
-                'max_ts' => $candleRange && $candleRange->max_ts !== null ? (int) $candleRange->max_ts : null,
+                'min_ts' => $candleRange['min_ts'],
+                'max_ts' => $candleRange['max_ts'],
             ],
             // Подсказка только если job реально лежит в очереди >2 мин (worker не берёт).
             'queue' => [

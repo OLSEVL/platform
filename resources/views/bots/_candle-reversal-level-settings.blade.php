@@ -12,8 +12,9 @@
             <a href="{{ route('bots.indicators.smc-flow.edit', $bot) }}" class="text-blue-400 hover:underline">SMC Flow</a>.
         </p>
         <p class="text-[11px] text-zinc-500">
-            Цепочка: сбор уровней → касание ценой → (опц.) M5 rejection → (опц.) N M1 в сторону отскока → paper-сделка на 3–5 мин.
-            Пробои не торгуются — только отскок.
+            Цепочка: сбор уровней → касание ценой → (опц.) <strong>закрытая</strong> M5 rejection
+            → (опц.) N закрытых M1 в сторону отскока → paper-сделка на 3–5 мин.
+            Формирующаяся M5 не используется: тень ещё перерисуется. Пробои не торгуются — только отскок.
         </p>
     </div>
 
@@ -143,7 +144,7 @@
                 @checked((bool) old('m5_rejection_enabled', $cfg['m5_rejection_enabled'] ?? true))>
             <span>
                 <span class="text-sm font-medium text-zinc-200">Требовать M5 rejection</span>
-                <span class="mt-0.5 block text-[11px] font-normal text-zinc-500">Последняя M5 — разворотная свеча с тенью у уровня. Снимите для раннего входа только по M1 (больше сигналов, выше риск).</span>
+                <span class="mt-0.5 block text-[11px] font-normal text-zinc-500">Последняя <strong>закрытая</strong> M5 — разворотная свеча с тенью у уровня (не текущая формирующаяся). Снимите для входа только по M1 (больше сигналов, выше риск).</span>
             </span>
         </label>
         <input type="hidden" name="m5_rejection_require_direction" value="0">

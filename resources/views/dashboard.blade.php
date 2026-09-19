@@ -1212,14 +1212,16 @@
     /** Throttle DOM-оверлеев от attachPrimitive (poll/update не должен пересобирать DOM каждый кадр). */
     const CHART_DOM_OVERLAY_SYNC_MIN_MS = 200;
     let chartDomOverlaySyncLastMs = 0;
-    /** RAF-tween close → series.update() ~60fps: LWC v5 теряет хвостовые свечи и дёргает ось времени. */
-    const CHART_LIVE_SMOOTH_CLOSE = false;
+    /** RAF-tween close → series.update() ~60fps. Heal выключал из‑за потери хвоста LWC v5 —
+     * возвращаем: poll идёт через update() хвоста, не full setData. */
+    const CHART_LIVE_SMOOTH_CLOSE = true;
     /** Флаг «грязных» HTML-оверлеев: attachPrimitive только помечает, DOM — раз в CHART_DOM_OVERLAY_TICK_MS. */
     let chartDomOverlayDirty = false;
     let chartDomOverlayTickTimer = null;
     const CHART_DOM_OVERLAY_TICK_MS = 400;
-    /** HTML-линейка секунд поверх LWC — дёргает ось времени; включается только при явном zoom (pan). */
-    const CHART_HTML_TIME_RULER_ENABLED = false;
+    /** HTML-линейка секунд на оси времени (PlatformChartMarkers.renderTimeRulerOverlay).
+     * Heal (94fef33) выключил её из‑за дёрганья оси — возвращаем: тяжёлый sync только на pan/zoom. */
+    const CHART_HTML_TIME_RULER_ENABLED = true;
 
     /**
      * Названия structural-слоёв (OB/FVG/PA/…) при включённом чекбоксе.
@@ -1945,8 +1947,11 @@
     }
 
     /**
-     * LWC v5: series.update() на candlestick ломает 5–6 баров слева от хвоста.
-     * Poll: только setData всего ряда при изменении tailPollSyncKey (throttle 1с).
+     * Обновление хвоста серии после poll.
+     * С включённым candleSmooth: series.update() только на last (и только что закрытый)
+     * через toward()/snap — плавный close. Full setData — при смене длины ряда / без smooth.
+     * (Heal раньше всегда делал setData: LWC v5 ломал соседние бары при update на всём хвосте;
+     *  точечный update одного last-бара + tween безопаснее и даёт «живую» свечу.)
      */
     function pushCandlestickSeriesIfTailChanged(opts = {}) {
         if (!candlestickSeries || !allChartData.length) return false;
@@ -1955,12 +1960,32 @@
 
         const prevParts = lastSyncedTailKey ? lastSyncedTailKey.split(';') : [];
         const prevLastTime = prevParts.length ? prevParts[prevParts.length - 1].split('|')[0] : '';
-        const curLastTime = String(allChartData[allChartData.length - 1].time);
+        const lastBar = allChartData[allChartData.length - 1];
+        const curLastTime = String(lastBar.time);
         const isNewBarTime = prevLastTime !== '' && prevLastTime !== curLastTime;
 
+        // Длина ряда изменилась — нужен полный setData (индексы LWC).
         if (candleSeriesBarCount !== allChartData.length) {
             lastSyncedTailKey = key;
             resyncCandlestickSeriesFromAllChartData(opts);
+            return true;
+        }
+
+        // Плавный путь: не throttle 1с и не full setData — иначе tween никогда не виден.
+        if (candleSmooth) {
+            withSuppressedDataSeriesViewport(() => {
+                // Только что закрытый бар: один update без tween (OHLC уже финальный).
+                if (isNewBarTime && allChartData.length >= 2) {
+                    try {
+                        candlestickSeries.update(mapBarForCandlestickSeries(allChartData[allChartData.length - 2]));
+                    } catch (e) {
+                        console.error('[chart] closed-bar update', e);
+                    }
+                }
+                candleSmooth.toward(lastBar);
+            });
+            lastSyncedTailKey = key;
+            lastTailSeriesUpdateMs = performance.now();
             return true;
         }
 
@@ -6346,6 +6371,8 @@
             width: chartWrapper.clientWidth,
             height: chartWrapper.clientHeight
         });
+        // Для Chrome MCP / e2e: доступ к IChartApi (проба дёрганья loadMore).
+        window.__platformChart = chart;
 
         candlestickSeries = chart.addSeries(LightweightCharts.CandlestickSeries, {
             upColor: '#26a69a',
@@ -6359,7 +6386,7 @@
                 minMove: 0.00001
             }
         });
-        // Плавный close отключён (CHART_LIVE_SMOOTH_CLOSE): стабильнее для LWC v5 на длинном простое.
+        // Плавный close последней свечи (PlatformCandleSmooth), если флаг включён.
         candleSmooth = null;
         if (CHART_LIVE_SMOOTH_CLOSE
             && window.PlatformCandleSmooth
@@ -6367,8 +6394,11 @@
             candleSmooth = window.PlatformCandleSmooth.create({
                 getSeries: () => candlestickSeries,
                 paintBar: paintBarForSmooth,
-                durationMs: 200,
+                // ~poll interval: tween перекрывает паузу между тиками, движение непрерывное.
+                durationMs: 450,
             });
+            // Для Chrome MCP / диагностики: жив ли tween.
+            window.__platformCandleSmooth = candleSmooth;
         }
         // Маркеры — лениво в renderChartMarkers(); attachPrimitive на серии свечей убран (ломал LWC canvas).
         candlestickMarkers = null;
@@ -6423,36 +6453,84 @@
         if (oldestLoadedTime <= sinceT) return;
 
         loadingMore = true;
-        setLoading(true);
-        // Догрузка более старой истории: расширяем окно до MAX_WINDOW_SEC.
-        // Работает для всех TF графика (M1/M5/… и S5/S15/S30).
+        // Лёгкий prepend: один setData + logical restore в том же sync-стеке.
+        // Без visibility:hidden (мигание), без setVisibleRange у края (схлопывание),
+        // без второго PA setData. from<0 клампим к 0, ширину окна сохраняем.
+        const inst = currentInstrument;
         fetchCandles(currentInstrument, { before: oldestLoadedTime, kind: 'more' })
             .then(data => {
+                if (inst !== currentInstrument) {
+                    loadingMore = false;
+                    return;
+                }
                 const candles = data.candles || [];
-                if (candles.length === 0) { loadingMore = false; setLoading(false); return; }
+                if (candles.length === 0) { loadingMore = false; return; }
                 const newBars = buildChartData(candles);
                 const existingTimes = new Set(allChartData.map(c => c.time));
                 const toAdd = newBars.filter(c => !existingTimes.has(c.time));
-                if (toAdd.length === 0) { loadingMore = false; setLoading(false); return; }
+                if (toAdd.length === 0) { loadingMore = false; return; }
+                const added = toAdd.length;
+
+                // Logical range ДО мутации данных — pan во время fetch учтён (снимок здесь).
+                let savedLogical = null;
+                try {
+                    savedLogical = chart && chart.timeScale
+                        ? chart.timeScale().getVisibleLogicalRange()
+                        : null;
+                } catch (_) {}
+
                 allChartData = [...toAdd, ...allChartData].sort((a, b) => a.time - b.time);
                 oldestLoadedTime = Math.min(...allChartData.map(c => c.time));
                 if (candleSmooth) candleSmooth.cancel();
                 lastSyncedTailKey = '';
-                resyncCandlestickSeriesFromAllChartData({ preserveRange: true });
-                if (candleSmooth && allChartData.length) {
-                    candleSmooth.snap(allChartData[allChartData.length - 1]);
+
+                let shifted = null;
+                if (savedLogical
+                    && Number.isFinite(savedLogical.from)
+                    && Number.isFinite(savedLogical.to)) {
+                    const width = Math.max(1, savedLogical.to - savedLogical.from);
+                    const baseFrom = Math.max(0, savedLogical.from) + added;
+                    shifted = { from: baseFrom, to: baseFrom + width };
                 }
-                loadingMore = false;
-                setLoading(false);
+
+                withSuppressedDataSeriesViewport(() => {
+                    withSuppressedViewportFollow(() => {
+                        if (candleSmooth) candleSmooth.reset();
+                        try {
+                            candlestickSeries.setData(allChartData.map(mapBarForCandlestickSeries));
+                            candleSeriesBarCount = allChartData.length;
+                            if (candleSmooth && allChartData.length) {
+                                candleSmooth.snap(allChartData[allChartData.length - 1]);
+                            }
+                        } catch (e) {
+                            console.error('[chart] loadMore setData', e);
+                        }
+                        syncLastBarKeyFromData();
+                        if (shifted) {
+                            try {
+                                chart.timeScale().setVisibleLogicalRange(shifted);
+                            } catch (_) {}
+                        }
+                    });
+                });
+
                 tickCandleCloseTimer();
-                applyPaBarColors({ fullResync: true });
-                requestAnimationFrame(redrawStructureOverlay);
-                fetchStructures();
-                if (layerPa && layerPa.checked) fetchPriceActionIndicator();
-                if (layerLiquidity && layerLiquidity.checked) fetchLiquiditySwingsIndicator();
-                if (anyClassicLayerOn()) fetchClassicIndicators();
+                // Один rAF: не держим loadingMore дольше нужного (меньше «залипания» скролла).
+                requestAnimationFrame(() => {
+                    if (inst !== currentInstrument) return;
+                    loadingMore = false;
+                    redrawStructureOverlay();
+                });
+                // Оверлеи не в том же тике, что setData — меньше main-thread лагов.
+                setTimeout(() => {
+                    if (inst !== currentInstrument) return;
+                    fetchStructures();
+                    if (layerPa && layerPa.checked) fetchPriceActionIndicator();
+                    if (layerLiquidity && layerLiquidity.checked) fetchLiquiditySwingsIndicator();
+                    if (anyClassicLayerOn()) fetchClassicIndicators();
+                }, 250);
             })
-            .catch(() => { loadingMore = false; setLoading(false); });
+            .catch(() => { loadingMore = false; });
     }
 
     function reloadChartData() {

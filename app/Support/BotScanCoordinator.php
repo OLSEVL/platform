@@ -90,8 +90,11 @@ final class BotScanCoordinator
     /** Дефолт интервала скана для типа бота (MaxBot — 5 с live). */
     public static function defaultScanIntervalSecForType(string $botType): int
     {
-        return $botType === \App\Support\MaxBotConfig::BOT_TYPE
-            ? \App\Support\MaxBotConfig::DEFAULT_SCAN_INTERVAL_SEC
+        return in_array($botType, [
+            \App\Support\MaxBotConfig::BOT_TYPE,
+            \App\Support\ImpulseLvl1minConfig::BOT_TYPE,
+        ], true)
+            ? 5
             : self::DEFAULT_SCAN_INTERVAL_SEC;
     }
 
@@ -189,6 +192,37 @@ final class BotScanCoordinator
         return null;
     }
 
+    /** Имя lock `bots:scan:bot:47` → 47. */
+    public static function parseBotIdFromLockName(string $lockName): ?int
+    {
+        if (preg_match('#bots:scan:bot:(\d+)$#', $lockName, $m)) {
+            return (int) $m[1];
+        }
+
+        return null;
+    }
+
+    /**
+     * Снять mutex бота, если процесса bots:scan уже нет (сирота после FatalError).
+     *
+     * @return list<array{bot_id:int,key:string}>
+     */
+    public static function clearOrphanScanLocks(): array
+    {
+        $cleared = [];
+        foreach (self::listLockRows() as $row) {
+            $botId = self::parseBotIdFromLockName((string) $row['key']);
+            if ($botId === null || self::isScanRunning($botId)) {
+                continue;
+            }
+            self::clearLock(self::botLockName($botId));
+            BotScanProgress::endScan($botId);
+            $cleared[] = ['bot_id' => $botId, 'key' => (string) $row['key']];
+        }
+
+        return $cleared;
+    }
+
     public static function cmdlineMatchesScan(string $cmdline, ?int $botId): bool
     {
         if (! preg_match('#(?:^|/)(php\d*(?:\.\d+)?)\s+artisan\s+bots:scan\b#', $cmdline)) {
@@ -251,6 +285,15 @@ final class BotScanCoordinator
                 $row = DB::table('cache_locks')->where('key', $fullKey)->first();
                 if ($row && (int) ($row->expiration ?? 0) <= time()) {
                     DB::table('cache_locks')->where('key', $fullKey)->delete();
+
+                    continue;
+                }
+                // FatalError / kill -9: finally не отпускает lock (TTL до 6 ч), PID уже нет.
+                // Без съёма dispatch каждые 5 с пишет «пропуск (lock)» и бот молчит.
+                $orphanBotId = self::parseBotIdFromLockName($lockName);
+                if ($orphanBotId !== null && ! self::isScanRunning($orphanBotId, $exceptPid)) {
+                    DB::table('cache_locks')->where('key', $fullKey)->delete();
+                    BotScanProgress::endScan($orphanBotId);
 
                     continue;
                 }
@@ -456,5 +499,97 @@ final class BotScanCoordinator
         }
 
         return $reaped;
+    }
+
+    /**
+     * @param  list<mixed>  $items
+     * @return list<mixed>
+     */
+    public static function takeShard(array $items, int $shardIndex, int $shardCount): array
+    {
+        $shardCount = max(1, $shardCount);
+        $shardIndex = max(0, $shardIndex % $shardCount);
+        if ($shardCount === 1) {
+            return array_values($items);
+        }
+        $out = [];
+        foreach (array_values($items) as $i => $item) {
+            if ($i % $shardCount === $shardIndex) {
+                $out[] = $item;
+            }
+        }
+
+        return $out;
+    }
+
+    /**
+     * @return array{index:int,count:int}|null
+     */
+    public static function parseScanShard(?string $raw): ?array
+    {
+        $raw = trim((string) $raw);
+        if (! preg_match('/^(\d+)\/(\d+)$/', $raw, $m)) {
+            return null;
+        }
+        $count = (int) $m[2];
+        $index = (int) $m[1];
+        if ($count < 2 || $index < 0 || $index >= $count) {
+            return null;
+        }
+
+        return ['index' => $index, 'count' => $count];
+    }
+
+    /**
+     * Параллельный обход пар Impulse LVL: N процессов как SSID у 1min.
+     *
+     * @return array{processed:int,signals:int,trades:int}
+     */
+    public static function runImpulseShardedScan(int $botId, int $workers): array
+    {
+        $workers = max(2, min(8, $workers));
+        $php = self::cliPhpForScan();
+        $artisan = base_path('artisan');
+        $processes = [];
+        for ($i = 0; $i < $workers; $i++) {
+            $cmd = sprintf(
+                '%s %s bots:scan --bot_id=%d --scan-shard=%d/%d --active-only=1',
+                escapeshellarg($php),
+                escapeshellarg($artisan),
+                $botId,
+                $i,
+                $workers
+            );
+            $proc = proc_open($cmd, [
+                0 => ['pipe', 'r'],
+                1 => ['pipe', 'w'],
+                2 => ['pipe', 'w'],
+            ], $pipes, base_path());
+            if (! is_resource($proc)) {
+                continue;
+            }
+            fclose($pipes[0]);
+            $processes[] = ['proc' => $proc, 'out' => $pipes[1], 'err' => $pipes[2]];
+        }
+
+        $summary = ['processed' => 0, 'signals' => 0, 'trades' => 0];
+        foreach ($processes as $row) {
+            $stdout = stream_get_contents($row['out']) ?: '';
+            fclose($row['out']);
+            fclose($row['err']);
+            proc_close($row['proc']);
+            if (preg_match('/processed=(\d+)\s+signals=(\d+)\s+trades=(\d+)/', $stdout, $m)) {
+                $summary['processed'] += (int) $m[1];
+                $summary['signals'] += (int) $m[2];
+                $summary['trades'] += (int) $m[3];
+            }
+        }
+
+        return $summary;
+    }
+
+    private static function cliPhpForScan(): string
+    {
+        return ArtisanProcessFinder::cliPhpBinary();
     }
 }

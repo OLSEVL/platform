@@ -4,6 +4,7 @@ namespace App\Services\Telegram;
 
 use App\Jobs\RunTelegramAnalystAnalysisJob;
 use App\Models\Bot;
+use App\Support\TelegramInstrumentLabel;
 use Illuminate\Support\Facades\Log;
 
 /**
@@ -169,7 +170,7 @@ class StrongLevelTelegramHandler
             $this->telegram->sendMessage(
                 $token,
                 $chatId,
-                '❌ Инструмент <b>'.htmlspecialchars($parsed['instrument'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8').'</b> не найден.'
+                '❌ Инструмент <b>'.TelegramInstrumentLabel::html($parsed['instrument']).'</b> не найден.'
             );
 
             return;
@@ -197,7 +198,7 @@ class StrongLevelTelegramHandler
         $this->telegram->sendMessage(
             $token,
             $chatId,
-            '⏳ Запущен LLM-анализ <b>'.htmlspecialchars($instrument, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8')."</b>.\n".
+            '⏳ Запущен LLM-анализ <b>'.TelegramInstrumentLabel::html($instrument)."</b>.\n".
             'Ответ придёт от Chart Analyst SMC Flow (обычно 1–3 мин).'
         );
     }

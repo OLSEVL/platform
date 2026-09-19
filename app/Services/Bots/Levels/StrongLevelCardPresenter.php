@@ -9,6 +9,7 @@ use App\Services\CandleService;
 use App\Services\Telegram\LevelBounceAlertPresenter;
 use App\Services\Telegram\StrongLevelTelegramChartBuilder;
 use App\Services\Telegram\TelegramChartImageRenderer;
+use App\Support\TelegramInstrumentLabel;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\File;
 
@@ -360,7 +361,8 @@ class StrongLevelCardPresenter
         $isBb = $this->alertPresenter->isBollingerContrtrendDecision($decision, $botType);
         $isOsEngineBinary = $this->alertPresenter->isOsEngineBinaryDecision($decision, $botType);
 
-        $instrumentEsc = htmlspecialchars($instrument, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+        // Telegram-карточка: полное имя (display_name) + короткий код в скобках.
+        $instrumentEsc = TelegramInstrumentLabel::html($instrument);
         $sideEsc = htmlspecialchars($sideRu, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
         $expiryLabel = htmlspecialchars($this->alertPresenter->formatExpiryRu(max(1, $expirySec)), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
         $strategyTitle = htmlspecialchars($this->strategyTitle($features, $botType, $decision), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');

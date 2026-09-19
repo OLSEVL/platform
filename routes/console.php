@@ -10,6 +10,8 @@ use App\Services\Bots\BotEngineService;
 use App\Services\Bots\BotSettlementService;
 use App\Services\Bots\BotVirtualTradeSettlementService;
 use App\Services\Bots\OpenRouterClient;
+use App\Services\CandleRangeCache;
+use App\Services\CandleService;
 use App\Services\DataCleanupService;
 use App\Services\ProxyDeadProbeService;
 use App\Services\ProxyRotationService;
@@ -141,15 +143,31 @@ Artisan::command('candles:prune-old', function (DataCleanupService $dataCleanup)
 })->purpose('Устаревший алиас data:auto-cleanup (свечи и прочие данные по настройке /settings)');
 
 Artisan::command('candles:ingest-status', function () {
-    $total = InstrumentCandle::query()->count();
-    $this->line("Всего записей в candles: {$total}");
-    $rows = InstrumentCandle::query()
-        ->selectRaw('instrument, MAX(time) as last_time, MAX(updated_at) as last_write')
-        ->groupBy('instrument')
-        ->orderByDesc('last_write')
-        ->limit(20)
-        ->get();
-    if ($rows->isEmpty()) {
+    $rangeCache = app(CandleRangeCache::class);
+    $total = $rangeCache->approximateRowCount();
+    $approxMark = $rangeCache->rowCountIsApproximate() ? '≈ ' : '';
+    $this->line("Всего записей в candles: {$approxMark}{$total}");
+    // По паре — seek в уникальный индекс, без GROUP BY по всей таблице.
+    $tf = CandleService::TF_S5;
+    $rows = [];
+    foreach (PocketInstrument::query()->orderBy('instrument')->pluck('instrument') as $code) {
+        $last = InstrumentCandle::query()
+            ->where('instrument', (string) $code)
+            ->where('timeframe', $tf)
+            ->orderByDesc('time')
+            ->first(['time', 'updated_at']);
+        if ($last === null) {
+            continue;
+        }
+        $rows[] = (object) [
+            'instrument' => (string) $code,
+            'last_time' => $last->time,
+            'last_write' => $last->updated_at,
+        ];
+    }
+    usort($rows, static fn ($a, $b) => strcmp((string) $b->last_write, (string) $a->last_write));
+    $rows = array_slice($rows, 0, 20);
+    if ($rows === []) {
         $this->warn('Нет свечей. Проверьте: сервис pocket-options-proxy с PLATFORM_URL, активные инструменты и session_token.');
 
         return;
@@ -588,6 +606,56 @@ Artisan::command('bots:max-bot-bootstrap', function () {
 
     $this->info("Готово: #{$bot->id} {$bot->name} ({$bot->type})");
 })->purpose('Создать бота MaxBot (ratio тел к историческому максимуму), inactive');
+
+Artisan::command('bots:impulse-lvl-1min-bootstrap', function () {
+    $user = User::query()->orderBy('id')->first();
+    if (! $user) {
+        $this->error('Нет пользователей. Сначала зарегистрируйте пользователя.');
+
+        return;
+    }
+
+    $bot = Bot::query()->firstOrCreate(
+        ['user_id' => $user->id, 'name' => \App\Support\ImpulseLvl1minConfig::TITLE, 'type' => \App\Support\ImpulseLvl1minConfig::BOT_TYPE],
+        [
+            'is_active' => false,
+            'config' => \App\Support\ImpulseLvl1minConfig::defaultConfig(),
+        ]
+    );
+
+    $this->info("Готово: #{$bot->id} {$bot->name} ({$bot->type})");
+})->purpose('Создать Impulse LVL 1min (импульс + LVL), inactive');
+
+Artisan::command('bots:impulse-lvl-1min-import {botId?} {--config=docs_need_release/1min/new/config.py} {--pairs}', function () {
+    $botId = $this->argument('botId');
+    $bot = $botId
+        ? \App\Models\Bot::query()->find($botId)
+        : \App\Models\Bot::query()->where('type', \App\Support\ImpulseLvl1minConfig::BOT_TYPE)->orderBy('id')->first();
+    if (! $bot || ! \App\Support\ImpulseLvl1minConfig::is((string) $bot->type)) {
+        $this->error('Impulse LVL 1min бот не найден.');
+
+        return 1;
+    }
+
+    $loaded = \App\Support\ImpulseLvl1minPythonConfig::load((string) $this->option('config'));
+    $config = array_merge($bot->config ?? [], $loaded['overlay']);
+    if ($this->option('pairs')) {
+        $config['allowed_instruments'] = $loaded['pairs'];
+    }
+    $bot->config = $config;
+    $bot->save();
+
+    $this->info("Импорт в #{$bot->id} из {$loaded['source']}");
+    $this->info('Профилей: '.count($loaded['overlay']['profiles'] ?? []).', пар в PAIRS: '.count($loaded['pairs']));
+    if (! $this->option('pairs')) {
+        $this->comment('Белый список пар не тронут. Чтобы взять PAIRS из config.py: --pairs');
+    }
+    foreach ($loaded['skipped'] as $note) {
+        $this->comment('пропуск: '.$note);
+    }
+
+    return 0;
+})->purpose('Импорт порогов Impulse LVL из 1min config.py');
 
 Artisan::command('bots:reversal-confirm-bootstrap', function () {
     $user = User::query()->orderBy('id')->first();
@@ -1312,29 +1380,33 @@ Artisan::command('bots:scan-dispatch', function () {
     }
 })->purpose('Запустить параллельный bots:scan для каждого активного бота (cron каждую минуту)');
 
-Artisan::command('bots:scan {--bot_id=} {--active-only=1}', function (BotEngineService $engine) {
+Artisan::command('bots:scan {--bot_id=} {--active-only=1} {--scan-shard=}', function (BotEngineService $engine) {
     $botIdOpt = $this->option('bot_id');
     $singleBotId = $botIdOpt !== null && $botIdOpt !== '' ? (int) $botIdOpt : null;
+    $shard = BotScanCoordinator::parseScanShard(is_string($this->option('scan-shard')) ? $this->option('scan-shard') : null);
+    $isShard = $shard !== null;
 
-    // Per-bot: блокируем только тот же bot_id; полный проход — отдельный lock «all».
     $lockName = $singleBotId !== null
         ? BotScanCoordinator::botLockName($singleBotId)
         : BotScanCoordinator::ALL_BOTS_LOCK;
     $processBotFilter = $singleBotId;
 
-    if (bots_scan_process_running(getmypid(), $processBotFilter)) {
-        $this->warn('bots:scan уже выполняется — пропуск.');
+    $lock = null;
+    if (! $isShard) {
+        if (bots_scan_process_running(getmypid(), $processBotFilter)) {
+            $this->warn('bots:scan уже выполняется — пропуск.');
 
-        return;
+            return;
+        }
+
+        $lockResult = BotScanCoordinator::acquireLock($lockName, getmypid());
+        if (! $lockResult['acquired'] || ! $lockResult['lock'] instanceof \Illuminate\Contracts\Cache\Lock) {
+            $this->warn('bots:scan уже выполняется — пропуск (lock).');
+
+            return;
+        }
+        $lock = $lockResult['lock'];
     }
-
-    $lockResult = BotScanCoordinator::acquireLock($lockName, getmypid());
-    if (! $lockResult['acquired'] || ! $lockResult['lock'] instanceof \Illuminate\Contracts\Cache\Lock) {
-        $this->warn('bots:scan уже выполняется — пропуск (lock).');
-
-        return;
-    }
-    $lock = $lockResult['lock'];
 
     try {
         $activeOnly = (string) $this->option('active-only') !== '0';
@@ -1361,7 +1433,19 @@ Artisan::command('bots:scan {--bot_id=} {--active-only=1}', function (BotEngineS
             if ($bot->type === 'openrouter_llm_analyst') {
                 continue;
             }
-            $r = $engine->scanBot($bot);
+            $workers = \App\Support\ImpulseLvl1minConfig::is((string) $bot->type)
+                ? \App\Support\ImpulseLvl1minConfig::scanWorkers(is_array($bot->config) ? $bot->config : [])
+                : 1;
+            if ($isShard) {
+                $r = $engine->scanBot($bot, [
+                    'shard_index' => $shard['index'],
+                    'shard_count' => $shard['count'],
+                ]);
+            } elseif ($singleBotId !== null && $workers > 1) {
+                $r = BotScanCoordinator::runImpulseShardedScan($bot->id, $workers);
+            } else {
+                $r = $engine->scanBot($bot);
+            }
             $summary['processed'] += (int) $r['processed'];
             $summary['signals'] += (int) $r['signals'];
             $summary['trades'] += (int) $r['trades'];
@@ -1381,7 +1465,9 @@ Artisan::command('bots:scan {--bot_id=} {--active-only=1}', function (BotEngineS
             $summary['trades']
         ));
     } finally {
-        BotScanCoordinator::releaseLock($lock);
+        if ($lock !== null) {
+            BotScanCoordinator::releaseLock($lock);
+        }
     }
 })->purpose('Сканировать пары ботом (один --bot_id или все активные в одном процессе)');
 
@@ -1433,7 +1519,9 @@ Artisan::command('bots:scan-watchdog {--max-elapsed= : Секунды wall-time 
         : BotScanCoordinator::getScanMaxElapsedSec();
 
     $reaped = BotScanCoordinator::reapStaleScans($maxElapsed);
-    if ($reaped === []) {
+    // PID уже мёртв, lock жив до 6 ч (FatalError не вызывает finally) — иначе бот молчит.
+    $orphans = BotScanCoordinator::clearOrphanScanLocks();
+    if ($reaped === [] && $orphans === []) {
         $this->info(sprintf('Watchdog: зависших scan нет (порог %d с).', $maxElapsed));
 
         return;
@@ -1446,6 +1534,12 @@ Artisan::command('bots:scan-watchdog {--max-elapsed= : Секунды wall-time 
             $row['bot_id'] !== null ? (string) $row['bot_id'] : 'all',
             $row['elapsed_sec'],
             $row['reason']
+        ));
+    }
+    foreach ($orphans as $row) {
+        $this->warn(sprintf(
+            'Watchdog: снят сиротский lock bot=%d (процесса нет).',
+            $row['bot_id']
         ));
     }
 

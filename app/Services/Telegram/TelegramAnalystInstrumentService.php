@@ -31,7 +31,7 @@ class TelegramAnalystInstrumentService
 
         $rows = PocketInstrument::active()
             ->orderBy('instrument')
-            ->get(['instrument', 'current_payout']);
+            ->get(['instrument', 'display_name', 'current_payout']);
 
         return $rows->filter(function (PocketInstrument $row) use ($minPayout, $allowed, $blocked): bool {
             $key = (string) $row->instrument;
@@ -59,7 +59,7 @@ class TelegramAnalystInstrumentService
      * запускала анализ другой пары по тому же порядковому номеру.
      *
      * @return array{
-     *   items:list<array{instrument:string,callback_data:string,payout:?float}>,
+     *   items:list<array{instrument:string,label:string,callback_data:string,payout:?float}>,
      *   total:int
      * }
      */
@@ -76,6 +76,8 @@ class TelegramAnalystInstrumentService
             }
             $items[] = [
                 'instrument' => $instrument,
+                // Текст кнопки: «AUD/NZD OTC (AUDNZD_otc)» — то же правило, что в алертах.
+                'label' => \App\Support\TelegramInstrumentLabel::format($instrument),
                 'callback_data' => $callbackData,
                 'payout' => $row->current_payout !== null ? (float) $row->current_payout : null,
             ];

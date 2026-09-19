@@ -33,6 +33,7 @@ final class LevelBounceBotTypes
         'three_soldier_vol_adaptive',
         'custom_candles_impulse',
         MaxBotConfig::BOT_TYPE,
+        ImpulseLvl1minConfig::BOT_TYPE,
     ];
 
     /** Новые mean-reversion / pattern порты (дефолты runtime как у bollinger_contrtrend). */
@@ -59,6 +60,7 @@ final class LevelBounceBotTypes
         'three_soldier_vol_adaptive',
         'custom_candles_impulse',
         MaxBotConfig::BOT_TYPE,
+        ImpulseLvl1minConfig::BOT_TYPE,
     ];
 
     public static function supportsCards(string $type): bool

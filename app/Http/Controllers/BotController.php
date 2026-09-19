@@ -102,6 +102,7 @@ use App\Support\LevelBounceBotTypes;
 use App\Support\ChartAnalystBotTypes;
 use App\Support\OsEngineWaveABotConfig;
 use App\Support\MaxBotConfig;
+use App\Support\ImpulseLvl1minConfig;
 use App\Support\OsEngineWaveBBotConfig;
 use App\Support\SmcFlowWorkingSnapshot;
 use App\Support\CardSmcFlowAnalysisStore;
@@ -1603,6 +1604,8 @@ class BotController extends Controller
             $config = OsEngineWaveABotConfig::buildFromRequest($request, $bot);
         } elseif (MaxBotConfig::is($bot->type)) {
             $config = MaxBotConfig::buildFromRequest($request, $bot);
+        } elseif (ImpulseLvl1minConfig::is($bot->type)) {
+            $config = ImpulseLvl1minConfig::buildFromRequest($request, $bot);
         } elseif (OsEngineWaveBBotConfig::isWaveB($bot->type)) {
             // Wave B: импульс / vola-adaptive паттерны под expiry ≤10m.
             $config = OsEngineWaveBBotConfig::buildFromRequest($request, $bot);
@@ -2513,7 +2516,7 @@ class BotController extends Controller
         if (! ChartAnalystBotTypes::isAnalyst($bot->type)) {
             $config['mirror_trades_enabled'] = $request->boolean('mirror_trades_enabled');
             // MaxBot хранит scan_interval_sec в своём блоке настроек.
-            if (! MaxBotConfig::is($bot->type)) {
+            if (! MaxBotConfig::is($bot->type) && ! ImpulseLvl1minConfig::is($bot->type)) {
                 $intervalRaw = $request->input(
                     'scan_interval_sec',
                     BotScanCoordinator::defaultScanIntervalSecForType((string) $bot->type)
@@ -2684,6 +2687,7 @@ class BotController extends Controller
             'three_soldier_vol_adaptive',
             'custom_candles_impulse' => '@candle_reversal_confirm_bot',
             MaxBotConfig::BOT_TYPE => '@candle_reversal_confirm_bot',
+            ImpulseLvl1minConfig::BOT_TYPE => '@candle_reversal_confirm_bot',
             'openrouter_llm_analyst' => '@chart_analyct_smc_flow_bot',
             ChartAnalystBotTypes::SRL => '@chart_analyst_sweep_raid_bot',
             ChartAnalystBotTypes::ENGULF => '@chart_analyst_engulf_bot',

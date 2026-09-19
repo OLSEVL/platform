@@ -4,6 +4,7 @@ namespace App\Jobs;
 
 use App\Models\Bot;
 use App\Support\ChartAnalystBotTypes;
+use App\Support\TelegramInstrumentLabel;
 use App\Services\Bots\BotDataService;
 use App\Services\Bots\BotEngineService;
 use App\Services\Telegram\StrongLevelTelegramLlmButton;
@@ -105,7 +106,7 @@ class RunTelegramAnalystAnalysisJob implements ShouldQueue
         }
 
         if ($pngPath !== null) {
-            $caption = '📊 <b>'.htmlspecialchars($this->instrument, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8').'</b> · M1';
+            $caption = '📊 <b>'.TelegramInstrumentLabel::html($this->instrument).'</b> · M1';
             $photoResult = $telegram->sendPhoto($token, $this->chatId, $pngPath, $caption);
             if (! ($photoResult['ok'] ?? false)) {
                 Log::warning('telegram_analyst_photo_failed', [
@@ -117,7 +118,7 @@ class RunTelegramAnalystAnalysisJob implements ShouldQueue
             @unlink($pngPath);
         }
 
-        $header = '📈 <b>Анализ '.htmlspecialchars($this->instrument, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8')."</b>\n\n";
+        $header = '📈 <b>Анализ '.TelegramInstrumentLabel::html($this->instrument)."</b>\n\n";
         $body = htmlspecialchars((string) $analysis['analysis_text'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
         $telegram->sendLongMessage($token, $this->chatId, $header.$body);
 

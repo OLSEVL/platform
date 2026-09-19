@@ -4,6 +4,7 @@ namespace App\Services\Telegram;
 
 use App\Support\LevelBounceBotTypes;
 use App\Support\MaxBotConfig;
+use App\Support\ImpulseLvl1minConfig;
 
 /**
  * Тексты Telegram-алертов и карточек для ботов отбития от уровня
@@ -143,6 +144,7 @@ class LevelBounceAlertPresenter
             'vol_adaptive_candles' => '⚡',
             'custom_candles_impulse' => '🚀',
             MaxBotConfig::BOT_TYPE => '⚡',
+            ImpulseLvl1minConfig::BOT_TYPE => $this->impulseLvlEmoji($decision),
             'cci_trade' => '📐',
             'rsi_trade' => '📊',
             'rvi_trade' => '📈',
@@ -168,6 +170,7 @@ class LevelBounceAlertPresenter
             'vol_adaptive_candles' => '⚡ <b>Vol Adaptive Candle — '.$sideEsc.'</b>',
             'custom_candles_impulse' => '🚀 <b>Candles Impulse — '.$sideEsc.'</b>',
             MaxBotConfig::BOT_TYPE => '⚡ <b>MaxBot — '.$sideEsc.'</b>',
+            ImpulseLvl1minConfig::BOT_TYPE => $this->impulseLvlTitle($decision, $sideEsc),
             'cci_trade' => '📐 <b>CCI — '.$sideEsc.'</b>',
             'rsi_trade' => '📊 <b>RSI Trade — '.$sideEsc.'</b>',
             'rvi_trade' => '📈 <b>RVI — '.$sideEsc.'</b>',
@@ -175,6 +178,38 @@ class LevelBounceAlertPresenter
                 ? '🔄 <b>Candle Reversal + Confirm — '.$sideEsc.'</b>'
                 : '🎯 <b>Strong Level — '.$sideEsc.'</b>',
         };
+    }
+
+    /**
+     * Кружок того профиля, который реально сработал (как emoji в 1min).
+     *
+     * @param  array<string, mixed>  $decision
+     */
+    public function impulseLvlEmoji(array $decision): string
+    {
+        $features = is_array($decision['features'] ?? null) ? $decision['features'] : [];
+        $kind = (string) ($features['kind'] ?? '');
+        $id = (string) ($features['strategy_id'] ?? '');
+        if ($kind === 'max' || str_starts_with($id, 'MAX')) {
+            return 'MAX';
+        }
+        $emoji = ImpulseLvl1minConfig::sanitizeEmoji($features['profile_emoji'] ?? '');
+        if ($emoji === '') {
+            $emoji = ImpulseLvl1minConfig::defaultEmojiForProfileId($id);
+        }
+
+        return $emoji !== '' ? $emoji : '⚪';
+    }
+
+    /**
+     * @param  array<string, mixed>  $decision
+     */
+    private function impulseLvlTitle(array $decision, string $sideEsc): string
+    {
+        $emoji = $this->impulseLvlEmoji($decision);
+        $features = is_array($decision['features'] ?? null) ? $decision['features'] : [];
+
+        return $emoji.' <b>Impulse LVL 1min'.(! empty($features['is_prev']) ? ' prev' : '').' — '.$sideEsc.'</b>';
     }
 
     /**
@@ -194,6 +229,7 @@ class LevelBounceAlertPresenter
             'vol_adaptive_candles' => 'Vol Adaptive Candles',
             'custom_candles_impulse' => 'Custom Candles Impulse',
             MaxBotConfig::BOT_TYPE => 'MaxBot',
+            ImpulseLvl1minConfig::BOT_TYPE => 'Impulse LVL 1min',
             'cci_trade' => 'CCI',
             'rsi_trade' => 'RSI Trade',
             'rvi_trade' => 'RVI',

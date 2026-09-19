@@ -58,6 +58,7 @@ final class BotAlgorithmSummary
             'strong_trend_demarker' => 'Strong Trend + DeMarker',
             DemarkerDualFastConfig::BOT_TYPE => 'Dual DeMarker Fast',
             MaxBotConfig::BOT_TYPE => 'MaxBot',
+            ImpulseLvl1minConfig::BOT_TYPE => 'Impulse LVL 1min',
             'openrouter_llm' => 'OpenRouter LLM',
             'openrouter_llm_analyst' => 'OpenRouter Chart Analyst',
             ChartAnalystBotTypes::SRL => 'OpenRouter Chart Analyst Sweep/Raid',
@@ -71,7 +72,7 @@ final class BotAlgorithmSummary
     {
         return match ($type) {
             'three_candles_in_row' => 'counter_three',
-            'strong_trend_telegram', 'custom_candles_impulse', MaxBotConfig::BOT_TYPE, 'three_soldier', 'three_soldier_vol_adaptive' => 'impulse_three',
+            'strong_trend_telegram', 'custom_candles_impulse', MaxBotConfig::BOT_TYPE, ImpulseLvl1minConfig::BOT_TYPE, 'three_soldier', 'three_soldier_vol_adaptive' => 'impulse_three',
             'strong_trend_demarker', DemarkerDualFastConfig::BOT_TYPE => 'oscillator_zones',
             'pinbar_trade' => 'pinbar',
             'bollinger_contrtrend' => 'bb_reversion',
@@ -162,6 +163,9 @@ final class BotAlgorithmSummary
             MaxBotConfig::BOT_TYPE => "Импульс MaxBot: серия одноцветных свечей + ratio тел к историческому максимуму.\n"
                 ."Несколько правил (1:110%, 2:120%…); первая сработавшая — сигнал.\n"
                 .'live — на текущей свече; trend/counter задаёт CALL/PUT.',
+            ImpulseLvl1minConfig::BOT_TYPE => "Импульс 1min: тело vs trim-mean × множитель или MAX-ratio к истории.\n"
+                ."Обязательное касание swing-зоны LVL на M1/M5/M15/M30 (high/low).\n"
+                .'Опция live-фитиль: незакрытая M1 по max(high−open, open−low), как updateBotM1.',
             'smc_flow' => "Три фильтра на закрытой M1 должны совпасть:\n"
                 ."UT Bot (свежий Buy/Sell) + 3BR confirm + цена в LuxAlgo OB.\n"
                 .'Только при полном совпадении стороны → CALL или PUT.',
@@ -256,6 +260,13 @@ final class BotAlgorithmSummary
                 $s('Когда PUT', 'Красная серия + trend, или зелёная + counter.'),
                 $s('Стратегии', 'Список правил в порядке приоритета: 1:110%, 2:120% и т.д. Первая сработавшая даёт сигнал; dedupe по strategy_id + timestamp свечи.'),
                 $s('Важно', 'scan_interval_sec по умолчанию 5 с для live на M1. ТФ бота: 5/15/30/60/300 с.'),
+            ],
+            ImpulseLvl1minConfig::BOT_TYPE => [
+                $s('Идея', 'Порт docs_need_release/1min: импульс к trimmed mean (10+10 из 100) или MAX-серия vs исторический максимум одноцветных блоков, плюс касание swing-зоны LVL.'),
+                $s('Когда CALL', 'Бычий импульс (профиль extra_wl/extra/extreme/structure или MAX) коснулся LVL high. Сторона всегда по импульсу.'),
+                $s('Когда PUT', 'Медвежий импульс коснулся LVL low.'),
+                $s('Приоритет', 'MAX и каждый профиль — отдельные алерты (если включено в настройках). Paper одна: occupancy и «prefer live» задаются галочками.'),
+                $s('Важно', 'Воркеры, prev, живой HTF, live-фитиль, ждать закрытия paper — всё в карточке бота. Бэктест без forming-бара остаётся по телу. Диагностические логи scan сильно замедляют круг.'),
             ],
             'pinbar_trade' => [
                 $s('Идея', 'Пинбар = разворотная свеча: маленькое тело и длинный хвост. Тело должно лежать в верхней или нижней трети диапазона high−low.'),
@@ -386,7 +397,7 @@ final class BotAlgorithmSummary
                 $s('Когда CALL', 'Отбой от поддержки с разворотной структурой.'),
                 $s('Когда PUT', 'Отбой от сопротивления.'),
                 $s('Пример', 'Уровень 1.25, M5 пинбар вверх + M1 подтверждение → CALL на ~5 мин.'),
-                $s('Важно', 'По умолчанию expiry около 300 с. Фильтры источников как у Strong Level.'),
+                $s('Важно', 'M5 rejection считается только по закрытой пятиминутке, не по формирующейся. По умолчанию expiry около 300 с.'),
             ],
             'smc_flow' => [
                 $s('Идея', 'Три фильтра на одной закрытой M1: UT Bot, 3BR confirm и цена в LuxAlgo Order Block. Все должны смотреть в одну сторону.'),

@@ -11,6 +11,7 @@ use App\Services\Telegram\TelegramAlertService;
 use App\Services\Telegram\TelegramChartImageRenderer;
 use App\Services\Telegram\StrongLevelTelegramLlmButton;
 use App\Support\HybridAnalystConfig;
+use App\Support\TelegramInstrumentLabel;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldBeUnique;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -166,7 +167,7 @@ class RunHybridAnalystAnalysisJob implements ShouldQueue, ShouldBeUnique
                 .(($tradeResult['mirrored'] ?? false) ? ' · PO mirror' : '');
         }
 
-        $header = '🔀 <b>Гибридный анализ '.htmlspecialchars($this->instrument, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8')."</b>\n"
+        $header = '🔀 <b>Гибридный анализ '.TelegramInstrumentLabel::html($this->instrument)."</b>\n"
             .'LLM: '.$llmSide
             .' · Source: '.htmlspecialchars($sourceName, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8')
             .' ('.htmlspecialchars($sourceType, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8').') → '.$sourceSide
@@ -198,7 +199,7 @@ class RunHybridAnalystAnalysisJob implements ShouldQueue, ShouldBeUnique
             $footerParts,
             $llmMarkup,
         ): array {
-            $instrumentEsc = htmlspecialchars($this->instrument, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+            $instrumentEsc = TelegramInstrumentLabel::html($this->instrument);
             if ($pngPath !== null) {
                 $caption = '🔀 <b>Гибрид</b> · '.$instrumentEsc
                     .' · LLM '.$llmSide

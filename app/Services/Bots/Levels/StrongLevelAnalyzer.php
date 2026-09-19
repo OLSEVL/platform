@@ -78,6 +78,7 @@ class StrongLevelAnalyzer
         $m5 = is_array($mtf['5'] ?? null) ? array_values($mtf['5']) : [];
         $m15 = is_array($mtf['15'] ?? null) ? array_values($mtf['15']) : [];
         $h1 = is_array($mtf['60'] ?? null) ? array_values($mtf['60']) : [];
+        // Live/backtest отдают только закрытые HTF (без формирующейся M5/H1).
         if (count($m5) < 20) {
             return null;
         }

@@ -96,6 +96,37 @@
     </div>
 </div>
 
+{{-- Модалка LLM «Доп. анализ нейросетью»: длинный текст не раздувает карточку в сетке. --}}
+<div id="smc-analysis-modal" class="fixed inset-0 z-[60] hidden" aria-hidden="true">
+    <div id="smc-analysis-backdrop" class="absolute inset-0 bg-black/70"></div>
+    <div class="relative flex min-h-full items-center justify-center p-4">
+        <div class="relative flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-xl border border-cyan-900/50 bg-zinc-900 shadow-2xl"
+            role="dialog" aria-modal="true" aria-labelledby="smc-analysis-title">
+            <button type="button" id="smc-analysis-close"
+                class="absolute right-3 top-3 z-10 rounded bg-zinc-800/90 px-2 py-1 text-lg leading-none text-zinc-300 hover:bg-zinc-700 hover:text-white"
+                aria-label="Закрыть">×</button>
+
+            <div class="border-b border-zinc-800 px-5 py-4 pr-12">
+                <h2 id="smc-analysis-title" class="text-lg font-semibold text-zinc-100">Доп. анализ нейросетью</h2>
+                <p id="smc-analysis-pair" class="mt-1 text-sm text-cyan-300"></p>
+            </div>
+
+            <div class="flex min-h-0 flex-1 flex-col overflow-y-auto p-5">
+                <p id="smc-analysis-status" class="text-sm text-cyan-300"></p>
+                <pre id="smc-analysis-text" class="mt-3 hidden max-h-[55vh] overflow-y-auto whitespace-pre-wrap break-words rounded-lg border border-zinc-800 bg-zinc-950/80 p-4 text-sm leading-relaxed text-zinc-200"></pre>
+                <p id="smc-analysis-meta" class="mt-2 hidden text-xs leading-snug text-zinc-500"></p>
+            </div>
+
+            <div class="flex items-center justify-end gap-2 border-t border-zinc-800 px-5 py-3">
+                <button type="button" id="smc-analysis-retry"
+                    class="hidden rounded border border-zinc-600 bg-zinc-800 px-3 py-1.5 text-sm text-zinc-200 hover:bg-zinc-700">
+                    Повторить анализ
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <script>
 (function() {
     const root = document.getElementById('bot-cards-app');
@@ -107,6 +138,10 @@
     const modal = document.getElementById('card-modal');
     const modalBackdrop = document.getElementById('card-modal-backdrop');
     const modalClose = document.getElementById('card-modal-close');
+    const analysisModal = document.getElementById('smc-analysis-modal');
+    const analysisBackdrop = document.getElementById('smc-analysis-backdrop');
+    const analysisClose = document.getElementById('smc-analysis-close');
+    const analysisRetry = document.getElementById('smc-analysis-retry');
     const SMC_FLOW_BTN_LABEL = root.dataset.smcFlowLabel || 'Доп. анализ нейросетью';
 
     const SOUND_KEY = 'bot_cards_sound_' + BOT_ID;
@@ -117,6 +152,8 @@
     let pollTimer = null;
     let tickTimer = null;
     let currentModalCard = null;
+    /** Карточка, чей LLM-анализ сейчас показан в модалке (не в сетке). */
+    let currentAnalysisCard = null;
     /** cardId → {kind, payload} — чтобы live-poll сетки не стирал текст анализа. */
     let analysisByCardId = new Map();
     /** cardId → {timer, count} */
@@ -311,17 +348,7 @@
                 <button type="button" data-stop-card="1" data-smc-analysis="1"
                     class="mt-3 w-full rounded border border-cyan-800/70 bg-cyan-950/50 px-3 py-1.5 text-xs font-medium text-cyan-200 transition hover:bg-cyan-900/60">
                     ${escapeHtml(SMC_FLOW_BTN_LABEL)}
-                </button>
-                {{-- Панель ответа LLM прямо в карточке (не в модалке): статус, текст, модель/биллинг, повтор. --}}
-                <div class="card-smc-panel mt-3 hidden rounded-lg border border-cyan-900/40 bg-zinc-950/80 p-3" data-stop-card="1">
-                    <p class="card-smc-status text-xs text-cyan-300"></p>
-                    <pre class="card-smc-text mt-2 hidden max-h-72 overflow-y-auto whitespace-pre-wrap break-words text-xs leading-relaxed text-zinc-200"></pre>
-                    <p class="card-smc-meta mt-1 hidden text-[11px] leading-snug text-zinc-500"></p>
-                    <button type="button" data-stop-card="1" data-smc-retry="1"
-                        class="card-smc-retry mt-2 hidden rounded border border-zinc-600 bg-zinc-800 px-2 py-1 text-[11px] text-zinc-200 hover:bg-zinc-700">
-                        Повторить анализ
-                    </button>
-                </div>` : ''}
+                </button>` : ''}
 
                 <div class="mt-4 h-1.5 overflow-hidden rounded-full bg-zinc-800">
                     <div class="${barColor} card-progress-inner h-full rounded-full transition-[width] duration-1000 ease-linear" style="width:${pct}%"></div>
@@ -399,7 +426,7 @@
 
         const saved = analysisByCardId.get(card.id);
         if (saved) {
-            paintSmcPanel(el, saved.kind, saved.payload);
+            paintSmcButton(card.id, saved.kind);
         }
 
         cardsById.set(card.id, card);
@@ -420,15 +447,23 @@
 
     // Делегирование: новые карточки после poll не требуют повторной привязки кнопки анализа.
     grid.addEventListener('click', (e) => {
-        const retryBtn = e.target.closest('[data-smc-retry]');
         const smcBtn = e.target.closest('[data-smc-analysis]');
-        if (!retryBtn && !smcBtn) return;
+        if (!smcBtn) return;
         e.preventDefault();
         e.stopPropagation();
-        const article = (retryBtn || smcBtn).closest('article[data-card-id]');
+        const article = smcBtn.closest('article[data-card-id]');
         if (!article) return;
         const card = cardsById.get(Number(article.getAttribute('data-card-id')));
-        if (card) startSmcAnalysis(card);
+        if (!card) return;
+        const cardId = Number(card.id);
+        const saved = analysisByCardId.get(cardId);
+        const polling = smcPolls.has(cardId);
+        // Готовый или идущий анализ открываем в модалке без нового POST; ошибка / первый клик — старт.
+        if (polling || (saved && saved.kind === 'ok')) {
+            openAnalysisModal(card);
+            return;
+        }
+        startSmcAnalysis(card);
     });
 
     function tickLive() {
@@ -470,7 +505,7 @@
         // Первая отрисовка — целиком, дальше точечные обновления без мерцания.
         if (!grid.querySelector('article[data-card-id]')) {
             grid.innerHTML = cards.map(renderCard).join('');
-            restoreSmcPanels();
+            restoreSmcButtons();
             bindCardClicks();
             tickLive();
             return;
@@ -497,7 +532,7 @@
                 const article = wrap.firstElementChild;
                 if (article) {
                     const saved = analysisByCardId.get(card.id);
-                    if (saved) paintSmcPanel(article, saved.kind, saved.payload);
+                    if (saved) paintSmcButton(card.id, saved.kind, article);
                     fragment.appendChild(article);
                 }
             }
@@ -558,7 +593,9 @@
     function closeModal() {
         modal.classList.add('hidden');
         currentModalCard = null;
-        document.body.classList.remove('overflow-hidden');
+        if (analysisModal.classList.contains('hidden')) {
+            document.body.classList.remove('overflow-hidden');
+        }
         ['card-modal-chart-m1', 'card-modal-chart-m15'].forEach((id) => {
             const img = document.getElementById(id);
             if (!img) return;
@@ -589,49 +626,69 @@
         smcPolls.delete(cardId);
     }
 
-    function restoreSmcPanels() {
+    function restoreSmcButtons() {
         analysisByCardId.forEach((saved, cardId) => {
-            const el = grid.querySelector(`article[data-card-id="${cardId}"]`);
-            if (el) paintSmcPanel(el, saved.kind, saved.payload);
+            paintSmcButton(cardId, saved.kind);
         });
     }
 
-    function paintSmcPanel(article, kind, payload) {
-        const panel = article.querySelector('.card-smc-panel');
-        if (!panel) return;
-        const statusEl = panel.querySelector('.card-smc-status');
-        const textEl = panel.querySelector('.card-smc-text');
-        const metaEl = panel.querySelector('.card-smc-meta');
-        const retryEl = panel.querySelector('.card-smc-retry');
+    /** Подпись кнопки на карточке: полный текст анализа живёт только в модалке. */
+    function paintSmcButton(cardId, kind, article) {
+        const scope = article || grid.querySelector(`article[data-card-id="${cardId}"]`);
+        if (!scope) return;
+        const el = scope.querySelector('[data-smc-analysis]');
+        if (!el) return;
+        if (kind === 'loading') {
+            el.textContent = 'Анализ…';
+        } else if (kind === 'ok') {
+            el.textContent = 'Открыть анализ';
+        } else if (kind === 'error') {
+            el.textContent = 'Повторить анализ';
+        } else {
+            el.textContent = SMC_FLOW_BTN_LABEL;
+        }
+    }
+
+    function paintSmcModal(kind, payload, card) {
+        const statusEl = document.getElementById('smc-analysis-status');
+        const textEl = document.getElementById('smc-analysis-text');
+        const metaEl = document.getElementById('smc-analysis-meta');
+        const pairEl = document.getElementById('smc-analysis-pair');
+        if (!statusEl || !textEl || !metaEl || !analysisRetry) return;
+
         const summary = (payload && payload.summary) ? String(payload.summary) : '';
         const analysisText = (payload && payload.analysis_text) ? String(payload.analysis_text) : '';
         const billing = (payload && payload.billing_label) ? String(payload.billing_label) : '';
         const model = (payload && payload.model) ? String(payload.model) : '';
         const errDetail = (payload && payload.error_detail) ? String(payload.error_detail) : '';
 
-        panel.classList.remove('hidden');
+        if (pairEl && card) {
+            const parts = [card.instrument, card.side_ru, card.expiry_label].filter(Boolean);
+            pairEl.textContent = parts.join(' · ');
+        }
+
         textEl.classList.add('hidden');
         metaEl.classList.add('hidden');
-        retryEl.classList.add('hidden');
+        analysisRetry.classList.add('hidden');
         textEl.textContent = '';
         metaEl.textContent = '';
 
         if (kind === 'loading') {
-            statusEl.className = 'card-smc-status text-xs text-cyan-300';
+            statusEl.className = 'text-sm text-cyan-300';
             statusEl.textContent = summary || '⏳ Запускаю LLM… Обычно 1–3 мин.';
             return;
         }
         if (kind === 'error') {
-            statusEl.className = 'card-smc-status text-xs text-rose-300';
+            statusEl.className = 'text-sm text-rose-300';
             statusEl.textContent = summary || 'Не удалось выполнить анализ.';
             if (errDetail) {
                 textEl.textContent = errDetail;
                 textEl.classList.remove('hidden');
             }
-            retryEl.classList.remove('hidden');
+            analysisRetry.classList.remove('hidden');
             return;
         }
-        statusEl.className = 'card-smc-status text-xs text-emerald-300';
+        statusEl.className = 'text-sm text-emerald-300';
         statusEl.textContent = summary || 'Анализ готов.';
         if (analysisText) {
             textEl.textContent = analysisText;
@@ -642,13 +699,35 @@
             metaEl.textContent = metaParts.join(' · ');
             metaEl.classList.remove('hidden');
         }
-        retryEl.classList.remove('hidden');
+        analysisRetry.classList.remove('hidden');
+    }
+
+    function openAnalysisModal(card) {
+        if (!card || !analysisModal) return;
+        currentAnalysisCard = card;
+        const saved = analysisByCardId.get(Number(card.id));
+        paintSmcModal(saved ? saved.kind : 'loading', saved ? saved.payload : { summary: '⏳ Запускаю LLM… Обычно 1–3 мин.' }, card);
+        analysisModal.classList.remove('hidden');
+        analysisModal.setAttribute('aria-hidden', 'false');
+        document.body.classList.add('overflow-hidden');
+    }
+
+    function closeAnalysisModal() {
+        if (!analysisModal) return;
+        analysisModal.classList.add('hidden');
+        analysisModal.setAttribute('aria-hidden', 'true');
+        currentAnalysisCard = null;
+        if (modal.classList.contains('hidden')) {
+            document.body.classList.remove('overflow-hidden');
+        }
     }
 
     function setSmcCardView(cardId, kind, payload) {
         analysisByCardId.set(cardId, { kind, payload: payload || {} });
-        const el = grid.querySelector(`article[data-card-id="${cardId}"]`);
-        if (el) paintSmcPanel(el, kind, payload);
+        paintSmcButton(cardId, kind);
+        if (currentAnalysisCard && Number(currentAnalysisCard.id) === Number(cardId)) {
+            paintSmcModal(kind, payload, currentAnalysisCard);
+        }
     }
 
     function applySmcPayload(cardId, data) {
@@ -698,6 +777,7 @@
         if (!card || !card.smc_flow_analysis_url) return;
         const cardId = Number(card.id);
         stopSmcPoll(cardId);
+        openAnalysisModal(card);
         setSmcCardView(cardId, 'loading', { summary: '⏳ Запускаю LLM… Обычно 1–3 мин.' });
 
         try {
@@ -730,8 +810,18 @@
 
     modalClose.addEventListener('click', closeModal);
     modalBackdrop.addEventListener('click', closeModal);
+    analysisClose.addEventListener('click', closeAnalysisModal);
+    analysisBackdrop.addEventListener('click', closeAnalysisModal);
+    analysisRetry.addEventListener('click', () => {
+        if (currentAnalysisCard) startSmcAnalysis(currentAnalysisCard);
+    });
     document.addEventListener('keydown', (e) => {
-        if (e.key === 'Escape' && !modal.classList.contains('hidden')) closeModal();
+        if (e.key !== 'Escape') return;
+        if (!analysisModal.classList.contains('hidden')) {
+            closeAnalysisModal();
+            return;
+        }
+        if (!modal.classList.contains('hidden')) closeModal();
     });
 
     async function refreshOnce() {

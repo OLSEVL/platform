@@ -129,7 +129,7 @@ class BotDataService
 
     /**
      * Убирает последний бакет, если его период ещё не закончился (now < time+period).
-     * Нужно для S30/S15/M1: seriesForDashboard отдаёт формирующуюся свечу как обычный ряд.
+     * Нужно для S30/S15/M1/M5: seriesForDashboard отдаёт формирующуюся свечу как обычный ряд.
      *
      * @param  list<array<string, mixed>>  $rows
      * @return list<array<string, mixed>>
@@ -148,6 +148,63 @@ class BotDataService
         }
 
         return $rows;
+    }
+
+    /**
+     * Срез MTF без look-ahead для bar-replay.
+     *
+     * `time` свечи = open бакета. M5 12:00 уже содержит OHLC всего интервала 12:00–12:05.
+     * Если на закрытом M1 12:02 отдать эту M5, бэктест видит тень и close, которых
+     * в 12:02 ещё не было — отсюда завышенный winrate CRC/Strong Level.
+     *
+     * Правило: HTF попадает в срез только когда уже закрылся к close текущего бара серии:
+     * `htf.time + htfPeriod <= barTs + seriesPeriod`.
+     * На последней минуте M5 (M1 11:59) close M1 = close M5 = 12:00 — rejection виден,
+     * вход на close пятиминутки, без будущих минут.
+     *
+     * Курсор двигается вперёд по времени (бары серии идут по возрастанию) — O(1) амортизировано.
+     *
+     * @param  array<string, list<array<string,mixed>>>  $seriesByTf  ключ dashboard TF ('5','15','60')
+     * @param  array<string, int>  $takeByTf
+     * @param  array<string, int>  $cursor  индекс последнего включённого ЗАКРЫТОГО HTF-бара
+     * @return array<string, list<array<string,mixed>>>
+     */
+    public static function sliceClosedMtfUntil(
+        array $seriesByTf,
+        array $takeByTf,
+        array &$cursor,
+        int $barTs,
+        int $seriesPeriodSec,
+    ): array {
+        $seriesPeriodSec = max(1, $seriesPeriodSec);
+        // Close текущего бара серии: к этому моменту OHLC бара уже известен.
+        $knownUntil = $barTs + $seriesPeriodSec;
+        $out = [];
+        foreach ($seriesByTf as $tfKey => $rows) {
+            $n = count($rows);
+            $i = $cursor[$tfKey] ?? -1;
+            $htfPeriod = CandleService::periodSecondsForDashboardTf((int) $tfKey) ?? $seriesPeriodSec;
+
+            // Продвинуть правую границу до последнего HTF, который уже закрылся.
+            while ($i + 1 < $n) {
+                $htfTime = (int) ($rows[$i + 1]['time'] ?? 0);
+                $htfClose = $htfTime + $htfPeriod;
+                if ($htfClose > $knownUntil) {
+                    break;
+                }
+                $i++;
+            }
+            $cursor[$tfKey] = $i;
+            if ($i < 0) {
+                $out[$tfKey] = [];
+                continue;
+            }
+            $take = max(1, (int) ($takeByTf[$tfKey] ?? 50));
+            $from = max(0, $i + 1 - $take);
+            $out[$tfKey] = array_slice($rows, $from, $i + 1 - $from);
+        }
+
+        return $out;
     }
 
     /**
@@ -222,6 +279,8 @@ class BotDataService
             'closed' => $closed,
             'partial' => $partial,
             'series' => $series,
+            // M5/M15/H1 — только закрытые бакеты. Иначе CRC/Strong Level подтверждают
+            // rejection по формирующейся свече (тень ещё перерисуется).
             'mtf' => $this->normalizeMtfBundle($bundle),
         ];
     }
@@ -273,13 +332,19 @@ class BotDataService
     }
 
     /**
+     * Нормализует OHLC и выкидывает ещё открытый последний бакет каждого ТФ.
+     * Live seriesBundle всегда дорисовывает текущую M5/M15/H1 из уже пришедших S5 —
+     * для подтверждения отскока нужна только закрытая старшая свеча.
+     *
      * @param  array<string, list<array{time:int,open:float,high:float,low:float,close:float,volume:float}>>  $bundle
      * @return array<string, list<array{time:int,open:float,high:float,low:float,close:float,volume:float}>>
      */
-    private function normalizeMtfBundle(array $bundle): array
+    private function normalizeMtfBundle(array $bundle, ?int $now = null): array
     {
         $out = [];
         foreach ($bundle as $tf => $rows) {
+            $tfId = (int) $tf;
+            $closedRows = self::withoutOpenLastBucket($rows, $tfId, $now);
             $out[(string) $tf] = array_map(static fn (array $c) => [
                 'time' => (int) $c['time'],
                 'open' => (float) $c['open'],
@@ -287,7 +352,7 @@ class BotDataService
                 'low' => (float) $c['low'],
                 'close' => (float) $c['close'],
                 'volume' => (float) ($c['volume'] ?? 0),
-            ], $rows);
+            ], $closedRows);
         }
 
         return $out;

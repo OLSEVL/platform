@@ -2,6 +2,7 @@
 
 namespace App\Services\Telegram;
 
+use App\Support\TelegramInstrumentLabel;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Str;
 
@@ -173,7 +174,8 @@ class TelegramChartImageRenderer
         $candleH = $hasOscillator ? max(80, $plotH - $oscH - $oscGap) : $plotH;
         $oscY0 = $plotY0 + $candleH + $oscGap;
 
-        $title = $instrument.' · '.$timeframeLabel.' · '.now()->utc()->format('d.m.Y H:i').' UTC';
+        // В заголовке PNG — полное имя + короткий код, как в тексте Telegram-алертов.
+        $title = TelegramInstrumentLabel::format($instrument).' · '.$timeframeLabel.' · '.now()->utc()->format('d.m.Y H:i').' UTC';
         $this->drawText($img, $fontPath, $fontTitle, $plotX0, 22, $text, $title);
         if ($subtitle !== '') {
             $this->drawText(

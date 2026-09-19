@@ -2,12 +2,11 @@
 
 namespace App\Services\Telegram;
 
-use App\Support\ChartAnalystBotTypes;
-
 use App\Jobs\RunTelegramAnalystAnalysisJob;
 use App\Models\Bot;
-use App\Services\Telegram\StrongLevelTelegramLlmButton;
+use App\Support\ChartAnalystBotTypes;
 use App\Support\OpenRouterLlmConfig;
+use App\Support\TelegramInstrumentLabel;
 use Illuminate\Support\Facades\Log;
 
 /**
@@ -188,7 +187,7 @@ class TelegramAnalystHandler
                 'step' => TelegramAnalystStateStore::STEP_AWAIT_QUESTION,
                 'instrument' => $instrument,
             ]);
-            $questionText = '❓ <b>Ваш вопрос по '.htmlspecialchars($instrument, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8')."</b>?\n\n".
+            $questionText = '❓ <b>Ваш вопрос по '.TelegramInstrumentLabel::html($instrument)."</b>?\n\n".
                 'Напишите текст, '.TelegramAnalystReplyKeyboard::skipHint().' — анализ без вопроса. '.
                 TelegramAnalystReplyKeyboard::menuHint().' — вернуться к списку.';
             $this->sendReplyText($token, $chatId, $questionText, TelegramAnalystReplyKeyboard::awaitQuestionMarkup());
@@ -221,7 +220,7 @@ class TelegramAnalystHandler
             $this->sendReplyText(
                 $token,
                 $chatId,
-                '❌ Инструмент <b>'.htmlspecialchars($parsed['instrument'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8').'</b> не найден.',
+                '❌ Инструмент <b>'.TelegramInstrumentLabel::html($parsed['instrument']).'</b> не найден.',
                 TelegramAnalystReplyKeyboard::mainMarkup()
             );
 
@@ -256,7 +255,7 @@ class TelegramAnalystHandler
         $this->sendReplyText(
             $token,
             $chatId,
-            '⏳ Запущен независимый LLM-анализ <b>'.htmlspecialchars($instrument, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8')."</b>.\n".
+            '⏳ Запущен независимый LLM-анализ <b>'.TelegramInstrumentLabel::html($instrument)."</b>.\n".
             'Без гибрида и сигнала source (обычно 1–3 мин).',
             TelegramAnalystReplyKeyboard::mainMarkup()
         );
@@ -272,7 +271,7 @@ class TelegramAnalystHandler
         $this->sendReplyText(
             $token,
             $chatId,
-            '⏳ Анализирую <b>'.htmlspecialchars($instrument, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8').'</b>… (обычно 1–3 мин)',
+            '⏳ Анализирую <b>'.TelegramInstrumentLabel::html($instrument).'</b>… (обычно 1–3 мин)',
             TelegramAnalystReplyKeyboard::mainMarkup()
         );
 
@@ -353,7 +352,7 @@ class TelegramAnalystHandler
     }
 
     /**
-     * @param  array{items:list<array{instrument:string,callback_data:string,payout:?float}>,total:int}  $menuData
+     * @param  array{items:list<array{instrument:string,label?:string,callback_data:string,payout:?float}>,total:int}  $menuData
      * @return list<list<array{text:string,callback_data:string}>>
      */
     private function buildInstrumentKeyboard(array $menuData): array
@@ -361,13 +360,13 @@ class TelegramAnalystHandler
         $rows = [];
         $row = [];
         foreach ($menuData['items'] as $item) {
-            // Текст кнопки можно укорачивать; callback_data всегда несёт полное имя пары.
-            $label = $item['instrument'];
+            // На кнопке — полное имя + код; callback_data по-прежнему только короткий instrument.
+            $label = (string) ($item['label'] ?? $item['instrument']);
             if ($item['payout'] !== null) {
                 $label .= ' '.number_format($item['payout'], 0).'%';
             }
-            if (mb_strlen($label) > 32) {
-                $label = mb_substr($item['instrument'], 0, 28).'…';
+            if (mb_strlen($label) > 48) {
+                $label = mb_substr($label, 0, 45).'…';
             }
             $row[] = [
                 'text' => $label,

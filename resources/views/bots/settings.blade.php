@@ -205,7 +205,7 @@
             </label>
         </div>
 
-        @if (! \App\Support\MaxBotConfig::is($bot->type))
+        @if (! \App\Support\MaxBotConfig::is($bot->type) && ! \App\Support\ImpulseLvl1minConfig::is($bot->type))
             @include('bots._scan-interval-settings', ['cfg' => $cfg])
         @endif
         @else
@@ -1381,6 +1381,8 @@
             @include('bots._wave-a-settings', ['bot' => $bot, 'cfg' => $cfg, 'chartAnalystBots' => $chartAnalystBots ?? []])
         @elseif (\App\Support\MaxBotConfig::is($bot->type))
             @include('bots._max-bot-settings', ['bot' => $bot, 'cfg' => $cfg, 'chartAnalystBots' => $chartAnalystBots ?? []])
+        @elseif (\App\Support\ImpulseLvl1minConfig::is($bot->type))
+            @include('bots._impulse-lvl-1min-settings', ['bot' => $bot, 'cfg' => $cfg, 'chartAnalystBots' => $chartAnalystBots ?? []])
         @elseif (\App\Support\OsEngineWaveBBotConfig::isWaveB($bot->type))
             @include('bots._wave-b-settings', ['bot' => $bot, 'cfg' => $cfg, 'chartAnalystBots' => $chartAnalystBots ?? []])
         @elseif ($bot->type === 'openrouter_llm')

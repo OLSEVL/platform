@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Models\InstrumentCandle;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Cache;
 use Tests\TestCase;
 
 class IngestCandlesApiTest extends TestCase
@@ -97,5 +98,38 @@ class IngestCandlesApiTest extends TestCase
             'timeframe' => 4005,
             'time' => 1_700_000_005,
         ]);
+    }
+
+    public function test_ingest_s5_expands_warm_candle_range_cache(): void
+    {
+        Cache::flush();
+        app(\App\Services\CandleRangeCache::class)->rebuild();
+
+        $this->postJson('/api/ingest-candles', [
+            'instrument' => 'GBPUSD_otc',
+            'timeframe' => 4005,
+            'candles' => [
+                [
+                    'time' => 1_700_000_100,
+                    'open' => 1.0,
+                    'high' => 1.0,
+                    'low' => 1.0,
+                    'close' => 1.0,
+                    'volume' => 1,
+                ],
+                [
+                    'time' => 1_700_000_200,
+                    'open' => 1.0,
+                    'high' => 1.0,
+                    'low' => 1.0,
+                    'close' => 1.0,
+                    'volume' => 1,
+                ],
+            ],
+        ])->assertOk();
+
+        $range = app(\App\Services\CandleRangeCache::class)->s5Range();
+        $this->assertSame(1_700_000_100, $range['min_ts']);
+        $this->assertSame(1_700_000_200, $range['max_ts']);
     }
 }

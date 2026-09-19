@@ -887,12 +887,14 @@
     let lastClassicLayersSig = '';
     const CHART_DOM_OVERLAY_SYNC_MIN_MS = 200;
     let chartDomOverlaySyncLastMs = 0;
-    /** RAF-tween close → series.update() ~60fps: LWC v5 теряет хвостовые свечи и дёргает ось времени. */
-    const CHART_LIVE_SMOOTH_CLOSE = false;
+    /** RAF-tween close → series.update() ~60fps. Heal выключал из‑за потери хвоста LWC v5 —
+     * возвращаем: poll идёт через update() хвоста, не full setData. */
+    const CHART_LIVE_SMOOTH_CLOSE = true;
     let chartDomOverlayDirty = false;
     let chartDomOverlayTickTimer = null;
     const CHART_DOM_OVERLAY_TICK_MS = 400;
-    const CHART_HTML_TIME_RULER_ENABLED = false;
+    /** HTML-линейка секунд (как на dashboard). Heal выключил — возвращаем на pan/zoom. */
+    const CHART_HTML_TIME_RULER_ENABLED = true;
 
     let chart = null;
     let candlestickSeries = null;
@@ -6101,12 +6103,30 @@
 
         const prevParts = lastSyncedTailKey ? lastSyncedTailKey.split(';') : [];
         const prevLastTime = prevParts.length ? prevParts[prevParts.length - 1].split('|')[0] : '';
-        const curLastTime = String(allChartData[allChartData.length - 1].time);
+        const lastBar = allChartData[allChartData.length - 1];
+        const curLastTime = String(lastBar.time);
         const isNewBarTime = prevLastTime !== '' && prevLastTime !== curLastTime;
 
         if (candleSeriesBarCount !== allChartData.length) {
             lastSyncedTailKey = key;
             resyncCandlestickSeriesFromAllChartData(opts);
+            return true;
+        }
+
+        // Плавный close: toward() вместо full setData (иначе tween не стартует).
+        if (candleSmooth) {
+            withSuppressedDataSeriesViewport(() => {
+                if (isNewBarTime && allChartData.length >= 2) {
+                    try {
+                        candlestickSeries.update(mapBarForCandlestickSeries(allChartData[allChartData.length - 2]));
+                    } catch (e) {
+                        console.error('[bot chart] closed-bar update', e);
+                    }
+                }
+                candleSmooth.toward(lastBar);
+            });
+            lastSyncedTailKey = key;
+            lastTailSeriesUpdateMs = performance.now();
             return true;
         }
 
@@ -7601,12 +7621,14 @@
             width: chartWrapper.clientWidth,
             height: chartWrapper.clientHeight
         });
+        // Для Chrome MCP / e2e: доступ к IChartApi (проба дёрганья loadMore).
+        window.__platformChart = chart;
         candlestickSeries = chart.addSeries(LightweightCharts.CandlestickSeries, {
             upColor: '#26a69a', downColor: '#ef5350', borderVisible: false,
             wickUpColor: '#26a69a', wickDownColor: '#ef5350',
             priceFormat: { type: 'price', precision: 5, minMove: 0.00001 }
         });
-        // Плавный close отключён (CHART_LIVE_SMOOTH_CLOSE): стабильнее для LWC v5 на длинном простое.
+        // Плавный close последней свечи (PlatformCandleSmooth), если флаг включён.
         candleSmooth = null;
         if (CHART_LIVE_SMOOTH_CLOSE
             && window.PlatformCandleSmooth
@@ -7614,8 +7636,10 @@
             candleSmooth = window.PlatformCandleSmooth.create({
                 getSeries: () => candlestickSeries,
                 paintBar: paintBarForSmooth,
-                durationMs: 200,
+                // ~poll interval: tween перекрывает паузу между тиками.
+                durationMs: 450,
             });
+            window.__platformCandleSmooth = candleSmooth;
         }
         ensureBotChartDomOverlayTickLoop();
         candlestickMarkers = null;
@@ -7658,33 +7682,82 @@
             : candlesSince();
         if (oldestLoadedTime <= dynamicSince) return;
         loadingMore = true;
-        setLoading(true);
+        // Лёгкий prepend: setData + logical restore (clamp from≥0, ширина окна).
+        // Без visibility:hidden и без setVisibleRange у левого края.
         const inst = currentInstrument;
         const loadSeq = ++chartLoadSeq;
-        // before на любом TF: API больше не режет TF≠1 пустым ответом.
         fetchCandles(inst, { before: oldestLoadedTime, kind: 'more' }).then((data) => {
-            if (loadSeq !== chartLoadSeq || inst !== currentInstrument) return;
+            if (loadSeq !== chartLoadSeq || inst !== currentInstrument) {
+                loadingMore = false;
+                return;
+            }
             const newBars = buildChartData(data.candles || []);
             const existingTimes = new Set(allChartData.map(c => c.time));
             const toAdd = newBars.filter(c => !existingTimes.has(c.time));
-            if (!toAdd.length) return;
+            if (!toAdd.length) {
+                loadingMore = false;
+                return;
+            }
+            const added = toAdd.length;
+
+            let savedLogical = null;
+            try {
+                savedLogical = chart && chart.timeScale
+                    ? chart.timeScale().getVisibleLogicalRange()
+                    : null;
+            } catch (_) {}
+
             allChartData = [...toAdd, ...allChartData].sort((a, b) => a.time - b.time);
             oldestLoadedTime = Math.min(...allChartData.map(c => c.time));
             if (candleSmooth) candleSmooth.cancel();
             lastSyncedTailKey = '';
-            resyncCandlestickSeriesFromAllChartData({ preserveRange: true });
-            if (candleSmooth && allChartData.length) {
-                candleSmooth.snap(allChartData[allChartData.length - 1]);
+
+            let shifted = null;
+            if (savedLogical
+                && Number.isFinite(savedLogical.from)
+                && Number.isFinite(savedLogical.to)) {
+                const width = Math.max(1, savedLogical.to - savedLogical.from);
+                const baseFrom = Math.max(0, savedLogical.from) + added;
+                shifted = { from: baseFrom, to: baseFrom + width };
             }
+
+            withSuppressedDataSeriesViewport(() => {
+                withSuppressedViewportFollow(() => {
+                    if (candleSmooth) candleSmooth.reset();
+                    try {
+                        candlestickSeries.setData(allChartData.map(mapBarForCandlestickSeries));
+                        candleSeriesBarCount = allChartData.length;
+                        if (candleSmooth && allChartData.length) {
+                            candleSmooth.snap(allChartData[allChartData.length - 1]);
+                        }
+                    } catch (e) {
+                        console.error('[chart] loadMore setData', e);
+                    }
+                    syncLastBarKeyFromData();
+                    if (shifted && chart) {
+                        try {
+                            chart.timeScale().setVisibleLogicalRange(shifted);
+                        } catch (_) {}
+                    }
+                });
+            });
+
             renderChartMarkers();
             renderEntryPriceLines();
-            redrawStructureOverlay();
-            fetchStructures();
-            if (anyOverlayIndicatorLayerOn()) fetchPriceActionIndicator();
-        }).finally(() => {
+            requestAnimationFrame(() => {
+                if (loadSeq !== chartLoadSeq || inst !== currentInstrument) return;
+                loadingMore = false;
+                redrawStructureOverlay();
+                tickCandleCloseTimer();
+            });
+            setTimeout(() => {
+                if (loadSeq !== chartLoadSeq || inst !== currentInstrument) return;
+                fetchStructures();
+                if (anyOverlayIndicatorLayerOn()) fetchPriceActionIndicator();
+            }, 250);
+        }).catch(() => {
             if (loadSeq !== chartLoadSeq) return;
             loadingMore = false;
-            setLoading(false);
             tickCandleCloseTimer();
         });
     }

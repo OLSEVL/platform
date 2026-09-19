@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\InstrumentCandle;
 use App\Models\PocketInstrument;
+use App\Services\CandleRangeCache;
 use App\Services\CandleService;
 use App\Services\CurrentCandleCacheService;
 use App\Services\ProxyDeadProbeService;
@@ -71,7 +72,7 @@ class ProxyInstrumentController extends Controller
         return response()->json($list->values()->all());
     }
 
-    public function ingestCandles(Request $request): JsonResponse
+    public function ingestCandles(Request $request, CandleRangeCache $rangeCache): JsonResponse
     {
         $request->validate([
             'instrument' => 'required|string|max:63',
@@ -94,12 +95,22 @@ class ProxyInstrumentController extends Controller
         // - сохраняем в БД без +/-(часы);
         // - все последующие слои (API/UI/аналитика) работают с тем же timestamp.
         // Это гарантирует "ноль ручных сдвигов" и исключает каскадные рассинхроны.
+        $s5Min = null;
+        $s5Max = null;
         foreach ($candles as $c) {
             $time = max(1, (int) $c['time']);
             InstrumentCandle::updateOrCreate(
                 ['instrument' => $instrument, 'timeframe' => $timeframe, 'time' => $time],
                 ['open' => (float) $c['open'], 'high' => (float) $c['high'], 'low' => (float) $c['low'], 'close' => (float) $c['close'], 'volume' => (float) ($c['volume'] ?? 0)]
             );
+            // S5: копим края батча и одним вызовом расширяем кэш диапазона истории.
+            if ($timeframe === CandleService::TF_S5) {
+                $s5Min = $s5Min === null ? $time : min($s5Min, $time);
+                $s5Max = $s5Max === null ? $time : max($s5Max, $time);
+            }
+        }
+        if ($s5Min !== null && $s5Max !== null) {
+            $rangeCache->expandS5($s5Min, $s5Max);
         }
 
         return response()->json([

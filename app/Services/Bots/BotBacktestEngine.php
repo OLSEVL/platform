@@ -169,7 +169,7 @@ class BotBacktestEngine
         // PA/SMC params один раз на chunk: merged*() ходит в БД/кэш — не на каждый бар.
         $needsSmcParams = in_array($bot->type, ['smc_flow', 'strong_level', 'candle_reversal_confirm'], true);
         $needsPaParams = in_array($bot->type, ['strong_level', 'candle_reversal_confirm'], true);
-        $needsMtf = in_array($bot->type, ['candle_reversal_confirm', 'strong_level'], true);
+        $needsMtf = in_array($bot->type, ['candle_reversal_confirm', 'strong_level', \App\Support\ImpulseLvl1minConfig::BOT_TYPE], true);
         $smcParams = $needsSmcParams ? IndicatorSetting::mergedSmcFlowParams($botClone) : null;
         $paParams = $needsPaParams ? IndicatorSetting::mergedPriceActionDgtParams($botClone) : null;
 
@@ -240,9 +240,9 @@ class BotBacktestEngine
                 }
                 $barsTotal += count($tradeableIndexes);
 
-                // MTF один раз на пару в RAM; на баре — только срез <= barTs (без 3×SQL).
+                // MTF в RAM: закрытые HTF к close M1. Impulse LVL достраивает текущий бакет из M1 в Levels.
                 $mtfCache = $needsMtf
-                    ? $this->preloadMtfSeries($runtime, $instrument, $warmupFrom, (int) $run->to_ts)
+                    ? $this->preloadMtfSeries($runtime, (string) $bot->type, $instrument, $warmupFrom, (int) $run->to_ts)
                     : null;
                 $mtfCursor = $mtfCache !== null
                     ? array_fill_keys(array_keys($mtfCache['series']), -1)
@@ -280,8 +280,9 @@ class BotBacktestEngine
                         continue;
                     }
 
+                    // MTF без look-ahead: только HTF, которые уже закрылись к close этого M1.
                     $mtf = $mtfCache !== null
-                        ? $this->mtfSliceUntil($mtfCache, $mtfCursor, $barTs)
+                        ? $this->mtfSliceUntil($mtfCache, $mtfCursor, $barTs, $periodSec)
                         : [];
                     // now_utc — для фильтров trade hours в стратегиях (не Carbon::now()).
                     $context = [
@@ -876,14 +877,20 @@ class BotBacktestEngine
      * @param  array<string,mixed>  $runtime
      * @return array{series: array<string, list<array<string,mixed>>>, take: array<string,int>}
      */
-    private function preloadMtfSeries(array $runtime, string $instrument, int $fromTs, int $toTs): array
+    private function preloadMtfSeries(array $runtime, string $botType, string $instrument, int $fromTs, int $toTs): array
     {
         $cfg = is_array($runtime['config'] ?? null) ? $runtime['config'] : [];
-        $map = [
-            '5' => (int) ($cfg['m5_take'] ?? 120),
-            '15' => (int) ($cfg['m15_take'] ?? 80),
-            '60' => (int) ($cfg['h1_take'] ?? 12),
-        ];
+        $map = \App\Support\ImpulseLvl1minConfig::is($botType)
+            ? [
+                '5' => (int) ($cfg['m5_take'] ?? 80),
+                '15' => (int) ($cfg['m15_take'] ?? 60),
+                '30' => (int) ($cfg['m30_take'] ?? 40),
+            ]
+            : [
+                '5' => (int) ($cfg['m5_take'] ?? 120),
+                '15' => (int) ($cfg['m15_take'] ?? 80),
+                '60' => (int) ($cfg['h1_take'] ?? 12),
+            ];
         $series = [];
         foreach ($map as $tfKey => $take) {
             $tf = (int) $tfKey;
@@ -904,34 +911,23 @@ class BotBacktestEngine
     }
 
     /**
-     * Срез MTF «как на live lastTs»: бары с time <= lastTs, последние take штук.
-     * Курсор двигается вперёд по времени (бары M1 идут по возрастанию) — O(1) амортизировано.
+     * Срез MTF без look-ahead: бары, которые уже закрылись к close текущего бара серии.
+     * time <= lastTs недостаточно: M5 12:00 содержит OHLC до 12:05, а на M1 12:02
+     * этой информации ещё нет. См. BotDataService::sliceClosedMtfUntil.
      *
      * @param  array{series: array<string, list<array<string,mixed>>>, take: array<string,int>}  $mtfCache
-     * @param  array<string, int>  $cursor  индекс последнего включённого бара по ТФ (по ссылке)
+     * @param  array<string, int>  $cursor  индекс последнего включённого закрытого бара по ТФ (по ссылке)
      * @return array<string, list<array<string,mixed>>>
      */
-    private function mtfSliceUntil(array $mtfCache, array &$cursor, int $lastTs): array
+    private function mtfSliceUntil(array $mtfCache, array &$cursor, int $lastTs, int $seriesPeriodSec): array
     {
-        $out = [];
-        foreach ($mtfCache['series'] as $tfKey => $rows) {
-            $n = count($rows);
-            $i = $cursor[$tfKey] ?? -1;
-            // Продвинуть правую границу до последнего бара <= lastTs.
-            while ($i + 1 < $n && (int) $rows[$i + 1]['time'] <= $lastTs) {
-                $i++;
-            }
-            $cursor[$tfKey] = $i;
-            if ($i < 0) {
-                $out[$tfKey] = [];
-                continue;
-            }
-            $take = max(1, (int) ($mtfCache['take'][$tfKey] ?? 50));
-            $from = max(0, $i + 1 - $take);
-            $out[$tfKey] = array_slice($rows, $from, $i + 1 - $from);
-        }
-
-        return $out;
+        return BotDataService::sliceClosedMtfUntil(
+            $mtfCache['series'],
+            $mtfCache['take'],
+            $cursor,
+            $lastTs,
+            $seriesPeriodSec,
+        );
     }
 
     /** @param  array<string,mixed>  $decision */

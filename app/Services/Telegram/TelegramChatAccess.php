@@ -105,7 +105,7 @@ final class TelegramChatAccess
             return false;
         }
 
-        return (bool) DB::transaction(function () use ($bot, $chatId): bool {
+        $saved = (bool) DB::transaction(function () use ($bot, $chatId): bool {
             /** @var Bot|null $locked */
             $locked = Bot::query()->whereKey($bot->id)->lockForUpdate()->first();
             if ($locked === null) {
@@ -127,13 +127,24 @@ final class TelegramChatAccess
             $locked->save();
 
             $bot->refresh();
-            Log::info('telegram_subscriber_added', [
-                'bot_id' => $bot->id,
-                'chat_id' => $chatId,
-            ]);
 
             return true;
         });
+
+        // Лог вне транзакции: poll идёт от www-data, laravel.log часто принадлежит CLI-пользователю.
+        // Исключение Log::info внутри transaction откатывало подписку — /start «не работал».
+        if ($saved) {
+            try {
+                Log::info('telegram_subscriber_added', [
+                    'bot_id' => $bot->id,
+                    'chat_id' => $chatId,
+                ]);
+            } catch (\Throwable) {
+                // Подписка уже в БД; падение лога не должно это отменять.
+            }
+        }
+
+        return $saved;
     }
 
     /**
@@ -147,7 +158,7 @@ final class TelegramChatAccess
             return false;
         }
 
-        return (bool) DB::transaction(function () use ($bot, $chatId): bool {
+        $saved = (bool) DB::transaction(function () use ($bot, $chatId): bool {
             /** @var Bot|null $locked */
             $locked = Bot::query()->whereKey($bot->id)->lockForUpdate()->first();
             if ($locked === null) {
@@ -169,13 +180,21 @@ final class TelegramChatAccess
             $locked->save();
             $bot->refresh();
 
-            Log::info('telegram_subscriber_removed', [
-                'bot_id' => $bot->id,
-                'chat_id' => $chatId,
-            ]);
-
             return true;
         });
+
+        if ($saved) {
+            try {
+                Log::info('telegram_subscriber_removed', [
+                    'bot_id' => $bot->id,
+                    'chat_id' => $chatId,
+                ]);
+            } catch (\Throwable) {
+                // Отписка уже сохранена.
+            }
+        }
+
+        return $saved;
     }
 
     /**

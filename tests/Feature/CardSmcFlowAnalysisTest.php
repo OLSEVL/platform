@@ -17,7 +17,7 @@ class CardSmcFlowAnalysisTest extends TestCase
 {
     use RefreshDatabase;
 
-    public function test_cards_page_renders_inline_analysis_panel(): void
+    public function test_cards_page_renders_analysis_modal(): void
     {
         [$user, $bot] = $this->makeSourceBotWithAnalyst();
 
@@ -25,8 +25,8 @@ class CardSmcFlowAnalysisTest extends TestCase
             ->get(route('bots.cards', $bot))
             ->assertOk()
             ->assertSee('Доп. анализ нейросетью', false)
-            ->assertSee('card-smc-panel', false)
-            ->assertDontSee('smc-analysis-modal', false);
+            ->assertSee('smc-analysis-modal', false)
+            ->assertDontSee('card-smc-panel', false);
     }
 
     public function test_cards_data_includes_analysis_url_when_analyst_exists(): void

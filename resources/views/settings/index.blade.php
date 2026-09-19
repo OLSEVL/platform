@@ -679,7 +679,7 @@
                 <strong class="text-zinc-100">{{ $candlesStorageDepthLabel ?? 'нет данных' }}</strong>
                 истории свечей
                 @if(! empty($candlesStorageOldestLabel))
-                    <span class="text-zinc-500">(с {{ $candlesStorageOldestLabel }}, {{ number_format($candlesStorageStats['count'], 0, ',', ' ') }} записей)</span>
+                    <span class="text-zinc-500">(с {{ $candlesStorageOldestLabel }}, {{ !empty($candlesStorageStats['count_is_approximate']) ? '≈ ' : '' }}{{ number_format($candlesStorageStats['count'], 0, ',', ' ') }} записей)</span>
                 @endif
             </p>
         @else

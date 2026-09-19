@@ -38,6 +38,9 @@ class BotScanCoordinatorTest extends TestCase
     public function test_bot_lock_name(): void
     {
         $this->assertSame('bots:scan:bot:11', BotScanCoordinator::botLockName(11));
+        $this->assertSame(47, BotScanCoordinator::parseBotIdFromLockName('bots:scan:bot:47'));
+        $this->assertSame(47, BotScanCoordinator::parseBotIdFromLockName('laravel-cache-bots:scan:bot:47'));
+        $this->assertNull(BotScanCoordinator::parseBotIdFromLockName('bots:scan:all'));
     }
 
     public function test_log_path_for_bot(): void

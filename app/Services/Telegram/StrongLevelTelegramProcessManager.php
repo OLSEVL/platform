@@ -293,6 +293,7 @@ class StrongLevelTelegramProcessManager
             'williams_range_trade' => 'Williams Range Trade',
             'three_soldier' => 'Three Soldier',
             \App\Support\MaxBotConfig::BOT_TYPE => 'MaxBot',
+            \App\Support\ImpulseLvl1minConfig::BOT_TYPE => 'Impulse LVL 1min',
             'cci_trade' => 'CCI Trade',
             'rsi_trade' => 'RSI Trade',
             'rvi_trade' => 'RVI Trade',

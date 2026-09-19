@@ -542,20 +542,26 @@ class PlatformProcessMonitorService
      */
     private function ingestSummary(): array
     {
-        $active = PocketInstrument::active()->count();
-        $updatesLastMinute = InstrumentCandle::query()
-            ->where('updated_at', '>=', now()->subMinute())
-            ->count();
-
+        $active = PocketInstrument::active()->get();
+        // Не COUNT по updated_at без индекса — full scan ~40 млн строк на каждый snapshot.
+        // По паре: диапазон time по уникальному (instrument, timeframe, time).
+        $cutoffTs = now()->subMinute()->getTimestamp();
+        $tf = CandleService::TF_S5;
+        $updatesLastMinute = 0;
         $silent = 0;
-        foreach (PocketInstrument::active()->get() as $instrument) {
+        foreach ($active as $instrument) {
+            $updatesLastMinute += (int) InstrumentCandle::query()
+                ->where('instrument', (string) $instrument->instrument)
+                ->where('timeframe', $tf)
+                ->where('time', '>=', $cutoffTs)
+                ->count();
             if (IngestHealth::isIngestSilent($instrument)) {
                 $silent++;
             }
         }
 
         return [
-            'active_instruments' => $active,
+            'active_instruments' => $active->count(),
             'candle_updates_last_minute' => $updatesLastMinute,
             'ingest_silent_instruments' => $silent,
         ];

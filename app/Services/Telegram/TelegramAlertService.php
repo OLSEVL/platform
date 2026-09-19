@@ -6,6 +6,8 @@ use App\Models\Bot;
 use App\Models\BotTrade;
 use App\Models\IndicatorSetting;
 use App\Services\Bots\Levels\StrongLevelCardPresenter;
+use App\Support\ImpulseLvl1minConfig;
+use App\Support\TelegramInstrumentLabel;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
@@ -96,7 +98,7 @@ class TelegramAlertService
         $lines = [
             "{$icon} <b>Сильный {$trendLabel} тренд</b>",
             '',
-            'Пара: <b>'.htmlspecialchars($instrument, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8').'</b>',
+            'Пара: <b>'.TelegramInstrumentLabel::html($instrument).'</b>',
             'Таймфрейм: M1',
             "{$streakLen} {$candleLabel} свечей подряд ({$strictnessLabel})",
         ];
@@ -126,7 +128,8 @@ class TelegramAlertService
             $chartLevels = app(StrongTrendTelegramChartBuilder::class)
                 ->chartLevelsFromDecision($decision, $m1Candles);
             $side = strtoupper((string) ($decision['side'] ?? ''));
-            $captionBase = $icon.' <b>'.htmlspecialchars($instrument, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8').'</b>';
+            // Полное имя (display_name) + код в скобках — чтобы в чате сразу было видно «AUD/NZD OTC (AUDNZD_otc)».
+            $captionBase = $icon.' <b>'.TelegramInstrumentLabel::html($instrument).'</b>';
             if ($side !== '') {
                 $captionBase .= ' · '.$side;
             }
@@ -312,7 +315,7 @@ class TelegramAlertService
         $payout = $trade->payout_snapshot !== null ? (float) $trade->payout_snapshot : null;
 
         $lines = [
-            "{$icon} <b>{$label}</b> · ".htmlspecialchars($instrument, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8')." · {$side}",
+            "{$icon} <b>{$label}</b> · ".TelegramInstrumentLabel::html($instrument)." · {$side}",
             '',
             'Бот: <b>'.htmlspecialchars((string) $bot->name, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8').'</b>',
             'Вход: '.$this->formatResultPrice($entry)
@@ -397,7 +400,7 @@ class TelegramAlertService
         $lines = [
             '📣 <b>'.htmlspecialchars((string) $bot->name, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8').'</b> · '.$sideLabel,
             '',
-            'Пара: <b>'.htmlspecialchars($instrument, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8').'</b>',
+            'Пара: <b>'.TelegramInstrumentLabel::html($instrument).'</b>',
             'Таймфрейм: '.$timeframeLabel.' · экспирация '.$expirySec.' сек',
         ];
         if ($entryPrice !== null) {
@@ -454,7 +457,7 @@ class TelegramAlertService
                     ->chartLevelsFromDecision($decision, $closedCandles);
             }
             if (is_array($chartLevels)) {
-                $captionBase = '📣 <b>'.htmlspecialchars($instrument, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8').'</b>';
+                $captionBase = '📣 <b>'.TelegramInstrumentLabel::html($instrument).'</b>';
                 if ($side !== '') {
                     $captionBase .= ' · '.$side;
                 }
@@ -666,7 +669,7 @@ class TelegramAlertService
             $chartLevels = app(StrongLevelTelegramChartBuilder::class)
                 ->chartLevelsFromDecision($decision, $entryPrice);
             $side = strtoupper((string) ($decision['side'] ?? ''));
-            $captionBase = '📊 <b>'.htmlspecialchars($instrument, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8').'</b>';
+            $captionBase = '📊 <b>'.TelegramInstrumentLabel::html($instrument).'</b>';
             if ($side !== '') {
                 $captionBase .= ' · '.$side;
             }
@@ -842,7 +845,8 @@ class TelegramAlertService
         $reasons = $this->normalizeAlertReasons($decision['reasons_short'] ?? []);
         $isCrc = $presenter->isCrcDecision($decision, $botType);
 
-        $instrumentEsc = htmlspecialchars($instrument, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+        // Карточка/текст алерта: display_name из pocket_instruments + короткий instrument в скобках.
+        $instrumentEsc = TelegramInstrumentLabel::html($instrument);
         $kindLabel = $presenter->levelKindRu((string) ($features['level_kind'] ?? 'neutral'));
         $expiryRu = $presenter->formatExpiryRu(max(1, $expirySec));
 
@@ -851,6 +855,25 @@ class TelegramAlertService
             '',
             'Пара: <b>'.$instrumentEsc.'</b>',
         ];
+
+        // Impulse LVL: как оригинал «EURUSD (80%) ⚪ extra_wl 3- 4.30x M5» — в brief тоже, иначе профиль терялся.
+        $isImpulse = ImpulseLvl1minConfig::is((string) $botType)
+            || str_starts_with((string) ($decision['decision_version'] ?? ''), ImpulseLvl1minConfig::VERSION);
+        if ($isImpulse) {
+            $output = (string) ($features['output_label'] ?? ImpulseLvl1minConfig::outputLabel($features));
+            $kind = (string) ($features['kind'] ?? '');
+            $value = (float) ($features['value'] ?? 0);
+            $valueText = $kind === 'max' ? sprintf('%.0f%%', $value) : sprintf('%.2fx', $value);
+            $lvlBits = is_array($features['lvl_labels'] ?? null) ? $features['lvl_labels'] : [];
+            $lvlBits = array_values(array_filter(array_map('strval', $lvlBits), static fn (string $s): bool => $s !== ''));
+            $payoutBit = $payout !== null ? sprintf(' (%.0f%%)', $payout) : '';
+            $impulseLine = $instrumentEsc.$payoutBit.' '.htmlspecialchars($output, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8')
+                .' '.htmlspecialchars($valueText, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+            if ($lvlBits !== []) {
+                $impulseLine .= ' '.htmlspecialchars(implode(' ', $lvlBits), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+            }
+            $lines[] = $impulseLine;
+        }
 
         $levelLine = sprintf(
             'Уровень: <b>%.5f</b> (%s) | сила %.0f',

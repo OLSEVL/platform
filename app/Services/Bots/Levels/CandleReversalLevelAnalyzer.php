@@ -91,6 +91,8 @@ class CandleReversalLevelAnalyzer
         $m5 = is_array($mtf['5'] ?? null) ? array_values($mtf['5']) : [];
         $m15 = is_array($mtf['15'] ?? null) ? array_values($mtf['15']) : [];
         $h1 = is_array($mtf['60'] ?? null) ? array_values($mtf['60']) : [];
+        // Engine (live seriesWithMtf / backtest sliceClosedMtfUntil) отдаёт только
+        // закрытые HTF. Последняя M5 здесь — уже закрытый rejection, не формирующаяся свеча.
         if (count($m5) < 20) {
             return null;
         }
@@ -282,6 +284,8 @@ class CandleReversalLevelAnalyzer
             }
         }
 
+        // M5 rejection — по последней ЗАКРЫТОЙ пятиминутке (не по текущей формирующейся).
+        // Иначе live входит внутрь незавершённой свечи, а бэктест видел бы её полный OHLC.
         $m5Wick = null;
         if ($m5RejectionEnabled) {
             $wick = $side === 'CALL' ? $this->lowerWickRatio($lastM5) : $this->upperWickRatio($lastM5);
