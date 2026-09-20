@@ -1,4 +1,3 @@
-<script>
 /**
  * Общий helper для маркеров Lightweight Charts v5.
  *
@@ -760,15 +759,20 @@
                 : Math.floor(Date.now() / 1000));
 
         if (!show || !chart || !series || !instrument || !data.length) {
-            overlay.innerHTML = '';
-            overlay.classList.add('hidden');
+            // PR3b: не трогаем DOM, если оверлей уже пуст.
+            if (!overlay.classList.contains('hidden') || overlay.childElementCount) {
+                overlay.replaceChildren();
+                overlay.classList.add('hidden');
+            }
             return;
         }
 
         const ts = chart.timeScale();
         if (!ts) {
-            overlay.innerHTML = '';
-            overlay.classList.add('hidden');
+            if (!overlay.classList.contains('hidden') || overlay.childElementCount) {
+                overlay.replaceChildren();
+                overlay.classList.add('hidden');
+            }
             return;
         }
 
@@ -779,8 +783,10 @@
         });
 
         if (!rows.length) {
-            overlay.innerHTML = '';
-            overlay.classList.add('hidden');
+            if (!overlay.classList.contains('hidden') || overlay.childElementCount) {
+                overlay.replaceChildren();
+                overlay.classList.add('hidden');
+            }
             return;
         }
 
@@ -1691,4 +1697,3 @@
         },
     };
 })(window);
-</script>

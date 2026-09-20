@@ -16,6 +16,9 @@ const INGEST_CURRENT_LIGHT_S5_BAR_PERIOD_SEC = 5;
 /** Префикс ключа Redis — как CurrentCandleCacheService::KEY_PREFIX. */
 const INGEST_CURRENT_LIGHT_KEY_PREFIX = 'current_candle:';
 
+/** Pub/sub канал S5 partial — как App\Support\ChartLiveConfig::REDIS_CHANNEL (Laravel добавит Redis prefix). */
+const INGEST_CURRENT_LIGHT_PUB_CHANNEL = 'chart:s5';
+
 /**
  * @return array{
  *     status: int,
@@ -244,6 +247,9 @@ function ingest_current_light_put_partial(array $env, string $instrument, array 
         }
 
         $redis->setex($redisKey, $ttlSec, $json);
+        // PR2: тот же payload в pub/sub (префикс Laravel Redis options.prefix).
+        $channel = ($env['REDIS_PREFIX'] ?? 'laravel-database-').INGEST_CURRENT_LIGHT_PUB_CHANNEL;
+        $redis->publish($channel, $json);
     } catch (Throwable) {
         // Как CurrentCandleCacheService — Redis может быть временно недоступен.
     }

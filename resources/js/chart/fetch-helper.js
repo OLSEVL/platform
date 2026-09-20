@@ -1,6 +1,3 @@
-{{-- Скрипт ниже изолирован от Blade, поскольку JSDoc содержит фигурные скобки. --}}
-@verbatim
-<script>
 /**
  * PlatformChartFetch — общий helper для JSON-fetch на графиках (dashboard / bots/show).
  *
@@ -163,5 +160,3 @@
         isCurrent: isCurrent,
     };
 })(window);
-</script>
-@endverbatim

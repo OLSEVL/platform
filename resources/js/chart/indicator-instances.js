@@ -1,19 +1,21 @@
-{{--
-  Несколько экземпляров классических индикаторов на графике бота.
-  Требует: PLATFORM_CHART_INDICATOR_INSTANCES, PLATFORM_CHART_INSTANCE_RENDER_SPECS.
---}}
-@php
-    use App\Support\ChartIndicatorInstanceRegistry;
-    $instanceRenderSpecs = ChartIndicatorInstanceRegistry::renderSpecsForJs();
-    $instanceTypeKeys = ChartIndicatorInstanceRegistry::supportedHelpKeys();
-@endphp
-<script>
-(function () {
-    const BOT_CHART_INSTANCES_URL = @json(route('bots.chart-instances.index', ['bot' => $bot->id ?? 0]));
-    const BOT_CHART_INSTANCES_STORE_URL = @json(route('bots.chart-instances.store', ['bot' => $bot->id ?? 0]));
-    const BOT_CHART_INSTANCE_ITEM_URL = @json(url('/bots/'.($bot->id ?? 0).'/chart-instances/__ID__'));
-    const INSTANCE_TYPE_KEYS = @json($instanceTypeKeys);
-    const RENDER_SPECS = @json($instanceRenderSpecs);
+/**
+ * Classic indicator instances UI for bot chart (Vite).
+ * Reads URLs/specs from window.__CHART_BOT_BOOT__.
+ */
+(function bootChartIndicatorInstances() {
+    const boot = window.__CHART_BOT_BOOT__;
+    if (!boot || typeof boot !== 'object') {
+        return;
+    }
+    if (!boot.chartInstancesIndexUrl) {
+        return;
+    }
+
+    const BOT_CHART_INSTANCES_URL = boot.chartInstancesIndexUrl;
+    const BOT_CHART_INSTANCES_STORE_URL = boot.chartInstancesStoreUrl;
+    const BOT_CHART_INSTANCE_ITEM_URL = boot.chartInstanceItemUrlTmpl;
+    const INSTANCE_TYPE_KEYS = boot.instanceTypeKeys;
+    const RENDER_SPECS = boot.instanceRenderSpecs;
 
     /** @type {Array<{id:number,type:string,title:string,visible:boolean,settings_url:string}>} */
     let instances = Array.isArray(window.PLATFORM_CHART_INDICATOR_INSTANCES)
@@ -760,5 +762,7 @@
             return instancePayloads.get(Number(id)) || null;
         },
     };
+
 })();
-</script>
+
+export {};

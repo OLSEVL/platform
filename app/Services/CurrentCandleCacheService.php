@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Support\ChartLiveConfig;
 use Illuminate\Support\Facades\Redis;
 use Throwable;
 
@@ -30,7 +31,13 @@ class CurrentCandleCacheService
         ];
 
         try {
-            Redis::setex($this->key($instrument), $ttlSec, json_encode($payload, JSON_UNESCAPED_UNICODE));
+            $json = json_encode($payload, JSON_UNESCAPED_UNICODE);
+            if ($json === false) {
+                return;
+            }
+            Redis::setex($this->key($instrument), $ttlSec, $json);
+            // PR2: пушим S5 partial в pub/sub — chart_live_hub раздаёт браузерам по WS.
+            Redis::publish(ChartLiveConfig::REDIS_CHANNEL, $json);
         } catch (Throwable) {
             // Redis может быть временно недоступен/не настроен в окружении.
         }

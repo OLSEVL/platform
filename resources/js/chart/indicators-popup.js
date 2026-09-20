@@ -1,9 +1,3 @@
-{{--
-  JS для широкого попапа «Индикаторы» + детальной справки (? / клик по описанию).
-  Требует: #layers-dropdown-btn, #layers-dropdown-panel, #indicator-help-modal, #indicator-help-catalog.
-  Переменные layersBtn / layersPanel / tfPanel должны быть объявлены на странице.
---}}
-<script>
 (function () {
     const layersBtnEl = document.getElementById('layers-dropdown-btn');
     const layersPanelEl = document.getElementById('layers-dropdown-panel');
@@ -644,4 +638,3 @@
         }
     });
 })();
-</script>

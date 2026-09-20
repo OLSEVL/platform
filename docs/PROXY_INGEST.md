@@ -65,24 +65,26 @@ sudo systemctl stop pocket-options-proxy     # остановка
 
 Воркер в цикле делает паузу **`INGEST_LOOP_INTERVAL_SEC`** секунд и только после неё выполняет отправку текущей свечи, сброс завершённых минут в БД и прочие шаги. Если этот интервал большой (раньше в коде было **5 с**), то **даже при малом `INGEST_CURRENT_CANDLE_POST_DEBOUNCE_SEC`** текущая свеча на платформу уходит **не чаще, чем раз за интервал цикла**. В сочетании с опросом графика это давало ощущаемое отставание порядка **5–10 с** от графика Pocket.
 
-Рекомендация: держать **`INGEST_LOOP_INTERVAL_SEC=1`** (или `2`, если нужно снизить нагрузку на Redis/API). После смены переменных перезапустите прокси (`systemctl restart pocket-options-proxy` или перезапуск процесса с актуальным `proxy.env`).
+Рекомендация для «живой» S5: **`INGEST_LOOP_INTERVAL_SEC=0.25`**, **`INGEST_CURRENT_CANDLE_POST_DEBOUNCE_SEC=0.25`**, **`INGEST_CURRENT_CANDLE_REDIS_DIRECT=1`**.
+
+Важно: при `pm.max_children=5` HTTP `/api/ingest-current-candle` не тянет 100+ пар × 4 Hz (p50~1s, 504). Redis-direct пишет `SETEX current_candle:*` + `PUBLISH chart:s5` из Python; тик планирует publish без ожидания flush закрытых баров в Laravel.
 
 ### Остальные переменные (текущая свеча)
 
 | Переменная | Назначение |
 |------------|------------|
 | `INGEST_CURRENT_CANDLE_ENABLE` | `1` — слать формирующуюся минуту на платформу; `0` — только закрытые свечи в БД. |
-| `INGEST_CURRENT_CANDLE_POST_DEBOUNCE_SEC` | Минимальный интервал (сек, можно дробное, например `0.5`) между POST одной и той же открытой минуты при обновлении OHLC, чтобы не забивать Redis. |
+| `INGEST_CURRENT_CANDLE_POST_DEBOUNCE_SEC` | Минимальный интервал (сек, дробное ок, напр. `0.25`) между POST одной и той же открытой минуты при обновлении OHLC. |
 | `INGEST_CURRENT_CANDLE_TTL_SEC` | TTL ключа текущей свечи в Redis. |
-| `INGEST_LOOP_INTERVAL_SEC` | Пауза главного цикла воркера (сек); влияет на максимальную частоту доставки текущей свечи и flush завершённых минут. |
+| `INGEST_LOOP_INTERVAL_SEC` | Пауза главного цикла воркера (сек, float); потолок частоты POST текущей свечи и flush. |
 
 Пример фрагмента `bot/proxy.env`:
 
 ```env
 INGEST_CURRENT_CANDLE_ENABLE=1
 INGEST_CURRENT_CANDLE_TTL_SEC=180
-INGEST_CURRENT_CANDLE_POST_DEBOUNCE_SEC=1
-INGEST_LOOP_INTERVAL_SEC=1
+INGEST_CURRENT_CANDLE_POST_DEBOUNCE_SEC=0.25
+INGEST_LOOP_INTERVAL_SEC=0.25
 ```
 
 ### Дашборд

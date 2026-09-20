@@ -6,7 +6,8 @@
     <meta name="csrf-token" content="{{ csrf_token() }}">
     <title>@yield('title', 'Платформа')</title>
     @include('partials.platform-timezone')
-    <script src="https://cdn.tailwindcss.com"></script>
+    {{-- Собранный Tailwind (Vite), без runtime CDN-компилятора — быстрее FCP и меньше JS на каждой странице. --}}
+    @vite(['resources/css/app.css'])
 </head>
 <body @class([
     'bg-[#1c202e] text-slate-100 h-dvh min-h-dvh flex flex-col antialiased',

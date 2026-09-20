@@ -26,15 +26,16 @@ echo "[OK] bot/.venv готов"
 
 sudo cp "$ROOT/deploy/platform-queue.service" /etc/systemd/system/
 sudo cp "$ROOT/deploy/platform-pocket-proxy.service" /etc/systemd/system/
+sudo cp "$ROOT/deploy/platform-chart-live.service" /etc/systemd/system/
 sudo cp "$ROOT/deploy/logrotate-platform-proxy.conf" /etc/logrotate.d/platform-proxy
 # Старый root-юнит (pocket-options-proxy.service) конфликтует с platform-pocket-proxy на :3000.
 sudo systemctl disable --now pocket-options-proxy.service 2>/dev/null || true
 sudo systemctl daemon-reload
-sudo systemctl enable platform-pocket-proxy.service platform-queue.service
+sudo systemctl enable platform-pocket-proxy.service platform-queue.service platform-chart-live.service
 # Остановить дубликаты от start-all.sh (nohup), иначе порт 3000 занят не тем процессом.
 sudo pkill -f 'pocket-options-proxy.py' 2>/dev/null || true
 sleep 2
-sudo systemctl restart platform-pocket-proxy.service platform-queue.service
-echo "OK: platform-pocket-proxy + platform-queue + logrotate (platform-proxy)"
-systemctl is-active platform-pocket-proxy.service platform-queue.service
+sudo systemctl restart platform-pocket-proxy.service platform-queue.service platform-chart-live.service
+echo "OK: platform-pocket-proxy + platform-queue + platform-chart-live + logrotate"
+systemctl is-active platform-pocket-proxy.service platform-queue.service platform-chart-live.service
 # Проверка синтаксиса (без ротации): sudo logrotate -d /etc/logrotate.d/platform-proxy

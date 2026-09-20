@@ -1,4 +1,3 @@
-<script>
 /**
  * Плавная анимация close последней свечи (как на Pocket Option).
  *
@@ -23,11 +22,14 @@
      * options.getSeries — () => candlestickSeries
      * options.paintBar — optional (bar) => bar with DGT colors
      * options.durationMs — длина tween (по умолчанию 200)
+     * options.maxFps — потолок series.update/сек (PR3: меньше long tasks; 0 = каждый rAF)
      */
     function create(options) {
         const getSeries = options && options.getSeries;
         const paintBar = (options && options.paintBar) || ((b) => b);
         const durationMs = Math.max(40, Number(options && options.durationMs) || 200);
+        const maxFps = Math.max(0, Number(options && options.maxFps) || 0);
+        const minFrameGapMs = maxFps > 0 ? (1000 / maxFps) : 0;
 
         let rafId = null;
         let barTime = null;
@@ -37,6 +39,7 @@
         let displayClose = null;
         let fromClose = null;
         let animStartPerf = 0;
+        let lastPushPerf = 0;
 
         function series() {
             try {
@@ -90,13 +93,20 @@
             const e = easeOutCubic(t);
             const start = fromClose != null ? fromClose : target.close;
             displayClose = start + (target.close - start) * e;
-            pushToSeries(composeDisplayBar());
+
+            // PR3: не гоняем series.update на каждом rAF (~60fps) — LWC paint + DOM dirty.
+            const duePush = minFrameGapMs <= 0 || (now - lastPushPerf) >= minFrameGapMs || t >= 1;
+            if (duePush) {
+                lastPushPerf = now;
+                pushToSeries(composeDisplayBar());
+            }
 
             if (t < 1) {
                 rafId = requestAnimationFrame(frame);
             } else {
                 // Фиксируем точный target.close (без погрешности float lerp).
                 displayClose = target.close;
+                lastPushPerf = now;
                 pushToSeries({
                     time: target.time,
                     open: target.open,
@@ -193,4 +203,3 @@
 
     global.PlatformCandleSmooth = { create: create };
 })(window);
-</script>

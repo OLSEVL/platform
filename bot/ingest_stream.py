@@ -59,7 +59,12 @@ CANDLES_REQUEST_COUNT = 100  # количество свечей для нача
 # Интервал главного цикла (flush завершённых минут, POST текущей свечи, payout).
 # Раньше было 5s: при этом даже при debounce=1s текущая свеча на платформу уходила не чаще раз в 5s —
 # отсюда ощущаемое отставание ~5–10s от графика Pocket Options.
-FLUSH_CHECK_INTERVAL = int(os.environ.get("INGEST_LOOP_INTERVAL_SEC", "1"))
+# float: иначе INGEST_LOOP_INTERVAL_SEC=0.25 обрежется int() до 0 и цикл станет busy-spin.
+FLUSH_CHECK_INTERVAL = float(os.environ.get("INGEST_LOOP_INTERVAL_SEC", "1"))
+# Защита от нуля/отрицательных значений (минимальный разумный шаг цикла ~50 мс).
+if FLUSH_CHECK_INTERVAL <= 0:
+    FLUSH_CHECK_INTERVAL = 0.05
+
 INGEST_USE_API_CANDLES = os.environ.get("INGEST_USE_API_CANDLES", "1").strip().lower() in (
     "1",
     "true",
@@ -101,6 +106,21 @@ INGEST_CURRENT_CANDLE_TTL_SEC = int(os.environ.get("INGEST_CURRENT_CANDLE_TTL_SE
 INGEST_CURRENT_CANDLE_POST_DEBOUNCE_SEC = float(
     os.environ.get("INGEST_CURRENT_CANDLE_POST_DEBOUNCE_SEC", "1")
 )
+# 1: писать partial прямо в Redis (setex + PUBLISH chart:s5), минуя PHP-FPM.
+# Нужно при debounce ≤0.25s × ~100 инструментов: pm.max_children=5 не тянет HTTP.
+INGEST_CURRENT_CANDLE_REDIS_DIRECT = os.environ.get(
+    "INGEST_CURRENT_CANDLE_REDIS_DIRECT", "1"
+).strip().lower() in ("1", "true", "yes")
+# Redis — те же значения, что у Laravel / chart_live_hub (prefix обязателен для pub/sub).
+REDIS_HOST = os.environ.get("REDIS_HOST", "127.0.0.1")
+REDIS_PORT = int(os.environ.get("REDIS_PORT", "6379"))
+_REDIS_PASSWORD_RAW = (os.environ.get("REDIS_PASSWORD") or "").strip()
+REDIS_PASSWORD = (
+    ""
+    if _REDIS_PASSWORD_RAW.lower() in ("", "null", "none")
+    else _REDIS_PASSWORD_RAW
+)
+REDIS_PREFIX = os.environ.get("REDIS_PREFIX") or "laravel-database-"
 # Поправка времени feed в секундах (например -7200, если источник стабильно "вперёд" на 2 часа).
 # Применяется централизованно при расчёте effective времени свечи.
 FEED_TIME_CORRECTION_SEC = int(os.environ.get("FEED_TIME_CORRECTION_SEC", "0"))
@@ -113,6 +133,9 @@ FEED_TIME_DELTA_LOG_ENABLE = os.environ.get("FEED_TIME_DELTA_LOG_ENABLE", "1").s
 
 _ingest_http_session: Optional[aiohttp.ClientSession] = None
 _ingest_http_lock: Optional[asyncio.Lock] = None
+# Один async Redis на процесс — setex/publish partial без очереди в PHP-FPM.
+_ingest_redis = None
+_ingest_redis_lock: Optional[asyncio.Lock] = None
 
 
 async def _await_cancelled_worker(
@@ -276,6 +299,108 @@ async def close_ingest_http_session() -> None:
             await _ingest_http_session.close()
             await asyncio.sleep(0.25)
         _ingest_http_session = None
+    await close_ingest_redis()
+
+
+async def _ensure_ingest_redis():
+    """Ленивый redis.asyncio клиент (тот же host/prefix, что Laravel)."""
+    global _ingest_redis, _ingest_redis_lock
+    if _ingest_redis_lock is None:
+        _ingest_redis_lock = asyncio.Lock()
+    async with _ingest_redis_lock:
+        if _ingest_redis is not None:
+            return _ingest_redis
+        try:
+            import redis.asyncio as redis_async
+        except ImportError:
+            print("[INGEST] redis.asyncio unavailable — current candle stays on HTTP", flush=True)
+            return None
+        kwargs: Dict[str, Any] = {
+            "host": REDIS_HOST,
+            "port": REDIS_PORT,
+            "decode_responses": True,
+        }
+        if REDIS_PASSWORD:
+            kwargs["password"] = REDIS_PASSWORD
+        client = redis_async.Redis(**kwargs)
+        try:
+            await client.ping()
+        except Exception as e:
+            print(f"[INGEST] Redis ping failed ({e}) — current candle stays on HTTP", flush=True)
+            try:
+                await client.aclose()
+            except Exception:
+                pass
+            return None
+        _ingest_redis = client
+        print(
+            f"[INGEST] Redis direct current-candle ON "
+            f"({REDIS_HOST}:{REDIS_PORT} prefix={REDIS_PREFIX!r})",
+            flush=True,
+        )
+        return _ingest_redis
+
+
+async def close_ingest_redis() -> None:
+    """Закрыть Redis-клиент ingest (вместе с HTTP session при shutdown)."""
+    global _ingest_redis
+    if _ingest_redis_lock is None:
+        return
+    async with _ingest_redis_lock:
+        if _ingest_redis is not None:
+            try:
+                await _ingest_redis.aclose()
+            except Exception:
+                pass
+            _ingest_redis = None
+
+
+async def put_current_candle_redis_direct(
+    instrument: str,
+    candle: Dict[str, Any],
+    ttl_sec: int,
+) -> bool:
+    """
+    Зеркало ingest-current-light.php / CurrentCandleCacheService::putPartial:
+    SETEX current_candle:{instrument} + PUBLISH chart:s5 — без PHP.
+    """
+    client = await _ensure_ingest_redis()
+    if client is None:
+        return False
+    now = int(time.time())
+    payload = {
+        "instrument": instrument,
+        "time": int(candle.get("time", 0)),
+        "raw_feed_time": int(candle.get("raw_feed_time", candle.get("time", 0))),
+        "effective_feed_time": int(
+            candle.get("effective_feed_time", candle.get("time", 0))
+        ),
+        "open": float(candle.get("open", 0)),
+        "high": float(candle.get("high", 0)),
+        "low": float(candle.get("low", 0)),
+        "close": float(candle.get("close", 0)),
+        "volume": float(candle.get("volume", 0)),
+        "is_partial": True,
+        "updated_at": int(candle.get("updated_at", now) or now),
+        "ingest_received_at": now,
+    }
+    try:
+        import json as _json
+
+        raw = _json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+    except (TypeError, ValueError):
+        return False
+    key = f"{REDIS_PREFIX}current_candle:{instrument}"
+    channel = f"{REDIS_PREFIX}chart:s5"
+    try:
+        pipe = client.pipeline(transaction=False)
+        pipe.setex(key, int(ttl_sec), raw)
+        pipe.publish(channel, raw)
+        await pipe.execute()
+        return True
+    except Exception as e:
+        print(f"[INGEST] put_current_candle_redis_direct {instrument}: {e}", flush=True)
+        return False
 
 
 def create_ssid(session_token: str, uid: str, is_demo: bool = True) -> str:
@@ -404,7 +529,35 @@ async def post_ingest_current_candle(
     candle: Dict[str, Any],
     ttl_sec: int,
 ) -> bool:
-    """POST /api/ingest-current-candle."""
+    """
+    Доставить partial S5 на платформу.
+
+    Предпочтительно Redis direct (setex + chart:s5) — обход PHP-FPM.
+    HTTP /api/ingest-current-candle остаётся fallback, если Redis недоступен.
+    """
+    # Нормализуем updated_at здесь, чтобы Redis/HTTP видели один момент ingest.
+    candle_out = dict(candle)
+    candle_out["updated_at"] = int(time.time())
+
+    if FEED_TIME_DELTA_LOG_ENABLE:
+        server_now = int(time.time())
+        raw_feed = _to_unix_seconds(candle_out.get("raw_feed_time", 0))
+        effective_feed = int(
+            candle_out.get("effective_feed_time", candle_out.get("time", 0)) or 0
+        )
+        raw_delta = raw_feed - server_now if raw_feed > 0 else None
+        effective_delta = effective_feed - server_now if effective_feed > 0 else None
+        print(
+            f"[INGEST][TIME] {instrument}: raw={raw_feed} effective={effective_feed} "
+            f"server={server_now} raw_vs_server={raw_delta}s "
+            f"effective_vs_server={effective_delta}s correction={FEED_TIME_CORRECTION_SEC}s"
+        )
+
+    if INGEST_CURRENT_CANDLE_REDIS_DIRECT:
+        if await put_current_candle_redis_direct(instrument, candle_out, ttl_sec):
+            return True
+        # Redis упал — один раз пробуем HTTP, чтобы график не замирал.
+
     if not PLATFORM_URL:
         return False
     url = f"{PLATFORM_URL}/api/ingest-current-candle"
@@ -414,36 +567,30 @@ async def post_ingest_current_candle(
     }
     payload = {
         "instrument": instrument,
-        "time": int(candle.get("time", 0)),
+        "time": int(candle_out.get("time", 0)),
         # raw_feed_time — timestamp от feed до возможных преобразований/бакетизации;
         # effective_feed_time — timestamp, который платформа фактически использует.
-        "raw_feed_time": int(candle.get("raw_feed_time", candle.get("time", 0))),
-        "effective_feed_time": int(candle.get("effective_feed_time", candle.get("time", 0))),
-        "open": float(candle.get("open", 0)),
-        "high": float(candle.get("high", 0)),
-        "low": float(candle.get("low", 0)),
-        "close": float(candle.get("close", 0)),
-        "volume": float(candle.get("volume", 0)),
-        "updated_at": int(time.time()),
+        "raw_feed_time": int(candle_out.get("raw_feed_time", candle_out.get("time", 0))),
+        "effective_feed_time": int(
+            candle_out.get("effective_feed_time", candle_out.get("time", 0))
+        ),
+        "open": float(candle_out.get("open", 0)),
+        "high": float(candle_out.get("high", 0)),
+        "low": float(candle_out.get("low", 0)),
+        "close": float(candle_out.get("close", 0)),
+        "volume": float(candle_out.get("volume", 0)),
+        "updated_at": int(candle_out.get("updated_at", time.time())),
         "ttl_sec": int(ttl_sec),
     }
-    if FEED_TIME_DELTA_LOG_ENABLE:
-        server_now = int(time.time())
-        raw_feed = _to_unix_seconds(candle.get("raw_feed_time", 0))
-        effective_feed = int(candle.get("effective_feed_time", candle.get("time", 0)) or 0)
-        raw_delta = raw_feed - server_now if raw_feed > 0 else None
-        effective_delta = effective_feed - server_now if effective_feed > 0 else None
-        print(
-            f"[INGEST][TIME] {instrument}: raw={raw_feed} effective={effective_feed} "
-            f"server={server_now} raw_vs_server={raw_delta}s "
-            f"effective_vs_server={effective_delta}s correction={FEED_TIME_CORRECTION_SEC}s"
-        )
     try:
         session = await _ensure_ingest_http_session()
         async with session.post(url, headers=headers, json=payload) as resp:
             if resp.status not in (200, 201, 204):
                 body = await resp.text()
-                print(f"[INGEST] post_ingest_current_candle {instrument} HTTP {resp.status} body={body[:300]}")
+                print(
+                    f"[INGEST] post_ingest_current_candle {instrument} "
+                    f"HTTP {resp.status} body={body[:300]}"
+                )
                 return False
             return True
     except Exception as e:
@@ -596,6 +743,53 @@ async def run_instrument_worker(
             last_payout_posted_value: Optional[float] = None
             last_current_candle_post_at = 0.0
             last_current_candle_posted_ts: Optional[int] = None
+            # Не ждём HTTP flush закрытых баров — иначе цикл (и Redis partial) встаёт на секунды.
+            flush_in_flight_ts: set = set()
+            current_candle_post_pending = False
+            # Event loop воркера: tick-handler синхронный, publish планируем через create_task.
+            worker_loop = asyncio.get_running_loop()
+
+            def _schedule_current_candle_publish(force: bool = False) -> None:
+                """С тика: Redis PUBLISH partial без ожидания flush-цикла (цель debounce 0.25s)."""
+                nonlocal last_current_candle_post_at, last_current_candle_posted_ts
+                nonlocal current_candle_post_pending
+                if not INGEST_CURRENT_CANDLE_ENABLE or not current_candles:
+                    return
+                now_mono = time.time()
+                if (
+                    not force
+                    and (now_mono - last_current_candle_post_at)
+                    < INGEST_CURRENT_CANDLE_POST_DEBOUNCE_SEC
+                ):
+                    return
+                if current_candle_post_pending:
+                    return
+                latest_ts = max(current_candles.keys())
+                latest_candle = current_candles.get(latest_ts)
+                if not latest_candle:
+                    return
+                # Копия: tick может мутировать dict пока идёт await Redis.
+                candle_snapshot = dict(latest_candle)
+                current_candle_post_pending = True
+                # Резервируем debounce-слот сразу, чтобы тики не плодили task'и.
+                last_current_candle_post_at = now_mono
+                last_current_candle_posted_ts = latest_ts
+
+                async def _publish() -> None:
+                    nonlocal current_candle_post_pending
+                    try:
+                        await post_ingest_current_candle(
+                            instrument=instrument,
+                            candle=candle_snapshot,
+                            ttl_sec=INGEST_CURRENT_CANDLE_TTL_SEC,
+                        )
+                    finally:
+                        current_candle_post_pending = False
+
+                try:
+                    worker_loop.create_task(_publish())
+                except RuntimeError:
+                    current_candle_post_pending = False
 
             def _tick_asset_matches(tick_asset: str) -> bool:
                 return _norm_asset_name(tick_asset) == instrument_norm
@@ -628,6 +822,7 @@ async def run_instrument_worker(
             def on_json_data(data: Any) -> None:
                 """Permanent handler: captures every tick and candle update."""
                 nonlocal last_stream_activity_at, last_payout_value, last_payout_source, last_payout_event_at
+                tick_updated = False
                 try:
                     # Ticks: list of [['ASSET', timestamp, price], ...]
                     if isinstance(data, list) and len(data) > 0:
@@ -666,6 +861,7 @@ async def run_instrument_worker(
                                     c["tick_count"] = c.get("tick_count", 0) + 1
                                     c["volume"] = float(c.get("volume", 0)) + float(dv)
                                     c["ohlc_source"] = "ticks"
+                                tick_updated = True
 
                     # Server candle data (changeSymbol response / history)
                     if isinstance(data, dict) and "asset" in data:
@@ -711,6 +907,7 @@ async def run_instrument_worker(
                                         "tick_count": 0,
                                         "ohlc_source": "ws_candles",
                                     }
+                                    tick_updated = True
                         if "history" in data:
                             for tick in data.get("history", []):
                                 if isinstance(tick, (list, tuple)) and len(tick) >= 2:
@@ -742,8 +939,12 @@ async def run_instrument_worker(
                                         c["tick_count"] = c.get("tick_count", 0) + 1
                                         c["volume"] = float(c.get("volume", 0)) + float(dv)
                                         c["ohlc_source"] = "ticks"
+                                    tick_updated = True
                 except Exception:
                     pass
+                # Тик → Redis partial сразу (debounce), не ждём sleep/flush HTTP в цикле.
+                if tick_updated:
+                    _schedule_current_candle_publish(force=False)
 
             client._websocket.add_event_handler("json_data", on_json_data)
             client._websocket.add_event_handler("stream_update", on_json_data)
@@ -989,21 +1190,8 @@ async def run_instrument_worker(
                             )
 
                 if INGEST_CURRENT_CANDLE_ENABLE and current_candles:
-                    now_mono = time.time()
-                    debounce_ok = (now_mono - last_current_candle_post_at) >= INGEST_CURRENT_CANDLE_POST_DEBOUNCE_SEC
-                    latest_ts = max(current_candles.keys())
-                    candle_changed = latest_ts != last_current_candle_posted_ts
-                    if debounce_ok or candle_changed:
-                        latest_candle = current_candles.get(latest_ts)
-                        if latest_candle:
-                            ok = await post_ingest_current_candle(
-                                instrument=instrument,
-                                candle=latest_candle,
-                                ttl_sec=INGEST_CURRENT_CANDLE_TTL_SEC,
-                            )
-                            if ok:
-                                last_current_candle_post_at = now_mono
-                                last_current_candle_posted_ts = latest_ts
+                    # Backup, если тиков давно нет (тишина), но partial ещё в памяти.
+                    _schedule_current_candle_publish(force=False)
 
                 # Flush all completed candles:
                 # публикуем все бары, которые уже точно закончились по системному времени.
@@ -1013,6 +1201,8 @@ async def run_instrument_worker(
                 for candle_ts in sorted(current_candles.keys()):
                     # Текущий бакет (>= current_bucket_start) остаётся partial и не flush-ится.
                     if candle_ts >= current_bucket_start:
+                        continue
+                    if candle_ts in flush_in_flight_ts:
                         continue
                     c = current_candles[candle_ts]
                     completed_payload.append(
@@ -1037,37 +1227,54 @@ async def run_instrument_worker(
                     )
 
                 if completed_payload:
-                    ok = await post_ingest_candles(instrument, completed_payload)
-                    if ok:
-                        ticks_total = sum(m["tick_count"] for m in completed_meta)
-                        print(
-                            f"[INGEST] {instrument}: flushed {len(completed_payload)} candle(s), "
-                            f"total_ticks_in_those_bars={ticks_total}",
-                            flush=True,
-                        )
-                        if INGEST_FLUSH_DETAIL:
-                            for m in completed_meta:
+                    # HTTP flush в фоне: иначе await на Laravel блокирует Redis-partial на секунды.
+                    payload_copy = list(completed_payload)
+                    meta_copy = list(completed_meta)
+                    times_to_pop = [int(row["time"]) for row in payload_copy]
+                    for ts in times_to_pop:
+                        flush_in_flight_ts.add(ts)
+
+                    async def _flush_completed(
+                        rows: List[Dict[str, Any]] = payload_copy,
+                        meta: List[Dict[str, Any]] = meta_copy,
+                        times: List[int] = times_to_pop,
+                    ) -> None:
+                        try:
+                            ok = await post_ingest_candles(instrument, rows)
+                            if ok:
+                                ticks_total = sum(m["tick_count"] for m in meta)
                                 print(
-                                    f"[INGEST] {instrument}: flush_detail ts={m['time']} "
-                                    f"ticks_in_bar={m['tick_count']} ohlc_source={m['ohlc_source']} "
-                                    f"volume={m['volume']}",
+                                    f"[INGEST] {instrument}: flushed {len(rows)} candle(s), "
+                                    f"total_ticks_in_those_bars={ticks_total}",
                                     flush=True,
                                 )
-                    else:
-                        print(
-                            f"[INGEST] {instrument}: post failed, keeping {len(completed_payload)} "
-                            f"candle(s) in memory for retry",
-                            flush=True,
-                        )
-                    if ok:
-                        for row in completed_payload:
-                            current_candles.pop(row["time"], None)
+                                if INGEST_FLUSH_DETAIL:
+                                    for m in meta:
+                                        print(
+                                            f"[INGEST] {instrument}: flush_detail ts={m['time']} "
+                                            f"ticks_in_bar={m['tick_count']} "
+                                            f"ohlc_source={m['ohlc_source']} volume={m['volume']}",
+                                            flush=True,
+                                        )
+                                for t in times:
+                                    current_candles.pop(t, None)
+                            else:
+                                print(
+                                    f"[INGEST] {instrument}: post failed, keeping {len(rows)} "
+                                    f"candle(s) in memory for retry",
+                                    flush=True,
+                                )
+                        finally:
+                            for t in times:
+                                flush_in_flight_ts.discard(t)
+
+                    worker_loop.create_task(_flush_completed())
 
                 # Опционально: выкинуть только давно завершённые бары (не трогаем «хвост» при POST-ошибках).
                 if INGEST_PRUNE_COMPLETED_OLDER_THAN_SEC > 0:
                     threshold = current_bucket_start - INGEST_PRUNE_COMPLETED_OLDER_THAN_SEC
                     for ts in list(current_candles.keys()):
-                        if ts < current_bucket_start and ts < threshold:
+                        if ts < current_bucket_start and ts < threshold and ts not in flush_in_flight_ts:
                             print(
                                 f"[INGEST] {instrument}: prune stale completed candle ts={ts} "
                                 f"(older than {INGEST_PRUNE_COMPLETED_OLDER_THAN_SEC}s)",

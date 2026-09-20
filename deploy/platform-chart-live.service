@@ -1,0 +1,20 @@
+[Unit]
+Description=Platform chart live hub (Redis chart:s5 → WebSocket /chart-live)
+After=network.target redis-server.service
+Wants=redis-server.service
+
+[Service]
+Type=simple
+User=o
+Group=o
+WorkingDirectory=/home/o/platform/bot
+# .env подхватывает сам chart_live_hub.py; здесь только интерпретатор.
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/home/o/platform/bot/.venv/bin/python /home/o/platform/bot/chart_live_hub.py
+Restart=always
+RestartSec=3
+StandardOutput=append:/home/o/platform/storage/logs/chart-live-hub.log
+StandardError=append:/home/o/platform/storage/logs/chart-live-hub.log
+
+[Install]
+WantedBy=multi-user.target
