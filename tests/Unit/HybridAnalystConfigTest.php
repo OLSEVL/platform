@@ -203,6 +203,44 @@ class HybridAnalystConfigTest extends TestCase
         $this->assertStringContainsString('Отскок от уровня', $text);
         $this->assertStringContainsString('• touch', $text);
         $this->assertStringContainsString('• rsi', $text);
+
+        $compact = HybridAnalystConfig::formatSourceReplyForTelegram([
+            'source_bot_name' => 'Impulse LVL',
+            'source_bot_type' => 'impulse_lvl_1min',
+            'side' => 'CALL',
+            'confidence' => 0.7,
+            'analysis_text' => str_repeat('зона ', 200),
+            'reasons_short' => ['touch'],
+        ], true);
+        $this->assertStringContainsString('📥 Source: Impulse LVL (impulse_lvl_1min) → CALL', $compact);
+        $this->assertStringNotContainsString('зона', $compact);
+    }
+
+    public function test_system_prompt_section_short_is_four_lines_not_two_phases(): void
+    {
+        $short = HybridAnalystConfig::systemPromptSectionForMode(true);
+        $this->assertStringContainsString('Ответ СТРОГО 4 строки', $short);
+        $this->assertStringNotContainsString('Фаза A', $short);
+        $this->assertStringContainsString('Фаза A', HybridAnalystConfig::systemPromptSectionForMode(false));
+    }
+
+    public function test_compact_source_signal_for_short_llm_drops_analysis_text(): void
+    {
+        $compact = HybridAnalystConfig::compactSourceSignalForShortLlm([
+            'source_bot_id' => 47,
+            'source_signal_id' => 9,
+            'source_bot_name' => 'Impulse',
+            'source_bot_type' => 'impulse_lvl_1min',
+            'side' => 'put',
+            'confidence' => 0.5,
+            'analysis_text' => 'длинный разбор зон',
+            'features' => ['x' => 1],
+            'reasons_short' => ['a', 'b', 'c', 'd'],
+        ]);
+        $this->assertSame(47, $compact['source_bot_id']);
+        $this->assertSame(['a', 'b', 'c'], $compact['reasons_short']);
+        $this->assertArrayNotHasKey('analysis_text', $compact);
+        $this->assertArrayNotHasKey('features', $compact);
     }
 
     public function test_is_source_bot_type_excludes_chart_analyst_and_manual_only(): void
@@ -212,6 +250,7 @@ class HybridAnalystConfigTest extends TestCase
         $this->assertTrue(HybridAnalystConfig::isSourceBotType('max_bot'));
         $this->assertFalse(HybridAnalystConfig::isSourceBotType('openrouter_llm_analyst'));
         $this->assertFalse(HybridAnalystConfig::isSourceBotType('openrouter_llm_analyst_srl'));
+        $this->assertFalse(HybridAnalystConfig::isSourceBotType('openrouter_llm_analyst_ilvl'));
         $this->assertFalse(HybridAnalystConfig::isSourceBotType('manual_dashboard'));
     }
 }

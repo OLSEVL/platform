@@ -210,6 +210,9 @@ def get_current_ip_country() -> tuple[Optional[str], Optional[str]]:
 
 
 async def check_ip_allowed(config: dict[str, Any]) -> bool:
+    # Трафик PO идёт через PROXY_URLS; гео сервера для бана SSID нерелевантна.
+    if config.get("PROXY_URLS"):
+        return True
     restricted = config.get("RESTRICTED_COUNTRIES_SET", set())
     if not restricted:
         return True
@@ -295,8 +298,16 @@ def load_python_config(path: Path) -> dict[str, Any]:
     restricted_raw = getattr(module, "RESTRICTED_COUNTRIES", "")
     restricted_set = parse_restricted_countries(restricted_raw)
 
+    proxy_urls = [str(u).strip() for u in (getattr(module, "PROXY_URLS", []) or []) if str(u).strip()]
+    proxy_file = Path(__file__).resolve().with_name("proxy_urls.json")
+    if not proxy_urls and proxy_file.is_file():
+        loaded = json.loads(proxy_file.read_text(encoding="utf-8"))
+        if isinstance(loaded, list):
+            proxy_urls = [str(u).strip() for u in loaded if str(u).strip()]
+
     res = {
         "SSIDS": normalized_ssids,
+        "PROXY_URLS": proxy_urls,
         "PAIRS": pairs,
         "BOT_TOKEN": str(getattr(module, "BOT_TOKEN", "")).strip(),
         "CHAT_IDS": normalized_chat_ids,
@@ -411,6 +422,12 @@ def telegram_enabled(config: dict[str, Any]) -> bool:
 def send_telegram_message_sync(config: dict[str, Any], text: str) -> None:
     if not telegram_enabled(config):
         return
+    try:
+        log_path = Path(__file__).resolve().parent / "runtime_signals.log"
+        with log_path.open("a", encoding="utf-8") as fh:
+            fh.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} {text.splitlines()[0]}\n")
+    except OSError:
+        pass
     url = f"https://api.telegram.org/bot{config['BOT_TOKEN']}/sendMessage"
     session = _get_telegram_session()
     chat_ids = config.get("CHAT_IDS", [])
@@ -1834,9 +1851,25 @@ def compute_worker_cycle_timeout(states_count: int, config: dict[str, Any]) -> f
     return min((batches_count * (float(config["HISTORY_TIMEOUT"]) + 1.0)) + 2.0, 60.0)
 
 
-async def create_client(ssid: str, config: Optional[dict[str, Any]] = None):
+async def create_client(ssid: str, config: Optional[dict[str, Any]] = None, ssid_index: int = 0):
     if config and not await check_ip_allowed(config):
         raise RuntimeError("IP address filter IP address did not pass.")
+    proxies = list((config or {}).get("PROXY_URLS") or [])
+    if proxies:
+        from po_proxy_client import create_proxied_client, proxy_host_label
+        n = len(proxies)
+        last_error: Optional[BaseException] = None
+        # Перебор прокси: idle-least-loaded часто dead для SSID, рабочие — уже на ingest.
+        for offset in range(n):
+            proxy = proxies[(int(ssid_index) + offset) % n]
+            label = proxy_host_label(proxy)
+            write_line(f"SSID {int(ssid_index) + 1} try proxy {label}")
+            try:
+                return await create_proxied_client(ssid, proxy)
+            except Exception as exc:
+                last_error = exc
+                write_line(f"SSID {int(ssid_index) + 1} proxy {label} failed: {type(exc).__name__}")
+        raise RuntimeError(f"All {n} proxies failed for SSID {int(ssid_index) + 1}") from last_error
     if PocketOptionAsync is None:
         raise ImportError("BinaryOptionsToolsV2 package is required")
     client = PocketOptionAsync(ssid)
@@ -2578,7 +2611,7 @@ async def main():
             if not assigned: continue
             if not await check_ip_allowed(config):
                 return
-            client = await create_client(config["SSIDS"][idx], config); clients.append(client)
+            client = await create_client(config["SSIDS"][idx], config, ssid_index=idx); clients.append(client)
             if not name_map:
                 if not await check_ip_allowed(config):
                     return
@@ -2622,7 +2655,8 @@ async def main():
             start_t = time.perf_counter()
             collected = await asyncio.gather(*(collect_worker_history(worker.client, worker.states, config) for worker in workers))
             fetch_elapsed = time.perf_counter() - start_t
-            if config["DEBUG_CYCLE"]:
+            # С прокси видно, не залип ли цикл на changeSymbol (S1→M1).
+            if config["DEBUG_CYCLE"] or config.get("PROXY_URLS"):
                 write_line(f"FETCH {format_ts_with_seconds(request_started_at)} {fetch_elapsed:.3f}s history(1)={sum(len(snapshot) for snapshot in collected)}")
             for queue, snapshot in zip(analysis_queues, collected):
                 put_latest_snapshot(queue, (request_started_at, fetch_elapsed, snapshot))

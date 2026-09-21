@@ -19,12 +19,15 @@ final class ChartAnalystBotTypes
     /** Аналитик подтверждения 3-шагового поглощения (Engulfing Liquidity). */
     public const ENGULF = 'openrouter_llm_analyst_engulf';
 
+    /** Аналитик Impulse LVL: уровни/импульс бота 47 в промпт, LLM сам даёт CALL/PUT/NONE. */
+    public const IMPULSE = 'openrouter_llm_analyst_ilvl';
+
     /**
      * @return list<string>
      */
     public static function all(): array
     {
-        return [self::CLASSIC, self::SRL, self::ENGULF];
+        return [self::CLASSIC, self::SRL, self::ENGULF, self::IMPULSE];
     }
 
     public static function isAnalyst(string $type): bool
@@ -42,12 +45,18 @@ final class ChartAnalystBotTypes
         return $type === self::ENGULF;
     }
 
+    public static function isImpulse(string $type): bool
+    {
+        return $type === self::IMPULSE;
+    }
+
     /** Человекочитаемое имя для UI / seed. */
     public static function label(string $type): string
     {
         return match ($type) {
             self::SRL => 'OpenRouter Chart Analyst Sweep/Raid',
             self::ENGULF => 'OpenRouter Chart Analyst Engulfing',
+            self::IMPULSE => 'OpenRouter Chart Analyst Impulse LVL',
             default => 'OpenRouter Chart Analyst',
         };
     }

@@ -54,9 +54,10 @@ class HybridAnalystDispatcher
             return;
         }
 
+        // Все Chart Analyst (SMC / Sweep / Engulf / Impulse LVL), не только classic type.
         $analysts = Bot::query()
             ->where('user_id', $sourceBot->user_id)
-            ->where('type', 'openrouter_llm_analyst')
+            ->whereIn('type', \App\Support\ChartAnalystBotTypes::all())
             ->orderBy('id')
             ->get();
 

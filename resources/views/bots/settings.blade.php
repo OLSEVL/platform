@@ -19,7 +19,8 @@
     $isChartAnalystBot = \App\Support\ChartAnalystBotTypes::isAnalyst($bot->type);
     $isSrlAnalystBot = \App\Support\ChartAnalystBotTypes::isSrl($bot->type);
     $isEngulfAnalystBot = \App\Support\ChartAnalystBotTypes::isEngulf($bot->type);
-    $analystSmcFlowEnabled = $isChartAnalystBot && ! $isSrlAnalystBot && ! $isEngulfAnalystBot
+    $isImpulseAnalystBot = \App\Support\ChartAnalystBotTypes::isImpulse($bot->type);
+    $analystSmcFlowEnabled = $isChartAnalystBot && ! $isSrlAnalystBot && ! $isEngulfAnalystBot && ! $isImpulseAnalystBot
         && \App\Support\OpenRouterLlmConfig::analystSmcFlowEnabled($cfg);
     $analystSrlFlowEnabled = $isSrlAnalystBot;
     $analystEngulfFlowEnabled = $isEngulfAnalystBot;
@@ -1534,8 +1535,10 @@
             <div class="space-y-5 border-t border-zinc-800 pt-4">
                 <div class="space-y-2 text-sm text-zinc-400">
                     <p>
-                        <strong class="text-zinc-300">{{ $isEngulfAnalystBot ? 'Chart Analyst Engulfing' : ($isSrlAnalystBot ? 'Chart Analyst Sweep/Raid' : 'Chart Analyst') }}</strong> —
-                    @if($isEngulfAnalystBot)
+                        <strong class="text-zinc-300">{{ $isImpulseAnalystBot ? 'Chart Analyst Impulse LVL' : ($isEngulfAnalystBot ? 'Chart Analyst Engulfing' : ($isSrlAnalystBot ? 'Chart Analyst Sweep/Raid' : 'Chart Analyst')) }}</strong> —
+                    @if($isImpulseAnalystBot)
+                            ручной и Telegram-анализ: уровни Impulse LVL (бот 47) на графике и в промпте, LLM сам даёт CALL/PUT/NONE. Экспирация ориентир 60 с.
+                    @elseif($isEngulfAnalystBot)
                             ручной и Telegram-анализ: детектор находит ENGULF 1/2/3, LLM только подтверждает или отклоняет. Экспирация ориентир 60 с.
                     @elseif($isSrlAnalystBot)
                             ручной и Telegram-анализ: детектор находит SWEEP/RAID/PB, LLM только подтверждает или отклоняет. Экспирация ориентир 60 с.
@@ -1651,6 +1654,32 @@
                 </div>
                 @endif
 
+                @if ($isImpulseAnalystBot)
+                <p class="text-xs font-semibold uppercase tracking-wide text-zinc-500">Impulse LVL — как у бота 47</p>
+                <div class="space-y-2">
+                    <label class="flex items-start gap-2">
+                        <input type="checkbox" name="overlay_forming_htf" value="1" class="mt-0.5 rounded border-zinc-600 bg-zinc-800 text-blue-500"
+                            @checked(old('overlay_forming_htf', ($cfg['overlay_forming_htf'] ?? true) ? '1' : '') === '1' || (old('overlay_forming_htf') === null && ($cfg['overlay_forming_htf'] ?? true)))>
+                        <span class="text-xs text-zinc-300">Формирующиеся M5/M15/M30 из хвоста M1 (как 1min LEVEL_UPDATE_HIGHER_TF)</span>
+                    </label>
+                    <label class="flex items-start gap-2">
+                        <input type="checkbox" name="eval_prev_candle" value="1" class="mt-0.5 rounded border-zinc-600 bg-zinc-800 text-blue-500"
+                            @checked(old('eval_prev_candle', ($cfg['eval_prev_candle'] ?? true) ? '1' : '') === '1' || (old('eval_prev_candle') === null && ($cfg['eval_prev_candle'] ?? true)))>
+                        <span class="text-xs text-zinc-300">Учитывать закрытую предыдущую M1 (prev) в live_setups</span>
+                    </label>
+                    <label class="flex items-start gap-2">
+                        <input type="checkbox" name="live_candle_wick_signals" value="1" class="mt-0.5 rounded border-zinc-600 bg-zinc-800 text-blue-500"
+                            @checked(old('live_candle_wick_signals', ($cfg['live_candle_wick_signals'] ?? true) ? '1' : '') === '1' || (old('live_candle_wick_signals') === null && ($cfg['live_candle_wick_signals'] ?? true)))>
+                        <span class="text-xs text-zinc-300">Live-фитиль как updateBotM1 (в snapshot; LLM всё равно решает сам)</span>
+                    </label>
+                    <label class="flex items-start gap-2">
+                        <input type="checkbox" name="lvl_filter" value="1" class="mt-0.5 rounded border-zinc-600 bg-zinc-800 text-blue-500"
+                            @checked(old('lvl_filter', ($cfg['lvl_filter'] ?? true) ? '1' : '') === '1' || (old('lvl_filter') === null && ($cfg['lvl_filter'] ?? true)))>
+                        <span class="text-xs text-zinc-300">LVL обязателен для live_setups детектора (зоны на график всё равно считаются)</span>
+                    </label>
+                </div>
+                @endif
+
                 <p class="text-xs font-semibold uppercase tracking-wide text-zinc-500">Данные для модели</p>
                 <div class="grid gap-4 sm:grid-cols-2">
                     <div class="space-y-1">
@@ -1739,7 +1768,7 @@
                     </div>
                     <div class="space-y-1">
                         <label for="max_tokens_short" class="block text-xs font-medium text-zinc-400">Max tokens (краткий режим)</label>
-                        <input type="number" name="max_tokens_short" id="max_tokens_short" min="1" required
+                        <input type="number" name="max_tokens_short" id="max_tokens_short" required
                             value="{{ old('max_tokens_short', $cfg['max_tokens_short'] ?? \App\Support\OpenRouterLlmConfig::ANALYST_SHORT_MAX_TOKENS_DEFAULT) }}"
                             class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
 
@@ -2105,7 +2134,15 @@
                     <p id="telegram-action-status-analyst" class="text-xs text-zinc-500"></p>
                     <p class="text-[11px] text-zinc-500">
                         Напишите боту
+                        @if($isImpulseAnalystBot)
+                        (токен этого Chart Analyst Impulse LVL)
+                        @elseif($isEngulfAnalystBot)
+                        (токен этого Chart Analyst Engulfing)
+                        @elseif($isSrlAnalystBot)
+                        (токен этого Chart Analyst Sweep/Raid)
+                        @else
                         <a href="https://t.me/chart_analyct_smc_flow_bot" target="_blank" rel="noopener" class="text-blue-400 hover:underline">@chart_analyct_smc_flow_bot</a>
+                        @endif
                         → /start, затем «Получить chat_id».
                     </p>
                 </div>

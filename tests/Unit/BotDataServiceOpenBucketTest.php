@@ -134,6 +134,58 @@ class BotDataServiceOpenBucketTest extends TestCase
         $this->assertSame($h1Prev, $out['60'][0]['time']);
     }
 
+    public function test_stale_open_m1_is_kept_when_flag_on(): void
+    {
+        $minute = 1_704_067_200;
+        $now = $minute + 50;
+        $partial = ['time' => $minute + 20, 'updated_at' => $now - 40];
+
+        $this->assertTrue(BotDataService::shouldUseFormingPartial(
+            $partial,
+            $minute - 60,
+            60,
+            30,
+            true,
+            $now,
+        ));
+        $this->assertFalse(BotDataService::shouldUseFormingPartial(
+            $partial,
+            $minute - 60,
+            60,
+            30,
+            false,
+            $now,
+        ));
+    }
+
+    public function test_closed_minute_partial_is_never_kept(): void
+    {
+        $minute = 1_704_067_200;
+        $now = $minute + 70;
+        $partial = ['time' => $minute, 'updated_at' => $now];
+
+        $this->assertFalse(BotDataService::shouldUseFormingPartial(
+            $partial,
+            $minute - 60,
+            60,
+            30,
+            true,
+            $now,
+        ));
+    }
+
+    public function test_keep_forming_partial_decision_is_cheap(): void
+    {
+        $minute = 1_704_067_200;
+        $partial = ['time' => $minute + 10, 'updated_at' => $minute];
+        $t0 = hrtime(true);
+        for ($i = 0; $i < 5000; $i++) {
+            BotDataService::shouldUseFormingPartial($partial, $minute - 60, 60, 30, true, $minute + 40);
+        }
+        $ms = (hrtime(true) - $t0) / 1e6;
+        $this->assertLessThan(20.0, $ms);
+    }
+
     /**
      * @return array{time:int,open:float,high:float,low:float,close:float,volume:float}
      */

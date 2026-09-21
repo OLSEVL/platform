@@ -25,6 +25,7 @@
                     <option value="{{ \App\Models\PocketInstrument::TYPE_CURRENCY }}" @selected($typeVal === \App\Models\PocketInstrument::TYPE_CURRENCY)>1 — Валютные пары</option>
                     <option value="{{ \App\Models\PocketInstrument::TYPE_CRYPTO }}" @selected($typeVal === \App\Models\PocketInstrument::TYPE_CRYPTO)>2 — Криптовалюты</option>
                     <option value="{{ \App\Models\PocketInstrument::TYPE_STOCK }}" @selected($typeVal === \App\Models\PocketInstrument::TYPE_STOCK)>3 — Акции</option>
+                    <option value="{{ \App\Models\PocketInstrument::TYPE_COMMODITY }}" @selected($typeVal === \App\Models\PocketInstrument::TYPE_COMMODITY)>4 — Сырьевые товары</option>
                 </select>
             </div>
             <div>

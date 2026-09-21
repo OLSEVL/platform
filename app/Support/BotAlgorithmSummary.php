@@ -63,6 +63,7 @@ final class BotAlgorithmSummary
             'openrouter_llm_analyst' => 'OpenRouter Chart Analyst',
             ChartAnalystBotTypes::SRL => 'OpenRouter Chart Analyst Sweep/Raid',
             ChartAnalystBotTypes::ENGULF => 'OpenRouter Chart Analyst Engulfing',
+            ChartAnalystBotTypes::IMPULSE => 'OpenRouter Chart Analyst Impulse LVL',
             default => $type,
         };
     }
@@ -86,7 +87,7 @@ final class BotAlgorithmSummary
             'smc_flow' => 'smc_flow',
             'sweep_raid_liquidity' => 'level_bounce',
             'engulfing_liquidity' => 'counter_three',
-            'openrouter_llm', 'openrouter_llm_analyst', ChartAnalystBotTypes::SRL, ChartAnalystBotTypes::ENGULF => 'llm',
+            'openrouter_llm', 'openrouter_llm_analyst', ChartAnalystBotTypes::SRL, ChartAnalystBotTypes::ENGULF, ChartAnalystBotTypes::IMPULSE => 'llm',
             default => 'generic',
         };
     }
@@ -199,6 +200,9 @@ final class BotAlgorithmSummary
             ChartAnalystBotTypes::ENGULF => "Chart Analyst + Engulfing: LLM только подтверждает цепочку ENGULF 1/2/3.\n"
                 ."Экспирация ориентир 60 с. Плановый scan выключен (ручной / Telegram / hybrid).\n"
                 .'Rule-based бот engulfing_liquidity остаётся отдельным.',
+            ChartAnalystBotTypes::IMPULSE => "Chart Analyst + Impulse LVL: уровни бота 47 на графике и в промпте, LLM сам даёт CALL/PUT/NONE.\n"
+                ."Экспирация ориентир 60 с. Плановый scan выключен (ручной / Telegram / hybrid).\n"
+                .'Rule-based Impulse LVL 1min (#47) не меняется.',
             default => 'Алгоритм не описан для типа «'.$type.'».',
         };
     }
@@ -266,7 +270,7 @@ final class BotAlgorithmSummary
                 $s('Когда CALL', 'Бычий импульс (профиль extra_wl/extra/extreme/structure или MAX) коснулся LVL high. Сторона всегда по импульсу.'),
                 $s('Когда PUT', 'Медвежий импульс коснулся LVL low.'),
                 $s('Приоритет', 'MAX и каждый профиль — отдельные алерты (если включено в настройках). Paper одна: occupancy и «prefer live» задаются галочками.'),
-                $s('Важно', 'Воркеры, prev, живой HTF, live-фитиль, ждать закрытия paper — всё в карточке бота. Бэктест без forming-бара остаётся по телу. Диагностические логи scan сильно замедляют круг.'),
+                $s('Важно', 'Воркеры, prev, живой HTF, live-фитиль, держать формирующуюся M1 — в карточке бота. Бэктест без forming-бара остаётся по телу. Диагностические логи scan сильно замедляют круг.'),
             ],
             'pinbar_trade' => [
                 $s('Идея', 'Пинбар = разворотная свеча: маленькое тело и длинный хвост. Тело должно лежать в верхней или нижней трети диапазона high−low.'),
@@ -438,6 +442,13 @@ final class BotAlgorithmSummary
                 $s('Когда PUT', 'Кандидат PUT: classic или same-color с low ниже соседа + реакция + контр-pogloщение.'),
                 $s('Пример', 'ENGULF 1 → ENGULF 2 реакция → ENGULF 3 контр → candidate CALL → LLM подтверждает на 60 с.'),
                 $s('Важно', 'Пустой candidates → NONE. Первое поглощение без цепочки — не вход. Rule-based engulfing_liquidity отдельно.'),
+            ],
+            ChartAnalystBotTypes::IMPULSE => [
+                $s('Идея', 'Как Chart Analyst SMC Flow: уровни Impulse LVL (M1–M30) рисуются на графике и уходят в промпт. LLM сам решает CALL/PUT/NONE, не только подтверждает хиты 47.'),
+                $s('Когда CALL', 'Бычий импульс (тело vs trim-mean или MAX) + касание непробитой поддержки LVL.'),
+                $s('Когда PUT', 'Медвежий импульс + касание непробитого сопротивления LVL.'),
+                $s('Пример', 'На M1 сильное зелёное тело касается M15 support → LLM CALL на 60 с, зоны на графике.'),
+                $s('Важно', 'Плановый scan выключен. Бот 47 (impulse_lvl_1min) остаётся отдельным сканером.'),
             ],
             default => [
                 $s('Описание', 'Для типа «'.$type.'» подробная карточка ещё не заполнена.'),

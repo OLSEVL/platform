@@ -11,6 +11,7 @@ use App\Services\Telegram\TelegramAlertService;
 use App\Services\Telegram\TelegramChartImageRenderer;
 use App\Services\Telegram\StrongLevelTelegramLlmButton;
 use App\Support\HybridAnalystConfig;
+use App\Support\OpenRouterLlmConfig;
 use App\Support\TelegramInstrumentLabel;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldBeUnique;
@@ -74,11 +75,13 @@ class RunHybridAnalystAnalysisJob implements ShouldQueue, ShouldBeUnique
         $sourceType = (string) ($this->sourceSignal['source_bot_type'] ?? '');
         // Side source намеренно не пишем в вопрос — иначе модель якорится до независимого вердикта.
         // Side/decision лежат только в hybrid_source_signal (фаза B промпта).
-        $question = sprintf(
-            'Гибридный анализ: сначала независимый вердикт по рынку, затем сверка с ботом «%s» (%s). Не подглядывай side source до независимого вердикта.',
-            $sourceName,
-            $sourceType !== '' ? $sourceType : 'bot'
-        );
+        $question = OpenRouterLlmConfig::isAnalystShortPromptMode($cfg)
+            ? ''
+            : sprintf(
+                'Гибридный анализ: сначала независимый вердикт по рынку, затем сверка с ботом «%s» (%s). Не подглядывай side source до независимого вердикта.',
+                $sourceName,
+                $sourceType !== '' ? $sourceType : 'bot'
+            );
 
         $analysis = $engine->runManualChartAnalysis(
             $bot,
@@ -151,8 +154,10 @@ class RunHybridAnalystAnalysisJob implements ShouldQueue, ShouldBeUnique
         }
 
         $llmSide = HybridAnalystConfig::extractRecommendationSide($analysisText) ?? '?';
+        $shortMode = OpenRouterLlmConfig::isAnalystShortPromptMode($cfg);
         $chartLevels = is_array($analysis['chart_levels'] ?? null) ? $analysis['chart_levels'] : [];
         $pngPath = null;
+        // Картинку шлём и в кратком режиме (зоны Impulse LVL с движка). Текст уровней — только в полном.
         if (extension_loaded('gd')) {
             $series = $dataService->series($this->instrument, 120, true, 31536000, 1);
             $candles = $series['series'];
@@ -173,12 +178,15 @@ class RunHybridAnalystAnalysisJob implements ShouldQueue, ShouldBeUnique
             .' ('.htmlspecialchars($sourceType, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8').') → '.$sourceSide
             .$tradeNote."\n\n";
         $body = htmlspecialchars($analysisText, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
-        // После LLM — исходный ответ/decision source (уже был в payload гибрида).
-        $sourceReply = HybridAnalystConfig::formatSourceReplyForTelegram($this->sourceSignal);
-        $sourceBlock = "\n\n————\n".htmlspecialchars($sourceReply, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+        // Полный режим: после LLM — текст source. Краткий: source уже в шапке, без дубля.
+        $sourceBlock = '';
+        if (! $shortMode) {
+            $sourceReply = HybridAnalystConfig::formatSourceReplyForTelegram($this->sourceSignal);
+            $sourceBlock = "\n\n————\n".htmlspecialchars($sourceReply, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+        }
 
         $billingLabel = trim((string) ($analysis['billing_label'] ?? ''));
-        $levelsText = $telegram->formatChartLevelsText($chartLevels);
+        $levelsText = $shortMode ? '' : $telegram->formatChartLevelsText($chartLevels);
         $footerParts = array_filter([
             $billingLabel !== '' ? '💰 '.htmlspecialchars($billingLabel, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') : '',
             $levelsText,

@@ -30,13 +30,10 @@ class OpenRouterLlmAnalystStrategy implements BotStrategyInterface
 
         $model = (string) ($cfg['model'] ?? 'openai/gpt-5.2');
         $temperature = (float) ($cfg['temperature'] ?? 0.2);
-        $maxTokens = (int) ($cfg['max_tokens'] ?? 900);
         $shortPromptMode = OpenRouterLlmConfig::isAnalystShortPromptMode($cfg);
-        // В кратком режиме используем отдельный лимит токенов из настроек бота (без жёсткого cap 64..512).
-        // Нормализация диапазона выполняется внутри OpenRouterClient::chatCompletion.
+        $maxTokens = (int) ($cfg['max_tokens'] ?? 900);
         if ($shortPromptMode) {
-            $shortCap = (int) ($cfg['max_tokens_short'] ?? OpenRouterLlmConfig::ANALYST_SHORT_MAX_TOKENS_DEFAULT);
-            $maxTokens = min($maxTokens, $shortCap);
+            $maxTokens = OpenRouterLlmConfig::resolveAnalystShortMaxTokens($cfg, $maxTokens);
         }
         $timeoutSec = OpenRouterClient::resolveChatTimeoutSec($cfg);
         $systemPrompt = OpenRouterLlmConfig::resolveAnalystSystemPrompt($cfg);
@@ -71,6 +68,11 @@ class OpenRouterLlmAnalystStrategy implements BotStrategyInterface
         $engulfingSummary = $analystEngulfEnabled && is_array($context['engulfing_summary'] ?? null)
             ? $context['engulfing_summary']
             : [];
+        $analystImpulseEnabled = (bool) ($context['analyst_impulse_lvl_flow_enabled'] ?? false);
+        /** @var array<string,mixed> $impulseLvlSummary */
+        $impulseLvlSummary = $analystImpulseEnabled && is_array($context['impulse_lvl_summary'] ?? null)
+            ? $context['impulse_lvl_summary']
+            : [];
 
         // Гибрид: полный decision source-бота (runtime), без изменения сохранённого system_prompt.
         /** @var array<string,mixed>|null $hybridSourceSignal */
@@ -78,7 +80,7 @@ class OpenRouterLlmAnalystStrategy implements BotStrategyInterface
             ? $context['hybrid_source_signal']
             : null;
         if ($hybridSourceSignal !== null) {
-            $systemPrompt .= HybridAnalystConfig::systemPromptSection();
+            $systemPrompt .= HybridAnalystConfig::systemPromptSectionForMode($shortPromptMode);
         }
 
         $payload = [
@@ -117,15 +119,28 @@ class OpenRouterLlmAnalystStrategy implements BotStrategyInterface
             $payload['engulfing_summary'] = $engulfingSummary;
             $payload['expiry_focus_sec'] = 60;
         }
+        if ($analystImpulseEnabled) {
+            if ($shortPromptMode) {
+                unset($impulseLvlSummary['rule_reminder']);
+                $zones = is_array($impulseLvlSummary['active_zones'] ?? null)
+                    ? array_slice(array_values($impulseLvlSummary['active_zones']), 0, 8)
+                    : [];
+                $impulseLvlSummary['active_zones'] = $zones;
+            }
+            $payload['impulse_lvl_summary'] = $impulseLvlSummary;
+            $payload['expiry_focus_sec'] = 60;
+        }
         if ($hybridSourceSignal !== null) {
-            $payload['hybrid_source_signal'] = $hybridSourceSignal;
+            // Краткий режим: без analysis_text/features source — иначе модель копирует простыню лидера.
+            $payload['hybrid_source_signal'] = $shortPromptMode
+                ? HybridAnalystConfig::compactSourceSignalForShortLlm($hybridSourceSignal)
+                : $hybridSourceSignal;
         }
 
         // Гибрид: в user-сообщении тоже фиксируем двухфазный порядок (якорь на source слабее).
         if ($hybridSourceSignal !== null) {
             if ($shortPromptMode) {
-                $userContent = "Гибрид, краткий формат: 1) Независимый вердикт: CALL|PUT|NONE (без hybrid_source_signal). "
-                    ."2) Одна фраза сверки с source. 3) Рекомендация: CALL|PUT|NONE. 4) Вероятность успеха: NN%.\n";
+                $userContent = "Краткий гибрид, ровно 4 строки: Независимый вердикт / Сверка / Рекомендация / Вероятность успеха. Без разбора.\n";
             } else {
                 $userContent = "Гибридный разбор: сначала независимый вердикт по рынку (без hybrid_source_signal), "
                     ."затем сверка с source и итоговая Рекомендация. Ответ — связный текст на русском.\n";
@@ -134,6 +149,10 @@ class OpenRouterLlmAnalystStrategy implements BotStrategyInterface
             $userContent = "Подтверди или отклони candidates из engulfing_summary: CALL/PUT/NONE и вероятность успеха.\n";
         } elseif ($analystEngulfEnabled) {
             $userContent = "Подтверди или отклони уже найденные цепочки ENGULF 1/2/3 из engulfing_summary. Ответ — связный текст на русском.\n";
+        } elseif ($analystImpulseEnabled && $shortPromptMode) {
+            $userContent = "Дай вердикт CALL/PUT/NONE по impulse_lvl_summary (зоны LVL + импульс) и вероятность успеха.\n";
+        } elseif ($analystImpulseEnabled) {
+            $userContent = "Разбери Impulse LVL: зоны, импульс, live_setups как подсказку. Решение CALL/PUT/NONE — твоё. Ответ — связный текст на русском.\n";
         } elseif ($analystSrlEnabled && $shortPromptMode) {
             $userContent = "Подтверди или отклони candidates из sweep_raid_summary: CALL/PUT/NONE и вероятность успеха.\n";
         } elseif ($analystSrlEnabled) {
@@ -196,7 +215,9 @@ class OpenRouterLlmAnalystStrategy implements BotStrategyInterface
         $chartParsed = $shortPromptMode
             ? ['ok' => false, 'message' => null, 'data' => ['levels' => [], 'zones' => [], 'entry' => null]]
             : OpenRouterChartLevelsParser::normalize($split['chart_levels_raw'], $split['fence_found']);
-        $displayText = $shortPromptMode ? trim((string) $assistantText) : $split['analysis_text'];
+        $displayText = $shortPromptMode
+            ? OpenRouterLlmConfig::compactShortAnalystReply((string) $assistantText, $hybridSourceSignal !== null)
+            : $split['analysis_text'];
 
         $llmLogId = $this->persistLlmLog([
             'bot_id' => $botId,

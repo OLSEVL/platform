@@ -39,11 +39,13 @@ ASSETS: Dict[str, int] = {
     "GBPJPY_otc": 84,
     "NZDJPY_otc": 89,
     "NZDUSD_otc": 90,
-    # Commodities
+    # Commodities (сырьевые товары: нефть, драгметаллы, газ)
     "XAUUSD": 2,  # Gold
     "XAUUSD_otc": 169,
+    "XAUEUR": 102,  # XAU/EUR
     "XAGUSD": 65,  # Silver
     "XAGUSD_otc": 167,
+    "XAGEUR": 103,  # XAG/EUR
     "UKBrent": 50,  # Oil
     "UKBrent_otc": 164,
     "USCrude": 64,

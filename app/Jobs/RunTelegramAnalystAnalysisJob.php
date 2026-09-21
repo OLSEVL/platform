@@ -4,6 +4,7 @@ namespace App\Jobs;
 
 use App\Models\Bot;
 use App\Support\ChartAnalystBotTypes;
+use App\Support\OpenRouterLlmConfig;
 use App\Support\TelegramInstrumentLabel;
 use App\Services\Bots\BotDataService;
 use App\Services\Bots\BotEngineService;
@@ -73,9 +74,12 @@ class RunTelegramAnalystAnalysisJob implements ShouldQueue
             return;
         }
 
+        $cfg = is_array($bot->config) ? $bot->config : [];
+        $shortMode = OpenRouterLlmConfig::isAnalystShortPromptMode($cfg);
+
         $chartLevels = is_array($analysis['chart_levels'] ?? null) ? $analysis['chart_levels'] : [];
         $pngPath = null;
-        // Картинку шлём всегда, когда есть свечи и GD — не ждём chart_levels_ok от LLM.
+        // PNG всегда (и в кратком режиме). Текстовый список уровней — только в полном.
         if (extension_loaded('gd')) {
             $series = $dataService->series($this->instrument, 120, true, 31536000, 1);
             $candles = $series['series'];
@@ -123,9 +127,7 @@ class RunTelegramAnalystAnalysisJob implements ShouldQueue
         $telegram->sendLongMessage($token, $this->chatId, $header.$body);
 
         $billingLabel = trim((string) ($analysis['billing_label'] ?? ''));
-        $levelsText = $telegram->formatChartLevelsText($chartLevels);
-        /** @var array<string, mixed> $cfg */
-        $cfg = is_array($bot->config) ? $bot->config : [];
+        $levelsText = $shortMode ? '' : $telegram->formatChartLevelsText($chartLevels);
         // Та же inline-кнопка, что у гибрид-алерта: повторный LLM без hybrid_source_signal.
         $llmMarkup = StrongLevelTelegramLlmButton::inlineKeyboardMarkupForAnalystSelf($bot, $this->instrument, $cfg);
         $footerParts = array_filter([

@@ -242,6 +242,7 @@ class BotDataService
         bool $includePartial = true,
         int $staleAfterSec = 30,
         int $timeframe = 1,
+        bool $keepOpenFormingPartial = false,
     ): array {
         $map = $tfToMaxBars;
         $map[$timeframe] = $count;
@@ -262,11 +263,16 @@ class BotDataService
         $partial = null;
         if ($includePartial) {
             $partialCandidate = $this->currentCandleCache->getPartial($instrument);
-            if ($partialCandidate && $this->currentCandleCache->isFresh($partialCandidate, $staleAfterSec)) {
-                $lastClosedTime = ! empty($closed) ? (int) end($closed)['time'] : 0;
-                if ((int) $partialCandidate['time'] > $lastClosedTime) {
-                    $partial = $partialCandidate;
-                }
+            $lastClosedTime = ! empty($closed) ? (int) end($closed)['time'] : 0;
+            $periodSec = CandleService::periodSecondsForDashboardTf($timeframe) ?? 60;
+            if ($partialCandidate && self::shouldUseFormingPartial(
+                $partialCandidate,
+                $lastClosedTime,
+                $periodSec,
+                $staleAfterSec,
+                $keepOpenFormingPartial,
+            )) {
+                $partial = $partialCandidate;
             }
         }
 
@@ -283,6 +289,47 @@ class BotDataService
             // rejection по формирующейся свече (тень ещё перерисуется).
             'mtf' => $this->normalizeMtfBundle($bundle),
         ];
+    }
+
+    /**
+     * Брать ли Redis-partial как live-бар стратегии.
+     *
+     * stale_after_sec: защита DeMarker/CRC от торговли по зависшему тику.
+     * keepOpenForming: как 1min history(1) — пока бакет ещё открыт, последний снимок
+     * годится даже если ingest молчит дольше N секунд. Закрытую минуту не реанимируем.
+     *
+     * @param  array{time?:int,updated_at?:int}  $partial
+     */
+    public static function shouldUseFormingPartial(
+        array $partial,
+        int $lastClosedTime,
+        int $periodSec,
+        int $staleAfterSec,
+        bool $keepOpenForming,
+        ?int $now = null,
+    ): bool {
+        $t = (int) ($partial['time'] ?? 0);
+        if ($t <= 0) {
+            return false;
+        }
+        $periodSec = max(1, $periodSec);
+        $now ??= time();
+        $bucket = intdiv($t, $periodSec) * $periodSec;
+        if (($bucket + $periodSec) <= $now) {
+            return false;
+        }
+        if ($bucket < $lastClosedTime) {
+            return false;
+        }
+        if ($keepOpenForming) {
+            return true;
+        }
+        $updatedAt = (int) ($partial['updated_at'] ?? 0);
+        if ($updatedAt <= 0) {
+            return false;
+        }
+
+        return ($now - $updatedAt) <= $staleAfterSec;
     }
 
     /**

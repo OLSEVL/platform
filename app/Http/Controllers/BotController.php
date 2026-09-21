@@ -2421,7 +2421,10 @@ class BotController extends Controller
                 // SRL / Engulf-пакеты: для соответствующих type всегда включены; SMC выключен.
                 'analyst_srl_flow_enabled' => ChartAnalystBotTypes::isSrl($bot->type),
                 'analyst_engulf_flow_enabled' => ChartAnalystBotTypes::isEngulf($bot->type),
-                'analyst_smc_flow_enabled' => (ChartAnalystBotTypes::isSrl($bot->type) || ChartAnalystBotTypes::isEngulf($bot->type))
+                'analyst_impulse_lvl_flow_enabled' => ChartAnalystBotTypes::isImpulse($bot->type),
+                'analyst_smc_flow_enabled' => (ChartAnalystBotTypes::isSrl($bot->type)
+                    || ChartAnalystBotTypes::isEngulf($bot->type)
+                    || ChartAnalystBotTypes::isImpulse($bot->type))
                     ? false
                     : (bool) (($bot->config ?? [])['analyst_smc_flow_enabled'] ?? false),
                 'srl_pivot_length' => ChartAnalystBotTypes::isSrl($bot->type)
@@ -2478,9 +2481,33 @@ class BotController extends Controller
                 'version' => match (true) {
                     ChartAnalystBotTypes::isSrl($bot->type) => 'openrouter_llm_analyst_srl_v2',
                     ChartAnalystBotTypes::isEngulf($bot->type) => 'openrouter_llm_analyst_engulf_v2',
+                    ChartAnalystBotTypes::isImpulse($bot->type) => 'openrouter_llm_analyst_impulse_lvl_v1',
                     default => 'openrouter_llm_analyst_v1',
                 },
             ]));
+            if (ChartAnalystBotTypes::isImpulse($bot->type)) {
+                // Профили/LVL как у бота 47, без затирания LLM count/промпта/telegram.
+                $impulseDefaults = ImpulseLvl1minConfig::defaultConfig();
+                unset(
+                    $impulseDefaults['count'],
+                    $impulseDefaults['m5_take'],
+                    $impulseDefaults['m15_take'],
+                    $impulseDefaults['telegram_enabled'],
+                    $impulseDefaults['telegram_bot_token'],
+                    $impulseDefaults['telegram_chat_id'],
+                    $impulseDefaults['telegram_notify_result'],
+                    $impulseDefaults['telegram_notify_on'],
+                    $impulseDefaults['telegram_alert_format'],
+                    $impulseDefaults['telegram_send_chart'],
+                    $impulseDefaults['scan_interval_sec'],
+                    $impulseDefaults['scan_workers'],
+                );
+                $config = array_merge($impulseDefaults, $config);
+                $config['overlay_forming_htf'] = $request->boolean('overlay_forming_htf');
+                $config['eval_prev_candle'] = $request->boolean('eval_prev_candle');
+                $config['live_candle_wick_signals'] = $request->boolean('live_candle_wick_signals');
+                $config['lvl_filter'] = $request->boolean('lvl_filter');
+            }
             // Плановый scan для аналитика не выполняется (scanBot сразу выходит).
             // is_active=true при гибриде — чтобы бот был «active» в списке/аналитике.
             $isActive = $hybridEnabled;
@@ -2691,6 +2718,7 @@ class BotController extends Controller
             'openrouter_llm_analyst' => '@chart_analyct_smc_flow_bot',
             ChartAnalystBotTypes::SRL => '@chart_analyst_sweep_raid_bot',
             ChartAnalystBotTypes::ENGULF => '@chart_analyst_engulf_bot',
+            ChartAnalystBotTypes::IMPULSE => '@chart_analyst_impulse_lvl_bot',
             'strong_trend_demarker' => '@strong_DeMarker_bot',
             \App\Support\DemarkerDualFastConfig::BOT_TYPE => '@strong_DeMarker_bot',
             'sweep_raid_liquidity' => 'боту Sweep из сохранённого token (не @trend1123_bot)',
@@ -3471,6 +3499,7 @@ class BotController extends Controller
                 && \App\Support\OpenRouterLlmConfig::analystSmcFlowEnabled(is_array($bot->config) ? $bot->config : []),
             'analystSrlFlowEnabled' => ChartAnalystBotTypes::isSrl($bot->type),
             'analystEngulfFlowEnabled' => ChartAnalystBotTypes::isEngulf($bot->type),
+            'analystImpulseLvlFlowEnabled' => ChartAnalystBotTypes::isImpulse($bot->type),
             'chartSignals' => $chartSignalsPayload,
             'instruments' => $instruments,
             'timeframes' => $timeframes,

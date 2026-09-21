@@ -83,6 +83,16 @@
                 class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
             @include('partials.field-hint', ['text' => $hint('stale_after_sec')])
         </div>
+        <label class="flex items-start gap-2 text-sm text-zinc-300">
+            <input type="hidden" name="keep_stale_forming_m1" value="0">
+            <input type="checkbox" name="keep_stale_forming_m1" id="keep_stale_forming_m1" value="1"
+                class="mt-0.5 rounded border-zinc-600 bg-zinc-800 text-blue-500"
+                @checked(old('keep_stale_forming_m1', $cfg['keep_stale_forming_m1'] ?? true))>
+            <span>
+                <span class="font-medium text-zinc-200">Держать формирующуюся M1</span>
+                <span class="mt-0.5 block text-[11px] font-normal text-zinc-500">{{ $hint('keep_stale_forming_m1') }}</span>
+            </span>
+        </label>
         <div class="space-y-1">
             <label for="trim_low_count" class="block text-xs font-medium text-zinc-400">Trim: отрезать тонких</label>
             <input type="number" name="trim_low_count" id="trim_low_count" min="0" max="90" required

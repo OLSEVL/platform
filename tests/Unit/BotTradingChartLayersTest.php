@@ -80,6 +80,15 @@ class BotTradingChartLayersTest extends TestCase
         $this->assertFalse($params['allow_same_color']);
     }
 
+    public function test_impulse_analyst_enables_llm_levels_only(): void
+    {
+        $bot = $this->bot(\App\Support\ChartAnalystBotTypes::IMPULSE, [
+            'analyst_impulse_lvl_flow_enabled' => true,
+        ]);
+
+        $this->assertSame(['layer-llm-levels'], BotTradingChartLayers::layerIds($bot));
+    }
+
     public function test_demarker_enables_demarker_layer(): void
     {
         $bot = $this->bot('strong_trend_demarker');

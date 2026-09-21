@@ -19,6 +19,9 @@ class PocketInstrument extends Model
     /** Акции (stock OTC / spot). */
     public const TYPE_STOCK = 3;
 
+    /** Сырьевые товары (commodities OTC / spot: нефть, металлы, газ). */
+    public const TYPE_COMMODITY = 4;
+
     protected $fillable = [
         'instrument', 'display_name', 'type', 'priority',
         'session_token', 'uid', 'is_demo', 'is_active', 'proxy_endpoint_id',
@@ -120,6 +123,12 @@ class PocketInstrument extends Model
     public function scopeStock($query)
     {
         return $query->where('type', self::TYPE_STOCK);
+    }
+
+    /** Только сырьевые товары (type = 4). */
+    public function scopeCommodity($query)
+    {
+        return $query->where('type', self::TYPE_COMMODITY);
     }
 
     public function scopeOrderByPriority($query)

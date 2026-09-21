@@ -112,10 +112,17 @@ class TelegramAnalystHandler
             return;
         }
 
+        $cfg = is_array($bot->config) ? $bot->config : [];
+        $cfg['_bot_type'] = $bot->type;
+        $hello = ChartAnalystBotTypes::label($bot->type);
+        if ($bot->type === ChartAnalystBotTypes::CLASSIC && OpenRouterLlmConfig::analystSmcFlowEnabled($cfg)) {
+            $hello = 'OpenRouter Chart Analyst SMC Flow';
+        }
+
         $this->sendReplyText(
             $token,
             $chatId,
-            "Привет! Я Chart Analyst SMC Flow.\n\n".
+            "Привет! Я {$hello}.\n\n".
             TelegramAnalystReplyKeyboard::menuHint().' — выбрать инструмент для анализа.',
             TelegramAnalystReplyKeyboard::mainMarkup()
         );

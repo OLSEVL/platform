@@ -58,6 +58,7 @@ use App\Support\ChartAnalystBotTypes;
 use App\Support\LevelBounceBotTypes;
 use App\Support\MaxBotConfig;
 use App\Support\ImpulseLvl1minConfig;
+use App\Support\ImpulseLvlLlmSnapshot;
 use App\Support\EngulfingLlmSnapshot;
 use App\Support\SmcFlowLlmSnapshot;
 use App\Support\SweepRaidLlmSnapshot;
@@ -219,6 +220,7 @@ class BotEngineService
                             true,
                             $staleAfterSec,
                             $seriesTimeframe,
+                            ImpulseLvl1minConfig::flag($config, 'keep_stale_forming_m1', true),
                         );
                         $series = $packed;
                         $mtf = $packed['mtf'];
@@ -851,7 +853,9 @@ class BotEngineService
             || \App\Support\OpenRouterLlmConfig::analystSrlFlowEnabled($config);
         $analystEngulfEnabled = ChartAnalystBotTypes::isEngulf($bot->type)
             || \App\Support\OpenRouterLlmConfig::analystEngulfFlowEnabled($config);
-        $analystSmcEnabled = ! $analystSrlEnabled && ! $analystEngulfEnabled
+        $analystImpulseEnabled = ChartAnalystBotTypes::isImpulse($bot->type)
+            || \App\Support\OpenRouterLlmConfig::analystImpulseLvlFlowEnabled($config);
+        $analystSmcEnabled = ! $analystSrlEnabled && ! $analystEngulfEnabled && ! $analystImpulseEnabled
             && \App\Support\OpenRouterLlmConfig::analystSmcFlowEnabled($config);
         $smcFlowPack = $analystSmcEnabled
             ? $this->buildAnalystSmcFlowPack($bot, $instrument, $count)
@@ -861,6 +865,9 @@ class BotEngineService
             : null;
         $engulfPack = $analystEngulfEnabled
             ? $this->buildAnalystEngulfPack($bot, $instrument, $count, $config)
+            : null;
+        $impulsePack = $analystImpulseEnabled
+            ? $this->buildAnalystImpulseLvlPack($bot, $instrument, $count, $config)
             : null;
 
         $analyzeContext = [
@@ -875,6 +882,7 @@ class BotEngineService
             'analyst_smc_flow_enabled' => $analystSmcEnabled,
             'analyst_srl_flow_enabled' => $analystSrlEnabled,
             'analyst_engulf_flow_enabled' => $analystEngulfEnabled,
+            'analyst_impulse_lvl_flow_enabled' => $analystImpulseEnabled,
         ];
         if ($analystSmcEnabled && is_array($smcFlowPack)) {
             $analyzeContext['smc_flow_summary'] = $smcFlowPack['snapshot'];
@@ -884,6 +892,9 @@ class BotEngineService
         }
         if ($analystEngulfEnabled && is_array($engulfPack)) {
             $analyzeContext['engulfing_summary'] = $engulfPack['snapshot'];
+        }
+        if ($analystImpulseEnabled && is_array($impulsePack)) {
+            $analyzeContext['impulse_lvl_summary'] = $impulsePack['snapshot'];
         }
         // Гибрид: полный прогноз source-бота уходит в payload LLM (+ секция в system prompt).
         if (is_array($hybridSourceSignal) && $hybridSourceSignal !== []) {
@@ -914,16 +925,31 @@ class BotEngineService
 
         $features = is_array($decision['features'] ?? null) ? $decision['features'] : [];
 
+        $chartLevels = is_array($decision['chart_levels'] ?? null) ? $decision['chart_levels'] : [
+            'levels' => [],
+            'zones' => [],
+            'entry' => null,
+        ];
+        $chartLevelsOk = (bool) ($decision['chart_levels_ok'] ?? false);
+        // Зоны 47 рисуем даже если модель не вернула chart_levels; уровни LLM дописываются сверху.
+        if ($analystImpulseEnabled && is_array($impulsePack)) {
+            $seed = is_array($impulsePack['chart_levels'] ?? null) ? $impulsePack['chart_levels'] : [
+                'levels' => [],
+                'zones' => [],
+                'entry' => null,
+            ];
+            $chartLevels = ImpulseLvlLlmSnapshot::mergeChartLevels($chartLevels, $seed);
+            if (($seed['levels'] ?? []) !== [] || ($seed['zones'] ?? []) !== []) {
+                $chartLevelsOk = true;
+            }
+        }
+
         return [
             'instrument' => $instrument,
             'summary' => 'Анализ готов.',
             'analysis_text' => (string) $decision['analysis_text'],
-            'chart_levels' => is_array($decision['chart_levels'] ?? null) ? $decision['chart_levels'] : [
-                'levels' => [],
-                'zones' => [],
-                'entry' => null,
-            ],
-            'chart_levels_ok' => (bool) ($decision['chart_levels_ok'] ?? false),
+            'chart_levels' => $chartLevels,
+            'chart_levels_ok' => $chartLevelsOk,
             'chart_levels_message' => isset($decision['chart_levels_message']) ? (string) $decision['chart_levels_message'] : null,
             'user_question' => $userQuestion,
             'model' => (string) ($features['model'] ?? ($config['model'] ?? '')),
@@ -934,6 +960,7 @@ class BotEngineService
             'analyst_smc_flow_enabled' => $analystSmcEnabled,
             'analyst_srl_flow_enabled' => $analystSrlEnabled,
             'analyst_engulf_flow_enabled' => $analystEngulfEnabled,
+            'analyst_impulse_lvl_flow_enabled' => $analystImpulseEnabled,
             'analyst_prompt_mode' => (string) ($features['analyst_prompt_mode'] ?? \App\Support\OpenRouterLlmConfig::analystPromptMode($config)),
             'smc_flow' => $analystSmcEnabled && is_array($smcFlowPack) ? $smcFlowPack['overlay'] : null,
             'smc_flow_modules' => $analystSmcEnabled && is_array($smcFlowPack)
@@ -941,6 +968,7 @@ class BotEngineService
                 : [],
             'sweep_raid_liquidity' => $analystSrlEnabled && is_array($srlPack) ? $srlPack['overlay'] : null,
             'engulfing_liquidity' => $analystEngulfEnabled && is_array($engulfPack) ? $engulfPack['overlay'] : null,
+            'impulse_lvl' => $analystImpulseEnabled && is_array($impulsePack) ? $impulsePack['overlay'] : null,
             'hybrid_mode' => is_array($hybridSourceSignal) && $hybridSourceSignal !== [],
         ];
     }
@@ -1123,6 +1151,60 @@ class BotEngineService
     }
 
     /**
+     * Impulse LVL для аналитика: непробитые зоны M1–M30 + live-хиты 47 в snapshot.
+     *
+     * @param  array<string, mixed>  $config
+     * @return array{snapshot:array<string,mixed>,overlay:array<string,mixed>,chart_levels:array<string,mixed>,bar_count:int}
+     */
+    private function buildAnalystImpulseLvlPack(Bot $bot, string $instrument, int $m1BarCount, array $config): array
+    {
+        $impulseCfg = array_merge(ImpulseLvl1minConfig::defaultConfig(), $config);
+        $history = max(
+            $m1BarCount,
+            ImpulseLvl1minConfig::historyPeriod($impulseCfg),
+            ImpulseLvl1minConfig::DEFAULT_HISTORY_BARS
+        );
+        $tfMap = [
+            5 => max(20, (int) ($impulseCfg['m5_take'] ?? 80)),
+            15 => max(20, (int) ($impulseCfg['m15_take'] ?? 60)),
+            30 => max(20, (int) ($impulseCfg['m30_take'] ?? 40)),
+        ];
+        $keepForming = ImpulseLvl1minConfig::flag($impulseCfg, 'keep_stale_forming_m1', true);
+        $bundle = $this->botDataService->seriesWithMtf(
+            $instrument,
+            $history,
+            $tfMap,
+            true,
+            31536000,
+            1,
+            $keepForming
+        );
+        $closed = is_array($bundle['closed'] ?? null) ? array_values($bundle['closed']) : [];
+        $partial = is_array($bundle['partial'] ?? null) ? $bundle['partial'] : null;
+        $mtf = is_array($bundle['mtf'] ?? null) ? $bundle['mtf'] : [];
+
+        if ($partial !== null) {
+            $eval = $partial;
+            $m1Closed = $closed;
+        } elseif ($closed !== []) {
+            $eval = $closed[array_key_last($closed)];
+            $m1Closed = array_slice($closed, 0, -1);
+        } else {
+            $eval = null;
+            $m1Closed = [];
+        }
+
+        $pack = ImpulseLvlLlmSnapshot::pack($m1Closed, $eval, $mtf, $impulseCfg);
+
+        return [
+            'snapshot' => $pack['snapshot'],
+            'overlay' => $pack['overlay'],
+            'chart_levels' => $pack['chart_levels'],
+            'bar_count' => count($closed) + ($partial ? 1 : 0),
+        ];
+    }
+
+    /**
      * Собирает блок billing для ответа аналитика: стоимость запроса + остаток на счёте OpenRouter.
      *
      * @param  array<string,mixed>|null  $decision
@@ -1235,6 +1317,7 @@ class BotEngineService
                 true,
                 $runtime['stale_after_sec'],
                 (int) ($runtime['series_timeframe'] ?? 1),
+                ImpulseLvl1minConfig::flag($runtime['config'], 'keep_stale_forming_m1', true),
             );
             $series = $packed;
             $mtf = $packed['mtf'];
@@ -1459,6 +1542,7 @@ class BotEngineService
             'openrouter_llm_analyst' => 120,
             ChartAnalystBotTypes::SRL => 120,
             ChartAnalystBotTypes::ENGULF => 120,
+            ChartAnalystBotTypes::IMPULSE => 120,
             'strong_trend_telegram' => 120,
             'strong_trend_demarker' => 120,
             DemarkerDualFastConfig::BOT_TYPE => 120,
@@ -1477,6 +1561,7 @@ class BotEngineService
             'openrouter_llm_analyst' => \App\Support\OpenRouterLlmConfig::m1BarCount($config),
             ChartAnalystBotTypes::SRL => \App\Support\OpenRouterLlmConfig::m1BarCount($config),
             ChartAnalystBotTypes::ENGULF => \App\Support\OpenRouterLlmConfig::m1BarCount($config),
+            ChartAnalystBotTypes::IMPULSE => \App\Support\OpenRouterLlmConfig::m1BarCount($config),
             default => max(10, min(5000, (int) ($config['count'] ?? $defaultCount))),
         };
         $expirySec = match ($bot->type) {
@@ -1597,6 +1682,7 @@ class BotEngineService
             'openrouter_llm_analyst' => 0,
             ChartAnalystBotTypes::SRL => 0,
             ChartAnalystBotTypes::ENGULF => 0,
+            ChartAnalystBotTypes::IMPULSE => 0,
             default => 3,
         };
         // Указываем таймфрейм входного потока для стратегии.
@@ -1712,6 +1798,7 @@ class BotEngineService
             'openrouter_llm_analyst' => new OpenRouterLlmAnalystStrategy($this->openRouterClient),
             ChartAnalystBotTypes::SRL => new OpenRouterLlmAnalystStrategy($this->openRouterClient),
             ChartAnalystBotTypes::ENGULF => new OpenRouterLlmAnalystStrategy($this->openRouterClient),
+            ChartAnalystBotTypes::IMPULSE => new OpenRouterLlmAnalystStrategy($this->openRouterClient),
             'smc_flow' => new SmcFlowStrategy($this->smcFlowBotSignalAnalyzer),
             'sweep_raid_liquidity' => new SweepRaidLiquidityStrategy,
             'engulfing_liquidity' => new EngulfingLiquidityStrategy,
@@ -1920,7 +2007,9 @@ class BotEngineService
             });
         });
 
-        if ($createdSignalId > 0 && $createdTradeId > 0) {
+        // Как в scanBot: гибрид на любой BotSignal, не только на paper-сделку
+        // (у 47 occupancy часто режет paper, алерты всё равно уходят).
+        if ($createdSignalId > 0) {
             $hybrid = app(HybridAnalystDispatcher::class);
             $hybrid->maybeDispatch(
                 $bot,
@@ -1930,7 +2019,7 @@ class BotEngineService
                 $confidence,
                 $decision,
                 \App\Support\HybridAnalystConfig::TRIGGER_ON_SIGNAL,
-                $createdTradeId,
+                $createdTradeId > 0 ? $createdTradeId : null,
             );
             $hybrid->maybeDispatch(
                 $bot,
@@ -1940,7 +2029,7 @@ class BotEngineService
                 $confidence,
                 $decision,
                 \App\Support\HybridAnalystConfig::TRIGGER_ON_PO_MIRROR,
-                $createdTradeId,
+                $createdTradeId > 0 ? $createdTradeId : null,
             );
         }
 

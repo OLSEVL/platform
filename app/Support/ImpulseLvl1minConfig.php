@@ -65,6 +65,7 @@ final class ImpulseLvl1minConfig
             'send_all_bar_alerts' => true,
             // Live-фитиль как updateBotM1; выкл. по умолчанию — бэктест без partial не меняется.
             'live_candle_wick_signals' => false,
+            'keep_stale_forming_m1' => true,
             'occupancy_blocks_alerts' => false,
             'occupancy_blocks_paper' => true,
             'occupancy_scope' => 'instrument',
@@ -573,6 +574,7 @@ final class ImpulseLvl1minConfig
             'overlay_forming_htf' => $request->boolean('overlay_forming_htf'),
             'send_all_bar_alerts' => $request->boolean('send_all_bar_alerts'),
             'live_candle_wick_signals' => $request->boolean('live_candle_wick_signals'),
+            'keep_stale_forming_m1' => $request->boolean('keep_stale_forming_m1'),
             'occupancy_blocks_alerts' => $request->boolean('occupancy_blocks_alerts'),
             'occupancy_blocks_paper' => $request->boolean('occupancy_blocks_paper'),
             'occupancy_scope' => self::occupancyScope(['occupancy_scope' => $extra['occupancy_scope'] ?? 'instrument']),

@@ -28,6 +28,7 @@ class BotBacktestEngine
         'openrouter_llm_analyst',
         \App\Support\ChartAnalystBotTypes::SRL,
         \App\Support\ChartAnalystBotTypes::ENGULF,
+        \App\Support\ChartAnalystBotTypes::IMPULSE,
         'manual_dashboard',
     ];
 

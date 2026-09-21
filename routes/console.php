@@ -21,6 +21,7 @@ use App\Services\Telegram\TelegramAnalystProcessManager;
 use App\Services\WebshareProxyRefreshService;
 use App\Support\BotScanCoordinator;
 use App\Support\ChartAnalystBotTypes;
+use App\Support\ImpulseLvl1minConfig;
 use App\Support\OpenRouterChartLevelsParser;
 use App\Support\OpenRouterLlmConfig;
 use App\Support\WebshareProxyRefreshSettings;
@@ -1287,6 +1288,73 @@ Artisan::command('bots:openrouter-analyst-engulf-bootstrap', function () {
 
     return 0;
 })->purpose('Создать бота OpenRouter Chart Analyst Engulfing (LLM подтверждает ENGULF 1/2/3)');
+
+Artisan::command('bots:openrouter-analyst-impulse-lvl-bootstrap', function () {
+    $user = User::query()->orderBy('id')->first();
+    if (! $user) {
+        $this->error('Нет пользователей. Сначала зарегистрируйте пользователя.');
+
+        return 1;
+    }
+
+    $name = ChartAnalystBotTypes::label(ChartAnalystBotTypes::IMPULSE);
+    $impulseDefaults = ImpulseLvl1minConfig::defaultConfig();
+    unset(
+        $impulseDefaults['count'],
+        $impulseDefaults['telegram_enabled'],
+        $impulseDefaults['telegram_bot_token'],
+        $impulseDefaults['telegram_chat_id'],
+        $impulseDefaults['scan_interval_sec'],
+        $impulseDefaults['scan_workers'],
+    );
+    $config = array_merge($impulseDefaults, [
+        'count' => 120,
+        's5_take' => 240,
+        'model' => 'openai/gpt-5.2',
+        'temperature' => 0.2,
+        'max_tokens' => 900,
+        'max_tokens_short' => OpenRouterLlmConfig::ANALYST_SHORT_MAX_TOKENS_DEFAULT,
+        'openrouter_timeout_sec' => 180,
+        'mtf_enabled' => true,
+        'm5_take' => 96,
+        'm15_take' => 64,
+        'h1_take' => 24,
+        'expiry_sec' => 60,
+        'analyst_smc_flow_enabled' => false,
+        'analyst_srl_flow_enabled' => false,
+        'analyst_engulf_flow_enabled' => false,
+        'analyst_impulse_lvl_flow_enabled' => true,
+        'overlay_forming_htf' => true,
+        'eval_prev_candle' => true,
+        'live_candle_wick_signals' => true,
+        'lvl_filter' => true,
+        'analyst_prompt_mode' => OpenRouterLlmConfig::ANALYST_PROMPT_MODE_FULL,
+        'system_prompt' => OpenRouterChartLevelsParser::defaultAnalystSystemPromptWithImpulseLvl(),
+        'system_prompt_short' => OpenRouterChartLevelsParser::defaultAnalystSystemPromptShortWithImpulseLvl(),
+        'version' => 'openrouter_llm_analyst_impulse_lvl_v1',
+    ]);
+
+    $bot = Bot::query()->firstOrCreate(
+        [
+            'user_id' => $user->id,
+            'name' => $name,
+            'type' => ChartAnalystBotTypes::IMPULSE,
+        ],
+        [
+            'is_active' => false,
+            'config' => $config,
+        ]
+    );
+
+    $existing = is_array($bot->config) ? $bot->config : [];
+    $bot->config = array_merge($existing, $config);
+    $bot->save();
+
+    $this->info("Impulse LVL Chart Analyst: #{$bot->id} {$bot->name} ({$bot->type})");
+    $this->line('System prompt Impulse LVL записан. Проверьте OPENROUTER_API_KEY и Telegram token.');
+
+    return 0;
+})->purpose('Создать бота OpenRouter Chart Analyst Impulse LVL (уровни 47 + LLM решает CALL/PUT/NONE)');
 
 Artisan::command('bots:openrouter-list-models', function (OpenRouterClient $client) {
     // Проверка доступности каталога OpenRouter (тот же запрос, что на странице настроек LLM-бота).

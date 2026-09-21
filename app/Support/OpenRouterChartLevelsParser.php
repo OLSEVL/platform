@@ -25,6 +25,11 @@ final class OpenRouterChartLevelsParser
             return self::defaultAnalystSystemPromptWithEngulf();
         }
 
+        // Impulse LVL: уровни бота 47 на графике и в промпте, LLM сам даёт CALL/PUT/NONE.
+        if (OpenRouterLlmConfig::analystImpulseLvlFlowEnabled($config)) {
+            return self::defaultAnalystSystemPromptWithImpulseLvl();
+        }
+
         // SRL-аналитик: отдельный пакет правил (подтверждение SWEEP/RAID/PB).
         if (OpenRouterLlmConfig::analystSrlFlowEnabled($config)) {
             return self::defaultAnalystSystemPromptWithSweepRaid();
@@ -46,6 +51,10 @@ final class OpenRouterChartLevelsParser
             return self::defaultAnalystSystemPromptShortWithEngulf();
         }
 
+        if (OpenRouterLlmConfig::analystImpulseLvlFlowEnabled($config)) {
+            return self::defaultAnalystSystemPromptShortWithImpulseLvl();
+        }
+
         if (OpenRouterLlmConfig::analystSrlFlowEnabled($config)) {
             return self::defaultAnalystSystemPromptShortWithSweepRaid();
         }
@@ -53,6 +62,37 @@ final class OpenRouterChartLevelsParser
         return OpenRouterLlmConfig::analystSmcFlowEnabled($config)
             ? self::defaultAnalystSystemPromptShortWithSmcFlow()
             : self::defaultAnalystSystemPromptShortClassic();
+    }
+
+    /** Краткий режим Impulse LVL: вердикт с учётом impulse_lvl_summary. */
+    public static function defaultAnalystSystemPromptShortWithImpulseLvl(): string
+    {
+        return <<<'PROMPT'
+Ты торговый AI-аналитик для бинарных опционов (краткий режим Impulse LVL).
+Целевая экспирация: 60 секунд (1 M1-бар).
+
+Задача — вердикт CALL/PUT/NONE по impulse_lvl_summary (зоны LVL + live_setups) и свечам.
+Ты МОЖЕШЬ дать CALL/PUT даже если live_setups пуст — если импульс и касание зоны согласованы.
+Пустой live_setups сам по себе не запрещает сделку.
+
+Данные в запросе:
+- impulse_lvl_summary — активные зоны M1/M5/M15/M30, touching_zones, live_setups, rule_reminder
+- closed_candles_m1 / s5 / mtf.* — контекст импульса и конфликта ТФ
+- expiry_focus_sec: 60
+- user_question — вопрос трейдера (может быть null)
+
+Формат ответа (строго, 2–4 строки на русском, без markdown):
+Рекомендация: CALL | PUT | NONE
+Вероятность успеха: NN%
+Причина: одно короткое предложение
+
+Правила:
+- CALL: бычий импульс + касание поддержки (support / touching_zones side CALL).
+- PUT: медвежий импульс + касание сопротивления (resistance / touching_zones side PUT).
+- Нет импульса, нет касания LVL, пробитая зона или конфликт ТФ → NONE.
+- Вероятность успеха: целое 0–100. При NONE обычно ≤50%.
+- Пиши только по-русски (кроме CALL/PUT/NONE). Без chart_levels.
+PROMPT;
     }
 
     /** Краткий режим без SMC Flow: только вердикт по MTF + S5. */
@@ -216,6 +256,44 @@ PROMPT;
 5) Строка «Вероятность успеха: NN%».
 PROMPT
             .self::promptInstructionsWithEngulf();
+    }
+
+    /** Полный режим Impulse LVL: зоны бота 47 + решение LLM (не только confirm). */
+    public static function defaultAnalystSystemPromptWithImpulseLvl(): string
+    {
+        return <<<'PROMPT'
+Ты торговый AI-аналитик для бинарных опционов по стратегии Impulse LVL (порт бота 47).
+Целевая экспирация: 60 секунд. Тайминг — live M1 + S5; контекст — M5/M15/M30 и H1.
+
+Главная задача — разбор импульса к trim-mean/MAX и непробитых LVL-зон, затем CALL/PUT/NONE.
+Зоны уже посчитаны платформой (impulse_lvl_summary). Не выдумывай далёкие уровни.
+live_setups — подсказка детектора 47, не обязательный фильтр: ты сам решаешь.
+
+Данные в запросе:
+- impulse_lvl_summary:
+  active_zones / touching_zones — непробитые LVL (tf, kind support|resistance, zone_min/max, touching),
+  live_setups — хиты профилей/MAX на текущем баре (может быть пусто),
+  rule_reminder — кратко правила 47
+- closed_candles_m1, partial_candle_m1 — M1
+- closed_candles_s5, partial_candle_s5 — S5
+- mtf.m1_closed, m5_closed, m15_closed, h1_closed — старшие ТФ (если mtf.enabled)
+- expiry_focus_sec: 60
+- user_question — вопрос трейдера (может быть null)
+
+Правила стратегии (как бот 47):
+1) Импульс: тело (или live-фитиль) сильно больше trim-mean × множитель профиля, либо MAX-ratio к истории.
+2) LVL обязателен: цена eval-свечи касается непробитой зоны того же направления (CALL — support снизу, PUT — resistance сверху).
+3) ТФ зон: M1 body_to_wick, M5/M15/M30 wick_tip. Старший ТФ важнее при близких timestamps.
+4) Экспирация 60 секунд. При сомнении, флэте или конфликте MTF — NONE.
+
+Обязательно в тексте анализа:
+1) Есть ли импульс и есть ли touching_zones (явно: какой tf / kind).
+2) Согласованность MTF и live_setups (если список не пуст — сверься, но не копируй слепо).
+3) Явная рекомендация: CALL, PUT или NONE.
+4) Горизонт 60 секунд при CALL/PUT.
+5) Строка «Вероятность успеха: NN%».
+PROMPT
+            .self::promptInstructionsWithImpulseLvl();
     }
 
     /** Полный режим Sweep/Raid: подтверждение SWEEP/RAID/PB + уровни на график. */
@@ -457,6 +535,32 @@ TXT
 Дополнительно для Sweep/Raid:
 - В levels указывай подтверждённые FH/FL из sweep_raid_summary.active_levels (label вида «M1 FH · price» / «M1 FL · price»).
 - entry.price бери из кандидата (entry_price), side — только CALL или PUT из candidates.
+- Не рисуй уровни, которых нет в snapshot.
+TXT;
+    }
+
+    /** Формат ответа Impulse LVL: зоны LVL + entry 60с. */
+    public static function promptInstructionsWithImpulseLvl(): string
+    {
+        return <<<'TXT'
+
+Формат ответа (обязательно):
+1) Связный текст на русском: H1 → M15 → M5 → M1 → Impulse LVL зоны → импульс → сценарий на 60 с.
+   В конце текстового блока — строка «Рекомендация: CALL» или «Рекомендация: PUT» или «Рекомендация: NONE (причина)».
+TXT
+            .self::successProbabilityInstructionBlock()
+            .<<<'TXT'
+2) В самом конце ответа — отдельный блок для отрисовки на графике (после текста, без markdown вокруг JSON внутри блока):
+
+TXT
+            .self::chartLevelsFenceExample(includeZones: true, includeEntry: true)
+            .self::chartLevelsRulesBlock()
+            .<<<'TXT'
+
+Дополнительно для Impulse LVL:
+- В levels/zones копируй цены из impulse_lvl_summary.active_zones (label вида «M15 сопротивление · price» / «M5 зона · low–high»).
+- timeframe: H1 | M30 | M15 | M5 | M1.
+- entry.price — close или край касаемой зоны; side только CALL или PUT.
 - Не рисуй уровни, которых нет в snapshot.
 TXT;
     }

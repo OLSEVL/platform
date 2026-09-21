@@ -137,4 +137,47 @@ class HybridAnalystDispatcherTest extends TestCase
 
         Queue::assertNothingPushed();
     }
+
+    public function test_dispatches_impulse_lvl_chart_analyst_on_source_signal(): void
+    {
+        Queue::fake();
+
+        $user = User::factory()->create();
+        $source = Bot::query()->create([
+            'user_id' => $user->id,
+            'name' => 'Impulse 47',
+            'type' => \App\Support\ImpulseLvl1minConfig::BOT_TYPE,
+            'is_active' => true,
+            'config' => [],
+        ]);
+        $analyst = Bot::query()->create([
+            'user_id' => $user->id,
+            'name' => 'Impulse Analyst',
+            'type' => \App\Support\ChartAnalystBotTypes::IMPULSE,
+            'is_active' => true,
+            'config' => [
+                'hybrid_enabled' => true,
+                'hybrid_source_bot_id' => $source->id,
+                'hybrid_trigger' => HybridAnalystConfig::TRIGGER_ON_SIGNAL,
+                'hybrid_publish' => HybridAnalystConfig::PUBLISH_ALWAYS,
+            ],
+        ]);
+
+        app(HybridAnalystDispatcher::class)->maybeDispatch(
+            $source,
+            99,
+            'EURUSD_otc',
+            'PUT',
+            0.65,
+            ['analysis_text' => 'impulse', 'features' => []],
+            HybridAnalystConfig::TRIGGER_ON_SIGNAL,
+        );
+
+        Queue::assertPushed(RunHybridAnalystAnalysisJob::class, function (RunHybridAnalystAnalysisJob $job) use ($analyst, $source): bool {
+            return $job->analystBotId === $analyst->id
+                && (int) ($job->sourceSignal['source_bot_id'] ?? 0) === (int) $source->id
+                && (int) ($job->sourceSignal['source_signal_id'] ?? 0) === 99
+                && $job->instrument === 'EURUSD_otc';
+        });
+    }
 }

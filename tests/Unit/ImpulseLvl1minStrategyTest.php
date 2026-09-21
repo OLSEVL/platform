@@ -350,7 +350,7 @@ class ImpulseLvl1minStrategyTest extends TestCase
         $this->assertSame(70, $overlay['trim_low_count']);
         $this->assertTrue($overlay['overlay_forming_htf']);
         $this->assertTrue($overlay['send_all_bar_alerts']);
-        $this->assertFalse($overlay['live_candle_wick_signals']);
+        $this->assertTrue($overlay['live_candle_wick_signals']);
         $this->assertTrue($overlay['occupancy_blocks_paper']);
         $this->assertFalse($overlay['occupancy_blocks_alerts']);
         $this->assertSame(5, $overlay['trim_high_count']);

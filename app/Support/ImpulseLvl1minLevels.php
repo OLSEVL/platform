@@ -85,6 +85,61 @@ final class ImpulseLvl1minLevels
     }
 
     /**
+     * Непробитые LVL-зоны обоих направлений (для LLM и chart_levels), без фильтра «цена уже в зоне».
+     *
+     * @param  list<array{time:int,open:float,high:float,low:float,close:float}>  $m1Closed
+     * @param  array{time:int,open:float,high:float,low:float,close:float}  $evalCandle
+     * @param  array<string, list<array<string, mixed>>>  $mtf
+     * @param  array<string, mixed>  $config
+     * @return list<array{
+     *   tf:string,
+     *   tf_seconds:int,
+     *   side:string,
+     *   kind:string,
+     *   price:float,
+     *   zone_min:float,
+     *   zone_max:float,
+     *   time:int,
+     *   touching:bool
+     * }>
+     */
+    public static function activeZones(array $m1Closed, array $evalCandle, array $mtf, array $config = []): array
+    {
+        $found = [];
+        $m1ForBreak = $m1Closed;
+        $m1ForBreak[] = $evalCandle;
+        foreach (self::unbrokenOnSeries($m1Closed, $m1ForBreak, 1, 60, $evalCandle, $config) as $zone) {
+            $found[] = $zone;
+        }
+
+        if (ImpulseLvl1minConfig::flag($config, 'overlay_forming_htf', true)) {
+            $mtf = self::overlayFormingHtfFromM1($m1ForBreak, $mtf);
+        }
+
+        foreach ([5 => 300, 15 => 900, 30 => 1800] as $tfId => $tfSeconds) {
+            $series = is_array($mtf[(string) $tfId] ?? null) ? array_values($mtf[(string) $tfId]) : [];
+            $normalized = self::normalizeSeries($series);
+            if ($normalized === []) {
+                continue;
+            }
+            foreach (self::unbrokenOnSeries($normalized, $normalized, $tfId, $tfSeconds, $evalCandle, $config) as $zone) {
+                $found[] = $zone;
+            }
+        }
+
+        usort($found, static function (array $a, array $b): int {
+            $tf = ((int) $b['tf_seconds']) <=> ((int) $a['tf_seconds']);
+            if ($tf !== 0) {
+                return $tf;
+            }
+
+            return ((int) $b['time']) <=> ((int) $a['time']);
+        });
+
+        return $found;
+    }
+
+    /**
      * Хвост HTF из M1 до eval: последние 2 бакета ТФ, как _merge_recent_higher_timeframe_tail.
      * Закрытые бакеты из seriesWithMtf не трогаем; подменяем только текущий/предыдущий.
      *
@@ -233,6 +288,77 @@ final class ImpulseLvl1minLevels
         }
 
         return $hits;
+    }
+
+    /**
+     * Непробитые swing-зоны одного ТФ, оба направления; не больше 5 на сторону.
+     *
+     * @param  list<array{time:int,open:float,high:float,low:float,close:float}>  $forSwings
+     * @param  list<array{time:int,open:float,high:float,low:float,close:float}>  $forBreaks
+     * @param  array{time:int,open:float,high:float,low:float,close:float}  $evalCandle
+     * @return list<array{
+     *   tf:string,
+     *   tf_seconds:int,
+     *   side:string,
+     *   kind:string,
+     *   price:float,
+     *   zone_min:float,
+     *   zone_max:float,
+     *   time:int,
+     *   touching:bool
+     * }>
+     */
+    private static function unbrokenOnSeries(
+        array $forSwings,
+        array $forBreaks,
+        int $dashboardTf,
+        int $tfSeconds,
+        array $evalCandle,
+        array $config = [],
+    ): array {
+        $settings = ImpulseLvl1minConfig::levelSettingsForTf($dashboardTf, $config);
+        $pivotLeft = (int) $settings['pivot_left'];
+        $pivotRight = (int) $settings['pivot_right'];
+        $allowance = self::allowance($forSwings, (float) $settings['distance_body_multiplier']);
+        $evalHigh = (float) ($evalCandle['high'] ?? 0);
+        $evalLow = (float) ($evalCandle['low'] ?? 0);
+        $out = [];
+
+        foreach ([1 => 'resistance', -1 => 'support'] as $direction => $kind) {
+            $swings = $direction > 0
+                ? self::findSwings($forSwings, $pivotLeft, $pivotRight, true)
+                : self::findSwings($forSwings, $pivotLeft, $pivotRight, false);
+            $kept = [];
+            foreach (array_reverse($swings) as $level) {
+                if (self::isBroken($level, $forBreaks, $direction, $tfSeconds, $pivotRight, $allowance, $settings)) {
+                    continue;
+                }
+                [$zoneMin, $zoneMax] = self::zoneBounds($level, $direction, $settings);
+                $lo = $zoneMin - $allowance;
+                $hi = $zoneMax + $allowance;
+                $price = $direction > 0 ? $evalHigh : $evalLow;
+                $touching = ! ($price + self::EPSILON < $lo || $price - self::EPSILON > $hi);
+                $kept[] = [
+                    'tf' => self::tfLabel($tfSeconds),
+                    'tf_seconds' => $tfSeconds,
+                    'side' => $direction > 0 ? 'PUT' : 'CALL',
+                    'kind' => $kind,
+                    'price' => (float) $level['price'],
+                    'zone_min' => $zoneMin,
+                    'zone_max' => $zoneMax,
+                    'time' => (int) $level['time'],
+                    'touching' => $touching,
+                ];
+                if (count($kept) >= 5) {
+                    break;
+                }
+            }
+            foreach ($kept as $zone) {
+                $out[] = $zone;
+            }
+        }
+
+        return $out;
     }
 
     /**

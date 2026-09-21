@@ -51,11 +51,12 @@ class InstrumentController extends Controller
         $rules = [
             'instrument' => 'required|string|max:63|unique:pocket_instruments,instrument',
             'display_name' => 'nullable|string|max:255',
-            // 1 = валютные пары, 2 = криптовалюты.
+            // 1 = валютные пары, 2 = криптовалюты, 3 = акции, 4 = сырьевые товары.
             'type' => ['required', 'integer', Rule::in([
                 PocketInstrument::TYPE_CURRENCY,
                 PocketInstrument::TYPE_CRYPTO,
                 PocketInstrument::TYPE_STOCK,
+                PocketInstrument::TYPE_COMMODITY,
             ])],
             'priority' => 'nullable|integer',
             'session_token' => 'nullable|string|max:4096',
@@ -103,6 +104,7 @@ class InstrumentController extends Controller
                 PocketInstrument::TYPE_CURRENCY,
                 PocketInstrument::TYPE_CRYPTO,
                 PocketInstrument::TYPE_STOCK,
+                PocketInstrument::TYPE_COMMODITY,
             ])],
             'priority' => 'nullable|integer',
             'session_token' => 'nullable|string|max:4096',

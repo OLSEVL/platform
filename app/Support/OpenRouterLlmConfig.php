@@ -101,14 +101,61 @@ final class OpenRouterLlmConfig
     public const ANALYST_SHORT_MAX_TOKENS_DEFAULT = 200;
 
     /**
+     * @param  array<string, mixed>  $config
+     */
+    public static function resolveAnalystShortMaxTokens(array $config, int $fullMaxTokens): int
+    {
+        $shortCap = (int) ($config['max_tokens_short'] ?? self::ANALYST_SHORT_MAX_TOKENS_DEFAULT);
+        if ($shortCap <= 0) {
+            $shortCap = self::ANALYST_SHORT_MAX_TOKENS_DEFAULT;
+        }
+
+        // Как в поле настроек: без искусственного потолка, только не выше полного max_tokens.
+        return max(1, min($fullMaxTokens, $shortCap));
+    }
+
+    /**
+     * Оставляет только строки вердикта (модель часто игнорирует «2–4 строки»).
+     */
+    public static function compactShortAnalystReply(string $text, bool $hybrid = false): string
+    {
+        $text = trim($text);
+        if ($text === '') {
+            return $text;
+        }
+        $split = OpenRouterChartLevelsParser::splitAssistantResponse($text);
+        $plain = trim((string) ($split['analysis_text'] ?? $text));
+        $plain = preg_replace('/```chart_levels[\s\S]*$/u', '', $plain) ?? $plain;
+        $lines = preg_split("/\R/u", $plain) ?: [];
+        $keep = [];
+        foreach ($lines as $line) {
+            $trimmed = trim((string) $line);
+            if ($trimmed === '') {
+                continue;
+            }
+            if (preg_match('/^(Независимый вердикт|Сверка|Рекомендация|Вероятность успеха|Причина)\s*:/iu', $trimmed) === 1) {
+                $keep[] = $trimmed;
+            }
+        }
+        if ($keep === []) {
+            return mb_strlen($plain) > 400 ? (mb_substr($plain, 0, 400).'…') : $plain;
+        }
+        $max = $hybrid ? 4 : 3;
+
+        return implode("\n", array_slice($keep, 0, $max));
+    }
+
+    /**
      * Включён ли SMC Flow в ручном анализе openrouter_llm_analyst (snapshot в LLM + overlay после анализа).
      *
      * @param  array<string, mixed>  $config
      */
     public static function analystSmcFlowEnabled(array $config): bool
     {
-        // SRL / Engulf-пакеты взаимоисключают SMC: иначе в payload уйдут несколько снимков.
-        if (self::analystSrlFlowEnabled($config) || self::analystEngulfFlowEnabled($config)) {
+        // SRL / Engulf / Impulse LVL взаимоисключают SMC: иначе в payload уйдут несколько снимков.
+        if (self::analystSrlFlowEnabled($config)
+            || self::analystEngulfFlowEnabled($config)
+            || self::analystImpulseLvlFlowEnabled($config)) {
             return false;
         }
 
@@ -145,6 +192,22 @@ final class OpenRouterLlmConfig
         }
 
         return (bool) ($config['analyst_engulf_flow_enabled'] ?? false);
+    }
+
+    /**
+     * Пакет Impulse LVL (уровни M1–M30 + live-хиты как у бота 47) для LLM-аналитика.
+     * Для type=openrouter_llm_analyst_ilvl всегда true.
+     *
+     * @param  array<string, mixed>  $config
+     */
+    public static function analystImpulseLvlFlowEnabled(array $config): bool
+    {
+        $botType = (string) ($config['_bot_type'] ?? '');
+        if ($botType === ChartAnalystBotTypes::IMPULSE) {
+            return true;
+        }
+
+        return (bool) ($config['analyst_impulse_lvl_flow_enabled'] ?? false);
     }
 
     /**

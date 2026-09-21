@@ -9,6 +9,8 @@ except ModuleNotFoundError as exc:
 
 SSID = getattr(private, "SSID", "") if private else ""
 SSIDS = getattr(private, "SSIDS", []) if private else ""
+# HTTP/SOCKS URL из пула платформы, по одному на SSID. Не коммитить.
+PROXY_URLS = getattr(private, "PROXY_URLS", []) if private else []
 BOT_TOKEN = getattr(private, "BOT_TOKEN", "") if private else ""
 CHAT_ID = getattr(private, "CHAT_ID", "") if private else ""
 CHAT_IDS = getattr(private, "CHAT_IDS", []) if private else ""
@@ -36,7 +38,7 @@ SEND_RULE_SEQUENCE_SIGNALS = False
 REQUEST_BATCH_SIZE = 0                       # Размер пакета запросов (0 - без пакетирования/авто)
 HISTORY_PERIOD = 100                         # Глубина запрашиваемой истории свечей (число баров)
 TIMEFRAME_SECONDS = 60                       # Основной таймфрейм торговли в секундах (60 = M1)
-HISTORY_TIMEOUT = 10                         # Таймаут ожидания загрузки истории в секундах
+HISTORY_TIMEOUT = 25                         # Таймаут ожидания загрузки истории в секундах
 MIN_PAYOUT = 80                              # Минимальный процент доходности (выплаты) парах для фильтрации
 
 # Настройки обрезки экстремальных свечей для вычисления среднего тела (TRIM)
@@ -218,6 +220,7 @@ PAIRS = [
     "#INTC_otc", "#JNJ_otc", "#MCD_otc", "#MSFT_otc",
     "#PFE_otc", "#TSLA_otc", "#XOM_otc", "VIX_otc",
     
-    # COMMODITIES
+    # COMMODITIES (сырьевые товары Pocket Option)
     "XAUUSD_otc", "XAGUSD_otc", "USCrude_otc", "UKBrent_otc",
+    "XNGUSD_otc", "XPDUSD_otc", "XPTUSD_otc",
 ]

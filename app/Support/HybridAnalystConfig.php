@@ -261,6 +261,27 @@ final class HybridAnalystConfig
      */
     public static function systemPromptSection(): string
     {
+        return self::systemPromptSectionForMode(false);
+    }
+
+    /**
+     * Гибридная секция: полный двухфазный разбор или 4 строки (краткий режим).
+     */
+    public static function systemPromptSectionForMode(bool $short): string
+    {
+        if ($short) {
+            return <<<'PROMPT'
+
+---
+Гибридный режим (кратко). Ответ СТРОГО 4 строки, без абзацев, без markdown, без chart_levels:
+Независимый вердикт: CALL | PUT | NONE
+Сверка: согласен или не согласен с source SIDE
+Рекомендация: CALL | PUT | NONE
+Вероятность успеха: NN%
+Не пиши MTF-разбор, списки зон и обоснование длиннее одной короткой сверки.
+PROMPT;
+        }
+
         return <<<'PROMPT'
 
 ---
@@ -449,12 +470,45 @@ PROMPT;
     }
 
     /**
+     * Урезанный source для краткого LLM: side/имя/confidence, без текста анализа.
+     *
+     * @param  array<string, mixed>  $sourceSignal
+     * @return array<string, mixed>
+     */
+    public static function compactSourceSignalForShortLlm(array $sourceSignal): array
+    {
+        $reasons = [];
+        if (is_array($sourceSignal['reasons_short'] ?? null)) {
+            foreach (array_values($sourceSignal['reasons_short']) as $reason) {
+                $r = trim(is_scalar($reason) ? (string) $reason : '');
+                if ($r !== '') {
+                    $reasons[] = $r;
+                }
+                if (count($reasons) >= 3) {
+                    break;
+                }
+            }
+        }
+
+        return [
+            'source_bot_id' => (int) ($sourceSignal['source_bot_id'] ?? 0),
+            'source_signal_id' => (int) ($sourceSignal['source_signal_id'] ?? 0),
+            'source_bot_name' => (string) ($sourceSignal['source_bot_name'] ?? ''),
+            'source_bot_type' => (string) ($sourceSignal['source_bot_type'] ?? ''),
+            'side' => strtoupper((string) ($sourceSignal['side'] ?? '')),
+            'confidence' => isset($sourceSignal['confidence']) ? (float) $sourceSignal['confidence'] : null,
+            'reasons_short' => $reasons,
+        ];
+    }
+
+    /**
      * Текст ответа source-бота для дописывания в Telegram после гибрид-анализа LLM.
      * Plain text (без HTML) — экранирование делает вызывающий код.
+     * compact=true — одна строка meta, без analysis_text (краткий режим).
      *
      * @param  array<string, mixed>  $sourceSignal
      */
-    public static function formatSourceReplyForTelegram(array $sourceSignal): string
+    public static function formatSourceReplyForTelegram(array $sourceSignal, bool $compact = false): string
     {
         $name = trim((string) ($sourceSignal['source_bot_name'] ?? 'source'));
         $type = trim((string) ($sourceSignal['source_bot_type'] ?? ''));
@@ -477,6 +531,10 @@ PROMPT;
         if ($confidence !== null && $confidence > 0) {
             $pct = $confidence <= 1.0 ? (int) round($confidence * 100) : (int) round($confidence);
             $meta .= ' · conf '.$pct.'%';
+        }
+
+        if ($compact) {
+            return '📥 Source: '.$meta;
         }
 
         $lines = ['📥 Ответ source: '.$meta];

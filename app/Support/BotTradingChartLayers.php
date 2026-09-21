@@ -71,6 +71,7 @@ final class BotTradingChartLayers
             'openrouter_llm_analyst' => self::analystLayerIds($cfg),
             ChartAnalystBotTypes::SRL => ['layer-llm-levels', 'layer-sweep-raid-liquidity'],
             ChartAnalystBotTypes::ENGULF => ['layer-llm-levels', 'layer-engulfing-liquidity'],
+            ChartAnalystBotTypes::IMPULSE => ['layer-llm-levels'],
             'strong_trend_telegram' => self::telegramPullbackLayerIds($cfg),
             // Свечные паттерны без оверлей-индикатора: three_candles, three_soldier, Wave B impulse и т.п.
             default => [],

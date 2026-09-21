@@ -86,6 +86,8 @@
                         <span class="text-amber-300">2 · Крипто</span>
                     @elseif((int) $i->type === \App\Models\PocketInstrument::TYPE_STOCK)
                         <span class="text-violet-300">3 · Акции</span>
+                    @elseif((int) $i->type === \App\Models\PocketInstrument::TYPE_COMMODITY)
+                        <span class="text-orange-300">4 · Сырьё</span>
                     @else
                         <span class="text-sky-300">1 · Валюта</span>
                     @endif
