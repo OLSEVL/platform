@@ -331,6 +331,11 @@ final class BotScanCoordinator
 
     public static function spawnScan(int $botId): bool
     {
+        // Уже крутится bots:scan — не плодим второй процесс.
+        if (self::isScanRunning($botId)) {
+            return false;
+        }
+
         $ok = ArtisanProcessFinder::spawnBackground(
             [ArtisanProcessFinder::cliPhpBinary(), 'artisan', 'bots:scan', '--bot_id='.$botId],
             self::logPathForBot($botId),

@@ -31,6 +31,7 @@ class DataCleanupServiceTest extends TestCase
         $this->assertSame(120, $service->normalizeRetentionHours(120)); // 5 дней
         $this->assertSame(168, $service->normalizeRetentionHours(168)); // 7 дней
         $this->assertSame(720, $service->normalizeRetentionHours(720)); // 30 дней
+        $this->assertSame(1680, $service->normalizeRetentionHours(1680)); // 70 дней
     }
 
     public function test_normalize_retention_hours_falls_back_to_default(): void
@@ -87,6 +88,7 @@ class DataCleanupServiceTest extends TestCase
         $this->assertSame(24, $service->normalizeAutoCleanupRetentionHours(24));
         $this->assertSame(1, $service->normalizeAutoCleanupRetentionHours('1'));
         $this->assertSame(720, $service->normalizeAutoCleanupRetentionHours(720)); // 30 дней
+        $this->assertSame(1680, $service->normalizeAutoCleanupRetentionHours(1680)); // 70 дней
         $this->assertSame(72, $service->normalizeAutoCleanupRetentionHours('72')); // 3 дня
         $this->assertNull($service->normalizeAutoCleanupRetentionHours(0));
         $this->assertNull($service->normalizeAutoCleanupRetentionHours(99));
@@ -102,19 +104,23 @@ class DataCleanupServiceTest extends TestCase
         $this->assertSame('5 дней (120 часов)', $service->autoCleanupRetentionLabel(120));
         $this->assertSame('21 день (504 часа)', $service->autoCleanupRetentionLabel(504));
         $this->assertSame('30 дней (720 часов)', $service->autoCleanupRetentionLabel(720));
+        $this->assertSame('70 дней (1680 часов)', $service->autoCleanupRetentionLabel(1680));
         $this->assertSame('1 час', $service->autoCleanupRetentionLabel(1));
     }
 
-    public function test_allowed_auto_cleanup_includes_one_to_thirty_days(): void
+    public function test_allowed_auto_cleanup_includes_one_to_max_days(): void
     {
         $hours = DataCleanupService::allowedAutoCleanupRetentionHours();
+        $maxHours = DataCleanupService::MAX_AUTO_CLEANUP_RETENTION_DAYS * 24;
 
         $this->assertContains(24, $hours);
         $this->assertContains(48, $hours);
         $this->assertContains(720, $hours);
+        $this->assertContains($maxHours, $hours); // 70 дней
         $this->assertContains(1, $hours);
-        $this->assertCount(34, $hours); // 30 суток + 12/6/3/1 ч.
-        $this->assertSame(720, $hours[0]); // сначала самый длинный период
+        // N суток + 12/6/3/1 ч.
+        $this->assertCount(DataCleanupService::MAX_AUTO_CLEANUP_RETENTION_DAYS + 4, $hours);
+        $this->assertSame($maxHours, $hours[0]); // сначала самый длинный период
     }
 
     /**
@@ -145,7 +151,7 @@ class DataCleanupServiceTest extends TestCase
         };
         $this->assertSame(168 * 3600, $sevenDays->chartHistoryMaxSeconds());
 
-        // «Ничего не удалять» → потолок 30 суток, не бесконечность.
+        // «Ничего не удалять» → потолок MAX дней селекта, не бесконечность.
         $disabled = new class extends DataCleanupService
         {
             public function getAutoCleanupRetentionHours(): ?int
@@ -153,7 +159,10 @@ class DataCleanupServiceTest extends TestCase
                 return null;
             }
         };
-        $this->assertSame(30 * 24 * 3600, $disabled->chartHistoryMaxSeconds());
+        $this->assertSame(
+            DataCleanupService::MAX_AUTO_CLEANUP_RETENTION_DAYS * 24 * 3600,
+            $disabled->chartHistoryMaxSeconds()
+        );
     }
 
     public function test_candles_storage_depth_label_for_empty_stats(): void

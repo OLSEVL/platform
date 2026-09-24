@@ -177,6 +177,17 @@ class HybridAnalystTradeService
             return ['ok' => false, 'skipped' => 'db_error'];
         }
 
+        if ($createdTradeId > 0) {
+            try {
+                $opened = BotTrade::query()->with('bot')->find($createdTradeId);
+                if ($opened) {
+                    app(\App\Services\BotLiveEventsBroadcast::class)->tradeOpened($opened);
+                }
+            } catch (Throwable) {
+                // Redis недоступен — UI на HTTP fallback.
+            }
+        }
+
         $mirrored = false;
         if ($wantMirror && $createdTradeId > 0) {
             try {

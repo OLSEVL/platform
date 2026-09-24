@@ -162,6 +162,8 @@ Route::middleware('auth')->group(function () {
         Route::put('/{bot}/indicators/kalman', [BotChartIndicatorController::class, 'updateKalman'])->name('indicators.kalman.update');
         Route::get('/{bot}/indicators/fractal', [BotChartIndicatorController::class, 'editFractal'])->name('indicators.fractal.edit');
         Route::put('/{bot}/indicators/fractal', [BotChartIndicatorController::class, 'updateFractal'])->name('indicators.fractal.update');
+        Route::get('/{bot}/indicators/strat-assistant', [BotChartIndicatorController::class, 'editStratAssistant'])->name('indicators.strat-assistant.edit');
+        Route::put('/{bot}/indicators/strat-assistant', [BotChartIndicatorController::class, 'updateStratAssistant'])->name('indicators.strat-assistant.update');
         Route::get('/{bot}/indicators/donchian', [BotChartIndicatorController::class, 'editDonchian'])->name('indicators.donchian.edit');
         Route::put('/{bot}/indicators/donchian', [BotChartIndicatorController::class, 'updateDonchian'])->name('indicators.donchian.update');
         Route::get('/{bot}/indicators/stoch-rsi', [BotChartIndicatorController::class, 'editStochRsi'])->name('indicators.stoch-rsi.edit');

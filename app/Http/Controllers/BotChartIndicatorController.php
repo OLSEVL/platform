@@ -92,6 +92,8 @@ use App\Support\KalmanSettingsForm;
 use App\Services\Indicators\KalmanIndicatorService;
 use App\Support\FractalSettingsForm;
 use App\Services\Indicators\FractalIndicatorService;
+use App\Support\StratAssistantSettingsForm;
+use App\Services\Indicators\StratAssistantIndicatorService;
 use App\Support\DonchianSettingsForm;
 use App\Services\Indicators\DonchianIndicatorService;
 use App\Support\StochRsiSettingsForm;
@@ -952,6 +954,21 @@ class BotChartIndicatorController extends Controller
     public function updateFractal(Request $request, Bot $bot): RedirectResponse
     {
         return $this->saveClassic($request, $bot, IndicatorSetting::KEY_FRACTAL, FractalIndicatorService::class, FractalSettingsForm::class, 'bots.indicators.fractal.edit', 'Fractal');
+    }
+
+    public function editStratAssistant(Bot $bot): View
+    {
+        $this->ensureBotOwner($bot);
+
+        return view('bots.indicators.strat-assistant', [
+            'bot' => $bot,
+            'p' => IndicatorSetting::mergedStratAssistantParams($bot),
+        ]);
+    }
+
+    public function updateStratAssistant(Request $request, Bot $bot): RedirectResponse
+    {
+        return $this->saveClassic($request, $bot, IndicatorSetting::KEY_STRAT_ASSISTANT, StratAssistantIndicatorService::class, StratAssistantSettingsForm::class, 'bots.indicators.strat-assistant.edit', 'Strat Assistant');
     }
 
     public function editDonchian(Bot $bot): View

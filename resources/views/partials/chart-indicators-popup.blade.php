@@ -26,6 +26,7 @@
         ['id' => 'layer-sweep-raid-liquidity', 'help' => 'sweep-raid-liquidity', 'route' => 'bots.indicators.sweep-raid-liquidity.edit', 'label' => 'Sweep / Raid Liquidity', 'section' => null],
         ['id' => 'layer-engulfing-liquidity', 'help' => 'engulfing-liquidity', 'route' => 'bots.indicators.engulfing-liquidity.edit', 'label' => 'Engulfing Liquidity', 'section' => null],
         ['id' => 'layer-smc-flow', 'help' => 'smc-flow', 'route' => 'bots.indicators.smc-flow.edit', 'label' => 'SMC Flow (UT Bot)', 'section' => null],
+        ['id' => 'layer-strat-assistant', 'help' => 'strat-assistant', 'route' => 'bots.indicators.strat-assistant.edit', 'label' => 'Strat Assistant', 'section' => null],
 
         ['id' => 'layer-bollinger', 'help' => 'bollinger', 'route' => 'bots.indicators.bollinger.edit', 'label' => 'Bollinger', 'section' => null],
         ['id' => 'layer-keltner', 'help' => 'keltner', 'route' => 'bots.indicators.keltner.edit', 'label' => 'Keltner', 'section' => null],

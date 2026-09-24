@@ -138,7 +138,6 @@ class BotEngineService
             ->orderByDesc('priority')
             ->orderBy('instrument')
             ->get(['instrument', 'current_payout']);
-
         $processed = 0;
         $signals = 0;
         $trades = 0;
@@ -633,6 +632,15 @@ class BotEngineService
                             ], static fn ($v) => $v !== null),
                         ]);
                         $createdTradeId = (int) $trade->id;
+
+                        // WS: полная карточка сделки → dashboard лента + stats на странице бота.
+                        $openedTrade = $trade;
+                        if (! $openedTrade->relationLoaded('bot')) {
+                            $openedTrade->setRelation('bot', $bot);
+                        }
+                        DB::afterCommit(function () use ($openedTrade): void {
+                            app(\App\Services\BotLiveEventsBroadcast::class)->tradeOpened($openedTrade);
+                        });
 
                         // Если стратегия вернула id LLM-лога, привязываем лог к созданным signal/trade.
                         // Это соединяет "сырые request/response модели" с реальной сделкой.
@@ -2004,6 +2012,14 @@ class BotEngineService
             $createdTradeId = (int) $trade->id;
             DB::afterCommit(function () use ($createdTradeId): void {
                 app(MirrorTradeDispatcher::class)->dispatch($createdTradeId);
+            });
+            // WS: полная карточка → dashboard / stats.
+            $openedTrade = $trade;
+            if (! $openedTrade->relationLoaded('bot')) {
+                $openedTrade->setRelation('bot', $bot);
+            }
+            DB::afterCommit(function () use ($openedTrade): void {
+                app(\App\Services\BotLiveEventsBroadcast::class)->tradeOpened($openedTrade);
             });
         });
 

@@ -40,6 +40,8 @@
         let fromClose = null;
         let animStartPerf = 0;
         let lastPushPerf = 0;
+        /** Колбэк: таймер свечи едет вместе с полоской last price. */
+        let onVisualFrame = null;
 
         function series() {
             try {
@@ -53,6 +55,25 @@
             if (rafId != null) {
                 cancelAnimationFrame(rafId);
                 rafId = null;
+            }
+        }
+
+        function getDisplayClose() {
+            if (displayClose != null && Number.isFinite(displayClose)) return displayClose;
+            if (target && Number.isFinite(target.close)) return target.close;
+            return null;
+        }
+
+        function setOnVisualFrame(cb) {
+            onVisualFrame = typeof cb === 'function' ? cb : null;
+        }
+
+        function notifyVisualFrame() {
+            if (!onVisualFrame) return;
+            try {
+                onVisualFrame(getDisplayClose());
+            } catch (e) {
+                console.error('[candle-smooth] onVisualFrame', e);
             }
         }
 
@@ -76,6 +97,7 @@
             if (!s || !bar) return false;
             try {
                 s.update(paintBar(bar));
+                notifyVisualFrame();
                 return true;
             } catch (e) {
                 // Не валим график: следующий poll/setData восстановит.
@@ -99,6 +121,9 @@
             if (duePush) {
                 lastPushPerf = now;
                 pushToSeries(composeDisplayBar());
+            } else {
+                // Без series.update всё равно двигаем таймер по displayClose (Binodex-sync).
+                notifyVisualFrame();
             }
 
             if (t < 1) {
@@ -197,6 +222,8 @@
             cancel: cancel,
             reset: reset,
             visualFor: visualFor,
+            getDisplayClose: getDisplayClose,
+            setOnVisualFrame: setOnVisualFrame,
             isAnimating: function () { return rafId != null; },
         };
     }

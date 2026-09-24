@@ -160,6 +160,9 @@ class HybridAnalystConfigTest extends TestCase
         $this->assertSame(180, HybridAnalystConfig::resolveExpirySecFromSource(['expiry_sec' => 180]));
         $this->assertSame(300, HybridAnalystConfig::resolveExpirySecFromSource([], 300));
         $this->assertSame(180, HybridAnalystConfig::resolveExpirySecFromSource([]));
+        $this->assertSame(60, HybridAnalystConfig::resolveExpirySecFromSource([
+            'source_bot_type' => 'impulse_lvl_1min',
+        ]));
     }
 
     public function test_build_source_signal_payload(): void
@@ -233,11 +236,13 @@ class HybridAnalystConfigTest extends TestCase
             'source_bot_type' => 'impulse_lvl_1min',
             'side' => 'put',
             'confidence' => 0.5,
+            'expiry_sec' => 60,
             'analysis_text' => 'длинный разбор зон',
             'features' => ['x' => 1],
             'reasons_short' => ['a', 'b', 'c', 'd'],
         ]);
         $this->assertSame(47, $compact['source_bot_id']);
+        $this->assertSame(60, $compact['expiry_sec']);
         $this->assertSame(['a', 'b', 'c'], $compact['reasons_short']);
         $this->assertArrayNotHasKey('analysis_text', $compact);
         $this->assertArrayNotHasKey('features', $compact);

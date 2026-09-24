@@ -264,6 +264,14 @@ class BotTradeMirrorService
 
         $trade->meta_json = $meta;
         $trade->save();
+
+        // WS: mirror_status / mirrored_at → dashboard «СДЕЛКИ PO» без poll.
+        try {
+            $trade->loadMissing('bot');
+            app(\App\Services\BotLiveEventsBroadcast::class)->tradeMirrored($trade);
+        } catch (\Throwable) {
+            // Redis недоступен — лента на HTTP heal.
+        }
     }
 
     /**

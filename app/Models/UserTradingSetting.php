@@ -27,6 +27,9 @@ class UserTradingSetting extends Model
         'mirror_proxy_auto_last_endpoint_id',
         'mirror_proxy_auto_last_at',
         'mirror_proxy_auto_history',
+        // Персональные цвета свечей (null = дефолт PO из ChartCandleColors).
+        'candle_up_color',
+        'candle_down_color',
     ];
 
     protected function casts(): array

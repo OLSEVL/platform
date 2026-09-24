@@ -248,6 +248,11 @@ final class HybridAnalystConfig
         if ($fromTradeSec !== null && $fromTradeSec >= 60) {
             return max(60, min(3600, $fromTradeSec));
         }
+        // Impulse LVL (бот 47) торгует 60с; без expiry_sec в payload раньше падали на 180с и WR ломался.
+        $sourceType = (string) ($sourceSignal['source_bot_type'] ?? '');
+        if ($sourceType === \App\Support\ImpulseLvl1minConfig::BOT_TYPE) {
+            return 60;
+        }
 
         return 180;
     }
@@ -497,6 +502,8 @@ PROMPT;
             'source_bot_type' => (string) ($sourceSignal['source_bot_type'] ?? ''),
             'side' => strtoupper((string) ($sourceSignal['side'] ?? '')),
             'confidence' => isset($sourceSignal['confidence']) ? (float) $sourceSignal['confidence'] : null,
+            'expiry_sec' => isset($sourceSignal['expiry_sec']) ? (int) $sourceSignal['expiry_sec'] : null,
+            'instrument' => (string) ($sourceSignal['instrument'] ?? ''),
             'reasons_short' => $reasons,
         ];
     }

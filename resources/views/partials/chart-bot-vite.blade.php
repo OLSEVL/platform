@@ -12,6 +12,21 @@
         ? route('bots.chart-instances.sync-trading', $bot)
         : '';
     $chartFlags = ChartBootFlags::forClient();
+    $stratAssistantParams = \App\Models\IndicatorSetting::mergedStratAssistantParams($bot);
+    $clientIndicatorParams = [
+        'strat_assistant' => $stratAssistantParams,
+        'liquidity_swings' => \App\Models\IndicatorSetting::mergedLiquiditySwingsParams($bot),
+        'price_action_dgt' => \App\Models\IndicatorSetting::mergedPriceActionDgtParams($bot),
+        'smc_flow' => \App\Models\IndicatorSetting::mergedSmcFlowParams($bot),
+        'sma' => \App\Models\IndicatorSetting::mergedSmaParams($bot),
+        'ema' => \App\Models\IndicatorSetting::mergedEmaParams($bot),
+        'rsi' => \App\Models\IndicatorSetting::mergedRsiParams($bot),
+        'bollinger' => \App\Models\IndicatorSetting::mergedBollingerParams($bot),
+        'atr' => \App\Models\IndicatorSetting::mergedAtrParams($bot),
+        'macd' => \App\Models\IndicatorSetting::mergedMacdParams($bot),
+        'vwma' => \App\Models\IndicatorSetting::mergedVwmaParams($bot),
+        'stochastic' => \App\Models\IndicatorSetting::mergedStochasticParams($bot),
+    ];
 @endphp
 <script>
     // PR5: page-specific + общие флаги (live/heal/tradeLite) из ChartBootFlags.
@@ -51,6 +66,9 @@
         chartInstanceItemUrlTmpl: @json(url('/bots/'.$bot->id.'/chart-instances/__ID__')),
         instanceTypeKeys: @json($instanceTypeKeys),
         instanceRenderSpecs: @json($instanceRenderSpecs),
+        // Клиентские индикаторы (без тяжёлого /indicators/data для этих слоёв).
+        stratAssistantParams: @json($stratAssistantParams),
+        clientIndicatorParams: @json($clientIndicatorParams),
     }, @json($chartFlags));
 </script>
 @vite(['resources/js/chart/bot.js'])

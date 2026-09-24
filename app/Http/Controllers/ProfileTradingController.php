@@ -91,9 +91,28 @@ class ProfileTradingController extends Controller
             'is_demo' => ['sometimes', 'boolean'],
             'mirror_trades_enabled' => ['sometimes', 'boolean'],
             'mirror_wait_previous_settled' => ['sometimes', 'boolean'],
+            // Цвета свечей: #rgb / #rrggbb; пусто = сброс к дефолту PO.
+            'candle_up_color' => ['nullable', 'string', 'max:7'],
+            'candle_down_color' => ['nullable', 'string', 'max:7'],
         ]);
 
         $settings = $this->settingsForUser($request->user()->id);
+
+        // Валидация hex отдельно — Laravel regex неудобен для опционального пустого значения.
+        $upColor = \App\Support\ChartCandleColors::normalize($validated['candle_up_color'] ?? null);
+        $downColor = \App\Support\ChartCandleColors::normalize($validated['candle_down_color'] ?? null);
+        if (($validated['candle_up_color'] ?? '') !== '' && $upColor === null) {
+            return redirect()
+                ->route('profile.trading.edit')
+                ->withInput()
+                ->withErrors(['candle_up_color' => 'Укажите цвет в формате #RRGGBB.']);
+        }
+        if (($validated['candle_down_color'] ?? '') !== '' && $downColor === null) {
+            return redirect()
+                ->route('profile.trading.edit')
+                ->withInput()
+                ->withErrors(['candle_down_color' => 'Укажите цвет в формате #RRGGBB.']);
+        }
 
         $parsed = MartingaleAmountsParser::parse((string) $validated['order_amounts']);
         if ($parsed['error'] !== null) {
@@ -146,6 +165,10 @@ class ProfileTradingController extends Controller
         $settings->is_demo = $isDemo;
         $settings->mirror_trades_enabled = $mirrorEnabled;
         $settings->mirror_wait_previous_settled = $request->boolean('mirror_wait_previous_settled');
+        // Совпадение с дефолтом PO → null, чтобы смена системного дефолта подхватилась без миграции данных.
+        $candleDefaults = \App\Support\ChartCandleColors::defaults();
+        $settings->candle_up_color = ($upColor === null || $upColor === $candleDefaults['up']) ? null : $upColor;
+        $settings->candle_down_color = ($downColor === null || $downColor === $candleDefaults['down']) ? null : $downColor;
 
         // Сброс шага мартингейла: новый список, вкл. зеркала, смена Demo/Real.
         if ($listChanged || (! $previousMirror && $mirrorEnabled) || $isDemo !== $previousDemo) {

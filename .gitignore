@@ -30,3 +30,6 @@ bot/.venv/
 bot/__pycache__/
 bot/stream_logs/
 *.pyc
+
+# Local trader video analysis (do not commit)
+docs_need_release/video_analysis/alex_sniper/

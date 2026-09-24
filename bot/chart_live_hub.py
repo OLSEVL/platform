@@ -1,14 +1,19 @@
 # -*- coding: utf-8 -*-
 """
-PR2 Chart Live Hub: Redis PUBSUB (laravel-database-chart:s5) → WebSocket браузерам.
+PR2 Chart Live Hub: Redis PUBSUB → WebSocket браузерам.
 
-Задача: убрать HTTP poll /candles каждые 500ms. Ingest уже публикует S5 partial
-в Redis; этот процесс только раздаёт подписчикам по инструменту.
+Каналы:
+  laravel-database-chart:s5            → op=s5 (по подписке на инструмент)
+  laravel-database-instruments:payout  → op=payout (broadcast всем клиентам)
+
+Задача: убрать HTTP poll /candles каждые 500ms и частый GET /instruments/data
+для payout. Ingest публикует S5/payout в Redis; этот процесс только раздаёт.
 
 Протокол клиента:
   URL:  ws://host/chart-live?token=<uid|exp.hmac>
   →    {"op":"subscribe","instrument":"EURUSD_otc"}
-  ←    {"op":"s5","candle":{...}}   # тот же JSON, что в Redis
+  ←    {"op":"s5","candle":{...}}
+  ←    {"op":"payout","instrument":"...","current_payout":92,...}
   →    {"op":"ping"} / ← {"op":"pong"}
 
 Auth: HMAC-SHA256(APP_KEY) над "uid|exp", как App\\Support\\ChartLiveConfig.
@@ -75,6 +80,10 @@ if REDIS_PASSWORD.lower() in ("null", "none"):
     REDIS_PASSWORD = ""
 REDIS_PREFIX = os.environ.get("REDIS_PREFIX") or "laravel-database-"
 REDIS_CHANNEL = REDIS_PREFIX + "chart:s5"
+# Смена payout (все клиенты) — зеркало ChartLiveConfig::REDIS_PAYOUT_CHANNEL.
+REDIS_PAYOUT_CHANNEL = REDIS_PREFIX + "instruments:payout"
+# Open/settle paper-сделки — зеркало ChartLiveConfig::REDIS_BOT_EVENTS_CHANNEL.
+REDIS_BOT_EVENTS_CHANNEL = REDIS_PREFIX + "bot:events"
 
 HUB_HOST = os.environ.get("CHART_LIVE_HUB_HOST", "127.0.0.1")
 HUB_PORT = int(os.environ.get("CHART_LIVE_HUB_PORT", "8765"))
@@ -152,6 +161,22 @@ async def _fanout(instrument: str, raw_json: str) -> None:
         await _drop_client(ws)
 
 
+async def _fanout_all(raw_json: str) -> None:
+    """Payout и прочие broadcast: всем подключённым браузерам (сайдбар показывает весь список)."""
+    async with _clients_lock:
+        targets = list(_clients.keys())
+    if not targets:
+        return
+    dead = []
+    for ws in targets:
+        try:
+            await ws.send(raw_json)
+        except Exception:
+            dead.append(ws)
+    for ws in dead:
+        await _drop_client(ws)
+
+
 async def handler(ws: Any) -> None:
     """Один браузерный сокет: auth → subscribe → получают только свой инструмент."""
     # websockets v10+: request.path; v12+: ws.request.path
@@ -207,7 +232,7 @@ async def handler(ws: Any) -> None:
 
 
 async def redis_listener() -> None:
-    """SUBSCRIBE chart:s5 и fan-out. Переподключение при обрыве Redis."""
+    """SUBSCRIBE chart:s5 + instruments:payout и fan-out. Переподключение при обрыве Redis."""
     try:
         import redis.asyncio as aioredis
     except ImportError:
@@ -224,22 +249,77 @@ async def redis_listener() -> None:
                 decode_responses=True,
             )
             pubsub = client.pubsub()
-            await pubsub.subscribe(REDIS_CHANNEL)
-            LOG.info("Redis SUBSCRIBE %s", REDIS_CHANNEL)
+            await pubsub.subscribe(REDIS_CHANNEL, REDIS_PAYOUT_CHANNEL, REDIS_BOT_EVENTS_CHANNEL)
+            LOG.info(
+                "Redis SUBSCRIBE %s, %s, %s",
+                REDIS_CHANNEL,
+                REDIS_PAYOUT_CHANNEL,
+                REDIS_BOT_EVENTS_CHANNEL,
+            )
             async for message in pubsub.listen():
                 if message is None or message.get("type") != "message":
                     continue
                 data = message.get("data")
                 if not isinstance(data, str) or not data:
                     continue
+                channel = str(message.get("channel") or "")
                 try:
                     payload = json.loads(data)
                 except json.JSONDecodeError:
                     continue
+
+                # Payout: broadcast всем WS (сайдбар).
+                if channel == REDIS_PAYOUT_CHANNEL:
+                    instrument = str(payload.get("instrument") or "").strip()
+                    if not instrument:
+                        continue
+                    out = json.dumps(
+                        {
+                            "op": "payout",
+                            "instrument": instrument,
+                            "current_payout": payload.get("current_payout"),
+                            "payout_is_stale": bool(payload.get("payout_is_stale")),
+                            "payout_source": payload.get("payout_source"),
+                            "updated_at": payload.get("updated_at"),
+                        },
+                        ensure_ascii=False,
+                    )
+                    await _fanout_all(out)
+                    continue
+
+                # Bot trade / scan: полная карточка + stats/open/signal или scan snapshot.
+                if channel == REDIS_BOT_EVENTS_CHANNEL:
+                    bot_id = int(payload.get("bot_id") or 0)
+                    if bot_id <= 0:
+                        continue
+                    out = json.dumps(
+                        {
+                            "op": "bot_event",
+                            "bot_id": bot_id,
+                            "user_id": int(payload.get("user_id") or 0),
+                            "event": payload.get("event"),
+                            "trade_id": payload.get("trade_id"),
+                            "signal_id": payload.get("signal_id"),
+                            "instrument": payload.get("instrument"),
+                            "trade": payload.get("trade"),
+                            "stats": payload.get("stats"),
+                            "open_instruments": payload.get("open_instruments"),
+                            "open_instruments_user": payload.get("open_instruments_user"),
+                            "open_trade_row": payload.get("open_trade_row"),
+                            "closed_trade_id": payload.get("closed_trade_id"),
+                            "signal": payload.get("signal"),
+                            "scan": payload.get("scan"),
+                            "updated_at": payload.get("updated_at"),
+                        },
+                        ensure_ascii=False,
+                    )
+                    await _fanout_all(out)
+                    continue
+
+                # S5 candle: только подписчикам инструмента.
                 instrument = str(payload.get("instrument") or "").strip()
                 if not instrument:
                     continue
-                # Оборачиваем в op=s5, чтобы клиент отличал служебные сообщения.
                 out = json.dumps({"op": "s5", "candle": payload}, ensure_ascii=False)
                 await _fanout(instrument, out)
         except asyncio.CancelledError:
@@ -280,7 +360,14 @@ async def main() -> None:
 
     redis_task = asyncio.create_task(redis_listener(), name="redis-listener")
 
-    LOG.info("WS hub listening on %s:%s (channel=%s)", HUB_HOST, HUB_PORT, REDIS_CHANNEL)
+    LOG.info(
+        "WS hub listening on %s:%s (channels=%s, %s, %s)",
+        HUB_HOST,
+        HUB_PORT,
+        REDIS_CHANNEL,
+        REDIS_PAYOUT_CHANNEL,
+        REDIS_BOT_EVENTS_CHANNEL,
+    )
     async with websockets.serve(
         handler,
         HUB_HOST,

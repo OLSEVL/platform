@@ -32,6 +32,7 @@ use App\Services\Indicators\VwmaIndicatorService;
 use App\Services\Indicators\CmoIndicatorService;
 use App\Services\Indicators\DemarkerIndicatorService;
 use App\Services\Indicators\FractalIndicatorService;
+use App\Services\Indicators\StratAssistantIndicatorService;
 use App\Services\Indicators\DonchianIndicatorService;
 use App\Services\Indicators\StochRsiIndicatorService;
 use App\Services\Indicators\AcIndicatorService;
@@ -206,6 +207,9 @@ class IndicatorSetting extends Model
 
     /** Fractal — оверлей на цене (маркеры экстремумов). */
     public const KEY_FRACTAL = 'fractal';
+
+    /** Strat Assistant — маркеры The Strat (1/2/3 и комбо). */
+    public const KEY_STRAT_ASSISTANT = 'strat_assistant';
 
     /** Donchian Channel — оверлей up/mid/down. */
     public const KEY_DONCHIAN = 'donchian';
@@ -680,6 +684,12 @@ class IndicatorSetting extends Model
     public static function mergedFractalParams(Bot $bot): array
     {
         return self::mergedByKey($bot, self::KEY_FRACTAL, [FractalIndicatorService::class, 'defaultParams']);
+    }
+
+    /** @return array<string, mixed> */
+    public static function mergedStratAssistantParams(Bot $bot): array
+    {
+        return self::mergedByKey($bot, self::KEY_STRAT_ASSISTANT, [StratAssistantIndicatorService::class, 'defaultParams']);
     }
 
     /** @return array<string, mixed> */

@@ -8,6 +8,7 @@ use App\Models\PocketInstrument;
 use App\Services\CandleRangeCache;
 use App\Services\CandleService;
 use App\Services\CurrentCandleCacheService;
+use App\Services\InstrumentsPayoutLiveBroadcast;
 use App\Services\ProxyDeadProbeService;
 use App\Services\ProxyRotationService;
 use App\Support\FeedTimeNormalizer;
@@ -119,7 +120,7 @@ class ProxyInstrumentController extends Controller
         ]);
     }
 
-    public function ingestPayout(Request $request): JsonResponse
+    public function ingestPayout(Request $request, InstrumentsPayoutLiveBroadcast $payoutLive): JsonResponse
     {
         $data = $request->validate([
             'instrument' => 'required|string|max:63',
@@ -138,9 +139,15 @@ class ProxyInstrumentController extends Controller
         }
 
         $isStale = (bool) ($data['is_stale'] ?? false);
+        $newPayout = array_key_exists('current_payout', $data) ? $data['current_payout'] : null;
+
+        // Сравниваем до update: пушим в WS только реальную смену % / stale-флага.
+        $prevPayout = $instrument->current_payout;
+        $prevStale = (bool) $instrument->payout_is_stale;
+        $payoutChanged = $this->payoutValueChanged($prevPayout, $newPayout) || $prevStale !== $isStale;
 
         $update = [
-            'current_payout' => $data['current_payout'] ?? null,
+            'current_payout' => $newPayout,
             'payout_source' => $data['payout_source'] ?? null,
             'payout_is_stale' => $isStale,
         ];
@@ -156,12 +163,34 @@ class ProxyInstrumentController extends Controller
 
         $instrument->update($update);
 
+        if ($payoutChanged) {
+            $payoutLive->publish([
+                'instrument' => $instrument->instrument,
+                'current_payout' => $newPayout,
+                'payout_is_stale' => $isStale,
+                'payout_source' => $data['payout_source'] ?? null,
+            ]);
+        }
+
         return response()->json([
             'ok' => true,
             'instrument' => $instrument->instrument,
             'is_stale' => $isStale,
             'payout_is_stale' => $isStale,
         ]);
+    }
+
+    /** null/числовое сравнение без ложных срабатываний на 85 vs "85.0". */
+    private function payoutValueChanged(mixed $prev, mixed $next): bool
+    {
+        if ($prev === null && $next === null) {
+            return false;
+        }
+        if ($prev === null || $next === null) {
+            return true;
+        }
+
+        return abs((float) $prev - (float) $next) > 0.0001;
     }
 
     public function ingestCurrentCandle(Request $request, CurrentCandleCacheService $cache): JsonResponse

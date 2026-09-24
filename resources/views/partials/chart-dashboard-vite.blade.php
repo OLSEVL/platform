@@ -5,6 +5,7 @@
 @php
     use App\Support\ChartBootFlags;
     $chartFlags = ChartBootFlags::forClient();
+    $clientIndicatorParams = [];
 @endphp
 <script>
     // PR5: page-specific + общие флаги (live/heal/tradeLite) из ChartBootFlags.
@@ -21,6 +22,8 @@
         liveTradesActivityTmpl: @json(route('bots.activity', ['bot' => '__BOT_ID__'])),
         liveTradesPageUrl: @json(route('bots.live-trades')),
         chartHistoryMaxSeconds: {{ (int) ($chartHistoryMaxSeconds ?? 86400) }},
+        // Клиентские индикаторы (LS/PA/SMC/classics) — без тяжёлых poll-эндпоинтов.
+        clientIndicatorParams: @json($clientIndicatorParams),
     }, @json($chartFlags));
 </script>
 @vite(['resources/js/chart/dashboard.js'])

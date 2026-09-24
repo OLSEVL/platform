@@ -45,6 +45,7 @@ use App\Services\Indicators\WilliamsRangeIndicatorService;
 use App\Services\Indicators\CmoIndicatorService;
 use App\Services\Indicators\DemarkerIndicatorService;
 use App\Services\Indicators\FractalIndicatorService;
+use App\Services\Indicators\StratAssistantIndicatorService;
 use App\Services\Indicators\DonchianIndicatorService;
 use App\Services\Indicators\StochRsiIndicatorService;
 use App\Services\Indicators\AcIndicatorService;
@@ -856,47 +857,7 @@ class BotController extends Controller
             ->latest('created_at')
             ->limit(200)
             ->get()
-            ->map(function (BotTrade $t) {
-                $meta = is_array($t->meta_json) ? $t->meta_json : [];
-                $mirroredAt = isset($meta['mirrored_at']) ? (string) $meta['mirrored_at'] : null;
-                if ($mirroredAt !== null && strlen($mirroredAt) > 19) {
-                    try {
-                        $mirroredAt = Carbon::parse($mirroredAt)->format('Y-m-d H:i:s');
-                    } catch (\Throwable) {
-                        $mirroredAt = substr($mirroredAt, 0, 19);
-                    }
-                }
-
-                return [
-                    'id' => $t->id,
-                    'bot_id' => (int) $t->bot_id,
-                    'entry_time' => optional($t->entry_time)->format('Y-m-d H:i:s'),
-                    'created_at' => optional($t->created_at)->format('Y-m-d H:i:s'),
-                    'mirrored_at' => $mirroredAt,
-                    'bot_name' => $t->bot?->name ?? '—',
-                    'instrument' => $t->instrument,
-                    'side' => $t->side,
-                    'status' => $t->status,
-                    // Paper = итог по свечам платформы; mirror_po_* = итог на Pocket Option (мартингейл).
-                    'result' => $t->result ?? 'pending',
-                    'paper_result' => $meta['paper_result'] ?? ($t->result ?? 'pending'),
-                    'mirror_po_result' => isset($meta['mirror_po_result']) ? (string) $meta['mirror_po_result'] : null,
-                    'mirror_po_result_source' => isset($meta['mirror_po_result_source'])
-                        ? (string) $meta['mirror_po_result_source']
-                        : null,
-                    'mirror_po_profit' => isset($meta['mirror_po_profit']) && is_numeric($meta['mirror_po_profit'])
-                        ? (float) $meta['mirror_po_profit']
-                        : null,
-                    'mirror_status' => isset($meta['mirror_status']) ? (string) $meta['mirror_status'] : null,
-                    'entry_price' => $t->entry_price !== null ? number_format((float) $t->entry_price, 5, '.', '') : null,
-                    'entry_amount' => BotTrade::formatMirrorAmountLabel(BotTrade::mirrorAmountFromMeta($meta)),
-                    'expiry_price' => $t->expiry_price !== null ? number_format((float) $t->expiry_price, 5, '.', '') : null,
-                    'expiry_time' => optional($t->expiry_time)->format('Y-m-d H:i:s'),
-                    'settled_at' => optional($t->settled_at)->format('Y-m-d H:i:s'),
-                    'expiry_ts' => optional($t->expiry_time)?->timestamp,
-                    'pnl' => $t->pnl !== null ? number_format((float) $t->pnl, 4, '.', '') : null,
-                ];
-            })
+            ->map(static fn (BotTrade $t) => \App\Services\BotLiveEventsBroadcast::cardFromTrade($t))
             ->values();
 
         return response()->json([
@@ -3159,11 +3120,11 @@ class BotController extends Controller
             ? $this->botStatisticsForLastHour($bot, $instrument !== '' ? $instrument : null)
             : $this->botStatisticsAllTime($bot, $instrument !== '' ? $instrument : null);
 
+        // Только то, что рисует правый сайдбар (Total/Open/Wins/Losses/Winrate).
+        // analysis_metrics раньше считались на каждый poll 3с, но UI их нигде не читал —
+        // лишние COUNT по bot_analysis_runs/signals/trades под нагрузкой.
         return response()->json([
             'stats' => $stats,
-            'analysis_metrics' => $scope === 'hour'
-                ? $this->analysisMetricsLastHour($bot)
-                : $this->analysisMetricsAllTime($bot),
             'scope' => $scope,
             'instrument' => $instrument !== '' ? $instrument : null,
             'server_time' => now()->toIso8601String(),
@@ -3590,6 +3551,7 @@ class BotController extends Controller
         LinRegChannelIndicatorService $linregChannel,
         KalmanIndicatorService $kalman,
         FractalIndicatorService $fractal,
+        StratAssistantIndicatorService $stratAssistant,
         DonchianIndicatorService $donchian,
         StochRsiIndicatorService $stochRsi,
         AcIndicatorService $ac,
@@ -3630,7 +3592,7 @@ class BotController extends Controller
             'instrument' => ['required', 'string', 'max:64'],
             'timeframe' => ['nullable', 'integer', Rule::in(CandleService::DASHBOARD_TIMEFRAMES)],
             'layers' => ['nullable', 'array'],
-            'layers.*' => ['string', Rule::in(['pa', 'ls', 'srl', 'eng', 'smc', 'bollinger', 'rsi', 'sma', 'ema', 'vwma', 'atr', 'macd', 'stochastic', 'cci', 'keltner', 'envelops', 'parabolic_sar', 'supertrend', 'adx', 'williams', 'ao', 'alligator', 'ichimoku', 'price_channel', 'nrtr', 'hma', 'aroon', 'momentum', 'roc', 'osma', 'trix', 'cmo', 'demarker', 'rvi', 'ultimate', 'smi', 'stddev', 'sma_channel', 'ivashov', 'linreg', 'linreg_channel', 'kalman', 'fractal', 'donchian', 'stoch_rsi', 'ac', 'bulls_power', 'bears_power', 'dpo', 'qstick', 'vh_filter', 'efficiency_ratio', 'ravi', 'cog', 'pivot_floor', 'mass_index', 'nrtr_watr', 'price_channel_adaptive', 'price_channel_offset', 'parabolic_bollinger', 'parabolic_price_channel', 'atr_channel', 'offset_sma', 'offset_ema', 'offset_ssma', 'volatility_average', 'volatility_average_channel', 'price_oscillator', 'dynamic_trend_detector', 'adaptive_look_back', 'linreg_channel_fast', 'volatility_candles', 'zigzag', 'volatility_average_twice', 'volatility_stages_aw'])],
+            'layers.*' => ['string', Rule::in(['pa', 'ls', 'srl', 'eng', 'smc', 'bollinger', 'rsi', 'sma', 'ema', 'vwma', 'atr', 'macd', 'stochastic', 'cci', 'keltner', 'envelops', 'parabolic_sar', 'supertrend', 'adx', 'williams', 'ao', 'alligator', 'ichimoku', 'price_channel', 'nrtr', 'hma', 'aroon', 'momentum', 'roc', 'osma', 'trix', 'cmo', 'demarker', 'rvi', 'ultimate', 'smi', 'stddev', 'sma_channel', 'ivashov', 'linreg', 'linreg_channel', 'kalman', 'fractal', 'strat_assistant', 'donchian', 'stoch_rsi', 'ac', 'bulls_power', 'bears_power', 'dpo', 'qstick', 'vh_filter', 'efficiency_ratio', 'ravi', 'cog', 'pivot_floor', 'mass_index', 'nrtr_watr', 'price_channel_adaptive', 'price_channel_offset', 'parabolic_bollinger', 'parabolic_price_channel', 'atr_channel', 'offset_sma', 'offset_ema', 'offset_ssma', 'volatility_average', 'volatility_average_channel', 'price_oscillator', 'dynamic_trend_detector', 'adaptive_look_back', 'linreg_channel_fast', 'volatility_candles', 'zigzag', 'volatility_average_twice', 'volatility_stages_aw'])],
             // Pilot: id экземпляров SMA/EMA (chart_indicator_instances).
             'instances' => ['nullable', 'array'],
             'instances.*' => ['integer', 'min:1'],
@@ -3784,6 +3746,9 @@ class BotController extends Controller
         }
         if (! empty($want['fractal'])) {
             $json['fractal'] = $fractal->compute($rows, IndicatorSetting::mergedFractalParams($bot));
+        }
+        if (! empty($want['strat_assistant'])) {
+            $json['strat_assistant'] = $stratAssistant->compute($rows, IndicatorSetting::mergedStratAssistantParams($bot));
         }
         if (! empty($want['donchian'])) {
             $json['donchian'] = $donchian->compute($rows, IndicatorSetting::mergedDonchianParams($bot));

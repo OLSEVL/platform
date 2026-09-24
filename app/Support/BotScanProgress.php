@@ -143,6 +143,13 @@ final class BotScanProgress
         }
 
         self::cache()->put(self::cacheKey($botId), $state, self::TTL_SECONDS);
+
+        // WS: сайдбар обновляет scan_dot на каждый writeState (без throttle).
+        try {
+            app(\App\Services\BotLiveEventsBroadcast::class)->publishScan($botId);
+        } catch (\Throwable) {
+            // ignore
+        }
     }
 
     /** Scan активен, если явный флаг или есть current/analyzed (защита от потери scan_active). */
@@ -213,6 +220,13 @@ final class BotScanProgress
         }
 
         self::cache()->forget(self::cacheKey($botId));
+
+        // Финальный снимок — UI сразу гасит точки после endScan.
+        try {
+            app(\App\Services\BotLiveEventsBroadcast::class)->publishScan($botId);
+        } catch (\Throwable) {
+            // ignore
+        }
     }
 
     public static function setCurrentInstrument(int $botId, string $instrument): void

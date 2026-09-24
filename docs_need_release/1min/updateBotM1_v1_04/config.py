@@ -14,10 +14,16 @@ CHAT_ID = getattr(private, "CHAT_ID", "") if private else ""
 CHAT_IDS = getattr(private, "CHAT_IDS", []) if private else ""
 
 DEBUG_CYCLE = False
+# Версия бота: показывается только один раз при запуске в консоли.
+BOT_VERSION = "1.04"
 # Отправлять ли в Telegram PNG со свечами и совпавшими зонами уровней.
 # Для картинки используются уже накопленные M1-свечи, новый запрос не нужен.
 TELEGRAM_CHARTS_ENABLED = True
-TELEGRAM_CHART_CANDLES = 100
+# Такой же плотный кадр, как у MACD-бота: последние 50 M1-свечей.
+TELEGRAM_CHART_CANDLES = 50
+# Отправлять ли в Telegram строку статистики с прочерком, когда за минуту
+# не было сигналов (например: 10:07:55 2.99s 110/118 -).
+TELEGRAM_NO_SIGNAL_STATS_ENABLED = True
 
 # Интервал сканирования рынка в секундах
 SCAN_INTERVAL_SECONDS = 5
@@ -30,13 +36,22 @@ LIVE_CANDLE_WICK_SIGNALS = True
 # приоритетом считается позиция профиля в STRATEGY_PROFILES. Повторный сигнал
 # за минуту допустим лишь при новом экстремуме и более высоком приоритете.
 
+# Защита от повторов. Обе настройки включены.
+# True: один реально отправленный сигнал на непрерывную серию свечей одного
+# цвета. Противоположная закрытая свеча сбрасывает серию и снова разрешает
+# сигнал по паре. Эта настройка имеет приоритет.
+ONE_SIGNAL_PER_SERIES = False
+# Используется только когда защита по серии выключена: один любой сигнал по
+# паре на одну M1, независимо от цвета; на следующей M1 снова разрешён.
+ONE_SIGNAL_PER_PAIR_PER_MINUTE = False
+
 # Рассылать ли сигналы последовательных правил на одном баре
 SEND_RULE_SEQUENCE_SIGNALS = False
 
 REQUEST_BATCH_SIZE = 0                       # Размер пакета запросов (0 - без пакетирования/авто)
 HISTORY_PERIOD = 100                         # Глубина запрашиваемой истории свечей (число баров)
 TIMEFRAME_SECONDS = 60                       # Основной таймфрейм торговли в секундах (60 = M1)
-HISTORY_TIMEOUT = 10                         # Таймаут ожидания загрузки истории в секундах
+HISTORY_TIMEOUT = 5                         # Таймаут ожидания загрузки истории в секундах
 MIN_PAYOUT = 80                              # Минимальный процент доходности (выплаты) парах для фильтрации
 
 # Настройки обрезки экстремальных свечей для вычисления среднего тела (TRIM)
@@ -49,7 +64,7 @@ GLOBAL_FILTER = "LVL";
 STRATEGY_PROFILES = [   
 
     {
-        "id": "extra_wl",
+        "id": "top_lvl",
         "enabled": True,
         "label": "-",
         "emoji": "⚪",
@@ -59,7 +74,7 @@ STRATEGY_PROFILES = [
         "filter_expr": GLOBAL_FILTER
     },
     {
-        "id": "extra",
+        "id": "high_lvl",
         "enabled": True,
         "label": "-",
         "emoji": "🟢",
@@ -69,7 +84,7 @@ STRATEGY_PROFILES = [
         "filter_expr": GLOBAL_FILTER
     },    
     {
-        "id": "extreme",
+        "id": "mid_lvl",
         "enabled": True,
         "label": "-",
         "emoji": "🟡",        
@@ -79,7 +94,7 @@ STRATEGY_PROFILES = [
         "filter_expr": GLOBAL_FILTER
     },
     {
-        "id": "structure",
+        "id": "low_lvl",
         "enabled": True,
         "label": "-",
         "emoji": "🟣",        
@@ -89,7 +104,7 @@ STRATEGY_PROFILES = [
         "filter_expr": GLOBAL_FILTER
     },
     {
-        "id": "structure_no_lvl",
+        "id": "top_no_lvl",
         "enabled": True,
         "label": "-",
         "emoji": "🟤",        
@@ -132,7 +147,8 @@ LEVEL_SETTINGS = {
     60:  {"pivot_left": 3, "pivot_right": 3, "use_body": False, "wick_only": False, "distance_body_multiplier": 0.05},  # M1: зона тело ↔ фитиль
     300: {"pivot_left": 2, "pivot_right": 2, "wick_only": False, "zone_mode": "wick_tip", "wick_tip_fraction": 0.15, "distance_body_multiplier": 0.05},  # M5: последние 33% фитиля
     900: {"pivot_left": 1, "pivot_right": 1, "wick_only": False, "zone_mode": "wick_tip", "wick_tip_fraction": 0.10, "distance_body_multiplier": 0.05},  # M15: последние 20% фитиля
-    1800: {"pivot_left": 1, "pivot_right": 1, "wick_only": False, "zone_mode": "wick_tip", "wick_tip_fraction": 0.10, "distance_body_multiplier": 0.05},  # M15: последние 20% фитиля
+    1800: {"pivot_left": 1, "pivot_right": 1, "wick_only": False, "zone_mode": "wick_tip", "wick_tip_fraction": 0.05, "distance_body_multiplier": 0.05},  # M15: последние 20% фитиля
+    3600: {"pivot_left": 1, "pivot_right": 1, "wick_only": False, "zone_mode": "wick_tip", "wick_tip_fraction": 0.04, "distance_body_multiplier": 0.05},  # M15: последние 20% фитиля
 }
 
 # Допуск = коэффициент × медианное тело закрытых свечей именно этого ТФ.
@@ -147,7 +163,7 @@ LEVEL_HISTORY_LIMIT_MINUTES = 0
 TIME_OFFSET_HOURS = -2.0
 
 # Список таймфреймов для поиска уровней
-LEVEL_TIMEFRAMES_SECONDS = [60, 300, 900, 1800]  # M1 — локально, M5 — рабочий, M15 — старший контекст
+LEVEL_TIMEFRAMES_SECONDS = [60, 300, 900, 1800, 3600]  # M1 — локально, M5 — рабочий, M15 — старший контекст
 
 # Какой таймфрейм приоритетнее при удалении дубликатов: "lower" или "higher"
 # "higher" обеспечивает приоритет старшим таймфреймам (M5-M15), у которых проходимость и сила уровней выше

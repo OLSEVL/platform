@@ -20,7 +20,7 @@ class DataCleanupService
     public const ALLOWED_RETENTION_HOURS = [0, 1, 3, 6, 12, 24, 48];
 
     /**
-     * @deprecated Используйте allowedAutoCleanupRetentionHours() — список дней 1–30 динамический.
+     * @deprecated Используйте allowedAutoCleanupRetentionHours() — список дней 1–MAX_AUTO_CLEANUP_RETENTION_DAYS.
      * Оставлен для совместимости старых ссылок на константу в коде/доках.
      */
     public const ALLOWED_AUTO_CLEANUP_RETENTION_HOURS = [1, 3, 6, 12, 24, 48];
@@ -32,8 +32,28 @@ class DataCleanupService
     /** Пока настройка не задана в БД — сохраняем прежнее поведение cron (свечи старше 24 ч.). */
     public const DEFAULT_AUTO_CLEANUP_RETENTION_HOURS = 24;
 
+    /** Максимум дней в селекте «Автоматически удалять данные старше» (и потолок графика при выкл. очистке). */
+    public const MAX_AUTO_CLEANUP_RETENTION_DAYS = 70;
+
     /**
-     * Разрешённые окна авто-очистки: сутки 1–30 (в часах) + короткие 1/3/6/12 ч.
+     * Размер одного DELETE для свечей.
+     * Один монолитный DELETE по миллионам строк блокировал InnoDB на минуты
+     * (php-fpm/nginx → upstream timeout, UI «не открывается»).
+     */
+    public const CANDLE_DELETE_BATCH_SIZE = 5000;
+
+    /**
+     * Пауза между батчами свечей (мкс) — даём место concurrent SELECT/INSERT инжеста и ботов.
+     */
+    public const CANDLE_DELETE_BATCH_SLEEP_US = 50_000;
+
+    /**
+     * Батч для таблиц ботов (обычно меньше candles, но тот же паттерн безопаснее).
+     */
+    public const BOT_DATA_DELETE_BATCH_SIZE = 2000;
+
+    /**
+     * Разрешённые окна авто-очистки: сутки 1–MAX_AUTO_CLEANUP_RETENTION_DAYS (в часах) + короткие 1/3/6/12 ч.
      * Порядок: сначала длиннее (больше истории), потом короткие часы.
      *
      * @return list<int>
@@ -41,7 +61,8 @@ class DataCleanupService
     public static function allowedAutoCleanupRetentionHours(): array
     {
         $hours = [];
-        for ($day = 30; $day >= 1; $day--) {
+        // От большего к меньшему: 32 дня … 1 день, затем короткие часовые окна.
+        for ($day = self::MAX_AUTO_CLEANUP_RETENTION_DAYS; $day >= 1; $day--) {
             $hours[] = $day * 24;
         }
         foreach ([12, 6, 3, 1] as $shortHours) {
@@ -104,34 +125,16 @@ class DataCleanupService
         $deletedBotRuns = 0;
         $deletedBacktestRuns = 0;
 
-        DB::transaction(function () use (
-            $botId,
-            $cutoff,
-            $cutoffTimestamp,
-            $includeCandles,
-            $includeBotData,
-            $purgeAll,
-            &$deletedCandles,
-            &$deletedLogs,
-            &$deletedAnalysisRuns,
-            &$deletedTrades,
-            &$deletedSignals,
-            &$deletedBotRuns,
-            &$deletedBacktestRuns,
-        ): void {
-            // Свечи общие для всей платформы — при очистке конкретного бота их не трогаем.
-            if ($includeCandles && $botId === null) {
-                $deletedCandles = $purgeAll
-                    ? InstrumentCandle::query()->delete()
-                    : InstrumentCandle::query()
-                        ->where('time', '<', $cutoffTimestamp)
-                        ->delete();
-            }
+        // Без одной большой транзакции: батчи коммитятся по одному, InnoDB не держит
+        // undo-лог на миллионы строк и не блокирует UI/инжест на минуты.
+        // Свечи общие для всей платформы — при очистке конкретного бота их не трогаем.
+        if ($includeCandles && $botId === null) {
+            $deletedCandles = $this->deleteCandlesInBatches(
+                $purgeAll ? null : $cutoffTimestamp,
+            );
+        }
 
-            if (! $includeBotData) {
-                return;
-            }
-
+        if ($includeBotData) {
             if (Schema::hasTable('bot_llm_logs')) {
                 $deletedLogs = $this->deleteByBotScope(
                     'bot_llm_logs',
@@ -188,7 +191,7 @@ class DataCleanupService
                     $purgeAll,
                 );
             }
-        });
+        }
 
         // Свечи удалены — старый min_ts в кэше бэктеста уже неверный.
         if ($includeCandles && $botId === null && $deletedCandles > 0) {
@@ -212,7 +215,7 @@ class DataCleanupService
      *
      * Принимает оба списка:
      * - ALLOWED_RETENTION_HOURS — ручная «Удалить все данные» (в т.ч. 0 = всё);
-     * - allowedAutoCleanupRetentionHours() — авто-очистка 1–30 дней и короткие часы.
+     * - allowedAutoCleanupRetentionHours() — авто-очистка 1–70 дней и короткие часы.
      *
      * Раньше проверялся только первый список, поэтому значение из настроек вроде
      * «7 дней» (168 ч.) не входило в [0,1,3,6,12,24,48] и молча сбрасывалось на 24 ч.
@@ -224,7 +227,7 @@ class DataCleanupService
             return $hours;
         }
 
-        // Дни из селекта «Автоматически удалять данные старше» (72…720 и т.д.).
+        // Дни из селекта «Автоматически удалять данные старше» (24…MAX*24 и т.д.).
         if (in_array($hours, self::allowedAutoCleanupRetentionHours(), true)) {
             return $hours;
         }
@@ -267,14 +270,14 @@ class DataCleanupService
      *
      * Раньше на дашборде был хардкод 24ч — настройка «Автоматически удалять данные старше»
      * влияла только на cron purge, а UI всё равно не отдавал/не запрашивал старше суток.
-     * Берём то же окно, что и авто-очистка; если очистка выключена — потолок 30 суток
+     * Берём то же окно, что и авто-очистка; если очистка выключена — потолок MAX_AUTO_CLEANUP_RETENTION_DAYS
      * (как максимум в селекте), чтобы не тянуть бесконечный since из БД.
      */
     public function chartHistoryMaxSeconds(): int
     {
         $hours = $this->getAutoCleanupRetentionHours();
         if ($hours === null) {
-            $hours = 30 * 24;
+            $hours = self::MAX_AUTO_CLEANUP_RETENTION_DAYS * 24;
         }
 
         // Минимум 1 час — иначе since ≈ now и график пустеет при сбое настройки.
@@ -421,7 +424,7 @@ class DataCleanupService
 
     /**
      * Человекочитаемая подпись для UI и flash-сообщений.
-     * Сутки: «1 день (24 часа)» … «30 дней (720 часов)»; короткие окна — в часах.
+     * Сутки: «1 день (24 часа)» … «70 дней (1680 часов)»; короткие окна — в часах.
      */
     public function autoCleanupRetentionLabel(?int $hours): string
     {
@@ -440,10 +443,10 @@ class DataCleanupService
             };
         }
 
-        // Полные сутки: 24, 48, … 720 → «N день/дня/дней (M час/часа/часов)».
+        // Полные сутки: 24, 48, … MAX*24 → «N день/дня/дней (M час/часа/часов)».
         if ($hours % 24 === 0) {
             $days = intdiv($hours, 24);
-            if ($days >= 1 && $days <= 30) {
+            if ($days >= 1 && $days <= self::MAX_AUTO_CLEANUP_RETENTION_DAYS) {
                 return sprintf(
                     '%s (%s)',
                     self::pluralizeDays($days),
@@ -603,7 +606,47 @@ class DataCleanupService
     }
 
     /**
+     * Удаляет устаревшие (или все) свечи пакетами с LIMIT.
+     *
+     * Раньше один DELETE WHERE time < cutoff на ~десятках миллионов строк
+     * держал InnoDB в состоянии updating 5+ минут → php-fpm max_children,
+     * nginx upstream timeout, страница /bots «не открывается».
+     *
+     * @param  int|null  $cutoffTimestamp  unix-time; null = удалить всю таблицу батчами
+     */
+    private function deleteCandlesInBatches(?int $cutoffTimestamp): int
+    {
+        $total = 0;
+        // LIMIT вшиваем как int: на части MySQL/PDO bound LIMIT в prepared statement ломается.
+        $batchSize = max(1, (int) self::CANDLE_DELETE_BATCH_SIZE);
+
+        do {
+            // Явный LIMIT: короткий lock, коммит после каждого батча (autocommit).
+            if ($cutoffTimestamp === null) {
+                $deleted = (int) DB::affectingStatement(
+                    "DELETE FROM `candles` LIMIT {$batchSize}",
+                );
+            } else {
+                $deleted = (int) DB::affectingStatement(
+                    "DELETE FROM `candles` WHERE `time` < ? LIMIT {$batchSize}",
+                    [$cutoffTimestamp],
+                );
+            }
+
+            $total += $deleted;
+
+            // Между батчами отдаём CPU/IO инжесту и веб-запросам.
+            if ($deleted > 0 && self::CANDLE_DELETE_BATCH_SLEEP_US > 0) {
+                usleep(self::CANDLE_DELETE_BATCH_SLEEP_US);
+            }
+        } while ($deleted > 0);
+
+        return $total;
+    }
+
+    /**
      * Удаляет строки из таблицы бота с учётом опционального фильтра bot_id.
+     * Тоже батчами — на больших bot_trades монолитный DELETE тоже может зажать пул.
      */
     private function deleteByBotScope(
         string $table,
@@ -612,28 +655,38 @@ class DataCleanupService
         ?int $botId,
         bool $purgeAll = false,
     ): int {
-        if ($purgeAll) {
-            if ($botId === null) {
-                return DB::delete("DELETE FROM {$table}");
+        $total = 0;
+        $batchSize = max(1, (int) self::BOT_DATA_DELETE_BATCH_SIZE);
+
+        // Имена таблицы/колонки из нашего кода (не user input) — безопасны в SQL.
+        do {
+            if ($purgeAll) {
+                if ($botId === null) {
+                    $deleted = (int) DB::affectingStatement(
+                        "DELETE FROM {$table} LIMIT {$batchSize}",
+                    );
+                } else {
+                    $deleted = (int) DB::affectingStatement(
+                        "DELETE FROM {$table} WHERE bot_id = ? LIMIT {$batchSize}",
+                        [$botId],
+                    );
+                }
+            } elseif ($botId === null) {
+                $deleted = (int) DB::affectingStatement(
+                    "DELETE FROM {$table} WHERE {$timeColumn} < ? LIMIT {$batchSize}",
+                    [$cutoff],
+                );
+            } else {
+                $deleted = (int) DB::affectingStatement(
+                    "DELETE FROM {$table} WHERE bot_id = ? AND {$timeColumn} < ? LIMIT {$batchSize}",
+                    [$botId, $cutoff],
+                );
             }
 
-            return DB::delete(
-                "DELETE FROM {$table} WHERE bot_id = ?",
-                [$botId],
-            );
-        }
+            $total += $deleted;
+        } while ($deleted > 0);
 
-        if ($botId === null) {
-            return DB::delete(
-                "DELETE FROM {$table} WHERE {$timeColumn} < ?",
-                [$cutoff],
-            );
-        }
-
-        return DB::delete(
-            "DELETE FROM {$table} WHERE bot_id = ? AND {$timeColumn} < ?",
-            [$botId, $cutoff],
-        );
+        return $total;
     }
 
     /**

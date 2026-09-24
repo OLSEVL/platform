@@ -25,7 +25,10 @@ class ProfileTradingTest extends TestCase
             ->get(route('profile.trading.edit'))
             ->assertOk()
             ->assertSee('Включить зеркалирование')
-            ->assertSee('Прокси зеркала');
+            ->assertSee('Прокси зеркала')
+            ->assertSee('Цвета свечей на графике')
+            ->assertSee('#22ff00', false)
+            ->assertSee('#ff0000', false);
 
         $ssid = '42["auth",{"session":"abc","uid":1,"isDemo":1,"platform":2}]';
 
@@ -56,6 +59,49 @@ class ProfileTradingTest extends TestCase
         $this->assertTrue($settings->mirror_wait_previous_settled);
         $this->assertStringContainsString('42["auth"', (string) $settings->pocket_ssid);
         $this->assertTrue($settings->canMirrorTrades());
+    }
+
+    public function test_user_can_save_custom_candle_colors(): void
+    {
+        $user = User::factory()->create();
+        UserTradingSetting::query()->create([
+            'user_id' => $user->id,
+            'is_demo' => true,
+            'order_amount' => 5,
+            'order_amounts' => [5.0],
+        ]);
+
+        $this->actingAs($user)
+            ->put(route('profile.trading.update'), [
+                'order_amounts' => '5',
+                'is_demo' => '1',
+                'mirror_trades_enabled' => '0',
+                'mirror_wait_previous_settled' => '0',
+                'candle_up_color' => '#00aaff',
+                'candle_down_color' => '#ff00aa',
+            ])
+            ->assertRedirect(route('profile.trading.edit'))
+            ->assertSessionHas('status');
+
+        $settings = UserTradingSetting::query()->where('user_id', $user->id)->first();
+        $this->assertSame('#00aaff', $settings->candle_up_color);
+        $this->assertSame('#ff00aa', $settings->candle_down_color);
+
+        // Дефолт PO сохраняется как null — системный дефолт подхватится сам.
+        $this->actingAs($user)
+            ->put(route('profile.trading.update'), [
+                'order_amounts' => '5',
+                'is_demo' => '1',
+                'mirror_trades_enabled' => '0',
+                'mirror_wait_previous_settled' => '0',
+                'candle_up_color' => '#22ff00',
+                'candle_down_color' => '#ff0000',
+            ])
+            ->assertRedirect(route('profile.trading.edit'));
+
+        $settings->refresh();
+        $this->assertNull($settings->candle_up_color);
+        $this->assertNull($settings->candle_down_color);
     }
 
     public function test_user_can_manage_mirror_proxy_pool(): void

@@ -162,6 +162,14 @@ class BotSettlementService
                 $settledFallback++;
             }
 
+            // WS: полная карточка (status/result/pnl) → dashboard лента + stats на боте.
+            try {
+                $trade->loadMissing('bot');
+                app(\App\Services\BotLiveEventsBroadcast::class)->tradeSettled($trade);
+            } catch (\Throwable) {
+                // Не ломаем settlement из-за Redis.
+            }
+
             // Dual DeMarker: после LOSS колена K открываем колено K+1 без нового сигнала.
             if ((string) $trade->result === BotTrade::RESULT_LOSS) {
                 try {

@@ -10,6 +10,12 @@ class ChartLiveConfig
 {
     public const REDIS_CHANNEL = 'chart:s5';
 
+    /** Pub/sub: смена payout → hub fan-out всем WS-клиентам (сайдбар без HTTP poll). */
+    public const REDIS_PAYOUT_CHANNEL = 'instruments:payout';
+
+    /** Pub/sub: open/settle paper-сделки бота → UI stats/open-trades без частого poll. */
+    public const REDIS_BOT_EVENTS_CHANNEL = 'bot:events';
+
     public static function enabled(): bool
     {
         return (bool) config('chart.live_enabled', env('CHART_LIVE_ENABLED', true));

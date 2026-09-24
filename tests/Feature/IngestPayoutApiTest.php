@@ -3,8 +3,10 @@
 namespace Tests\Feature;
 
 use App\Models\PocketInstrument;
+use App\Support\ChartLiveConfig;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Redis;
 use Tests\TestCase;
 
 class IngestPayoutApiTest extends TestCase
@@ -23,6 +25,20 @@ class IngestPayoutApiTest extends TestCase
 
         $eventAt = '2026-05-16T12:00:00+00:00';
         $ingestAt = '2026-05-16T12:00:30+00:00';
+
+        Redis::shouldReceive('publish')
+            ->once()
+            ->withArgs(function (string $channel, string $json): bool {
+                if ($channel !== ChartLiveConfig::REDIS_PAYOUT_CHANNEL) {
+                    return false;
+                }
+                $payload = json_decode($json, true);
+
+                return is_array($payload)
+                    && ($payload['instrument'] ?? null) === 'EURUSD_otc'
+                    && (float) ($payload['current_payout'] ?? 0) === 85.0
+                    && ($payload['payout_is_stale'] ?? true) === false;
+            });
 
         $response = $this->postJson('/api/ingest-payout', [
             'instrument' => 'EURUSD_otc',
@@ -66,6 +82,20 @@ class IngestPayoutApiTest extends TestCase
             'payout_is_stale' => false,
         ]);
 
+        // stale flip false→true при том же % — всё равно публикуем.
+        Redis::shouldReceive('publish')
+            ->once()
+            ->withArgs(function (string $channel, string $json): bool {
+                if ($channel !== ChartLiveConfig::REDIS_PAYOUT_CHANNEL) {
+                    return false;
+                }
+                $payload = json_decode($json, true);
+
+                return is_array($payload)
+                    && ($payload['instrument'] ?? null) === 'GBPUSD'
+                    && ($payload['payout_is_stale'] ?? false) === true;
+            });
+
         $response = $this->postJson('/api/ingest-payout', [
             'instrument' => 'GBPUSD',
             'current_payout' => 80,
@@ -92,5 +122,27 @@ class IngestPayoutApiTest extends TestCase
             '2026-05-16 14:00:30',
             $instrument->last_payout_at?->utc()->format('Y-m-d H:i:s')
         );
+    }
+
+    public function test_ingest_payout_unchanged_skips_redis_publish(): void
+    {
+        PocketInstrument::query()->create([
+            'instrument' => 'USDJPY_otc',
+            'is_active' => true,
+            'current_payout' => 92,
+            'payout_is_stale' => false,
+        ]);
+
+        Redis::shouldReceive('publish')->never();
+
+        $response = $this->postJson('/api/ingest-payout', [
+            'instrument' => 'USDJPY_otc',
+            'current_payout' => 92,
+            'payout_source' => 'heartbeat',
+            'last_payout_at' => '2026-05-16T15:00:00+00:00',
+            'is_stale' => false,
+        ]);
+
+        $response->assertOk();
     }
 }

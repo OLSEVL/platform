@@ -147,6 +147,12 @@ class BotSignalKneeFollowUpService
         // Вызывающий код (settlement) уже закоммитил LOSS — зеркалим сразу.
         if ($newTrade instanceof BotTrade) {
             try {
+                $newTrade->loadMissing('bot');
+                app(\App\Services\BotLiveEventsBroadcast::class)->tradeOpened($newTrade);
+            } catch (\Throwable) {
+                // Redis недоступен — UI на HTTP fallback.
+            }
+            try {
                 app(MirrorTradeDispatcher::class)->dispatch((int) $newTrade->id);
             } catch (\Throwable $e) {
                 Log::warning('knee_follow_up_mirror_failed', [

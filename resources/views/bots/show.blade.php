@@ -340,13 +340,14 @@
                     <span id="bot-crosshair-time" class="bot-crosshair-axis-label absolute hidden"></span>
                 </div>
             </div>
+            {{-- Binodex-style: тёмный pill с оранжевой обводкой «13s» справа от текущей свечи. --}}
             <div id="candle-timer-overlay"
                 class="pointer-events-none absolute z-[6] hidden h-0 w-0 overflow-visible"
-                title="До закрытия текущей свечи выбранного таймфрейма (мм:сс)">
-                <span id="candle-tf-label"
-                    class="absolute left-1/2 z-[6] -translate-x-1/2 whitespace-nowrap text-[11px] font-medium leading-none text-zinc-400">M1</span>
+                title="До закрытия текущей свечи выбранного таймфрейма">
+                <span id="candle-tf-label" class="hidden" aria-hidden="true"></span>
                 <span id="candle-close-timer"
-                    class="absolute left-1/2 z-[6] -translate-x-1/2 whitespace-nowrap font-mono text-[11px] tabular-nums leading-none text-zinc-400"
+                    class="absolute left-0 top-0 z-[6] whitespace-nowrap rounded-md border border-[#ff9a3c] bg-zinc-950/95 px-1.5 py-0.5 text-[11px] font-semibold leading-none tabular-nums text-[#ff9a3c] shadow-[0_0_0_1px_rgba(0,0,0,0.35)]"
+                    style="font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;"
                     aria-live="polite"></span>
             </div>
             <div id="open-trades-overlay" class="absolute left-2 top-2 z-[8] pointer-events-none flex flex-col gap-1"></div>

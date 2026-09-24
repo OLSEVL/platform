@@ -41,6 +41,7 @@ use App\Services\Indicators\WilliamsRangeIndicatorService;
 use App\Services\Indicators\CmoIndicatorService;
 use App\Services\Indicators\DemarkerIndicatorService;
 use App\Services\Indicators\FractalIndicatorService;
+use App\Services\Indicators\StratAssistantIndicatorService;
 use App\Services\Indicators\IvashovRangeIndicatorService;
 use App\Services\Indicators\KalmanIndicatorService;
 use App\Services\Indicators\LinRegChannelIndicatorService;
@@ -639,6 +640,7 @@ class DashboardController extends Controller
         LinRegChannelIndicatorService $linregChannel,
         KalmanIndicatorService $kalman,
         FractalIndicatorService $fractal,
+        StratAssistantIndicatorService $stratAssistant,
         DonchianIndicatorService $donchian,
         StochRsiIndicatorService $stochRsi,
         AcIndicatorService $ac,
@@ -677,7 +679,7 @@ class DashboardController extends Controller
             'timeframe' => ['nullable', 'integer', Rule::in(CandleService::DASHBOARD_TIMEFRAMES)],
             'layers' => ['nullable', 'array'],
             // OHLC-пакет (Donchian…Mass Index) — те же ключи, что на bots/show.
-            'layers.*' => ['string', Rule::in(['bollinger', 'rsi', 'sma', 'ema', 'vwma', 'atr', 'macd', 'stochastic', 'cci', 'keltner', 'envelops', 'parabolic_sar', 'supertrend', 'adx', 'williams', 'ao', 'alligator', 'ichimoku', 'price_channel', 'nrtr', 'hma', 'aroon', 'momentum', 'roc', 'osma', 'trix', 'cmo', 'demarker', 'rvi', 'ultimate', 'smi', 'stddev', 'sma_channel', 'ivashov', 'linreg', 'linreg_channel', 'kalman', 'fractal', 'donchian', 'stoch_rsi', 'ac', 'bulls_power', 'bears_power', 'dpo', 'qstick', 'vh_filter', 'efficiency_ratio', 'ravi', 'cog', 'pivot_floor', 'mass_index', 'nrtr_watr', 'price_channel_adaptive', 'price_channel_offset', 'parabolic_bollinger', 'parabolic_price_channel', 'atr_channel', 'offset_sma', 'offset_ema', 'offset_ssma', 'volatility_average', 'volatility_average_channel', 'price_oscillator', 'dynamic_trend_detector', 'adaptive_look_back', 'linreg_channel_fast', 'volatility_candles', 'zigzag', 'volatility_average_twice', 'volatility_stages_aw'])],
+            'layers.*' => ['string', Rule::in(['bollinger', 'rsi', 'sma', 'ema', 'vwma', 'atr', 'macd', 'stochastic', 'cci', 'keltner', 'envelops', 'parabolic_sar', 'supertrend', 'adx', 'williams', 'ao', 'alligator', 'ichimoku', 'price_channel', 'nrtr', 'hma', 'aroon', 'momentum', 'roc', 'osma', 'trix', 'cmo', 'demarker', 'rvi', 'ultimate', 'smi', 'stddev', 'sma_channel', 'ivashov', 'linreg', 'linreg_channel', 'kalman', 'fractal', 'strat_assistant', 'donchian', 'stoch_rsi', 'ac', 'bulls_power', 'bears_power', 'dpo', 'qstick', 'vh_filter', 'efficiency_ratio', 'ravi', 'cog', 'pivot_floor', 'mass_index', 'nrtr_watr', 'price_channel_adaptive', 'price_channel_offset', 'parabolic_bollinger', 'parabolic_price_channel', 'atr_channel', 'offset_sma', 'offset_ema', 'offset_ssma', 'volatility_average', 'volatility_average_channel', 'price_oscillator', 'dynamic_trend_detector', 'adaptive_look_back', 'linreg_channel_fast', 'volatility_candles', 'zigzag', 'volatility_average_twice', 'volatility_stages_aw'])],
             // since/limit с графика: считаем ровно под загруженные свечи (+ warmup на фронте).
             'since' => ['nullable', 'integer', 'min:0'],
             'limit' => ['nullable', 'integer', 'min:1', 'max:5000'],
@@ -1010,6 +1012,14 @@ class DashboardController extends Controller
                 $anchorBot !== null
                     ? IndicatorSetting::mergedFractalParams($anchorBot)
                     : FractalIndicatorService::defaultParams()
+            );
+        }
+        if (! empty($want['strat_assistant'])) {
+            $json['strat_assistant'] = $stratAssistant->compute(
+                $rows,
+                $anchorBot !== null
+                    ? IndicatorSetting::mergedStratAssistantParams($anchorBot)
+                    : StratAssistantIndicatorService::defaultParams()
             );
         }
         // --- OHLC-пакет OsEngine (без объёма): те же merge/default, что на графике бота ---

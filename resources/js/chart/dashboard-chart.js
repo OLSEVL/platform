@@ -16,12 +16,35 @@
     const SMC_INDICATOR_URL = boot.smcIndicatorUrl;
     // Классика OsEngine: BB/RSI/SMA/EMA/ATR (params с якорного бота).
     const CLASSIC_INDICATORS_URL = boot.classicIndicatorsUrl;
+    // Параметры клиентских индикаторов (дефолты модулей, если boot пуст).
+    const clientIndicatorParams = (boot.clientIndicatorParams && typeof boot.clientIndicatorParams === 'object')
+        ? boot.clientIndicatorParams
+        : {};
     const INSTRUMENTS_SIDEBAR_URL = boot.instrumentsSidebarUrl;
     // Сделки всех ботов пользователя по текущему инструменту → маркеры WIN/LOSE/OPEN.
     const CHART_TRADES_URL = boot.chartTradesUrl;
     // Лента зеркалимых на PO сделок для правой колонки dashboard.
     const LIVE_TRADES_URL = boot.liveTradesUrl;
     const LIVE_TRADES_ACTIVITY_TMPL = boot.liveTradesActivityTmpl;
+
+    /**
+     * Цвета свечей из профиля (дефолт PO: #22ff00 / #ff0000).
+     * Читаем один раз при boot — без лишней работы на каждом poll.
+     */
+    function normalizeCandleHex(raw, fallback) {
+        if (typeof raw !== 'string') return fallback;
+        let h = raw.trim().toLowerCase();
+        if (!h) return fallback;
+        if (h[0] !== '#') h = '#' + h;
+        if (/^#[0-9a-f]{3}$/.test(h)) {
+            h = '#' + h[1] + h[1] + h[2] + h[2] + h[3] + h[3];
+        }
+        return /^#[0-9a-f]{6}$/.test(h) ? h : fallback;
+    }
+    const CANDLE_UP_COLOR = normalizeCandleHex(boot.candleUpColor, '#22ff00');
+    const CANDLE_DOWN_COLOR = normalizeCandleHex(boot.candleDownColor, '#ff0000');
+    // Для Chrome MCP / e2e: проверить, что boot пробросил цвета профиля.
+    window.__platformCandleColors = { up: CANDLE_UP_COLOR, down: CANDLE_DOWN_COLOR };
 
     function serverUnixNow() {
         return window.PlatformServerClock ? PlatformServerClock.unixNow() : Math.floor(Date.now() / 1000);
@@ -154,10 +177,12 @@
         return Math.max(0, Math.min(periodSec, tfCloseCountdownAnchorSec - elapsed));
     }
     /**
-     * Горизонталь таймера: xCenter = x0 + (x1 - x0) * t, где x0/x1 — якорь последнего бара и слот справа (≈ barSpacing).
-     * t = 0 — у x0; t = 1 — на один интервал вправо; t = 1.5 / 2 — ещё дальше (полтора/два интервала). Только нижняя граница 0.
+     * Binodex: бейдж сразу справа от тела текущей свечи (не на 3 интервала вправо).
+     * px-зазор от правого края бара; вертикаль — close, центрируем через -translate-y-1/2 в CSS.
      */
-    const CANDLE_TIMER_GAP_T = 3;
+    const CANDLE_TIMER_GAP_PX = 6;
+    /** Фиксированный зазор над полоской last price (нижний край pill → линия). */
+    const CANDLE_TIMER_ABOVE_LINE_PX = 4;
 
     const chartPlaceholder = document.getElementById('chart-placeholder');
     const chartWrapper = document.getElementById('chart-wrapper');
@@ -223,6 +248,7 @@
     const layerLinRegChannel = document.getElementById('layer-linreg-channel');
     const layerKalman = document.getElementById('layer-kalman');
     const layerFractal = document.getElementById('layer-fractal');
+    const layerStratAssistant = document.getElementById('layer-strat-assistant');
     // 13 новых OsEngine OHLC-индикаторов (Donchian … Mass Index).
     const layerDonchian = document.getElementById('layer-donchian');
     const layerStochRsi = document.getElementById('layer-stoch-rsi');
@@ -475,6 +501,7 @@
             }
             if (layerKalman && typeof o.kalman === 'boolean') layerKalman.checked = o.kalman;
             if (layerFractal && typeof o.fractal === 'boolean') layerFractal.checked = o.fractal;
+            if (layerStratAssistant && typeof o.strat_assistant === 'boolean') layerStratAssistant.checked = o.strat_assistant;
             if (layerDonchian && typeof o.donchian === 'boolean') layerDonchian.checked = o.donchian;
             if (layerStochRsi && typeof o.stoch_rsi === 'boolean') layerStochRsi.checked = o.stoch_rsi;
             if (layerAc && typeof o.ac === 'boolean') layerAc.checked = o.ac;
@@ -559,6 +586,7 @@
                 linregChannel: layerLinRegChannel ? layerLinRegChannel.checked : false,
                 kalman: layerKalman ? layerKalman.checked : false,
                 fractal: layerFractal ? layerFractal.checked : false,
+                strat_assistant: layerStratAssistant ? layerStratAssistant.checked : false,
                 donchian: layerDonchian ? layerDonchian.checked : false,
                 stoch_rsi: layerStochRsi ? layerStochRsi.checked : false,
                 ac: layerAc ? layerAc.checked : false,
@@ -710,6 +738,114 @@
     let lastLinRegChannelPayload = null;
     let lastKalmanPayload = null;
     let lastFractalPayload = null;
+    let lastStratPayload = null;
+
+    /**
+     * Клиентские индикаторы (Strat/LS/PA/SMC + classic subset) — без HTTP.
+     * @param {{skipRender?: boolean, light?: boolean}} [opts]
+     * light=true — Strat+classic на in-bar тиках; PA/LS/SMC — на новом баре.
+     */
+    function recomputeClientIndicators(opts) {
+        const skipRender = !!(opts && opts.skipRender);
+        const light = !!(opts && opts.light);
+        if (!allChartData.length) {
+            if (!skipRender) {
+                if (typeof renderChartMarkers === 'function') renderChartMarkers();
+                if (typeof redrawPriceActionOverlay === 'function') redrawPriceActionOverlay();
+                if (typeof redrawLiquiditySwingsOverlay === 'function') redrawLiquiditySwingsOverlay();
+                if (typeof redrawSmcFlowOverlay === 'function') redrawSmcFlowOverlay();
+                if (typeof applyClassicOsEngineSeries === 'function') applyClassicOsEngineSeries();
+            }
+            return;
+        }
+        const p = clientIndicatorParams || {};
+
+        if (layerStratAssistant && layerStratAssistant.checked && window.PlatformStratAssistant) {
+            lastStratPayload = PlatformStratAssistant.compute(
+                allChartData,
+                p.strat_assistant || PlatformStratAssistant.DEFAULT_PARAMS
+            );
+        } else {
+            lastStratPayload = null;
+        }
+
+        if (!light) {
+            if (layerLiquidity && layerLiquidity.checked && window.PlatformLiquiditySwings) {
+                lastLsPayload = PlatformLiquiditySwings.compute(allChartData, p.liquidity_swings || null);
+            } else if (!(layerLiquidity && layerLiquidity.checked)) {
+                lastLsPayload = null;
+            }
+
+            if (layerPa && layerPa.checked && window.PlatformPriceActionDgt) {
+                const barSec = typeof timeframeSeconds === 'function'
+                    ? timeframeSeconds(currentTimeframeMinutes)
+                    : 60;
+                lastPaPayload = PlatformPriceActionDgt.compute(
+                    allChartData,
+                    p.price_action_dgt || null,
+                    barSec
+                );
+            } else if (!(layerPa && layerPa.checked)) {
+                lastPaPayload = null;
+            }
+
+            if (layerSmc && layerSmc.checked && window.PlatformSmcFlowCompute) {
+                lastSmcPayload = PlatformSmcFlowCompute.compute(allChartData, p.smc_flow || null);
+            } else if (!(layerSmc && layerSmc.checked)) {
+                lastSmcPayload = null;
+            }
+        }
+
+        const CI = window.PlatformClassicIndicators;
+        if (CI && typeof CI.computeAll === 'function') {
+            const wants = {
+                sma: !!(layerSma && layerSma.checked),
+                ema: !!(layerEma && layerEma.checked),
+                rsi: !!(layerRsi && layerRsi.checked),
+                bollinger: !!(layerBollinger && layerBollinger.checked),
+                atr: !!(layerAtr && layerAtr.checked),
+                macd: !!(layerMacd && layerMacd.checked),
+                vwma: !!(layerVwma && layerVwma.checked),
+                stochastic: !!(layerStochastic && layerStochastic.checked),
+            };
+            const classic = CI.computeAll(allChartData, wants, {
+                sma: p.sma,
+                ema: p.ema,
+                rsi: p.rsi,
+                bollinger: p.bollinger,
+                atr: p.atr,
+                macd: p.macd,
+                vwma: p.vwma,
+                stochastic: p.stochastic,
+            });
+            lastSmaPayload = wants.sma ? (classic.sma || null) : null;
+            lastEmaPayload = wants.ema ? (classic.ema || null) : null;
+            lastRsiPayload = wants.rsi ? (classic.rsi || null) : null;
+            lastBollingerPayload = wants.bollinger ? (classic.bollinger || null) : null;
+            lastAtrPayload = wants.atr ? (classic.atr || null) : null;
+            lastMacdPayload = wants.macd ? (classic.macd || null) : null;
+            lastVwmaPayload = wants.vwma ? (classic.vwma || null) : null;
+            lastStochasticPayload = wants.stochastic ? (classic.stochastic || null) : null;
+        }
+
+        if (!skipRender) {
+            if (!light) {
+                if (typeof applyPaBarColors === 'function') {
+                    applyPaBarColors({ fullResync: !!(layerPa && layerPa.checked) });
+                }
+                if (typeof redrawPriceActionOverlay === 'function') redrawPriceActionOverlay();
+                if (typeof redrawLiquiditySwingsOverlay === 'function') redrawLiquiditySwingsOverlay();
+                if (typeof redrawSmcFlowOverlay === 'function') redrawSmcFlowOverlay();
+            }
+            if (typeof applyClassicOsEngineSeries === 'function') applyClassicOsEngineSeries();
+            if (typeof renderChartMarkers === 'function') renderChartMarkers();
+        }
+    }
+
+    /** @deprecated alias */
+    function recomputeClientStrat(opts) {
+        recomputeClientIndicators(opts);
+    }
     let lastDonchianPayload = null;
     let lastStochRsiPayload = null;
     let lastAcPayload = null;
@@ -829,11 +965,101 @@
         return 'text-rose-400';
     }
 
+    /**
+     * WS op=payout: точечно обновляем % в сайдбаре (и панель CALL/PUT),
+     * без полного GET /instruments/data.
+     */
+    function applyInstrumentPayoutLive(msg) {
+        const instrument = String(msg?.instrument || '').trim();
+        if (!instrument) return;
+        const raw = msg.current_payout;
+        const n = (raw === null || raw === undefined) ? null : Number(raw);
+        const span = document.querySelector(
+            '.instrument-payout[data-instrument="' + CSS.escape(instrument) + '"]'
+        );
+        if (span) {
+            span.dataset.payout = (n == null || Number.isNaN(n)) ? '' : String(n);
+            span.textContent = (n == null || Number.isNaN(n)) ? '—' : `${Math.round(n)}%`;
+            span.className = 'instrument-payout text-xs font-medium ' + payoutClassByValue(n);
+        }
+        if (instrument === currentInstrument && typeof updateManualTradePayout === 'function') {
+            updateManualTradePayout();
+        }
+    }
+
+    /** Интервал HTTP сайдбара: при live — редкий heal (open_trade через bot_event). */
+    function instrumentsSidebarPollMs() {
+        if (boot.liveEnabled && boot.liveWsUrl && boot.liveToken) {
+            let ms = Number(boot.instrumentsRefreshMsLive);
+            if (!Number.isFinite(ms) || ms < 0) ms = 120000;
+            if (ms === 0) return 0; // caller должен не ставить setInterval
+            return Math.max(30000, ms);
+        }
+        return Math.max(1000, Number(boot.instrumentsRefreshMs) || 5000);
+    }
+
+    /** bot_event → флаги open_trade в сайдбаре dashboard (все боты пользователя). */
+    function applyDashSidebarBotEvent(msg) {
+        if (!msg || typeof msg !== 'object') return;
+        const myUserId = Number(boot.userId || 0);
+        if (myUserId > 0 && Number(msg.user_id || 0) !== myUserId) return;
+        const openMap = msg.open_instruments_user;
+        if (!openMap || typeof openMap !== 'object') return;
+        document.querySelectorAll('.instrument-btn').forEach((btn) => {
+            const inst = btn.dataset.instrument;
+            if (!inst) return;
+            const expiry = openMap[inst];
+            const isOpen = expiry != null && Number(expiry) > 0;
+            btn.dataset.openTrade = isOpen ? '1' : '0';
+            const showOpenTrade = !!(showTrades && isOpen);
+            btn.classList.toggle('bg-stone-800/45', showOpenTrade);
+            const nameWrap = btn.querySelector('.flex.min-w-0');
+            if (!nameWrap) return;
+            let timer = nameWrap.querySelector('.instrument-trade-timer');
+            if (showOpenTrade) {
+                if (!timer) {
+                    timer = document.createElement('span');
+                    timer.className = 'instrument-trade-timer shrink-0 text-xs font-mono tabular-nums text-stone-200';
+                    nameWrap.appendChild(timer);
+                }
+                timer.dataset.expiryTs = String(expiry);
+                timer.textContent = formatMmSs(Number(expiry) - serverUnixNow());
+            } else if (timer) {
+                timer.remove();
+            }
+        });
+    }
+    window.__dashSidebarOnBotEvent = applyDashSidebarBotEvent;
+
     function formatMmSs(totalSeconds) {
         const sec = Math.max(0, Math.floor(totalSeconds));
         const mm = Math.floor(sec / 60);
         const ss = sec % 60;
         return String(mm).padStart(2, '0') + ':' + String(ss).padStart(2, '0');
+    }
+
+    /** Binodex candle timer: «13s»; от 60с — «1:05» без ведущего нуля минут. */
+    function formatCandleCloseLeft(totalSeconds) {
+        const sec = Math.max(0, Math.floor(Number(totalSeconds) || 0));
+        if (sec < 60) {
+            return sec + 's';
+        }
+        const mm = Math.floor(sec / 60);
+        const ss = sec % 60;
+        return mm + ':' + String(ss).padStart(2, '0');
+    }
+
+    /**
+     * Fallback countdown от time последней свечи (когда серверный якорь = 0 / протух).
+     */
+    function candleCloseLeftFromLastBarOpen(tf) {
+        if (!allChartData.length) return null;
+        const lastT = Number(allChartData[allChartData.length - 1].time);
+        const period = timeframeSeconds(tf);
+        if (!Number.isFinite(lastT) || period <= 0) return null;
+        const elapsed = Math.max(0, serverUnixNow() - lastT);
+        const into = elapsed % period;
+        return into === 0 ? period : period - into;
     }
 
     function tickSidebarTradeTimers() {
@@ -858,47 +1084,60 @@
             candleTimerOverlay.classList.add('hidden');
             return;
         }
-        const yPrice = candlestickSeries.priceToCoordinate(last.close);
+        // Y = та же цена, что у полоски last price (smooth displayClose, иначе last.close).
+        let closePx = Number(last.close);
+        if (candleSmooth && typeof candleSmooth.getDisplayClose === 'function') {
+            const vis = Number(candleSmooth.getDisplayClose());
+            if (Number.isFinite(vis)) closePx = vis;
+        }
+        let yPrice = candlestickSeries.priceToCoordinate(closePx);
         if (yPrice == null || Number.isNaN(yPrice)) {
-            candleTimerOverlay.classList.add('hidden');
-            return;
+            // На кадрах зума/пересчёта price scale LWC иногда отдаёт null —
+            // не гасим бейдж, держим прошлый top.
+            const prevTop = parseFloat(candleTimerOverlay.style.top);
+            if (Number.isFinite(prevTop)) {
+                yPrice = prevTop;
+            } else {
+                return;
+            }
         }
         const ts = chart.timeScale();
         const lastIdx = allChartData.length - 1;
-        const t = Math.max(0, CANDLE_TIMER_GAP_T);
-        const bs = typeof ts.barSpacing === 'function' ? ts.barSpacing() : 6;
+        const bsRaw = typeof ts.barSpacing === 'function' ? ts.barSpacing() : null;
+        const bs = Number.isFinite(bsRaw) && bsRaw > 0 ? bsRaw : 6;
 
-        let x0 = null;
-        let x1 = null;
+        // Логический индекс стабильнее timeToCoordinate при анимации зума LWC.
+        let xCenter = null;
         if (typeof ts.logicalToCoordinate === 'function') {
-            x0 = ts.logicalToCoordinate(lastIdx);
-            x1 = ts.logicalToCoordinate(lastIdx + 1);
+            xCenter = ts.logicalToCoordinate(lastIdx);
         }
-        if (x0 == null || Number.isNaN(x0)) {
-            x0 = ts.timeToCoordinate(lastT);
+        if (xCenter == null || Number.isNaN(xCenter)) {
+            xCenter = ts.timeToCoordinate(lastT);
         }
-        if (x0 == null || Number.isNaN(x0)) {
-            candleTimerOverlay.classList.add('hidden');
+        if (xCenter == null || Number.isNaN(xCenter)) {
+            // Не мигаем hidden на промежуточном кадре зума — оставляем прошлую позицию.
             return;
         }
-        // Часто x1 === x0 или |x1-x0|≈0 — тогда (x1-x0)*t всегда 0 и CANDLE_TIMER_GAP_T «не работает».
-        if (x1 == null || Number.isNaN(x1) || Math.abs(x1 - x0) < 0.5) {
-            x1 = x0 + bs;
+        let xRight = xCenter + Math.min(bs * 0.45, 16) + CANDLE_TIMER_GAP_PX;
+        const plotW = chartWrapper ? chartWrapper.clientWidth : 0;
+        if (plotW > 0) {
+            // Прячем только если центр бара далеко вне экрана (не из‑за широкого barSpacing).
+            if (xCenter < -80 || xCenter > plotW + 80) {
+                candleTimerOverlay.classList.add('hidden');
+                return;
+            }
+            xRight = Math.max(4, Math.min(xRight, plotW - 8));
         }
-        const xCenter = x0 + (x1 - x0) * t;
         candleTimerOverlay.classList.remove('hidden');
-        const gapPx = 3;
-        candleTimerOverlay.style.left = xCenter + 'px';
-        candleTimerOverlay.style.top = Math.max(0, yPrice) + 'px';
-        candleTimerOverlay.style.transform = '';
-        if (candleTfLabelEl) {
-            candleTfLabelEl.style.bottom = gapPx + 'px';
-            candleTfLabelEl.style.top = 'auto';
-        }
+        candleTimerOverlay.style.left = xRight + 'px';
+        // top = линия last price; pill целиком НАД полоской (px, не %).
+        let pillH = 18;
         if (candleCloseTimerEl) {
-            candleCloseTimerEl.style.top = gapPx + 'px';
-            candleCloseTimerEl.style.bottom = 'auto';
+            const measured = candleCloseTimerEl.offsetHeight;
+            if (Number.isFinite(measured) && measured > 0) pillH = measured;
+            candleCloseTimerEl.style.transform = 'translateY(-' + (pillH + CANDLE_TIMER_ABOVE_LINE_PX) + 'px)';
         }
+        candleTimerOverlay.style.top = Math.max(0, yPrice) + 'px';
     }
 
     function tickCandleCloseTimer() {
@@ -914,19 +1153,21 @@
             candleCloseTimerEl.textContent = '';
             return;
         }
-        const left = currentTimeframeMinutes === 1
+        const leftRaw = currentTimeframeMinutes === 1
             ? m1CountdownLeftNow()
             : genericCountdownLeftNow(currentTimeframeMinutes);
+        let left = leftRaw;
+        if (left === null || left <= 0) {
+            const fallback = candleCloseLeftFromLastBarOpen(currentTimeframeMinutes);
+            if (fallback !== null) left = fallback;
+        }
         if (left === null) {
             if (candleTimerOverlay) candleTimerOverlay.classList.add('hidden');
             candleCloseTimerEl.textContent = '';
             return;
         }
-        if (candleTfLabelEl) {
-            candleTfLabelEl.textContent = timeframeLabel(currentTimeframeMinutes);
-        }
-        candleCloseTimerEl.textContent = formatMmSs(left);
-        requestAnimationFrame(positionCandleTimerOverlay);
+        candleCloseTimerEl.textContent = formatCandleCloseLeft(left);
+        scheduleCandleTimerSync();
     }
 
     /**
@@ -1666,182 +1907,117 @@
         return Math.min(x2, xLast - halfBar);
     }
 
-    function redrawStructureOverlay() {
-        if (!chart || !candlestickSeries || !structureOverlay) return;
-        if (!allChartData.length) {
-            structureOverlay.innerHTML = '';
-            redrawSweepRaidLiquidityOverlay();
-            requestAnimationFrame(redrawPriceActionOverlay);
-            return;
-        }
-        if (lastZones.length === 0) {
-            structureOverlay.innerHTML = '';
-            redrawSweepRaidLiquidityOverlay();
-            requestAnimationFrame(redrawPriceActionOverlay);
-            return;
-        }
-        const lastBarTime = allChartData[allChartData.length - 1].time;
 
-        const showOb = layerOb.checked;
-        const showFvg = layerFvg.checked;
-        structureOverlay.innerHTML = '';
-
-        /* rgba — явные стили: Tailwind CDN не подхватывает классы из строк JS */
-        const zonePaint = {
-            order_block_bull: { background: 'rgba(33, 87, 243, 0.2)', border: '1px solid rgba(33, 87, 243, 0.85)' },
-            order_block_bull_break: { background: 'rgba(255, 17, 0, 0.2)', border: '1px dashed rgba(255, 17, 0, 0.85)' },
-            order_block_bear: { background: 'rgba(255, 93, 0, 0.2)', border: '1px solid rgba(255, 93, 0, 0.85)' },
-            order_block_bear_break: { background: 'rgba(12, 181, 26, 0.2)', border: '1px dashed rgba(12, 181, 26, 0.85)' },
-            imbalance_bull: { background: 'rgba(14, 165, 233, 0.2)', border: '1px solid rgba(2, 132, 199, 0.45)' },
-            imbalance_bear: { background: 'rgba(14, 165, 233, 0.2)', border: '1px solid rgba(2, 132, 199, 0.45)' },
-            default: { background: 'rgba(156, 163, 175, 0.15)', border: '1px solid rgba(107, 114, 128, 0.35)' }
-        };
-
-        /** Подпись типа ордерблока внутри зоны (текст приходит с API на русском). */
-        function appendOrderBlockLabel(parent, z) {
-            if (!z.label || !String(z.type || '').startsWith('order_block')) return;
-            const lbl = document.createElement('span');
-            lbl.textContent = z.label;
-            lbl.style.position = 'absolute';
-            lbl.style.left = '4px';
-            lbl.style.top = '3px';
-            lbl.style.fontSize = '10px';
-            lbl.style.fontWeight = '600';
-            lbl.style.lineHeight = '1.2';
-            lbl.style.color = z.label_color || '#f4f4f5';
-            lbl.style.textShadow = '0 1px 2px rgba(0,0,0,0.9)';
-            lbl.style.pointerEvents = 'none';
-            lbl.style.whiteSpace = 'nowrap';
-            lbl.style.zIndex = '1';
-            parent.appendChild(lbl);
-        }
-
-        lastZones.forEach(z => {
-            const isOb = z.type.startsWith('order_block');
-            const isFvg = z.type.startsWith('imbalance');
-            if (isOb && !showOb) return;
-            if (isFvg && !showFvg) return;
-
-            if (lastBarTime < z.time_start) return;
-            const tEnd = z.time_end ?? lastBarTime;
-
-            const x1 = chart.timeScale().timeToCoordinate(z.time_start);
-            const x2 = zoneEndXClipped(chart.timeScale(), tEnd, allChartData);
-            if (x1 == null || x2 == null) return;
-            if (Math.abs(x2 - x1) < 1) return;
-
-            const y1 = candlestickSeries.priceToCoordinate(z.price_high);
-            const y2 = candlestickSeries.priceToCoordinate(z.price_low);
-            if (y1 == null || y2 == null) return;
-
-            const left = Math.min(x1, x2);
-            const width = Math.max(1, Math.abs(x2 - x1));
-            const top = Math.min(y1, y2);
-            const height = Math.max(1, Math.abs(y2 - y1));
-
-            const paint = zonePaint[z.type] || zonePaint.default;
-            const div = document.createElement('div');
-            div.style.position = 'absolute';
-            div.style.boxSizing = 'border-box';
-            div.style.pointerEvents = 'none';
-            div.style.left = left + 'px';
-            div.style.top = top + 'px';
-            div.style.width = width + 'px';
-            div.style.height = height + 'px';
-            div.style.background = z.fill || paint.background;
-            div.style.border = z.border || paint.border;
-            appendOrderBlockLabel(div, z);
-            structureOverlay.appendChild(div);
-        });
-        redrawSweepRaidLiquidityOverlay();
-        redrawEngulfingLiquidityOverlay();
-        requestAnimationFrame(redrawPriceActionOverlay);
+    /** Координаты LWC → canvas API (OB/PA/LS/SMC). */
+    function buildChartCanvasCoordApi(extra) {
+        if (!chart || !candlestickSeries) return null;
+        const ts = chart.timeScale();
+        return Object.assign({
+            viewportW: Math.max(1, chartWrapper?.clientWidth || 0),
+            viewportH: Math.max(1, chartWrapper?.clientHeight || 0),
+            timeToCoordinate: (t) => {
+                const x = ts.timeToCoordinate(Number(t));
+                return Number.isFinite(x) ? x : null;
+            },
+            priceToCoordinate: (p) => {
+                const y = candlestickSeries.priceToCoordinate(Number(p));
+                return Number.isFinite(y) ? y : null;
+            },
+            zoneEndX: (tEnd) => {
+                const x = zoneEndXClipped(ts, Number(tEnd), allChartData);
+                return Number.isFinite(x) ? x : null;
+            },
+            lastBarTime: allChartData.length ? allChartData[allChartData.length - 1].time : 0,
+        }, extra || {});
     }
+
+    /** Per-frame canvas paint тяжёлых оверлеев (без DOM thrash). */
+    function paintAllChartCanvasOverlaysFast() {
+        try {
+            redrawStructureOverlay({ skipFollowups: true });
+            redrawLiquiditySwingsOverlay();
+            redrawSweepRaidLiquidityOverlay();
+            redrawEngulfingLiquidityOverlay();
+            redrawPriceActionOverlay({ skipLiquidity: true, skipNameLabels: true });
+            if (layerSmc && layerSmc.checked && lastSmcPayload) redrawSmcFlowOverlay();
+        } catch (e) {
+            console.error('[chart] canvas overlays fast paint', e);
+        }
+    }
+
+
+    function redrawStructureOverlay(opts) {
+        const skipFollowups = !!(opts && opts.skipFollowups);
+        if (!chart || !candlestickSeries || !structureOverlay) return;
+        const painter = window.PlatformChartCanvasOverlay;
+        const showOb = !!(layerOb && layerOb.checked);
+        const showFvg = !!(layerFvg && layerFvg.checked);
+        const enabled = !!(allChartData.length && lastZones.length && (showOb || showFvg));
+        if (!painter || typeof painter.paintStructure !== 'function') {
+            structureOverlay.replaceChildren();
+        } else {
+            try {
+                const api = buildChartCanvasCoordApi({ enabled, showOb, showFvg });
+                if (api) painter.paintStructure(structureOverlay, lastZones, api);
+                else structureOverlay.replaceChildren();
+            } catch (e) {
+                console.error('[Structure] dashboard canvas redraw', e);
+            }
+        }
+        if (!skipFollowups) {
+            redrawSweepRaidLiquidityOverlay();
+            redrawEngulfingLiquidityOverlay();
+            requestAnimationFrame(redrawPriceActionOverlay);
+        }
+    }
+
 
     /**
      * Рисует Sweep / Raid независимо от Liquidity Swings:
      * lines отмечают снятые pivot-уровни, labels — фракталы, события и pullback-входы.
      * Цвета и видимость элементов уже нормализованы indicator-service на backend.
      */
+
+    /**
+     * Sweep / Raid — Canvas2D (lines + labels), без DOM на zoom.
+     */
     function redrawSweepRaidLiquidityOverlay() {
         if (!sweepRaidLiquidityOverlay || !chart || !candlestickSeries) return;
-        sweepRaidLiquidityOverlay.innerHTML = '';
-        if (!layerSweepRaid || !layerSweepRaid.checked || !lastSweepRaidPayload || !allChartData.length) return;
-
-        const timeScale = chart.timeScale();
-        const lines = Array.isArray(lastSweepRaidPayload.lines) ? lastSweepRaidPayload.lines : [];
-        const labels = Array.isArray(lastSweepRaidPayload.labels) ? lastSweepRaidPayload.labels : [];
-        const fontSize = { tiny: '8px', small: '9px', normal: '11px' }[lastSweepRaidPayload.label_size] || '9px';
-
-        lines.forEach((item) => {
-            const x1 = timeScale.timeToCoordinate(Number(item.time_start));
-            const x2 = timeScale.timeToCoordinate(Number(item.time_end));
-            const y = candlestickSeries.priceToCoordinate(Number(item.price));
-            if (![x1, x2, y].every(Number.isFinite)) return;
-
-            const line = document.createElement('div');
-            line.style.position = 'absolute';
-            line.style.left = Math.min(x1, x2) + 'px';
-            line.style.top = y + 'px';
-            line.style.width = Math.max(1, Math.abs(x2 - x1)) + 'px';
-            line.style.borderTop = Math.max(1, Number(item.width) || 1)
-                + 'px ' + (String(item.style).toLowerCase() === 'dotted' ? 'dotted ' : 'dashed ')
-                + paCssColor(item.color);
-            line.style.opacity = '0.85';
-            sweepRaidLiquidityOverlay.appendChild(line);
-        });
-
-        labels.forEach((item) => {
-            const x = timeScale.timeToCoordinate(Number(item.time));
-            const y = candlestickSeries.priceToCoordinate(Number(item.price));
-            if (![x, y].every(Number.isFinite)) return;
-            const below = String(item.position).toLowerCase() === 'below';
-            const label = document.createElement('span');
-            label.textContent = String(item.text || '');
-            label.style.position = 'absolute';
-            label.style.left = (x + 4) + 'px';
-            label.style.top = (y + (below ? 5 : -18)) + 'px';
-            label.style.padding = '2px 4px';
-            label.style.borderRadius = '3px';
-            label.style.background = 'rgba(15,23,42,0.88)';
-            label.style.color = paCssColor(item.color);
-            label.style.fontSize = fontSize;
-            label.style.fontWeight = '700';
-            label.style.whiteSpace = 'nowrap';
-            sweepRaidLiquidityOverlay.appendChild(label);
-        });
+        const painter = window.PlatformChartCanvasOverlay;
+        const enabled = !!(layerSweepRaid && layerSweepRaid.checked && lastSweepRaidPayload && allChartData.length);
+        if (!painter || typeof painter.paintLiquidity !== 'function') {
+            sweepRaidLiquidityOverlay.replaceChildren();
+            return;
+        }
+        try {
+            const api = buildChartCanvasCoordApi({ enabled });
+            if (api) painter.paintLiquidity(sweepRaidLiquidityOverlay, lastSweepRaidPayload, api);
+            else sweepRaidLiquidityOverlay.replaceChildren();
+        } catch (e) {
+            console.error('[SweepRaid] dashboard canvas redraw', e);
+        }
     }
+
 
     /** Метки ENGULF 1/2/3 — тот же формат labels, что у Sweep/Raid (без линий). */
+
     function redrawEngulfingLiquidityOverlay() {
         if (!engulfingLiquidityOverlay || !chart || !candlestickSeries) return;
-        engulfingLiquidityOverlay.innerHTML = '';
-        if (!layerEngulfing || !layerEngulfing.checked || !lastEngulfingPayload || !allChartData.length) return;
-
-        const timeScale = chart.timeScale();
-        const labels = Array.isArray(lastEngulfingPayload.labels) ? lastEngulfingPayload.labels : [];
-        const fontSize = { tiny: '8px', small: '9px', normal: '11px' }[lastEngulfingPayload.label_size] || '9px';
-
-        labels.forEach((item) => {
-            const x = timeScale.timeToCoordinate(Number(item.time));
-            const y = candlestickSeries.priceToCoordinate(Number(item.price));
-            if (![x, y].every(Number.isFinite)) return;
-            const below = String(item.position).toLowerCase() === 'below';
-            const label = document.createElement('span');
-            label.textContent = String(item.text || '');
-            label.style.position = 'absolute';
-            label.style.left = (x + 4) + 'px';
-            label.style.top = (y + (below ? 5 : -18)) + 'px';
-            label.style.padding = '2px 4px';
-            label.style.borderRadius = '3px';
-            label.style.background = 'rgba(15,23,42,0.88)';
-            label.style.color = paCssColor(item.color);
-            label.style.fontSize = fontSize;
-            label.style.fontWeight = '700';
-            label.style.whiteSpace = 'nowrap';
-            engulfingLiquidityOverlay.appendChild(label);
-        });
+        const painter = window.PlatformChartCanvasOverlay;
+        const enabled = !!(layerEngulfing && layerEngulfing.checked && lastEngulfingPayload && allChartData.length);
+        if (!painter || typeof painter.paintLiquidity !== 'function') {
+            engulfingLiquidityOverlay.replaceChildren();
+            return;
+        }
+        try {
+            const api = buildChartCanvasCoordApi({ enabled });
+            if (api) painter.paintLiquidity(engulfingLiquidityOverlay, lastEngulfingPayload, api);
+            else engulfingLiquidityOverlay.replaceChildren();
+        } catch (e) {
+            console.error('[Engulfing] dashboard canvas redraw', e);
+        }
     }
+
 
     function paCssColor(c) {
         if (c == null || c === '') return 'rgba(148,163,184,0.5)';
@@ -1870,40 +2046,10 @@
         parent.appendChild(div);
     }
 
+    /** PA DGT — клиентский пересчёт (без dashboard.indicators.price-action-dgt). */
     function fetchPriceActionIndicator() {
-        if (!currentInstrument || !layerPa || !layerPa.checked) {
-            lastPaPayload = null;
-            if (window.PlatformChartFetch) window.PlatformChartFetch.invalidate('pa');
-            redrawPriceActionOverlay();
-            applyPaBarColors({ fullResync: true });
-            return;
-        }
-        const params = new URLSearchParams({ instrument: currentInstrument, timeframe: String(currentTimeframeMinutes) });
-        const hist = appendIndicatorHistoryParams(params);
-        const key = currentInstrument + '|' + String(currentTimeframeMinutes) + '|' + hist.since + '|' + hist.limit;
-        if (!window.PlatformChartFetch) return;
-        // coalesce: повторный тик 15с с тем же key не стартует второй запрос.
-        PlatformChartFetch.requestJson('pa', {
-            key: key,
-            url: PA_INDICATOR_URL + '?' + params.toString(),
-            apply: (d) => {
-                try {
-                    lastPaPayload = d && d.indicator ? d.indicator : null;
-                    redrawPriceActionOverlay();
-                    applyPaBarColors({ fullResync: true });
-                    // PA отдаёт собственные markers (v_spike/atr) — пересобираем серию маркеров.
-                    renderChartMarkers();
-                } catch (e) {
-                    console.error('[PriceAction DGT] dashboard apply', e);
-                    lastPaPayload = null;
-                    try {
-                        redrawPriceActionOverlay();
-                        applyPaBarColors({ fullResync: true });
-                        renderChartMarkers();
-                    } catch (_) {}
-                }
-            },
-        });
+        if (window.PlatformChartFetch) window.PlatformChartFetch.invalidate('pa');
+        recomputeClientIndicators();
     }
 
     /**
@@ -2003,9 +2149,12 @@
         const paMk = (layerPa && layerPa.checked && lastPaPayload && Array.isArray(lastPaPayload.markers))
             ? lastPaPayload.markers
             : [];
+        const stratMk = (layerStratAssistant && layerStratAssistant.checked && lastStratPayload && Array.isArray(lastStratPayload.markers))
+            ? lastStratPayload.markers
+            : [];
         const merged = typeof PCM.mergeMarkers === 'function'
-            ? PCM.mergeMarkers(history, open, paMk)
-            : [...history, ...open, ...paMk].sort((a, b) => a.time - b.time);
+            ? PCM.mergeMarkers(history, open, paMk, stratMk)
+            : [...history, ...open, ...paMk, ...stratMk].sort((a, b) => a.time - b.time);
         const all = clipMarkersToCandles(merged);
 
         // Пустой plugin на серии + poll setData каждые 500ms → через ~5–7 мин «дырявый» хвост.
@@ -2112,6 +2261,74 @@
             nowSec: serverUnixNow(),
             show: !!showTrades,
         });
+    }
+
+    /** Серверные classic-слои (без клиентского subset SMA/EMA/RSI/BB/ATR/MACD/VWMA/Stoch). */
+    function anyServerClassicLayerOn() {
+        return !!(
+            (layerCci && layerCci.checked) ||
+            (layerKeltner && layerKeltner.checked) ||
+            (layerEnvelops && layerEnvelops.checked) ||
+            (layerParabolicSar && layerParabolicSar.checked) ||
+            (layerSuperTrend && layerSuperTrend.checked) ||
+            (layerAdx && layerAdx.checked) ||
+            (layerWilliams && layerWilliams.checked) ||
+            (layerAo && layerAo.checked) ||
+            (layerAlligator && layerAlligator.checked) ||
+            (layerIchimoku && layerIchimoku.checked) ||
+            (layerPriceChannel && layerPriceChannel.checked) ||
+            (layerNrtr && layerNrtr.checked) ||
+            (layerHma && layerHma.checked) ||
+            (layerAroon && layerAroon.checked) ||
+            (layerMomentum && layerMomentum.checked) ||
+            (layerRoc && layerRoc.checked) ||
+            (layerOsma && layerOsma.checked) ||
+            (layerTrix && layerTrix.checked) ||
+            (layerCmo && layerCmo.checked) ||
+            (layerDemarker && layerDemarker.checked) ||
+            (layerRvi && layerRvi.checked) ||
+            (layerUltimate && layerUltimate.checked) ||
+            (layerSmi && layerSmi.checked) ||
+            (layerStdDev && layerStdDev.checked) ||
+            (layerSmaChannel && layerSmaChannel.checked) ||
+            (layerIvashov && layerIvashov.checked) ||
+            (layerLinReg && layerLinReg.checked) ||
+            (layerLinRegChannel && layerLinRegChannel.checked) ||
+            (layerKalman && layerKalman.checked) ||
+            (layerFractal && layerFractal.checked) ||
+            (layerDonchian && layerDonchian.checked) ||
+            (layerStochRsi && layerStochRsi.checked) ||
+            (layerAc && layerAc.checked) ||
+            (layerBullsPower && layerBullsPower.checked) ||
+            (layerBearsPower && layerBearsPower.checked) ||
+            (layerDpo && layerDpo.checked) ||
+            (layerQstick && layerQstick.checked) ||
+            (layerVhFilter && layerVhFilter.checked) ||
+            (layerEfficiencyRatio && layerEfficiencyRatio.checked) ||
+            (layerRavi && layerRavi.checked) ||
+            (layerCog && layerCog.checked) ||
+            (layerPivotFloor && layerPivotFloor.checked) ||
+            (layerMassIndex && layerMassIndex.checked) ||
+            (layerNrtrWatr && layerNrtrWatr.checked) ||
+            (layerPriceChannelAdaptive && layerPriceChannelAdaptive.checked) ||
+            (layerPriceChannelOffset && layerPriceChannelOffset.checked) ||
+            (layerParabolicBollinger && layerParabolicBollinger.checked) ||
+            (layerParabolicPriceChannel && layerParabolicPriceChannel.checked) ||
+            (layerAtrChannel && layerAtrChannel.checked) ||
+            (layerOffsetSma && layerOffsetSma.checked) ||
+            (layerOffsetEma && layerOffsetEma.checked) ||
+            (layerOffsetSsma && layerOffsetSsma.checked) ||
+            (layerVolatilityAverage && layerVolatilityAverage.checked) ||
+            (layerVolatilityAverageChannel && layerVolatilityAverageChannel.checked) ||
+            (layerPriceOscillator && layerPriceOscillator.checked) ||
+            (layerDynamicTrendDetector && layerDynamicTrendDetector.checked) ||
+            (layerAdaptiveLookBack && layerAdaptiveLookBack.checked) ||
+            (layerLinRegChannelFast && layerLinRegChannelFast.checked) ||
+            (layerVolatilityCandles && layerVolatilityCandles.checked) ||
+            (layerZigZag && layerZigZag.checked) ||
+            (layerVolatilityAverageTwice && layerVolatilityAverageTwice.checked) ||
+            (layerVolatilityStagesAw && layerVolatilityStagesAw.checked)
+        );
     }
 
     /** Включён ли хотя бы один classic-слой OsEngine. */
@@ -2275,6 +2492,7 @@
         const wantLinRegChannel = layerLinRegChannel && layerLinRegChannel.checked && lastLinRegChannelPayload;
         const wantKalman = layerKalman && layerKalman.checked && lastKalmanPayload;
         const wantFractal = layerFractal && layerFractal.checked && lastFractalPayload;
+        const wantStrat = layerStratAssistant && layerStratAssistant.checked && lastStratPayload;
         const wantDonchian = layerDonchian && layerDonchian.checked && lastDonchianPayload;
         const wantStochRsi = layerStochRsi && layerStochRsi.checked && lastStochRsiPayload;
         const wantAc = layerAc && layerAc.checked && lastAcPayload;
@@ -4073,6 +4291,7 @@
         pushOverlay(wantLinRegChannel, lastLinRegChannelPayload, 'Linear Reg. Channel', 'layer-linreg-channel');
         pushOverlay(wantKalman, lastKalmanPayload, 'Kalman Filter', 'layer-kalman');
         pushOverlay(wantFractal, lastFractalPayload, 'Fractal', 'layer-fractal');
+        pushOverlay(wantStrat, lastStratPayload, 'Strat Assistant', 'layer-strat-assistant');
         pushOverlay(wantDonchian, lastDonchianPayload, 'Donchian', 'layer-donchian');
         pushOverlay(wantPivotFloor, lastPivotFloorPayload, 'Pivot Floor', 'layer-pivot-floor');
         pushOverlay(wantNrtrWatr, lastNrtrWatrPayload, 'NRTR WATR', 'layer-nrtr-watr');
@@ -4165,17 +4384,11 @@
         renderChartMarkers();
     }
 
-    /** Тянем только включённые classic-слои и рисуем series/panes. */
+    /** Тянем серверные classic-слои; клиентский subset уже в recomputeClientIndicators. */
     function fetchClassicIndicators() {
-        if (!currentInstrument || !anyClassicLayerOn()) {
-            lastBollingerPayload = null;
-            lastRsiPayload = null;
-            lastSmaPayload = null;
-            lastEmaPayload = null;
-            lastVwmaPayload = null;
-            lastAtrPayload = null;
-            lastMacdPayload = null;
-            lastStochasticPayload = null;
+        recomputeClientIndicators({ skipRender: true });
+        if (!currentInstrument || !anyServerClassicLayerOn()) {
+            // Чистим только серверные payload; клиентские уже выставлены recompute.
             lastCciPayload = null;
             lastKeltnerPayload = null;
             lastEnvelopsPayload = null;
@@ -4206,6 +4419,7 @@
             lastLinRegChannelPayload = null;
             lastKalmanPayload = null;
             lastFractalPayload = null;
+            // Strat клиентский — уже выставлен recomputeClientIndicators.
             lastDonchianPayload = null;
             lastStochRsiPayload = null;
             lastAcPayload = null;
@@ -4239,17 +4453,14 @@
             lastVolatilityAverageTwicePayload = null;
             lastVolatilityStagesAwPayload = null;
             if (window.PlatformChartFetch) window.PlatformChartFetch.invalidate('classic');
+            applyPaBarColors({ fullResync: !!(layerPa && layerPa.checked) });
+            redrawPriceActionOverlay();
+            redrawLiquiditySwingsOverlay();
+            redrawSmcFlowOverlay();
             applyClassicOsEngineSeries();
+            renderChartMarkers();
             return;
         }
-        const wantBb = layerBollinger && layerBollinger.checked;
-        const wantRsi = layerRsi && layerRsi.checked;
-        const wantSma = layerSma && layerSma.checked;
-        const wantEma = layerEma && layerEma.checked;
-        const wantVwma = layerVwma && layerVwma.checked;
-        const wantAtr = layerAtr && layerAtr.checked;
-        const wantMacd = layerMacd && layerMacd.checked;
-        const wantStochastic = layerStochastic && layerStochastic.checked;
         const wantCci = layerCci && layerCci.checked;
         const wantKeltner = layerKeltner && layerKeltner.checked;
         const wantEnvelops = layerEnvelops && layerEnvelops.checked;
@@ -4280,6 +4491,7 @@
         const wantLinRegChannel = layerLinRegChannel && layerLinRegChannel.checked;
         const wantKalman = layerKalman && layerKalman.checked;
         const wantFractal = layerFractal && layerFractal.checked;
+        const wantStrat = layerStratAssistant && layerStratAssistant.checked;
         const wantDonchian = layerDonchian && layerDonchian.checked;
         const wantStochRsi = layerStochRsi && layerStochRsi.checked;
         const wantAc = layerAc && layerAc.checked;
@@ -4313,14 +4525,6 @@
         const wantVolatilityAverageTwice = layerVolatilityAverageTwice && layerVolatilityAverageTwice.checked;
         const wantVolatilityStagesAw = layerVolatilityStagesAw && layerVolatilityStagesAw.checked;
         const layers = [];
-        if (wantBb) layers.push('bollinger');
-        if (wantRsi) layers.push('rsi');
-        if (wantSma) layers.push('sma');
-        if (wantEma) layers.push('ema');
-        if (wantVwma) layers.push('vwma');
-        if (wantAtr) layers.push('atr');
-        if (wantMacd) layers.push('macd');
-        if (wantStochastic) layers.push('stochastic');
         if (wantCci) layers.push('cci');
         if (wantKeltner) layers.push('keltner');
         if (wantEnvelops) layers.push('envelops');
@@ -4351,6 +4555,7 @@
         if (wantLinRegChannel) layers.push('linreg_channel');
         if (wantKalman) layers.push('kalman');
         if (wantFractal) layers.push('fractal');
+        // strat_assistant — PlatformStratAssistant на клиенте.
         if (wantDonchian) layers.push('donchian');
         if (wantStochRsi) layers.push('stoch_rsi');
         if (wantAc) layers.push('ac');
@@ -4406,14 +4611,6 @@
             url: CLASSIC_INDICATORS_URL + '?' + params.toString(),
             apply: (d) => {
                 try {
-                    lastBollingerPayload = wantBb && d && d.bollinger ? d.bollinger : null;
-                    lastRsiPayload = wantRsi && d && d.rsi ? d.rsi : null;
-                    lastSmaPayload = wantSma && d && d.sma ? d.sma : null;
-                    lastEmaPayload = wantEma && d && d.ema ? d.ema : null;
-                    lastVwmaPayload = wantVwma && d && d.vwma ? d.vwma : null;
-                    lastAtrPayload = wantAtr && d && d.atr ? d.atr : null;
-                    lastMacdPayload = wantMacd && d && d.macd ? d.macd : null;
-                    lastStochasticPayload = wantStochastic && d && d.stochastic ? d.stochastic : null;
                     lastCciPayload = wantCci && d && d.cci ? d.cci : null;
                     lastKeltnerPayload = wantKeltner && d && d.keltner ? d.keltner : null;
                     lastEnvelopsPayload = wantEnvelops && d && d.envelops ? d.envelops : null;
@@ -4476,6 +4673,7 @@
                     lastZigZagPayload = wantZigZag && d && d.zigzag ? d.zigzag : null;
                     lastVolatilityAverageTwicePayload = wantVolatilityAverageTwice && d && d.volatility_average_twice ? d.volatility_average_twice : null;
                     lastVolatilityStagesAwPayload = wantVolatilityStagesAw && d && d.volatility_stages_aw ? d.volatility_stages_aw : null;
+                    renderChartMarkers();
                     const layersSig = layers.slice().sort().join(',');
                     if (layersSig === lastClassicLayersSig && patchEnabledClassicSeriesData(layers)) {
                         // Pane не трогаем — только setData линий; viewport не трогаем.
@@ -4523,6 +4721,7 @@
                     lastLinRegChannelPayload = null;
                     lastKalmanPayload = null;
                     lastFractalPayload = null;
+                    lastStratPayload = null;
                     lastDonchianPayload = null;
                     lastStochRsiPayload = null;
                     lastAcPayload = null;
@@ -4565,60 +4764,20 @@
      * Тянем Liquidity Swings с отдельного эндпоинта (как DGT), чтобы не смешивать тяжёлые ответы.
      * Отрисовка — в redrawLiquiditySwingsOverlay(), вызывается перед PA-оверлеем.
      */
+    /** Liquidity Swings — клиентский пересчёт. */
     function fetchLiquiditySwingsIndicator() {
-        if (!currentInstrument || !layerLiquidity || !layerLiquidity.checked) {
-            lastLsPayload = null;
-            if (window.PlatformChartFetch) window.PlatformChartFetch.invalidate('liquidity');
-            redrawLiquiditySwingsOverlay();
-            return;
-        }
-        if (!window.PlatformChartFetch) return;
-        const params = new URLSearchParams({ instrument: currentInstrument, timeframe: String(currentTimeframeMinutes) });
-        const hist = appendIndicatorHistoryParams(params);
-        PlatformChartFetch.requestJson('liquidity', {
-            key: currentInstrument + '|' + String(currentTimeframeMinutes) + '|' + hist.since + '|' + hist.limit,
-            url: LS_INDICATOR_URL + '?' + params.toString(),
-            apply: (d) => {
-                try {
-                    lastLsPayload = d && d.liquidity_swings ? d.liquidity_swings : null;
-                    redrawLiquiditySwingsOverlay();
-                } catch (e) {
-                    console.error('[Liquidity Swings] dashboard apply', e);
-                    lastLsPayload = null;
-                    try { redrawLiquiditySwingsOverlay(); } catch (_) {}
-                }
-            },
-        });
+        if (window.PlatformChartFetch) window.PlatformChartFetch.invalidate('liquidity');
+        recomputeClientIndicators();
     }
 
     /**
      * SMC Flow — отдельный эндпоинт (как Liquidity Swings), чтобы не раздувать ответ DGT.
-     * Отрисовка в redrawSmcFlowOverlay(); вызывается из redrawPriceActionOverlay().
+     * Отрисовка: canvas PlatformSmcFlowOverlay (см. redrawSmcFlowOverlay).
      */
+    /** SMC Flow — клиентский пересчёт. */
     function fetchSmcFlowIndicator() {
-        if (!currentInstrument || !layerSmc || !layerSmc.checked) {
-            lastSmcPayload = null;
-            if (window.PlatformChartFetch) window.PlatformChartFetch.invalidate('smc');
-            redrawSmcFlowOverlay();
-            return;
-        }
-        if (!window.PlatformChartFetch) return;
-        const params = new URLSearchParams({ instrument: currentInstrument, timeframe: String(currentTimeframeMinutes) });
-        const hist = appendIndicatorHistoryParams(params);
-        PlatformChartFetch.requestJson('smc', {
-            key: currentInstrument + '|' + String(currentTimeframeMinutes) + '|' + hist.since + '|' + hist.limit,
-            url: SMC_INDICATOR_URL + '?' + params.toString(),
-            apply: (d) => {
-                try {
-                    lastSmcPayload = d && d.smc_flow ? d.smc_flow : null;
-                    redrawSmcFlowOverlay();
-                } catch (e) {
-                    console.error('[SMC Flow] dashboard apply', e);
-                    lastSmcPayload = null;
-                    try { redrawSmcFlowOverlay(); } catch (_) {}
-                }
-            },
-        });
+        if (window.PlatformChartFetch) window.PlatformChartFetch.invalidate('smc');
+        recomputeClientIndicators();
     }
 
     /** Размер подписей объёма: как Labels Size в LuxAlgo (tiny / small / normal). */
@@ -4632,88 +4791,25 @@
     /**
      * DOM-оверлей зон / линий / подписей объёма (аналог отображения в TradingView).
      */
+
+    /** Liquidity Swings — Canvas2D. */
     function redrawLiquiditySwingsOverlay() {
         if (!liquiditySwingsOverlay || !chart || !candlestickSeries) return;
-        liquiditySwingsOverlay.innerHTML = '';
-        if (!layerLiquidity || !layerLiquidity.checked || !lastLsPayload || !allChartData.length) return;
-        const ts = chart.timeScale();
-        const lastBarTime = allChartData[allChartData.length - 1].time;
+        const painter = window.PlatformChartCanvasOverlay;
+        const enabled = !!(layerLiquidity && layerLiquidity.checked && lastLsPayload && allChartData.length);
+        if (!painter || typeof painter.paintLiquidity !== 'function') {
+            liquiditySwingsOverlay.replaceChildren();
+            return;
+        }
         try {
-            const boxes = Array.isArray(lastLsPayload.boxes) ? lastLsPayload.boxes : [];
-            boxes.forEach((z) => {
-                if (!z || lastBarTime < z.time_start) return;
-                const tEnd = Math.min(lastBarTime, z.time_end);
-                const x1 = ts.timeToCoordinate(z.time_start);
-                const x2 = ts.timeToCoordinate(tEnd);
-                const y1 = candlestickSeries.priceToCoordinate(z.price_high);
-                const y2 = candlestickSeries.priceToCoordinate(z.price_low);
-                if (x1 == null || x2 == null || y1 == null || y2 == null) return;
-                const div = document.createElement('div');
-                div.style.position = 'absolute';
-                div.style.boxSizing = 'border-box';
-                div.style.pointerEvents = 'none';
-                div.style.left = Math.min(x1, x2) + 'px';
-                div.style.top = Math.min(y1, y2) + 'px';
-                div.style.width = Math.max(1, Math.abs(x2 - x1)) + 'px';
-                div.style.height = Math.max(1, Math.abs(y2 - y1)) + 'px';
-                div.style.background = z.fill || 'rgba(239,68,68,0.25)';
-                div.style.border = z.border && z.border !== 'none' ? z.border : 'none';
-                liquiditySwingsOverlay.appendChild(div);
-            });
-            const lines = Array.isArray(lastLsPayload.lines) ? lastLsPayload.lines : [];
-            lines.forEach((ln) => {
-                if (!ln || typeof ln !== 'object') return;
-                const x1 = ts.timeToCoordinate(Number(ln.time_start));
-                const x2 = ts.timeToCoordinate(Number(ln.time_end));
-                const y = candlestickSeries.priceToCoordinate(Number(ln.price));
-                if (x1 == null || x2 == null || y == null || Number.isNaN(x1) || Number.isNaN(x2) || Number.isNaN(y)) return;
-                const left = Math.min(x1, x2);
-                const w = Math.max(1, Math.abs(x2 - x1));
-                const st = (ln.style || 'Solid').toLowerCase();
-                const col = paCssColor(ln.color);
-                const lw = Math.max(1, Number(ln.width) || 1);
-                const div = document.createElement('div');
-                div.style.position = 'absolute';
-                div.style.left = left + 'px';
-                div.style.top = (y - lw / 2) + 'px';
-                div.style.width = w + 'px';
-                div.style.height = lw + 'px';
-                div.style.pointerEvents = 'none';
-                if (st === 'dotted' || st === 'dashed') {
-                    div.style.background = 'transparent';
-                    div.style.height = '0';
-                    div.style.borderTop = (st === 'dotted' ? `${lw}px dotted ` : `${lw}px dashed `) + col;
-                } else {
-                    div.style.background = col;
-                }
-                liquiditySwingsOverlay.appendChild(div);
-            });
-            const labels = Array.isArray(lastLsPayload.labels) ? lastLsPayload.labels : [];
-            labels.forEach((lb) => {
-                if (!lb || typeof lb !== 'object') return;
-                const x = ts.timeToCoordinate(Number(lb.time));
-                const y = candlestickSeries.priceToCoordinate(Number(lb.price));
-                if (x == null || y == null || Number.isNaN(x) || Number.isNaN(y)) return;
-                const span = document.createElement('span');
-                span.textContent = String(lb.text || '');
-                span.style.position = 'absolute';
-                span.style.left = x + 'px';
-                span.style.top = y + 'px';
-                span.style.transform = (lb.position === 'below')
-                    ? 'translate(-50%, 6px)'
-                    : 'translate(-50%, calc(-100% - 4px))';
-                span.style.fontSize = lsLabelFontPx(lastLsPayload.label_size);
-                span.style.fontWeight = '600';
-                span.style.lineHeight = '1';
-                span.style.color = paCssColor(lb.color);
-                span.style.pointerEvents = 'none';
-                span.style.whiteSpace = 'nowrap';
-                liquiditySwingsOverlay.appendChild(span);
-            });
+            const api = buildChartCanvasCoordApi({ enabled });
+            if (api) painter.paintLiquidity(liquiditySwingsOverlay, lastLsPayload, api);
+            else liquiditySwingsOverlay.replaceChildren();
         } catch (e) {
-            console.error('[Liquidity Swings] dashboard redraw', e);
+            console.error('[Liquidity Swings] dashboard canvas redraw', e);
         }
     }
+
 
     /** Mxwll BoS/CHoCH — горизонтальный пунктир структуры. */
     function smcIsStructureLine(ln) {
@@ -4813,240 +4909,78 @@
         fragment.appendChild(span);
     }
 
-    /** Зоны, линии и лейблы SMC Flow (UT Bot) — отдельный DOM-слой поверх DGT. */
+    /**
+     * SMC Flow на Canvas2D — тот же путь, что у Binodex: clear+stroke вместо recreate DOM.
+     * После подгрузки истории сегментов много; canvas держит зум плавным.
+     */
     function redrawSmcFlowOverlay() {
         if (!smcFlowOverlay || !chart || !candlestickSeries) return;
-        smcFlowOverlay.innerHTML = '';
-        if (!layerSmc || !layerSmc.checked || !lastSmcPayload || !allChartData.length) return;
-        const ts = chart.timeScale();
+        const painter = window.PlatformSmcFlowOverlay;
+        if (!painter || typeof painter.paint !== 'function') {
+            smcFlowOverlay.replaceChildren();
+            return;
+        }
         try {
-            const areas = Array.isArray(lastSmcPayload.areas) ? lastSmcPayload.areas : [];
-            const lines = Array.isArray(lastSmcPayload.lines) ? lastSmcPayload.lines : [];
-            const labels = Array.isArray(lastSmcPayload.labels) ? lastSmcPayload.labels : [];
-            const structureLines = [];
-            const otherLines = [];
-            lines.forEach((ln) => {
-                if (smcIsStructureLine(ln)) structureLines.push(ln);
-                else otherLines.push(ln);
+            const ts = chart.timeScale();
+            const enabled = !!(layerSmc && layerSmc.checked && lastSmcPayload && allChartData.length);
+            painter.paint(smcFlowOverlay, lastSmcPayload, {
+                enabled,
+                viewportW: Math.max(1, chartWrapper?.clientWidth || 0),
+                viewportH: Math.max(1, chartWrapper?.clientHeight || 0),
+                timeToCoordinate: (t) => {
+                    const x = ts.timeToCoordinate(Number(t));
+                    return Number.isFinite(x) ? x : null;
+                },
+                priceToCoordinate: (p) => {
+                    const y = candlestickSeries.priceToCoordinate(Number(p));
+                    return Number.isFinite(y) ? y : null;
+                },
+                zoneEndX: (tEnd) => {
+                    const x = zoneEndXClipped(ts, Number(tEnd), allChartData);
+                    return Number.isFinite(x) ? x : null;
+                },
             });
-            const fragment = document.createDocumentFragment();
-            const viewportW = Math.max(1, chartWrapper?.clientWidth || 0);
-            const maxRenderable = Math.max(250, Math.min(900, Math.floor(viewportW * 0.9)));
-            let rendered = 0;
-            areas.forEach((ar) => {
-                if (rendered >= maxRenderable) return;
-                if (!ar || typeof ar !== 'object') return;
-                const x1 = ts.timeToCoordinate(Number(ar.time_start));
-                const x2 = zoneEndXClipped(ts, Number(ar.time_end), allChartData);
-                const y1 = candlestickSeries.priceToCoordinate(Number(ar.price_high));
-                const y2 = candlestickSeries.priceToCoordinate(Number(ar.price_low));
-                if (x1 == null || x2 == null || y1 == null || y2 == null) return;
-                if (Math.abs(x2 - x1) < 1) return;
-                if ([x1, x2, y1, y2].some((v) => Number.isNaN(v))) return;
-                if (Math.max(x1, x2) < -80 || Math.min(x1, x2) > viewportW + 80) return;
-                const div = document.createElement('div');
-                div.style.position = 'absolute';
-                div.style.pointerEvents = 'none';
-                div.style.boxSizing = 'border-box';
-                div.style.left = Math.min(x1, x2) + 'px';
-                div.style.top = Math.min(y1, y2) + 'px';
-                div.style.width = Math.max(1, Math.abs(x2 - x1)) + 'px';
-                div.style.height = Math.max(1, Math.abs(y2 - y1)) + 'px';
-                div.style.background = paCssColor(ar.fill || 'rgba(41,98,255,0.24)');
-                div.style.border = (ar.border && ar.border !== 'none') ? String(ar.border) : 'none';
-                fragment.appendChild(div);
-                rendered++;
-            });
-            // Пунктиры BoS/CHoCH — в приоритете, иначе их вытесняют сегменты UT/Hull.
-            structureLines.forEach((ln) => {
-                if (smcAppendOverlayLine(fragment, ts, ln, viewportW)) rendered++;
-            });
-            otherLines.forEach((ln) => {
-                if (rendered >= maxRenderable) return;
-                if (smcAppendOverlayLine(fragment, ts, ln, viewportW)) rendered++;
-            });
-            labels.forEach((lb) => smcAppendOverlayLabel(fragment, ts, lb, viewportW));
-            smcFlowOverlay.appendChild(fragment);
         } catch (e) {
             console.error('[SMC Flow] dashboard redraw', e);
         }
     }
 
-    function redrawPriceActionOverlay() {
-        redrawLiquiditySwingsOverlay();
-        // SMC Flow не зависит от слоя DGT — перерисовываем всегда при sync оверлеев.
-        redrawSmcFlowOverlay();
+
+    /** PA DGT + VP — Canvas2D. */
+    function redrawPriceActionOverlay(opts) {
+        const skipLiquidity = !!(opts && opts.skipLiquidity);
+        const skipLabels = !!(opts && opts.skipNameLabels);
+        if (!skipLiquidity) {
+            redrawLiquiditySwingsOverlay();
+        }
         try {
             if (!priceActionOverlay || !chart || !candlestickSeries) return;
-            priceActionOverlay.innerHTML = '';
-            if (!layerPa || !layerPa.checked || !lastPaPayload || !allChartData.length) return;
-            const ts = chart.timeScale();
-            const vpPanelMaxHistPx = 100;
-            const vpPanelMaxDomPx = 26;
-            const vpPanelGapPx = 2;
-            /** Правый край колонки VP = левый край области подписей цен (ширина шкалы меняется при зуме и формате чисел). */
-            const computeVpAnchorRight = () => {
-                const cw = chartWrapper.clientWidth || 0;
-                if (!Number.isFinite(cw) || cw < 40) return null;
-                let scaleW = 0;
-                try {
-                    if (candlestickSeries && typeof candlestickSeries.priceScale === 'function') {
-                        scaleW = Number(candlestickSeries.priceScale().width());
-                    }
-                } catch (_) {
-                    scaleW = 0;
-                }
-                if (!Number.isFinite(scaleW) || scaleW < 0) scaleW = 0;
-                // На первом кадре width() иногда 0 — не даём VP уехать вправо за холст (старый запас ~78px).
-            const effectiveScale = scaleW > 0 ? scaleW : 78;
-            const borderGapPx = 1;
-            const anchor = cw - effectiveScale - borderGapPx;
-            return anchor > 8 ? anchor : null;
-        };
-        const appendVpLevelBar = (leftPx, topPx, widthPx, heightPx, background, opacity) => {
-            if (!Number.isFinite(leftPx) || !Number.isFinite(topPx) || !Number.isFinite(widthPx) || !Number.isFinite(heightPx)) return;
-            const div = document.createElement('div');
-            div.style.position = 'absolute';
-            div.style.left = leftPx + 'px';
-            div.style.top = topPx + 'px';
-            div.style.width = Math.max(1, widthPx) + 'px';
-            div.style.height = Math.max(1, heightPx) + 'px';
-            div.style.background = paCssColor(background);
-            div.style.opacity = opacity;
-            div.style.pointerEvents = 'none';
-            priceActionOverlay.appendChild(div);
-        };
-        try {
-            const lines = lastPaPayload.lines || [];
-            lines.forEach((ln) => {
-                if (!ln || typeof ln !== 'object') return;
-                const x1 = ts.timeToCoordinate(Number(ln.time_start));
-                const x2 = ts.timeToCoordinate(Number(ln.time_end));
-                const y = candlestickSeries.priceToCoordinate(Number(ln.price));
-                if (x1 == null || x2 == null || y == null || Number.isNaN(x1) || Number.isNaN(x2) || Number.isNaN(y)) return;
-                const left = Math.min(x1, x2);
-                const w = Math.max(1, Math.abs(x2 - x1));
-                const st = (ln.style || 'Solid').toLowerCase();
-                const col = paCssColor(ln.color);
-                const lw = Math.max(1, Number(ln.width) || 1);
-                const div = document.createElement('div');
-                div.style.position = 'absolute';
-                div.style.left = left + 'px';
-                div.style.top = (y - lw / 2) + 'px';
-                div.style.width = w + 'px';
-                div.style.height = lw + 'px';
-                div.style.pointerEvents = 'none';
-                if (st === 'dotted' || st === 'dashed') {
-                    div.style.background = 'transparent';
-                    div.style.height = '0';
-                    div.style.borderTop = (st === 'dotted' ? `${lw}px dotted ` : `${lw}px dashed `) + col;
-                } else {
-                    div.style.background = col;
-                }
-                priceActionOverlay.appendChild(div);
-            });
-            const vp = lastPaPayload.volume_profile || {};
-            const boxes = Array.isArray(vp.boxes) ? vp.boxes : [];
-            let boxCount = 0;
-            const anchorRight = computeVpAnchorRight();
-            let vpDividerY1 = null;
-            let vpDividerY2 = null;
-            for (let i = 0; i < boxes.length; i++) {
-                if (boxCount > 400) break;
-                const b = boxes[i];
-                if (!b || typeof b !== 'object') continue;
-                if (b.kind === 'vp_hist' && boxes[i + 1] && boxes[i + 1].kind === 'vp_dom') {
-                    const domBox = boxes[i + 1];
-                    const y1 = candlestickSeries.priceToCoordinate(Number(b.price_high));
-                    const y2 = candlestickSeries.priceToCoordinate(Number(b.price_low));
-                    if (y1 == null || y2 == null || anchorRight == null || !Number.isFinite(anchorRight)) {
-                        i += 1;
-                        continue;
-                    }
-                    const wrH = typeof b.width_ratio === 'number' ? b.width_ratio : 0.5;
-                    const spanHist = Math.max(8, Math.min(vpPanelMaxHistPx, wrH * (vpPanelMaxHistPx + 8)));
-                    const sr = typeof domBox.strength_ratio === 'number' ? domBox.strength_ratio : 0;
-                    const spanDom = Math.max(4, Math.min(vpPanelMaxDomPx, 5 + sr * (vpPanelMaxDomPx - 2)));
-                    const top = Math.min(y1, y2);
-                    const h = Math.max(1, Math.abs(y2 - y1));
-                    const leftDom = anchorRight - spanDom;
-                    const leftHist = leftDom - vpPanelGapPx - spanHist;
-                    appendVpLevelBar(leftHist, top, spanHist, h, b.background, '0.78');
-                    appendVpLevelBar(leftDom, top, spanDom, h, domBox.background, '0.88');
-                    if (vpDividerY1 == null) { vpDividerY1 = top; vpDividerY2 = top + h; }
-                    else { vpDividerY1 = Math.min(vpDividerY1, top); vpDividerY2 = Math.max(vpDividerY2, top + h); }
-                    boxCount += 2;
-                    i += 1;
-                    continue;
-                }
-                if (b.kind === 'vp_hist' || b.kind === 'vp_dom') {
-                    const y1 = candlestickSeries.priceToCoordinate(Number(b.price_high));
-                    const y2 = candlestickSeries.priceToCoordinate(Number(b.price_low));
-                    if (y1 == null || y2 == null || anchorRight == null || !Number.isFinite(anchorRight)) continue;
-                    const wr = typeof b.width_ratio === 'number' ? b.width_ratio : 0.5;
-                    const spanMax = b.kind === 'vp_dom' ? vpPanelMaxDomPx : vpPanelMaxHistPx;
-                    const span = Math.max(6, Math.min(spanMax, wr * (spanMax + 6)));
-                    const top = Math.min(y1, y2);
-                    const h = Math.max(1, Math.abs(y2 - y1));
-                    appendVpLevelBar(anchorRight - span, top, span, h, b.background, b.kind === 'vp_dom' ? '0.88' : '0.78');
-                    boxCount += 1;
-                    continue;
-                }
-                const x1 = ts.timeToCoordinate(Number(b.time_start));
-                const x2 = ts.timeToCoordinate(Number(b.time_end));
-                const yTop = candlestickSeries.priceToCoordinate(Number(b.price_high));
-                const yBot = candlestickSeries.priceToCoordinate(Number(b.price_low));
-                if (x1 == null || x2 == null || yTop == null || yBot == null) continue;
-                const div = document.createElement('div');
-                div.style.position = 'absolute';
-                div.style.boxSizing = 'border-box';
-                div.style.pointerEvents = 'none';
-                if (b.kind === 'vp_frame' && anchorRight != null && Number.isFinite(anchorRight)) {
-                    const panelW = vpPanelMaxHistPx + vpPanelGapPx + vpPanelMaxDomPx + 4;
-                    const yA = Math.min(yTop, yBot);
-                    const yB = Math.max(yTop, yBot);
-                    div.style.left = (anchorRight - panelW) + 'px';
-                    div.style.top = yA + 'px';
-                    div.style.width = Math.max(8, panelW) + 'px';
-                    div.style.height = Math.max(4, Math.abs(yB - yA)) + 'px';
-                    div.style.border = '1px dashed ' + (b.border || 'rgba(156,163,175,0.35)');
-                    div.style.background = 'transparent';
-                } else {
-                    div.style.left = Math.min(x1, x2) + 'px';
-                    div.style.top = Math.min(yTop, yBot) + 'px';
-                    div.style.width = Math.max(1, Math.abs(x2 - x1)) + 'px';
-                    div.style.height = Math.max(1, Math.abs(yBot - yTop)) + 'px';
-                    if (b.kind === 'vp_frame') {
-                        div.style.border = '1px dashed ' + (b.border || 'rgba(156,163,175,0.35)');
-                        div.style.background = 'transparent';
-                    } else {
-                        div.style.background = paCssColor(b.background);
-                        div.style.border = '1px solid rgba(255,255,255,0.08)';
-                    }
-                }
-                priceActionOverlay.appendChild(div);
-                boxCount++;
+            const painter = window.PlatformChartCanvasOverlay;
+            const enabled = !!(layerPa && layerPa.checked && lastPaPayload && allChartData.length);
+            if (!painter || typeof painter.paintPriceAction !== 'function') {
+                priceActionOverlay.replaceChildren();
+                return;
             }
-            if (anchorRight != null && vpDividerY1 != null && vpDividerY2 != null && vpDividerY2 > vpDividerY1) {
-                const splitX = anchorRight - vpPanelMaxDomPx - vpPanelGapPx * 0.5;
-                const line = document.createElement('div');
-                line.style.position = 'absolute';
-                line.style.left = splitX + 'px';
-                line.style.top = vpDividerY1 + 'px';
-                line.style.width = '1px';
-                line.style.height = Math.max(2, vpDividerY2 - vpDividerY1) + 'px';
-                line.style.background = 'rgba(226,232,240,0.4)';
-                line.style.pointerEvents = 'none';
-                priceActionOverlay.appendChild(line);
+            let scaleW = 0;
+            try {
+                if (typeof candlestickSeries.priceScale === 'function') {
+                    scaleW = Number(candlestickSeries.priceScale().width()) || 0;
+                }
+            } catch (_) {
+                scaleW = 0;
             }
+            const api = buildChartCanvasCoordApi({ enabled, priceScaleWidth: scaleW });
+            if (api) painter.paintPriceAction(priceActionOverlay, lastPaPayload, api);
+            else priceActionOverlay.replaceChildren();
         } catch (e) {
-            console.error('[PriceAction DGT] dashboard redraw', e);
-        }
+            console.error('[PriceAction DGT] dashboard canvas redraw', e);
         } finally {
-            // Названия structural/classic-слоёв обновляем после любого выхода из PA overlay.
-            renderAllIndicatorNameLabels();
+            if (!skipLabels && typeof renderAllIndicatorNameLabels === 'function') {
+                renderAllIndicatorNameLabels();
+            }
         }
     }
+
 
     /**
      * Pocket Option считает свечу растущей только при close > open.
@@ -5066,9 +5000,9 @@
         }
         return {
             ...bar,
-            color: '#ef5350',
-            borderColor: '#ef5350',
-            wickColor: '#ef5350',
+            color: CANDLE_DOWN_COLOR,
+            borderColor: CANDLE_DOWN_COLOR,
+            wickColor: CANDLE_DOWN_COLOR,
         };
     }
 
@@ -5239,13 +5173,22 @@
 
     function fetchStructures() {
         if (!currentInstrument) return;
+        const wantSweepRaid = !!(layerSweepRaid && layerSweepRaid.checked);
+        const wantEngulfing = !!(layerEngulfing && layerEngulfing.checked);
+        const wantOb = !!(layerOb && layerOb.checked);
+        const wantFvg = !!(layerFvg && layerFvg.checked);
+        // Нет включённых слоёв зон — не бьём /structures каждые 15с впустую.
+        if (!wantOb && !wantFvg && !wantSweepRaid && !wantEngulfing) {
+            lastZones = [];
+            lastSweepRaidPayload = null;
+            lastEngulfingPayload = null;
+            return;
+        }
         if (!window.PlatformChartFetch) return;
         const params = new URLSearchParams({
             instrument: currentInstrument,
             timeframe: String(currentTimeframeMinutes)
         });
-        const wantSweepRaid = !!(layerSweepRaid && layerSweepRaid.checked);
-        const wantEngulfing = !!(layerEngulfing && layerEngulfing.checked);
         if (wantSweepRaid) params.set('include_sweep_raid', '1');
         if (wantEngulfing) params.set('include_engulfing', '1');
         const hist = appendIndicatorHistoryParams(params);
@@ -5260,10 +5203,7 @@
                 lastEngulfingPayload = wantEngulfing && data && data.engulfing_liquidity
                     ? data.engulfing_liquidity
                     : null;
-                const needStructureOverlay = (layerOb && layerOb.checked)
-                    || (layerFvg && layerFvg.checked)
-                    || wantSweepRaid
-                    || wantEngulfing;
+                const needStructureOverlay = wantOb || wantFvg || wantSweepRaid || wantEngulfing;
                 if (needStructureOverlay) scheduleChartDomOverlaySyncHeavy();
             },
         });
@@ -5271,8 +5211,9 @@
 
     function startAutoRefresh() {
         if (refreshInterval) clearInterval(refreshInterval);
+        refreshInterval = null;
 
-        // Один poll-тик: при живом WS вызывается редко (soft-resync), иначе каждые 500ms.
+        // HTTP poll только без live WS. При live — хвост исключительно через /chart-live.
         const pollOnce = () => {
             if (chartViewportSettling || !currentInstrument || loadingMore || !candlestickSeries) return;
             const inst = currentInstrument;
@@ -5296,6 +5237,11 @@
                             maintainTailViewportIfFollowing();
                         }
                     }
+                    // Poll-режим: на новой свече сразу обновить индикаторы (не ждать 15с).
+                    const newLastT = newData.length ? newData[newData.length - 1].time : null;
+                    if (prevLastT != null && newLastT != null && newLastT > prevLastT) {
+                        refreshOverlaysOnNewBar();
+                    }
                 })
                 .catch(console.error);
         };
@@ -5305,12 +5251,19 @@
             refreshInterval = setInterval(pollOnce, Math.max(250, ms | 0));
         };
 
-        // PR2: если boot включил live и PlatformChartLive есть — тики с hub, poll = resync.
+        const stopPoll = () => {
+            if (refreshInterval) {
+                clearInterval(refreshInterval);
+                refreshInterval = null;
+            }
+        };
+
         const liveOk = !!(boot.liveEnabled && boot.liveWsUrl && boot.liveToken
             && window.PlatformChartLive && typeof window.PlatformChartLive.create === 'function');
-        const resyncMs = Math.max(5000, Number(boot.liveResyncPollMs) || 20000);
 
         if (liveOk) {
+            stopPoll();
+            // Клиент мог уже стартовать ради payout broadcast — только донастраиваем S5.
             if (!chartLiveClient) {
                 chartLiveClient = window.PlatformChartLive.create({
                     wsUrl: boot.liveWsUrl,
@@ -5320,15 +5273,37 @@
                     getLastBar: () => (allChartData.length ? allChartData[allChartData.length - 1] : null),
                     onLiveBar: (bar) => {
                         if (chartViewportSettling || !candlestickSeries || !bar) return;
+                        const prevLast = allChartData.length ? allChartData[allChartData.length - 1].time : null;
                         const followTail = isViewNearRightEdge();
                         applyIncrementalChartUpdate([bar], { liveTail: followTail, poll: true });
                         tickCandleCloseTimer();
                         if (followTail) maintainTailViewportIfFollowing();
+                        // Новая свеча при live WS → оверлеи (раньше только 15с poll / смена инструмента).
+                        const barT = Number(bar.time);
+                        if (prevLast != null && Number.isFinite(barT) && barT > Number(prevLast)) {
+                            refreshOverlaysOnNewBar();
+                        }
+                    },
+                    onPayout: applyInstrumentPayoutLive,
+                    onBotEvent: (msg) => {
+                        // Лента «СДЕЛКИ PO»: полный upsert карточки (см. initDashPoTrades).
+                        if (typeof window.__dashPoTradesOnBotEvent === 'function') {
+                            try { window.__dashPoTradesOnBotEvent(msg); } catch (_) {}
+                        }
+                        // Сайдбар open_trade флаги по всем ботам пользователя.
+                        if (typeof window.__dashSidebarOnBotEvent === 'function') {
+                            try { window.__dashSidebarOnBotEvent(msg); } catch (_) {}
+                        }
+                        // Маркеры сделок на графике — только при «Торговля» (debounce).
+                        if (showTrades && typeof fetchChartTrades === 'function') {
+                            if (window.__dashChartTradesDebounce) clearTimeout(window.__dashChartTradesDebounce);
+                            window.__dashChartTradesDebounce = setTimeout(() => {
+                                try { fetchChartTrades(); } catch (_) {}
+                            }, 250);
+                        }
                     },
                     onConnectionChange: (ok) => {
-                        // Connected → редкий REST resync; обрыв → снова 500ms poll.
-                        schedulePoll(ok ? resyncMs : 500);
-                        // PR3: heal только без live (и если healEnabled).
+                        // Без HTTP fallback: только reconnect + heal.
                         if (ok) stopCandleHealLoop();
                         else startCandleHealLoop();
                     },
@@ -5337,8 +5312,6 @@
                 chartLiveClient.resubscribe();
             }
             chartLiveClient.start();
-            // Пока hello не пришёл — держим 500ms; onConnectionChange переключит.
-            schedulePoll(chartLiveClient.isConnected() ? resyncMs : 500);
             if (chartLiveClient.isConnected()) stopCandleHealLoop();
             else startCandleHealLoop();
         } else {
@@ -5351,23 +5324,25 @@
 
     /**
      * Раз в OVERLAYS_REFRESH_MS подтягиваем тяжёлые оверлеи: зоны структуры и
-     * Price Action DGT. Дополнительно один раз сразу запускаем (ниже),
-     * чтобы при выборе инструмента оверлеи появились без 15-секундной задержки.
+     * индикаторы. Плюс refreshOverlaysOnNewBar() при появлении новой свечи (live/poll).
      */
+    function refreshOverlaysOnNewBar() {
+        if (!currentInstrument || loadingMore || !candlestickSeries) return;
+        recomputeClientIndicators();
+        fetchStructures();
+        if (anyServerClassicLayerOn()) fetchClassicIndicators();
+    }
+
     function startOverlaysRefresh() {
+        // Редкий heal серверных classic/структур; клиентские — на каждом баре локально.
         if (overlaysRefreshInterval) clearInterval(overlaysRefreshInterval);
         overlaysRefreshInterval = setInterval(() => {
             if (!currentInstrument || loadingMore || !candlestickSeries) return;
-            // Структуры обновляем всегда (легче по объёму ответа), DGT — только если слой включён.
+            recomputeClientIndicators();
             fetchStructures();
-            if (layerPa && layerPa.checked) fetchPriceActionIndicator();
-            if (layerLiquidity && layerLiquidity.checked) fetchLiquiditySwingsIndicator();
-            if (layerSmc && layerSmc.checked) fetchSmcFlowIndicator();
-            // Маркеры сделок — только при включённой «Торговле» (иначе лишний plugin на серии).
             if (showTrades) fetchChartTrades();
-            // Классика OsEngine — только если чекбоксы включены.
-            if (anyClassicLayerOn()) fetchClassicIndicators();
-        }, OVERLAYS_REFRESH_MS);
+            if (anyServerClassicLayerOn()) fetchClassicIndicators();
+        }, Math.max(30000, OVERLAYS_REFRESH_MS * 2));
     }
 
     function stopOverlaysRefresh() {
@@ -5511,6 +5486,8 @@
             if (candleSmooth && allChartData.length) {
                 candleSmooth.snap(allChartData[allChartData.length - 1]);
             }
+            recomputeClientIndicators();
+            if (typeof renderChartMarkers === 'function') renderChartMarkers();
             tickCandleCloseTimer();
             applyPaBarColors({ fullResync: true });
             requestAnimationFrame(redrawPriceActionOverlay);
@@ -5552,6 +5529,8 @@
         if (prependedOlder) {
             lastSyncedTailKey = '';
             resyncCandlestickSeriesFromAllChartData({ preserveRange: true });
+            recomputeClientIndicators();
+            if (typeof renderChartMarkers === 'function') renderChartMarkers();
             tickCandleCloseTimer();
             requestAnimationFrame(redrawPriceActionOverlay);
             return;
@@ -5563,8 +5542,11 @@
             maintainTailViewportIfFollowing();
         }
 
+        const barAdvanced = appendedNewBars || newestTime > prevLast;
+        recomputeClientIndicators(barAdvanced ? undefined : { light: true });
+        if (typeof renderChartMarkers === 'function') renderChartMarkers();
         tickCandleCloseTimer();
-        if (layerPa && layerPa.checked) {
+        if (!barAdvanced && layerPa && layerPa.checked) {
             requestAnimationFrame(redrawPriceActionOverlay);
         }
     }
@@ -5572,20 +5554,12 @@
     /**
      * Синхронизация HTML-оверлеев с canvas при любом изменении viewport.
      *
-     * Проблема: subscribeVisibleLogicalRangeChange срабатывает только когда меняется горизонтальный
-     * логический диапазон. Зум/сдвиг только по цене (правая шкала, колёсико на области цены)
-     * не вызывает этот колбэк, а timeToCoordinate/priceToCoordinate при этом меняются — оверлей
-     * остаётся со старыми пикселями и «отлипает» от свечей.
-     *
-     * Решение: attachPrimitive с пустым paneView. У примитива updateAllViews() вызывается
-     * библиотекой при любом пересчёте вида (время + цена + размеры). Здесь только планируем
-     * перерисовку DOM; на canvas ничего не рисуем.
-     *
-     * rAF: за кадр сливаем события; attachPrimitive дергается на каждом кадре tween close —
-     * без throttle + без тяжёлых OB/FVG main thread блокируется и canvas свечей «пропадает».
+     * Binodex: таймер на canvas. У нас DOM — таймер в том же rAF, что зум LWC (без throttle).
+     * Тяжёлые слои — trailing coalesce, чтобы не терять финальный кадр колеса.
      */
-    let chartDomOverlaySyncRaf = null;
+    let chartTimerOverlayRaf = null;
     let chartDomOverlayHeavyRaf = null;
+    let chartDomOverlayHeavyPending = false;
 
     function markChartDomOverlayDirty() {
         chartDomOverlayDirty = true;
@@ -5597,7 +5571,8 @@
         chartDomOverlayTickTimer = setInterval(() => {
             if (!chartDomOverlayDirty || !chart) return;
             chartDomOverlayDirty = false;
-            scheduleChartDomOverlaySyncLight(true);
+            scheduleCandleTimerSync();
+            scheduleChartDomOverlaySyncHeavy();
         }, CHART_DOM_OVERLAY_TICK_MS);
     }
 
@@ -5608,57 +5583,91 @@
         chartDomOverlayDirty = false;
     }
 
-    /** Лёгкая синхронизация (таймер, PO-лучи) — без HTML-линейки (она только при pan/zoom). */
-    function scheduleChartDomOverlaySyncLight(force) {
-        const now = performance.now();
-        if (!force && (now - chartDomOverlaySyncLastMs) < CHART_DOM_OVERLAY_SYNC_MIN_MS) {
-            return;
-        }
-        chartDomOverlaySyncLastMs = now;
-        if (chartDomOverlaySyncRaf !== null) return;
-        chartDomOverlaySyncRaf = requestAnimationFrame(() => {
-            chartDomOverlaySyncRaf = null;
-            // PR3b: лучи только если есть открытые сделки по текущей паре.
-            const hasOpenRays = !!(showTrades && Array.isArray(lastOpenTrades) && lastOpenTrades.some(
-                (t) => t && t.instrument === currentInstrument
-            ));
-            if (hasOpenRays) {
-                try {
-                    renderPoOpenTradeRaysOverlay();
-                } catch (ePo) {
-                    console.error('[chart] po open trade rays sync', ePo);
-                }
+    /** Только позиция таймера — лёгкий rAF. */
+    function scheduleCandleTimerSync() {
+        if (chartTimerOverlayRaf !== null) return;
+        chartTimerOverlayRaf = requestAnimationFrame(() => {
+            chartTimerOverlayRaf = null;
+            try {
+                positionCandleTimerOverlay();
+            } catch (e2) {
+                console.error('[chart] candle timer overlay sync', e2);
             }
-            requestAnimationFrame(() => {
-                try {
-                    positionCandleTimerOverlay();
-                } catch (e2) {
-                    console.error('[chart] candle timer overlay sync', e2);
-                }
-            });
         });
     }
 
-    /** Тяжёлая синхронизация (структуры/PA/линейка) — только при pan/zoom по времени. */
+    /** Canvas-оверлеи отдельно от таймера. */
+    let chartCanvasOverlayRaf = null;
+    function scheduleCanvasOverlaysSync() {
+        if (chartCanvasOverlayRaf !== null) return;
+        chartCanvasOverlayRaf = requestAnimationFrame(() => {
+            chartCanvasOverlayRaf = null;
+            try {
+                paintAllChartCanvasOverlaysFast();
+            } catch (e) {
+                console.error('[chart] canvas overlays sync', e);
+            }
+        });
+    }
+
+    /** Лёгкая синхронизация (таймер, PO-лучи). */
+    function scheduleChartDomOverlaySyncLight(force) {
+        const now = performance.now();
+        if (!force && (now - chartDomOverlaySyncLastMs) < CHART_DOM_OVERLAY_SYNC_MIN_MS) {
+            scheduleCandleTimerSync();
+            return;
+        }
+        chartDomOverlaySyncLastMs = now;
+        scheduleCandleTimerSync();
+        const hasOpenRays = !!(showTrades && Array.isArray(lastOpenTrades) && lastOpenTrades.some(
+            (t) => t && t.instrument === currentInstrument
+        ));
+        if (!hasOpenRays) return;
+            try {
+                renderPoOpenTradeRaysOverlay();
+            } catch (ePo) {
+                console.error('[chart] po open trade rays sync', ePo);
+            }
+    }
+
+    /** Тяжёлая синхронизация (структуры/PA/линейка) — trailing при pan/zoom. */
     function scheduleChartDomOverlaySyncHeavy() {
-        if (chartDomOverlayHeavyRaf !== null) return;
+        if (chartDomOverlayHeavyRaf !== null) {
+            chartDomOverlayHeavyPending = true;
+            return;
+        }
         chartDomOverlayHeavyRaf = requestAnimationFrame(() => {
             chartDomOverlayHeavyRaf = null;
-            try {
-                redrawStructureOverlay();
-            } catch (e) {
-                console.error('[chart] dom overlay sync heavy', e);
-            }
-            requestAnimationFrame(() => {
-                redrawPriceActionOverlay();
+            // Canvas-слои отдельно; таймер — лёгкий sync.
+            scheduleCandleTimerSync();
+            scheduleCanvasOverlaysSync();
+            if (CHART_HTML_TIME_RULER_ENABLED) {
                 try {
                     renderChartTimeRulerOverlay();
                 } catch (eRuler) {
                     console.error('[chart] time ruler overlay sync', eRuler);
                 }
-                scheduleChartDomOverlaySyncLight(true);
-            });
+            }
+            scheduleChartDomOverlaySyncLight(true);
+            if (chartDomOverlayHeavyPending) {
+                chartDomOverlayHeavyPending = false;
+                scheduleChartDomOverlaySyncHeavy();
+            }
         });
+    }
+
+    function bindChartViewportInteractionSync() {
+        if (!chartWrapper || chartWrapper.dataset.viewportSyncBound === '1') return;
+        chartWrapper.dataset.viewportSyncBound = '1';
+        const onInteract = () => {
+            scheduleCandleTimerSync();
+            scheduleChartDomOverlaySyncHeavy();
+        };
+        chartWrapper.addEventListener('wheel', onInteract, { passive: true, capture: true });
+        chartWrapper.addEventListener('pointermove', (e) => {
+            if (e.buttons) onInteract();
+        }, { passive: true });
+        chartWrapper.addEventListener('pointerup', onInteract, { passive: true });
     }
 
     function createChartDomOverlaySyncPrimitive() {
@@ -5674,7 +5683,7 @@
         const paneViewsStable = [paneView];
         return {
             updateAllViews() {
-                // Не пересобираем DOM на каждом кадре LWC — только помечаем и flush раз в 400ms.
+                scheduleCandleTimerSync();
                 markChartDomOverlayDirty();
             },
             paneViews() {
@@ -5972,11 +5981,12 @@
         window.__platformChart = chart;
 
         candlestickSeries = chart.addSeries(LightweightCharts.CandlestickSeries, {
-            upColor: '#26a69a',
-            downColor: '#ef5350',
+            // Цвета из профиля (дефолт как на PO); wick совпадает с телом.
+            upColor: CANDLE_UP_COLOR,
+            downColor: CANDLE_DOWN_COLOR,
             borderVisible: false,
-            wickUpColor: '#26a69a',
-            wickDownColor: '#ef5350',
+            wickUpColor: CANDLE_UP_COLOR,
+            wickDownColor: CANDLE_DOWN_COLOR,
             priceFormat: {
                 type: 'price',
                 precision: 5,
@@ -5996,6 +6006,12 @@
                 // PR3: меньше series.update → меньше LWC paint long tasks.
                 maxFps: Math.max(0, Number(boot.smoothMaxFps) || 24),
             });
+            // Таймер над полоской: sync на каждом visual frame smooth.
+            if (typeof candleSmooth.setOnVisualFrame === 'function') {
+                candleSmooth.setOnVisualFrame(() => {
+                    scheduleCandleTimerSync();
+                });
+            }
             // Для Chrome MCP / диагностики: жив ли tween.
             window.__platformCandleSmooth = candleSmooth;
         }
@@ -6037,6 +6053,8 @@
                 && range.from < 2 && userViewportChange) {
                 loadMoreCandles();
             }
+            // Таймер сразу; индикаторы — trailing heavy (не nested rAF).
+            scheduleCandleTimerSync();
             if (userViewportChange) {
                 scheduleChartDomOverlaySyncHeavy();
                 if (showTrades) schedulePaperTradeDurationOverlay();
@@ -6044,6 +6062,7 @@
                 scheduleChartDomOverlaySyncLight(false);
             }
         });
+        bindChartViewportInteractionSync();
     }
 
     function loadMoreCandles() {
@@ -6124,9 +6143,8 @@
                 setTimeout(() => {
                     if (inst !== currentInstrument) return;
                     fetchStructures();
-                    if (layerPa && layerPa.checked) fetchPriceActionIndicator();
-                    if (layerLiquidity && layerLiquidity.checked) fetchLiquiditySwingsIndicator();
-                    if (anyClassicLayerOn()) fetchClassicIndicators();
+                    recomputeClientIndicators();
+                    if (anyServerClassicLayerOn()) fetchClassicIndicators();
                 }, 250);
             })
             .catch(() => { loadingMore = false; });
@@ -6158,11 +6176,9 @@
                         if (loadSeq !== chartLoadSeq || inst !== currentInstrument) return;
                         startAutoRefresh();
                         fetchStructures();
-                        fetchPriceActionIndicator();
-                        fetchLiquiditySwingsIndicator();
-                        fetchSmcFlowIndicator();
+                        recomputeClientIndicators();
                         fetchChartTrades();
-                        fetchClassicIndicators();
+                        if (anyServerClassicLayerOn()) fetchClassicIndicators();
                     });
                 } else {
                     chartViewportSettling = false;
@@ -6310,14 +6326,11 @@
                         startAutoRefresh();
                         requestAnimationFrame(() => {
                             redrawStructureOverlay();
-                            // Один раз дёргаем «тяжёлые» эндпоинты сразу при выборе инструмента,
-                            // чтобы оверлеи появились без 15-секундной задержки таймера.
+                            // Клиентские индикаторы сразу; серверные classic — при необходимости.
                             fetchStructures();
-                            fetchPriceActionIndicator();
-                            fetchLiquiditySwingsIndicator();
-                            fetchSmcFlowIndicator();
+                            recomputeClientIndicators();
                             fetchChartTrades();
-                            fetchClassicIndicators();
+                            if (anyServerClassicLayerOn()) fetchClassicIndicators();
                         });
                     });
                 } else {
@@ -6376,10 +6389,13 @@
 
     layerOb.addEventListener('change', () => {
         saveLayerPrefs();
+        // Включение слоя — один fetch; выключение — только перерисовка без API.
+        if (layerOb.checked) fetchStructures();
         requestAnimationFrame(redrawStructureOverlay);
     });
     layerFvg.addEventListener('change', () => {
         saveLayerPrefs();
+        if (layerFvg.checked) fetchStructures();
         requestAnimationFrame(redrawStructureOverlay);
     });
     if (layerPa) {
@@ -6430,7 +6446,11 @@
             requestAnimationFrame(redrawPriceActionOverlay);
         });
     }
-    // Classic OsEngine: пересчитываем только при смене чекбокса (как на bots/show).
+    // Classic OsEngine: клиентский subset — локально; остальные — HTTP.
+    const clientClassicLayers = new Set([
+        layerBollinger, layerRsi, layerSma, layerEma, layerVwma,
+        layerAtr, layerMacd, layerStochastic, layerStratAssistant,
+    ]);
     [
         [layerBollinger, () => { lastBollingerPayload = null; }],
         [layerRsi, () => { lastRsiPayload = null; }],
@@ -6470,6 +6490,7 @@
         [layerLinRegChannel, () => { lastLinRegChannelPayload = null; }],
         [layerKalman, () => { lastKalmanPayload = null; }],
         [layerFractal, () => { lastFractalPayload = null; }],
+        [layerStratAssistant, () => { /* clear в recompute */ }],
         [layerDonchian, () => { lastDonchianPayload = null; }],
         [layerStochRsi, () => { lastStochRsiPayload = null; }],
         [layerAc, () => { lastAcPayload = null; }],
@@ -6506,8 +6527,11 @@
         if (!el) return;
         el.addEventListener('change', () => {
             saveLayerPrefs();
-            // Чистим payload только при выключении; при включении ждём ответ API.
             if (!el.checked) clearFn();
+            if (clientClassicLayers.has(el)) {
+                recomputeClientIndicators();
+                return;
+            }
             fetchClassicIndicators();
         });
     });
@@ -6610,10 +6634,48 @@
         updateTfOptionStyles();
     }
 
-    instrumentListRefreshInterval = setInterval(
-        refreshInstrumentSidebar,
-        Math.max(1000, Number(boot.instrumentsRefreshMs) || 5000)
-    );
+    // Ранний WS: payout broadcast до выбора инструмента (сайдбар без 5s poll %).
+    if (boot.liveEnabled && boot.liveWsUrl && boot.liveToken
+        && window.PlatformChartLive && typeof window.PlatformChartLive.create === 'function') {
+        if (!chartLiveClient) {
+            chartLiveClient = window.PlatformChartLive.create({
+                wsUrl: boot.liveWsUrl,
+                token: boot.liveToken,
+                getInstrument: () => currentInstrument,
+                getBarPeriodSec: () => timeframeSeconds(currentTimeframeMinutes),
+                getLastBar: () => (allChartData.length ? allChartData[allChartData.length - 1] : null),
+                onLiveBar: (bar) => {
+                    if (chartViewportSettling || !candlestickSeries || !bar) return;
+                    const followTail = isViewNearRightEdge();
+                    applyIncrementalChartUpdate([bar], { liveTail: followTail, poll: true });
+                    tickCandleCloseTimer();
+                    if (followTail) maintainTailViewportIfFollowing();
+                },
+                onPayout: applyInstrumentPayoutLive,
+                onBotEvent: (msg) => {
+                    if (typeof window.__dashPoTradesOnBotEvent === 'function') {
+                        try { window.__dashPoTradesOnBotEvent(msg); } catch (_) {}
+                    }
+                    if (typeof window.__dashSidebarOnBotEvent === 'function') {
+                        try { window.__dashSidebarOnBotEvent(msg); } catch (_) {}
+                    }
+                },
+                onConnectionChange: (ok) => {
+                    if (ok) stopCandleHealLoop();
+                    else if (candlestickSeries) startCandleHealLoop();
+                },
+            });
+        }
+        chartLiveClient.start();
+    }
+
+    const instrumentsPollMs = instrumentsSidebarPollMs();
+    if (instrumentsPollMs > 0) {
+        instrumentListRefreshInterval = setInterval(
+            refreshInstrumentSidebar,
+            instrumentsPollMs
+        );
+    }
     sidebarTimerInterval = setInterval(() => {
         tickSidebarTradeTimers();
         tickCandleCloseTimer();
@@ -7150,7 +7212,7 @@
 
     // -------------------------------------------------------------------------
     // Правая колонка: компактная лента зеркалимых на Pocket Option сделок.
-    // Источник — GET bots.live-trades.data; на UI показываем только mirrored_*.
+    // Источник: initial GET + полный WS bot_event.trade; HTTP heal редко (live).
     // Клик по карточке переключает график на инструмент сделки (selectInstrument).
     // -------------------------------------------------------------------------
     (function initDashPoTrades() {
@@ -7159,7 +7221,12 @@
         if (!listEl || !metaEl || !LIVE_TRADES_URL) return;
 
         let pollTimer = null;
+        let timerTick = null;
         let lastRenderedIds = '';
+        /** @type {Map<number, object>} кэш карточек (id → trade), окно ~2ч */
+        const tradesById = new Map();
+        const myUserId = Number(boot.userId || 0);
+        const liveWsOk = !!(boot.liveEnabled && boot.liveWsUrl && boot.liveToken);
 
         function escapeHtml(s) {
             return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -7228,13 +7295,11 @@
         }
 
         // Реально ушло на PO: markMirror('executed') или settlement assumed_not_opened.
-        // mirrored_at ставится и для skipped_* / failed — сам по себе не критерий.
         function isMirroredToPo(t) {
             const st = String(t.mirror_status ?? '').toLowerCase();
             return st === 'executed' || st === 'assumed_not_opened';
         }
 
-        // Имя для selectInstrument: из кнопки в сайдбаре или сам код инструмента.
         function displayNameForInstrument(instrument) {
             const key = String(instrument ?? '');
             if (!key) return key;
@@ -7244,11 +7309,41 @@
             return (btn && btn.dataset.displayName) ? btn.dataset.displayName : key;
         }
 
+        function tradesListSorted() {
+            return Array.from(tradesById.values()).sort((a, b) => {
+                const ca = String(a.created_at || a.entry_time || '');
+                const cb = String(b.created_at || b.entry_time || '');
+                return cb.localeCompare(ca);
+            });
+        }
+
+        function pruneOldTrades() {
+            const cutoffMs = Date.now() - 2 * 3600 * 1000;
+            for (const [id, t] of tradesById) {
+                const raw = t.created_at || t.entry_time;
+                if (!raw) continue;
+                const ts = Date.parse(String(raw).replace(' ', 'T') + 'Z');
+                if (Number.isFinite(ts) && ts < cutoffMs) tradesById.delete(id);
+            }
+        }
+
+        function updateMeta() {
+            const mirrored = tradesListSorted().filter(isMirroredToPo);
+            const openCnt = mirrored.filter((t) => t.status === 'open').length;
+            metaEl.textContent = mirrored.length
+                ? `${mirrored.length} · open ${openCnt}`
+                : 'пусто';
+        }
+
+        function renderFromCache() {
+            pruneOldTrades();
+            renderCards(tradesListSorted());
+            updateMeta();
+        }
+
         function renderCards(trades) {
             // Ограничиваем высоту колонки: свежие сверху (API уже latest).
             const mirrored = (trades || []).filter(isMirroredToPo).slice(0, 40);
-            // Стабильный ключ: не перерисовываем DOM каждую секунду без нужды
-            // (таймеры обновляем через data-expiry-ts в tickTimers).
             const idsKey = mirrored.map((t) =>
                 [t.id, t.status, t.paper_result || t.result, t.mirror_po_result || '', t.mirror_status || ''].join(':')
             ).join('|');
@@ -7299,7 +7394,6 @@
             }).join('');
         }
 
-        // Обновляем только countdown без полного re-render списка.
         function tickTimers(root) {
             root.querySelectorAll('.dash-po-trade-card[data-status="open"]').forEach((card) => {
                 const timerEl = card.querySelector('.dash-po-timer');
@@ -7318,20 +7412,45 @@
             });
         }
 
-        // Клик по карточке → переключить инструмент на графике (как в сайдбаре).
         listEl.addEventListener('click', (ev) => {
             const card = ev.target.closest('.dash-po-trade-card');
             if (!card) return;
             const instrument = card.dataset.instrument;
             if (!instrument) return;
             selectInstrument(instrument, displayNameForInstrument(instrument));
-            // Подсветка выбранной карточки без ожидания следующего poll.
             listEl.querySelectorAll('.dash-po-trade-card').forEach((el) => {
                 el.classList.toggle('bg-blue-950/30', el === card);
             });
         });
 
+        function replaceCacheFromServer(all) {
+            tradesById.clear();
+            (all || []).forEach((t) => {
+                const id = Number(t.id);
+                if (id) tradesById.set(id, t);
+            });
+            renderFromCache();
+        }
+
+        /**
+         * WS bot_event с полной карточкой: upsert в кэш (фильтр по user_id).
+         */
+        function applyBotTradePush(msg) {
+            if (!msg || typeof msg !== 'object') return;
+            if (myUserId > 0 && Number(msg.user_id || 0) !== myUserId) return;
+            const card = msg.trade;
+            if (!card || typeof card !== 'object') return;
+            const id = Number(card.id);
+            if (!id) return;
+            tradesById.set(id, card);
+            renderFromCache();
+        }
+
+        // Точка входа для PlatformChartLive.onBotEvent (см. create ниже).
+        window.__dashPoTradesOnBotEvent = applyBotTradePush;
+
         async function refreshOnce() {
+            if (document.hidden) return;
             try {
                 const res = await fetch(LIVE_TRADES_URL, {
                     headers: { Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
@@ -7340,26 +7459,53 @@
                 if (!res.ok) throw new Error('HTTP ' + res.status);
                 const data = await res.json();
                 if (window.PlatformServerClock) PlatformServerClock.sync(data.server_time);
-                const all = data.trades || [];
-                const mirrored = all.filter(isMirroredToPo);
-                renderCards(all);
-                const openCnt = mirrored.filter((t) => t.status === 'open').length;
-                metaEl.textContent = mirrored.length
-                    ? `${mirrored.length} · open ${openCnt}`
-                    : 'пусто';
+                replaceCacheFromServer(data.trades || []);
             } catch (_) {
                 metaEl.textContent = 'ошибка…';
             }
         }
 
-        // Экспорт для initManualTradePanel: обновить ленту сразу после ручного place.
         window.refreshDashPoTrades = refreshOnce;
 
+        function stopPoll() {
+            if (pollTimer) {
+                clearInterval(pollTimer);
+                pollTimer = null;
+            }
+        }
+
+        function startPoll() {
+            stopPoll();
+            // Live WS: редкий heal; без live — прежний 8с poll.
+            let ms;
+            if (liveWsOk) {
+                ms = Number(boot.liveTradesHealMsLive);
+                if (!Number.isFinite(ms) || ms < 0) ms = 60000;
+                if (ms === 0) return; // только initial + push
+                ms = Math.max(15000, ms);
+            } else {
+                ms = Math.max(2000, Number(boot.liveTradesPollMs) || 8000);
+            }
+            pollTimer = setInterval(refreshOnce, ms);
+        }
+
+        function syncPollToVisibility() {
+            if (document.hidden) {
+                stopPoll();
+                return;
+            }
+            startPoll();
+            refreshOnce();
+        }
+
         refreshOnce();
-        const liveTradesMs = Math.max(2000, Number(boot.liveTradesPollMs) || 8000);
-        pollTimer = setInterval(refreshOnce, liveTradesMs);
+        startPoll();
+        // Countdown на open-карточках без HTTP poll.
+        timerTick = setInterval(() => tickTimers(listEl), 1000);
+        document.addEventListener('visibilitychange', syncPollToVisibility);
         window.addEventListener('beforeunload', () => {
-            if (pollTimer) clearInterval(pollTimer);
+            stopPoll();
+            if (timerTick) clearInterval(timerTick);
         });
     })();
 

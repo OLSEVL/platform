@@ -142,6 +142,64 @@
             </div>
         </div>
 
+        {{-- Цвета свечей: дефолт как на Pocket Option; каждый пользователь настраивает себе. --}}
+        <div class="rounded border border-zinc-700 bg-zinc-950/40 px-4 py-4 space-y-3">
+            <div>
+                <h3 class="text-sm font-medium text-slate-100">Цвета свечей на графике</h3>
+                <p class="mt-1 text-xs text-zinc-500">
+                    По умолчанию — как на Pocket Option (зелёный #22ff00, красный #ff0000).
+                    Doji (open = close) красится цветом медвежьей свечи.
+                </p>
+            </div>
+            @php
+                $candleDefaults = \App\Support\ChartCandleColors::defaults();
+                $upVal = old('candle_up_color', $settings->candle_up_color ?: $candleDefaults['up']);
+                $downVal = old('candle_down_color', $settings->candle_down_color ?: $candleDefaults['down']);
+            @endphp
+            <div class="grid gap-4 sm:grid-cols-2">
+                <div class="space-y-1">
+                    <label for="candle_up_color" class="block text-xs font-medium text-zinc-400">Бычья (рост)</label>
+                    <div class="flex items-center gap-2">
+                        <input type="color" id="candle_up_color_picker"
+                            value="{{ $upVal }}"
+                            class="h-9 w-12 cursor-pointer rounded border border-zinc-700 bg-zinc-950 p-0.5"
+                            aria-label="Выбор цвета бычьей свечи"
+                            oninput="document.getElementById('candle_up_color').value = this.value">
+                        <input type="text" name="candle_up_color" id="candle_up_color"
+                            value="{{ $upVal }}"
+                            maxlength="7" pattern="#[0-9A-Fa-f]{3,6}"
+                            class="flex-1 rounded border border-zinc-700 bg-zinc-950 px-3 py-2 font-mono text-sm text-zinc-100"
+                            autocomplete="off"
+                            oninput="if(/^#[0-9A-Fa-f]{6}$/.test(this.value)) document.getElementById('candle_up_color_picker').value = this.value">
+                    </div>
+                    @error('candle_up_color')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                </div>
+                <div class="space-y-1">
+                    <label for="candle_down_color" class="block text-xs font-medium text-zinc-400">Медвежья (падение) / doji</label>
+                    <div class="flex items-center gap-2">
+                        <input type="color" id="candle_down_color_picker"
+                            value="{{ $downVal }}"
+                            class="h-9 w-12 cursor-pointer rounded border border-zinc-700 bg-zinc-950 p-0.5"
+                            aria-label="Выбор цвета медвежьей свечи"
+                            oninput="document.getElementById('candle_down_color').value = this.value">
+                        <input type="text" name="candle_down_color" id="candle_down_color"
+                            value="{{ $downVal }}"
+                            maxlength="7" pattern="#[0-9A-Fa-f]{3,6}"
+                            class="flex-1 rounded border border-zinc-700 bg-zinc-950 px-3 py-2 font-mono text-sm text-zinc-100"
+                            autocomplete="off"
+                            oninput="if(/^#[0-9A-Fa-f]{6}$/.test(this.value)) document.getElementById('candle_down_color_picker').value = this.value">
+                    </div>
+                    @error('candle_down_color')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                </div>
+            </div>
+            <button type="button" id="btn-reset-candle-colors"
+                class="rounded border border-zinc-600 bg-zinc-800 px-3 py-1.5 text-xs text-zinc-200 hover:bg-zinc-700"
+                data-up="{{ $candleDefaults['up'] }}"
+                data-down="{{ $candleDefaults['down'] }}">
+                Сбросить к цветам PO
+            </button>
+        </div>
+
         <div class="rounded border border-amber-900/50 bg-amber-950/25 px-4 py-3 text-xs text-amber-100/85 space-y-1">
             <p>Нужны <code class="text-amber-200">platform-pocket-proxy</code> и <code class="text-amber-200">platform-queue</code> (или <code class="text-amber-200">queue:work</code>).</p>
             <p class="text-amber-200/90">SSID — из DevTools <strong>того же</strong> кабинета PO, где смотрите сделки.
@@ -159,6 +217,23 @@
 
 <script>
 (function () {
+    // Сброс color picker + text к дефолту Pocket Option без submit.
+    const resetBtn = document.getElementById('btn-reset-candle-colors');
+    if (resetBtn) {
+        resetBtn.addEventListener('click', function () {
+            const up = resetBtn.getAttribute('data-up') || '#22ff00';
+            const down = resetBtn.getAttribute('data-down') || '#ff0000';
+            const upText = document.getElementById('candle_up_color');
+            const downText = document.getElementById('candle_down_color');
+            const upPick = document.getElementById('candle_up_color_picker');
+            const downPick = document.getElementById('candle_down_color_picker');
+            if (upText) upText.value = up;
+            if (downText) downText.value = down;
+            if (upPick) upPick.value = up;
+            if (downPick) downPick.value = down;
+        });
+    }
+
     const btn = document.getElementById('btn-test-po-auth');
     const out = document.getElementById('po-auth-result');
     const ssidEl = document.getElementById('pocket_ssid');

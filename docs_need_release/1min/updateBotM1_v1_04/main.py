@@ -82,8 +82,11 @@ class SymbolState:
     # values are deliberately held in memory rather than inferred from the
     # last close: an intrabar extreme must never move backwards.
     live_signal_candle_start: Optional[int] = None
-    live_last_emitted_measure: float = 0.0
-    live_best_profile_priority: Optional[int] = None
+    # The open candle has two independent interpretations: continuation of
+    # the preceding closed series and a standalone wick signal.  Alert
+    # escalation is kept separately for each interpretation.
+    live_last_emitted_measure: dict[str, float] = field(default_factory=dict)
+    live_best_profile_priority: dict[str, int] = field(default_factory=dict)
     payout_cache: dict[int, int] = field(default_factory=dict)
     cached_swing_highs: dict[int, list[dict[str, float]]] = field(default_factory=dict)
     cached_swing_lows: dict[int, list[dict[str, float]]] = field(default_factory=dict)
@@ -143,6 +146,8 @@ class HistoryFetchResult:
 class SignalMessage:
     text: str
     chart_path: Optional[Path] = None
+    # One chart is shared by all rule labels for the same pair and M1 candle.
+    chart_group: Optional[tuple[str, int]] = None
 
 
 @dataclass
@@ -150,6 +155,8 @@ class OutputBatch:
     """Results from all SSID workers for one History(1) request."""
     fetch_elapsed: float
     completed_workers: int = 0
+    processed_pairs: int = 0
+    total_pairs: int = 0
     messages: list[SignalMessage] = field(default_factory=list)
 
 
@@ -307,6 +314,7 @@ def load_python_config(path: Path) -> dict[str, Any]:
         "HISTORY_TIMEOUT": float(getattr(module, "HISTORY_TIMEOUT", getattr(module, "TICK_TIMEOUT", 5))),
         "TIMEFRAME_SECONDS": timeframe_seconds,
         "DEBUG_CYCLE": bool(getattr(module, "DEBUG_CYCLE", False)),
+        "BOT_VERSION": str(getattr(module, "BOT_VERSION", "")).strip(),
         "MIN_PAYOUT": int(getattr(module, "MIN_PAYOUT", 80)),
         "RESTRICTED_COUNTRIES": restricted_raw,
         "RESTRICTED_COUNTRIES_SET": restricted_set,
@@ -339,6 +347,8 @@ def load_python_config(path: Path) -> dict[str, Any]:
         # The open M1 is evaluated from its largest excursion away from the
         # open (max(high-open, open-low)).  Closed candles always use bodies.
         "LIVE_CANDLE_WICK_SIGNALS": bool(getattr(module, "LIVE_CANDLE_WICK_SIGNALS", True)),
+        "ONE_SIGNAL_PER_SERIES": bool(getattr(module, "ONE_SIGNAL_PER_SERIES", False)),
+        "ONE_SIGNAL_PER_PAIR_PER_MINUTE": bool(getattr(module, "ONE_SIGNAL_PER_PAIR_PER_MINUTE", False)),
         "SEND_RULE_SEQUENCE_SIGNALS": bool(getattr(module, "SEND_RULE_SEQUENCE_SIGNALS", False)),
         "TIME_OFFSET_HOURS": TIME_OFFSET_HOURS,
         "LEVEL_SETTINGS": getattr(module, "LEVEL_SETTINGS", {}),
@@ -356,6 +366,7 @@ def load_python_config(path: Path) -> dict[str, Any]:
         "MAX_RULE_DETAILS_ENABLED": bool(getattr(module, "MAX_RULE_DETAILS_ENABLED", True)),
         "TELEGRAM_CHARTS_ENABLED": bool(getattr(module, "TELEGRAM_CHARTS_ENABLED", False)),
         "TELEGRAM_CHART_CANDLES": max(15, int(getattr(module, "TELEGRAM_CHART_CANDLES", 40))),
+        "TELEGRAM_NO_SIGNAL_STATS_ENABLED": bool(getattr(module, "TELEGRAM_NO_SIGNAL_STATS_ENABLED", True)),
         "PAIRS_MAP": getattr(module, "PAIRS_MAP", {}),
     }
     GLOBAL_CONFIG.clear()
@@ -530,6 +541,20 @@ def format_ts_with_seconds(ts: float) -> str:
     return datetime.fromtimestamp(ts).strftime("%H:%M:%S")
 
 
+def format_scan_status(
+    request_started_at: float,
+    elapsed: float,
+    processed_pairs: int,
+    total_pairs: int,
+    *,
+    sent_at: Optional[float] = None,
+) -> str:
+    """Compact status for console output and Telegram signal captions."""
+    output_timestamp = time.time() if sent_at is None else sent_at
+    delay_seconds = max(0, round(output_timestamp - request_started_at))
+    return f"{format_ts_with_seconds(request_started_at)} {elapsed:.2f}s -{delay_seconds}s {processed_pairs}/{total_pairs}"
+
+
 def get_round_step(price: float) -> float:
     if price < 0.05: return 0.0001
     elif price < 0.5: return 0.001
@@ -596,7 +621,8 @@ def candle_body(candle: dict[str, Any]) -> float:
 def candle_direction(candle: dict[str, Any]) -> int:
     close = float(candle["close"])
     open_ = float(candle["open"])
-    return 1 if close > open_ else -1 if close < open_ else 0
+    # Доджи (close == open_) всегда считаются красными (-1)
+    return 1 if close > open_ else -1
 
 
 def live_wick_measure_and_direction(candle: dict[str, Any]) -> tuple[float, int]:
@@ -613,7 +639,8 @@ def live_wick_measure_and_direction(candle: dict[str, Any]) -> tuple[float, int]
         return up, 1
     if down > up:
         return down, -1
-    return up, 0
+    # При равенстве доджи считаются красными (-1)
+    return up, -1
 
 
 def profile_live_priority(config: dict[str, Any], profile_id: str) -> int:
@@ -622,6 +649,28 @@ def profile_live_priority(config: dict[str, Any], profile_id: str) -> int:
         if profile.get("id") == profile_id:
             return int(profile.get("live_priority", index))
     return len(config.get("STRATEGY_PROFILES", []))
+
+
+def signal_series_key(
+    state: SymbolState,
+    direction: int,
+    signal_candle_start: int,
+) -> tuple[str, int, Optional[int]]:
+    """Stable identity of the current same-colour candle series.
+
+    The timestamp of the latest closed candle in the opposite direction is
+    the series boundary.  Thus red #3, #4 and #5 share one key; after a closed
+    green candle the next red candle gets a new key.
+    """
+    if direction not in (-1, 1):
+        # A directionless live wick is not a coloured series.  Keep it local
+        # to this candle rather than accidentally blocking a later series.
+        return state.symbol, 0, signal_candle_start
+    for previous in reversed(state.candle_history):
+        previous_direction = candle_direction(previous)
+        if previous_direction and previous_direction != direction:
+            return state.symbol, direction, int(previous["timestamp"])
+    return state.symbol, direction, None
 
 
 def body_top_rank(body: float, body_history: Iterable[float], top_count: int) -> Optional[int]:
@@ -875,7 +924,7 @@ def filter_active_mirror_levels(levels: list[dict[str, float]], candles: list[di
             source_min, _ = level_zone_bounds(lvl, -1, False, wick_only)
             _, mirror_max = level_zone_bounds(lvl, 1, True, wick_only)
             source_break_below = source_min - allowance
-            mirror_break_above = mirror_max + allowance
+            mirror_break_above = mirror_break_above = mirror_max + allowance
         else:
             _, source_max = level_zone_bounds(lvl, 1, False, wick_only)
             mirror_min, _ = level_zone_bounds(lvl, -1, True, wick_only)
@@ -1096,6 +1145,7 @@ def render_signal_chart(
     levels: list[dict[str, Any]],
     caption: str,
     config: dict[str, Any],
+    scan_timestamp: Optional[float] = None,
 ) -> Optional[Path]:
     """Render a self-contained candlestick PNG from accumulated M1 history."""
     if not config.get("TELEGRAM_CHARTS_ENABLED", False) or Image is None or ImageDraw is None:
@@ -1123,51 +1173,96 @@ def render_signal_chart(
 
     lows = [float(item["low"]) for item in candles] + [low for _, low, _ in zone_bounds]
     highs = [float(item["high"]) for item in candles] + [high for _, _, high in zone_bounds]
+    # MACD-стиль: диапазон строится по фактическим high/low кадра без
+    # дополнительного воздуха по 10%. Поэтому движение занимает весь кадр,
+    # а крайние тени выглядят слегка обрезанными, как в Telegram у MACD.
     price_low, price_high = min(lows), max(highs)
-    span = max(price_high - price_low, max(abs(price_high), 1.0) * 0.0001)
-    price_low -= span * 0.10
-    price_high += span * 0.10
+    if price_high <= price_low:
+        span = max(abs(price_high), 1.0) * 1e-6
+        price_low -= span / 2
+        price_high += span / 2
 
-    width, height = 960, 560
-    left, right, top, bottom = 78, 885, 25, 500
-    image = Image.new("RGB", (width, height), "#111827")
+    width, height = 960, 600
+    # Keep the chart inset balanced: the previous 30px bottom margin made the
+    # time grid visibly stop too far above the lower edge.
+    left, right, top, bottom = 86, 944, 12, 588
+    image = Image.new("RGB", (width, height), "#171b2d")
     draw = ImageDraw.Draw(image)
     font = ImageFont.load_default() if ImageFont is not None else None
+    # Labels need to remain readable in Telegram's compressed preview. The
+    # default Pillow font is about half this size on the 960px chart.
+    try:
+        level_font = ImageFont.truetype("C:/Windows/Fonts/segoeui.ttf", size=20)
+    except (OSError, IOError):
+        level_font = font
+    try:
+        price_font = ImageFont.truetype("C:/Windows/Fonts/segoeui.ttf", size=14)
+    except (OSError, IOError):
+        price_font = font
 
     def y(price: float) -> int:
         return int(bottom - (price - price_low) / (price_high - price_low) * (bottom - top))
 
-    for fraction in range(1, 5):
-        gy = top + (bottom - top) * fraction // 5
-        draw.line((left, gy, right, gy), fill="#263244", width=1)
-        value = price_high - (price_high - price_low) * fraction / 5
-        draw.text((right + 8, gy - 6), f"{value:.5g}", fill="#9ca3af", font=font)
+    # Horizontal grid lines use round price increments (1/2/5 × 10^n), rather
+    # than arbitrary equal-height divisions of the currently visible range.
+    target_grid_lines = 6
+    raw_price_step = (price_high - price_low) / target_grid_lines
+    price_power = 10 ** math.floor(math.log10(raw_price_step))
+    normalized_step = raw_price_step / price_power
+    nice_multiplier = 1 if normalized_step <= 1 else 2 if normalized_step <= 2 else 5 if normalized_step <= 5 else 10
+    price_step = nice_multiplier * price_power
+    first_grid_price = math.ceil(price_low / price_step) * price_step
+    price_decimals = max(0, min(8, math.ceil(-math.log10(price_step))))
+    grid_price = first_grid_price
+    while grid_price <= price_high + price_step * 1e-9:
+        gy = y(grid_price)
+        draw.line((left, gy, right, gy), fill="#252b3d", width=1)
+        price_label = f"{grid_price:.{price_decimals}f}"
+        label_box = draw.textbbox((0, 0), price_label, font=price_font)
+        label_width = label_box[2] - label_box[0]
+        label_height = label_box[3] - label_box[1]
+        draw.text(
+            (left - 8 - label_width, gy - label_height // 2 - label_box[1]),
+            price_label,
+            fill="#8f9bb3",
+            font=price_font,
+        )
+        grid_price += price_step
 
-    # Muted cold colours keep the candles readable even when zones overlap.
-    zone_colors = {60: "#163b57", 300: "#2e2452", 900: "#173f3d", 1800: "#3b2548"}
+    step = (right - left) / len(candles)
+    # Mark the left edge of every five-minute block (:00, :05, :10, ...).
+    # A slightly brighter tone makes the time structure readable without
+    # competing with the candle colours or the level zones.
+    for index, item in enumerate(candles):
+        if int(item["timestamp"]) % 300 == 0:
+            x = int(left + index * step)
+            draw.line((x, top, x, bottom), fill="#343b4f", width=1)
+
+    # Холодные приглушённые зоны остаются заметными, но используют палитру
+    # тёмного MACD-графика и не спорят с красно-зелёными свечами.
+    zone_colors = {60: "#1e3a5f", 300: "#312e5f", 900: "#1f4a46", 1800: "#442a52"}
     for index, (level, zone_low, zone_high) in enumerate(zone_bounds):
         color = zone_colors.get(int(level["timeframe"]), "#94a3b8")
         y1, y2 = y(zone_high), y(zone_low)
         draw.rectangle((left, min(y1, y2), right, max(y1, y2)), fill=color, outline=color, width=1)
         label = timeframe_label(int(level["timeframe"])).upper()
-        draw.text((left + 5, min(y1, y2) + 3 + index * 11), label, fill="#e2e8f0", font=font)
+        draw.text((left + 5, min(y1, y2) + 3 + index * 22), label, fill="#cbd5e1", font=level_font)
 
-    step = (right - left) / len(candles)
-    body_width = max(2, int(step * 0.58))
+    # Broker-style density: candle bodies take most of their time slot, with
+    # only a narrow, even gap left between neighbouring candles.
+    body_width = max(2, int(step * 0.78))
     for index, item in enumerate(candles):
         x = int(left + (index + 0.5) * step)
         open_y, close_y = y(float(item["open"])), y(float(item["close"]))
         high_y, low_y = y(float(item["high"])), y(float(item["low"]))
-        up = float(item["close"]) >= float(item["open"])
-        color = "#22c55e" if up else "#ef4444"
+        # Доджи (close == open) считаются красными; зеленые только если close > open
+        up = float(item["close"]) > float(item["open"])
+        color = "#35c43a" if up else "#f44336"
         draw.line((x, high_y, x, low_y), fill=color, width=1)
         draw.rectangle((x - body_width // 2, min(open_y, close_y), x + body_width // 2, max(open_y, close_y) or min(open_y, close_y) + 1), fill=color)
         if int(item["timestamp"]) == int(candle["timestamp"]):
             marker_left, marker_right = x - body_width // 2 - 2, x + body_width // 2 + 2
-            draw.rectangle((min(marker_left, marker_right), min(top, bottom), max(marker_left, marker_right), max(top, bottom)), outline="#f8fafc", width=1)
-
-    draw.text((left, height - 38), caption[:115], fill="#f8fafc", font=font)
-    draw.text((left, height - 20), "M1 candles | highlighted candle = live signal", fill="#94a3b8", font=font)
+            draw.rectangle((min(marker_left, marker_right), min(top, bottom), max(marker_left, marker_right), max(top, bottom)), outline="#d4c56f", width=1)
     path = Path(tempfile.gettempdir()) / f"bot1m_signal_{uuid4().hex}.png"
     image.save(path, format="PNG", optimize=True)
     return path
@@ -1381,7 +1476,8 @@ def check_prev_candle_wick_s(state: SymbolState, config: dict[str, Any]) -> bool
     prev = state.candle_history[-1]
     po, ph, pl, pc = float(prev["open"]), float(prev["high"]), float(prev["low"]), float(prev["close"])
     pb = abs(pc - po)
-    wick = ph - pc if pc >= po else pc - pl
+    # Доджи считаются красными: верхняя тень только если pc > po, иначе нижняя тень
+    wick = ph - pc if pc > po else pc - pl
     return (wick / pb) * 100.0 >= float(config.get("WICK_S_THRESHOLD_PERCENT", 50.0)) if pb > 0 else wick > 0
 
 
@@ -2131,7 +2227,8 @@ def get_closed_sub_candles(raw_candles: list[dict[str, Any]], candle_start: int,
 
 def check_same_color_sub_candles(sub_candles: list[dict[str, float]], expected_direction: int = 0, allow_doji: bool = True) -> bool:
     if not sub_candles: return False
-    colors = [1 if sc["close"] > sc["open"] else -1 if sc["close"] < sc["open"] else 0 for sc in sub_candles]
+    # Доджи всегда считаются красными (-1)
+    colors = [1 if sc["close"] > sc["open"] else -1 for sc in sub_candles]
     colors_to_check = [c for c in colors if c != 0] if allow_doji else colors
     if not colors_to_check or (not allow_doji and 0 in colors): return False
     if len(set(colors_to_check)) != 1: return False
@@ -2146,8 +2243,11 @@ async def process_worker_cycle(
     config: dict[str, Any],
     *,
     prefetched_history: Optional[dict[str, HistoryFetchResult]] = None,
+    scan_timestamp: Optional[float] = None,
     sent_pair_signal_keys: Optional[set[Any]] = None,
     sent_exact_signal_keys: Optional[set[tuple[str, int, str]]] = None,
+    last_sent_series_by_pair: Optional[dict[str, tuple[str, int, Optional[int]]]] = None,
+    minute_sent_pairs: Optional[set[tuple[str, int]]] = None,
 ) -> CycleResult:
     if not await check_ip_allowed(config):
         return CycleResult(messages=[], errors=1)
@@ -2156,6 +2256,7 @@ async def process_worker_cycle(
     body_min = body_max = raw_first_ts = raw_last_ts = None; history1_count = 0; history1_total = 0.0; history1_min = history1_max = None
     states_by_symbol = {state.symbol: state for state in states}
     timeframe_seconds = int(config["TIMEFRAME_SECONDS"])
+    chart_paths_by_group: dict[tuple[str, int], Optional[Path]] = {}
 
     async def process_signal_candle(
         state: SymbolState,
@@ -2166,34 +2267,95 @@ async def process_worker_cycle(
         is_live_candle: bool = False,
     ) -> None:
         nonlocal body_min, body_max, signals_found, payout_rejected, duplicate_suppressed, level_marked, rsi_marked
+        max_candles_count = state.recent_bodies.maxlen or 8
+        signal_contexts: dict[str, tuple[float, int, list[float], list[int], Optional[str]]] = {}
+
+        def add_signal_context(
+            body: float,
+            direction: int,
+            recent_bodies: list[float],
+            recent_directions: list[int],
+            live_mode: Optional[str],
+            keep,
+        ) -> None:
+            signals = detect_signals(
+                state,
+                body,
+                config,
+                recent_bodies=recent_bodies,
+                recent_directions=recent_directions,
+                include_all_profile_matches=is_live_candle and config["LIVE_CANDLE_WICK_SIGNALS"],
+            )
+            for signal_type, value in signals:
+                if keep(signal_type):
+                    signal_contexts[signal_type] = (body, direction, recent_bodies, recent_directions, live_mode)
+                    signal_values[signal_type] = value
+
+        signal_values: dict[str, float] = {}
         if is_live_candle and config["LIVE_CANDLE_WICK_SIGNALS"]:
-            body, direction = live_wick_measure_and_direction(candle)
+            open_ = float(candle["open"])
+            up_wick = max(0.0, float(candle["high"]) - open_)
+            down_wick = max(0.0, open_ - float(candle["low"]))
+            closed_bodies = list(state.recent_bodies)
+            closed_directions = list(state.recent_directions)
+
+            # Continue the closed series in its own direction. A longer wick
+            # on the other side of the open candle must not break that series.
+            series_direction = closed_directions[-1] if closed_directions else 0
+            if series_direction in (-1, 1):
+                series_body = up_wick if series_direction > 0 else down_wick
+                series_bodies = (closed_bodies + [series_body])[-max_candles_count:]
+                series_directions = (closed_directions + [series_direction])[-max_candles_count:]
+                add_signal_context(
+                    series_body,
+                    series_direction,
+                    series_bodies,
+                    series_directions,
+                    "series",
+                    lambda signal_type: (
+                        (signal_type.startswith("MAX") and signal_type[3:].isdigit() and int(signal_type[3:]) >= 2)
+                        or (signal_type.startswith("CANDLE_") and signal_type.split("_")[1].isdigit() and int(signal_type.split("_")[1]) >= 2)
+                    ),
+                )
+
+            # Independently test the largest reached movement as a one-candle
+            # signal. It can produce MAX or CANDLE_1 even while the other
+            # calculation continues a closed series.
+            standalone_body, standalone_direction = live_wick_measure_and_direction(candle)
+            add_signal_context(
+                standalone_body,
+                standalone_direction,
+                [standalone_body],
+                [standalone_direction],
+                "standalone",
+                lambda signal_type: signal_type == "MAX" or signal_type.startswith("CANDLE_1_"),
+            )
         else:
             body, direction = candle_body(candle), candle_direction(candle)
-        body_min = body if body_min is None else min(body_min, body)
-        body_max = body if body_max is None else max(body_max, body)
-        level_markers = level_marker_labels(state, candle, direction, config)
-        order_block_marker = order_block_marker_label(state, candle, direction, config)
-        filter_facts = build_signal_filter_facts(state, candle, config, level_markers, order_block_marker)
+            eff_bodies = (list(state.recent_bodies) + [body])[-max_candles_count:]
+            eff_dirs = (list(state.recent_directions) + [direction])[-max_candles_count:]
+            add_signal_context(body, direction, eff_bodies, eff_dirs, None, lambda _signal_type: True)
 
-        max_candles_count = state.recent_bodies.maxlen or 8
-        eff_bodies, eff_dirs = list(state.recent_bodies) + [body], list(state.recent_directions) + [direction]
-        eff_bodies, eff_dirs = eff_bodies[-max_candles_count:], eff_dirs[-max_candles_count:]
-        signals = detect_signals(
-            state, body, config, recent_bodies=eff_bodies,
-            recent_directions=eff_dirs, filter_facts=filter_facts,
-            include_all_profile_matches=is_live_candle and config["LIVE_CANDLE_WICK_SIGNALS"],
-        )
         if is_live_candle and state.live_signal_candle_start != signal_candle_start:
             state.live_signal_candle_start = signal_candle_start
-            state.live_last_emitted_measure = 0.0
-            state.live_best_profile_priority = None
-        for signal_type, value in signals:
+            state.live_last_emitted_measure.clear()
+            state.live_best_profile_priority.clear()
+        for signal_type, value in signal_values.items():
+            body, direction, eff_bodies, eff_dirs, live_mode = signal_contexts[signal_type]
+            body_min = body if body_min is None else min(body_min, body)
+            body_max = body if body_max is None else max(body_max, body)
+            level_markers = level_marker_labels(state, candle, direction, config)
+            order_block_marker = order_block_marker_label(state, candle, direction, config)
+            filter_facts = build_signal_filter_facts(state, candle, config, level_markers, order_block_marker)
             profile_id = None
             if signal_type.startswith("CANDLE_"):
                 parts = signal_type.split("_")
                 if len(parts) >= 3: profile_id = "_".join(parts[2:])
-            pair_signal_key = (state.symbol, signal_candle_start, profile_id) if profile_id else (state.symbol, signal_candle_start)
+            pair_signal_key = (
+                (state.symbol, signal_candle_start, profile_id, live_mode)
+                if profile_id and live_mode
+                else ((state.symbol, signal_candle_start, profile_id) if profile_id else (state.symbol, signal_candle_start))
+            )
             exact_signal_key = (state.symbol, signal_candle_start, signal_type)
             is_exempt_filter = signal_type in SIGNAL_FILTER_EXEMPT_SIGNAL_TYPES or (signal_type.startswith("MAX") and signal_type[3:].isdigit())
             if not is_exempt_filter and profile_id:
@@ -2203,14 +2365,16 @@ async def process_worker_cycle(
                     if expr and not evaluate_signal_filter_expression(expr, filter_facts): continue
             if is_live_candle and profile_id and config["LIVE_CANDLE_WICK_SIGNALS"]:
                 profile_priority = profile_live_priority(config, profile_id)
-                # A colour may appear once per M1.  A further alert needs a
-                # real new extreme and a strictly higher priority than the
-                # best colour already sent.
-                if body <= state.live_last_emitted_measure:
+                mode = live_mode or "standalone"
+                # Series continuation and standalone wick are independent
+                # live checks. Within each one, a further alert still needs a
+                # new extreme and a strictly higher-priority profile.
+                if body <= state.live_last_emitted_measure.get(mode, 0.0):
                     duplicate_suppressed += 1
                     continue
-                if (state.live_best_profile_priority is not None
-                        and profile_priority >= state.live_best_profile_priority):
+                previous_priority = state.live_best_profile_priority.get(mode)
+                if (previous_priority is not None
+                        and profile_priority >= previous_priority):
                     duplicate_suppressed += 1
                     continue
             if signal_type == "MAX" or (signal_type.startswith("MAX") and signal_type[3:].isdigit()):
@@ -2223,6 +2387,22 @@ async def process_worker_cycle(
             bb_marker = bollinger_marker_label(state, candle, config)
             if not rsi_filter_allows(state, candle, direction, config) or not bollinger_filter_allows(state, candle, direction, config): continue
             signals_found += 1
+            signal_minute = signal_candle_start // timeframe_seconds
+            # Series protection wins by design.  The minute protection is not
+            # evaluated when it is enabled, as requested in the config.
+            series_key: Optional[tuple[str, int, Optional[int]]] = None
+            series_state_key = f"{state.symbol}:{live_mode}" if live_mode else state.symbol
+            if config["ONE_SIGNAL_PER_SERIES"]:
+                series_key = signal_series_key(state, direction, signal_candle_start)
+                if (last_sent_series_by_pair is not None
+                        and last_sent_series_by_pair.get(series_state_key) == series_key):
+                    duplicate_suppressed += 1
+                    continue
+            elif config["ONE_SIGNAL_PER_PAIR_PER_MINUTE"]:
+                minute_key = (state.symbol, signal_minute)
+                if minute_sent_pairs is not None and minute_key in minute_sent_pairs:
+                    duplicate_suppressed += 1
+                    continue
             if sent_exact_signal_keys is not None and exact_signal_key in sent_exact_signal_keys: duplicate_suppressed += 1; continue
             if not (signal_type in SIGNAL_SEQUENCE_EXEMPT_SIGNAL_TYPES or (signal_type.startswith("MAX") and signal_type[3:].isdigit())) and not config["SEND_RULE_SEQUENCE_SIGNALS"] and sent_pair_signal_keys is not None and pair_signal_key in sent_pair_signal_keys: duplicate_suppressed += 1; continue
             if level_markers: level_marked += 1
@@ -2236,9 +2416,19 @@ async def process_worker_cycle(
             if state.payout_cache[payout_key] < config["MIN_PAYOUT"]: payout_rejected += 1; continue
             if sent_exact_signal_keys is not None: sent_exact_signal_keys.add(exact_signal_key)
             if sent_pair_signal_keys is not None: sent_pair_signal_keys.add(pair_signal_key)
+            if config["ONE_SIGNAL_PER_SERIES"] and last_sent_series_by_pair is not None:
+                last_sent_series_by_pair[series_state_key] = series_key or signal_series_key(
+                    state, direction, signal_candle_start
+                )
+            elif config["ONE_SIGNAL_PER_PAIR_PER_MINUTE"] and minute_sent_pairs is not None:
+                minute_sent_pairs.add((state.symbol, signal_minute))
+                minute_sent_pairs.difference_update(
+                    key for key in tuple(minute_sent_pairs) if key[1] < signal_minute - 1
+                )
             if is_live_candle and profile_id and config["LIVE_CANDLE_WICK_SIGNALS"]:
-                state.live_last_emitted_measure = body
-                state.live_best_profile_priority = profile_live_priority(config, profile_id)
+                mode = live_mode or "standalone"
+                state.live_last_emitted_measure[mode] = body
+                state.live_best_profile_priority[mode] = profile_live_priority(config, profile_id)
             if signal_type == "MAX" or (signal_type.startswith("MAX") and signal_type[3:].isdigit()):
                 ref = max_body_reference_timestamp(state) if signal_type == "MAX" else state.max_series_ref_ts.get(signal_type)
                 if config.get("MAX_RULE_DETAILS_ENABLED", True):
@@ -2269,15 +2459,22 @@ async def process_worker_cycle(
                     if sc and check_same_color_sub_candles(sc, direction, config.get("SUB_TF_ALLOW_DOJI", True)): suffixes.append(config.get(lk, f"S{stf}")); break
             payout_val = state.payout_cache.get(payout_key)
             signal_text = f"{state.display_name}" + (f" ({payout_val}%)" if payout_val else "") + f" {label} {signal_value}" + (f" {' '.join(suffixes)}" if suffixes else "")
-            chart_path = render_signal_chart(
-                state,
-                candle,
-                direction,
-                matched_signal_levels(state, candle, direction, config),
-                signal_text,
-                config,
-            )
-            messages.append(SignalMessage(text=signal_text, chart_path=chart_path))
+            chart_group = (state.symbol, signal_candle_start)
+            if chart_group not in chart_paths_by_group:
+                chart_paths_by_group[chart_group] = render_signal_chart(
+                    state,
+                    candle,
+                    direction,
+                    matched_signal_levels(state, candle, direction, config),
+                    signal_text,
+                    config,
+                    scan_timestamp=scan_timestamp,
+                )
+            messages.append(SignalMessage(
+                text=signal_text,
+                chart_path=chart_paths_by_group[chart_group],
+                chart_group=chart_group,
+            ))
 
     for batch in chunked([s.symbol for s in states], config["REQUEST_BATCH_SIZE"]):
         if prefetched_history is None:
@@ -2342,6 +2539,8 @@ async def process_all_workers_cycle(
     *,
     sent_pair_signal_keys: Optional[set[Any]] = None,
     sent_exact_signal_keys: Optional[set[tuple[str, int, str]]] = None,
+    last_sent_series_by_pair: Optional[dict[str, tuple[str, int, Optional[int]]]] = None,
+    minute_sent_pairs: Optional[set[tuple[str, int]]] = None,
 ) -> CycleResult:
     if not workers:
         return CycleResult(messages=[])
@@ -2358,6 +2557,8 @@ async def process_all_workers_cycle(
                     config,
                     sent_pair_signal_keys=sent_pair_signal_keys,
                     sent_exact_signal_keys=sent_exact_signal_keys,
+                    last_sent_series_by_pair=last_sent_series_by_pair,
+                    minute_sent_pairs=minute_sent_pairs,
                 ),
                 timeout=w.worker_cycle_timeout,
             )
@@ -2453,6 +2654,8 @@ async def collect_output_batch(
     request_started_at: float,
     fetch_elapsed: float,
     messages: list[SignalMessage],
+    processed_pairs: int,
+    total_pairs: int,
     worker_count: int,
     config: dict[str, Any],
     output_lock: asyncio.Lock,
@@ -2470,30 +2673,48 @@ async def collect_output_batch(
 
         batch = pending_batches.setdefault(request_started_at, OutputBatch(fetch_elapsed=fetch_elapsed))
         batch.completed_workers += 1
+        batch.processed_pairs += processed_pairs
+        batch.total_pairs += total_pairs
         batch.messages.extend(messages)
         if batch.completed_workers < worker_count:
             return
         pending_batches.pop(request_started_at, None)
+        request_line = format_scan_status(
+            request_started_at,
+            batch.fetch_elapsed,
+            batch.processed_pairs,
+            batch.total_pairs,
+        )
 
         if batch.messages:
             signal_minutes.add(int(request_started_at) // 60)
-            request_line = f"{format_ts_with_seconds(request_started_at)} {batch.fetch_elapsed:.2f}s"
             await emit_message_block([request_line], config, send_to_telegram=False)
             signal_entries = sort_signal_messages(batch.messages)
             signal_lines = [entry.text for entry in signal_entries]
-            # Console keeps its compact one-block format.  In Telegram, a
-            # chart-enabled signal is delivered as a photo with its own
-            # caption; the common request-time line is sent once above it.
+            # In Telegram, the status follows the signal in its text/caption;
+            # it is never sent as a separate message before the chart.
             await emit_message_block(signal_lines, config, send_to_telegram=False, prefix_first=False)
             if any(entry.chart_path is not None for entry in signal_entries):
-                await send_telegram_message_async(config, request_line)
+                chart_groups: dict[tuple[str, int], list[SignalMessage]] = {}
                 for entry in signal_entries:
-                    if entry.chart_path is not None:
-                        await send_telegram_photo_async(config, entry.chart_path, entry.text)
+                    if entry.chart_path is not None and entry.chart_group is not None:
+                        chart_groups.setdefault(entry.chart_group, []).append(entry)
+                sent_chart_groups: set[tuple[str, int]] = set()
+                for entry in signal_entries:
+                    if entry.chart_path is not None and entry.chart_group is not None:
+                        if entry.chart_group in sent_chart_groups:
+                            continue
+                        group_entries = chart_groups[entry.chart_group]
+                        await send_telegram_photo_async(
+                            config,
+                            entry.chart_path,
+                            "\n".join([*(group_entry.text for group_entry in group_entries), request_line]),
+                        )
+                        sent_chart_groups.add(entry.chart_group)
                     else:
-                        await send_telegram_message_async(config, entry.text)
+                        await send_telegram_message_async(config, "\n".join([entry.text, request_line]))
             else:
-                await send_telegram_message_async(config, "\n".join([request_line, *signal_lines]))
+                await send_telegram_message_async(config, "\n".join([*signal_lines, request_line]))
             return
 
         if int(request_started_at) % 60 != 55:
@@ -2501,9 +2722,9 @@ async def collect_output_batch(
         minute_key = int(request_started_at) // 60
         if minute_key not in signal_minutes:
             await emit_message_block(
-                [f"{format_ts_with_seconds(request_started_at)} {batch.fetch_elapsed:.2f}s -"],
+                [f"{request_line} -"],
                 config,
-                send_to_telegram=False,
+                send_to_telegram=config["TELEGRAM_NO_SIGNAL_STATS_ENABLED"],
             )
             # Marks that this minute's one allowed console line was printed.
             signal_minutes.add(minute_key)
@@ -2518,6 +2739,8 @@ async def run_background_analysis(
     snapshots: asyncio.Queue,
     sent_pair_signal_keys: set[Any],
     sent_exact_signal_keys: set[tuple[str, int, str]],
+    last_sent_series_by_pair: dict[str, tuple[str, int, Optional[int]]],
+    minute_sent_pairs: set[tuple[str, int]],
     output_lock: asyncio.Lock,
     signal_minutes: set[int],
     pending_batches: dict[float, OutputBatch],
@@ -2538,8 +2761,11 @@ async def run_background_analysis(
                 worker.states,
                 config,
                 prefetched_history=prefetched_history,
+                scan_timestamp=request_started_at,
                 sent_pair_signal_keys=sent_pair_signal_keys,
                 sent_exact_signal_keys=sent_exact_signal_keys,
+                last_sent_series_by_pair=last_sent_series_by_pair,
+                minute_sent_pairs=minute_sent_pairs,
             )
             analysis_elapsed = time.perf_counter() - started
             if config["DEBUG_CYCLE"]:
@@ -2550,6 +2776,8 @@ async def run_background_analysis(
                 request_started_at=request_started_at,
                 fetch_elapsed=fetch_elapsed,
                 messages=result.messages,
+                processed_pairs=result.processed,
+                total_pairs=len(worker.states),
                 worker_count=worker_count,
                 config=config,
                 output_lock=output_lock,
@@ -2588,6 +2816,8 @@ async def main():
             if states:
                 workers.append(ClientWorker(client=client, ssid_index=idx, states=states, worker_cycle_timeout=compute_worker_cycle_timeout(len(states), config)))
         total_states = sum(len(w.states) for w in workers)
+        if config["BOT_VERSION"]:
+            write_line(f"BOT VERSION {config['BOT_VERSION']}")
         write_line(f"PAIRS {total_states} REQUEST_BATCH_SIZE {config['REQUEST_BATCH_SIZE']}")
         for w in workers:
             write_line(f"SSID {w.ssid_index + 1} PAIRS {len(w.states)}")
@@ -2597,6 +2827,8 @@ async def main():
             for r in skipped_reasons: write_line(r)
         scan = max(1, int(config["SCAN_INTERVAL_SECONDS"]))
         sent_pair: set[Any] = set(); sent_exact: set[tuple[str, int, str]] = set()
+        last_sent_series_by_pair: dict[str, tuple[str, int, Optional[int]]] = {}
+        minute_sent_pairs: set[tuple[str, int]] = set()
         output_lock = asyncio.Lock()
         signal_minutes: set[int] = set()
         pending_batches: dict[float, OutputBatch] = {}
@@ -2608,7 +2840,8 @@ async def main():
             analysis_queues.append(snapshots)
             analysis_tasks.append(asyncio.create_task(
                 run_background_analysis(
-                    worker, config, snapshots, sent_pair, sent_exact, output_lock,
+                    worker, config, snapshots, sent_pair, sent_exact,
+                    last_sent_series_by_pair, minute_sent_pairs, output_lock,
                     signal_minutes, pending_batches, len(workers),
                 )
             ))

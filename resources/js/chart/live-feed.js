@@ -1,9 +1,11 @@
 /**
  * PR2: WebSocket live-лента S5 partial → бар текущего TF.
+ * + payout push (op=payout) для сайдбара без частого GET /instruments/data.
  *
- * Когда hub доступен — график двигает хвост через series.update (applyIncremental),
- * а HTTP /candles poll уходит на редкий resync (15–30с) вместо 500ms.
- * При обрыве WS — onConnectionChange(false) → caller возвращает poll 500ms.
+ * Когда hub доступен — график двигает хвост через series.update (applyIncremental).
+ * HTTP /candles poll при live больше не используется (ни 500ms, ни soft-resync):
+ * только initial/loadMore. Обрыв WS → reconnect в этом модуле, без REST-fallback.
+ * Если live выключен в boot — caller сам держит классический poll.
  */
 (function (global) {
     'use strict';
@@ -40,7 +42,7 @@
             };
         }
 
-        // Устаревший тик (часы/коррекция) — игнор; resync подтянет.
+        // Устаревший тик (часы/коррекция) — игнор; следующий валидный S5 обновит бар.
         if (lastBar && bucket < Number(lastBar.time)) {
             return null;
         }
@@ -56,6 +58,8 @@
      * @param {() => number} opts.getBarPeriodSec
      * @param {() => object|null} opts.getLastBar
      * @param {(bar: object) => void} opts.onLiveBar
+     * @param {(payload: object) => void} [opts.onPayout] — смена % выплаты (broadcast)
+     * @param {(payload: object) => void} [opts.onBotEvent] — open/settle сделки бота
      * @param {(connected: boolean) => void} [opts.onConnectionChange]
      */
     function create(opts) {
@@ -118,11 +122,16 @@
             url = wsUrl + sep + 'token=' + encodeURIComponent(token);
 
             let ws;
+            let openedOk = false;
             try {
                 ws = new WebSocket(url);
             } catch (e) {
                 console.warn('[chart-live] open failed', e);
                 setConnected(false);
+                // Уведомляем caller (heal и т.п.); HTTP poll при live больше не включаем.
+                if (typeof opts.onConnectionChange === 'function' && !connected) {
+                    try { opts.onConnectionChange(false); } catch (_) {}
+                }
                 scheduleReconnect();
                 return;
             }
@@ -130,6 +139,7 @@
             subscribedInstrument = null;
 
             ws.onopen = () => {
+                openedOk = true;
                 reconnectAttempt = 0;
                 setConnected(true);
                 sendSubscribe();
@@ -160,6 +170,14 @@
                     if (bar && typeof opts.onLiveBar === 'function') {
                         opts.onLiveBar(bar);
                     }
+                } else if (msg.op === 'payout' && typeof opts.onPayout === 'function') {
+                    // Broadcast: обновляем % в сайдбаре без полного GET /instruments/data.
+                    try { opts.onPayout(msg); } catch (_) {}
+                } else if (msg.op === 'bot_event' && typeof opts.onBotEvent === 'function') {
+                    // Open/settle paper-сделки: клиент фильтрует bot_id и обновляет stats.
+                    try { opts.onBotEvent(msg); } catch (_) {}
+                } else if (msg.op === 'err') {
+                    console.warn('[chart-live]', msg.message || 'err');
                 }
             };
 
@@ -167,12 +185,20 @@
                 if (socket === ws) socket = null;
                 subscribedInstrument = null;
                 clearTimers();
-                setConnected(false);
+                if (openedOk) {
+                    setConnected(false);
+                } else {
+                    // Close до onopen: setConnected(false) no-op — всё равно уведомляем caller.
+                    connected = false;
+                    if (typeof opts.onConnectionChange === 'function') {
+                        try { opts.onConnectionChange(false); } catch (_) {}
+                    }
+                }
                 scheduleReconnect();
             };
 
             ws.onerror = () => {
-                // onclose сделает reconnect
+                // onclose сделает reconnect / fallback notify
             };
         }
 
