@@ -31,5 +31,6 @@ bot/__pycache__/
 bot/stream_logs/
 *.pyc
 
-# Local trader video analysis (do not commit)
-docs_need_release/video_analysis/alex_sniper/
+# Local scratch / release notes / video analysis (do not commit)
+docs_need_release/
+public/docs_need_release

@@ -1,6 +1,0 @@
-private_config.py
-proxy_urls.json
-runtime_signals.log
-.venv/
-__pycache__/
-*.pyc
