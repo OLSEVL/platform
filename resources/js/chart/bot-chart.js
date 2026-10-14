@@ -3787,7 +3787,8 @@
         lastClassicNameState = { overlays, oscillators };
         // rAF: после addPane высоты pane из LWC обычно уже актуальны.
         requestAnimationFrame(() => renderAllIndicatorNameLabels());
-        resyncCandlestickSeriesFromAllChartData();
+        // setData после addPane, но toward вместо snap — не убивать live chase.
+        resyncCandlestickSeriesFromAllChartData({ preserveSmooth: true });
         // После rebuild panes применить режим шкалы (addPane может сбросить autoScale).
         applyPriceScalePanPref();
         renderChartMarkers();
@@ -3988,8 +3989,13 @@
                 redrawPriceActionOverlay();
                 redrawLiquiditySwingsOverlay();
                 redrawSmcFlowOverlay();
+                // Classic rebuild (clear+addPane+resync setData) нельзя на in-bar тиках:
+                // resync → reset/snap убивает PlatformCandleSmooth chase (как на dashboard).
+                applyClassicOsEngineSeries();
+            } else {
+                // In-bar: обновить уже созданные classic-series без addPane/resync.
+                patchClientClassicSeriesFromPayloads();
             }
-            applyClassicOsEngineSeries();
             renderChartMarkers();
         }
     }
@@ -5625,17 +5631,26 @@
     function resyncCandlestickSeriesFromAllChartData(opts = {}) {
         if (!candlestickSeries || !allChartData.length) return;
         const preserveRange = opts.preserveRange !== false && chart;
+        // preserveSmooth: после addPane setData нужен, но last close через toward (не snap).
+        const preserveSmooth = opts.preserveSmooth === true && candleSmooth;
         let savedRange = null;
         if (preserveRange) {
             try { savedRange = chart.timeScale().getVisibleLogicalRange(); } catch (_) {}
         }
         withSuppressedDataSeriesViewport(() => {
-            if (candleSmooth) candleSmooth.reset();
+            if (candleSmooth && !preserveSmooth) candleSmooth.reset();
             try {
-                candlestickSeries.setData(allChartData.map(mapBarForCandlestickSeries));
+                candlestickSeries.setData(allChartData.map((c, idx) => {
+                    const src = (preserveSmooth && idx === allChartData.length - 1)
+                        ? candleSmooth.visualFor(c)
+                        : c;
+                    return mapBarForCandlestickSeries(src);
+                }));
                 candleSeriesBarCount = allChartData.length;
                 if (candleSmooth && allChartData.length) {
-                    candleSmooth.snap(allChartData[allChartData.length - 1]);
+                    const last = allChartData[allChartData.length - 1];
+                    if (preserveSmooth) candleSmooth.toward(last);
+                    else candleSmooth.snap(last);
                 }
             } catch (e) {
                 console.error('[bot chart] resyncCandlestickSeriesFromAllChartData', e);
@@ -5660,7 +5675,7 @@
             ? lastVolatilityCandlesPayload.series.vc
             : null;
         if (!s || !Array.isArray(data) || !data.length) return false;
-        s.setData(mapClippedLinePoints(data));
+        s.setData(mapClassicLinePoints(data));
         return true;
     }
 
@@ -5668,7 +5683,7 @@
         const s = classicLineSeries['rsi'];
         const data = lastRsiPayload && lastRsiPayload.series ? lastRsiPayload.series.rsi : null;
         if (!s || !Array.isArray(data) || !data.length) return false;
-        s.setData(mapClippedLinePoints(data));
+        s.setData(mapClassicLinePoints(data));
         return true;
     }
 
@@ -5676,8 +5691,79 @@
         const s = classicLineSeries['demarker'];
         const data = lastDemarkerPayload && lastDemarkerPayload.series ? lastDemarkerPayload.series.dem : null;
         if (!s || !Array.isArray(data) || !data.length) return false;
-        s.setData(mapClippedLinePoints(data));
+        s.setData(mapClassicLinePoints(data));
         return true;
+    }
+
+    /** Точки line-series для patch (без clip — на боте нет clipIndicatorPointsToCandles). */
+    function mapClassicLinePoints(data) {
+        if (!Array.isArray(data) || !data.length) return [];
+        return data.map((p) => ({ time: p.time, value: p.value }));
+    }
+
+    /**
+     * In-bar обновление клиентского classic-subset без clear/addPane/resync.
+     * Если series ещё нет (слой только включили) — возвращаем false; полный apply
+     * сделает следующий non-light recompute (новый бар / toggle).
+     */
+    function patchClientClassicSeriesFromPayloads() {
+        if (!chart || !Object.keys(classicLineSeries).length) return false;
+        let touched = false;
+
+        const setLine = (key, points) => {
+            const s = classicLineSeries[key];
+            if (!s || !Array.isArray(points) || !points.length) return;
+            try {
+                s.setData(mapClassicLinePoints(points));
+                touched = true;
+            } catch (e) {
+                console.error('[classic light-patch]', key, e);
+            }
+        };
+
+        if (lastSmaPayload) setLine('sma', (lastSmaPayload.series || {}).ma);
+        if (lastEmaPayload) setLine('ema', (lastEmaPayload.series || {}).ema);
+        if (lastVwmaPayload) setLine('vwma', (lastVwmaPayload.series || {}).vwma);
+        if (lastBollingerPayload) {
+            const ser = lastBollingerPayload.series || {};
+            setLine('bb_up', ser.up);
+            setLine('bb_mid', ser.mid);
+            setLine('bb_down', ser.down);
+        }
+        if (lastRsiPayload) setLine('rsi', (lastRsiPayload.series || {}).rsi);
+        if (lastAtrPayload) setLine('atr', (lastAtrPayload.series || {}).atr);
+        if (lastStochasticPayload) {
+            const ser = lastStochasticPayload.series || {};
+            setLine('stoch_k', ser.k);
+            setLine('stoch_d', ser.d);
+        }
+        if (lastMacdPayload) {
+            const ser = lastMacdPayload.series || {};
+            const st = lastMacdPayload.style || {};
+            setLine('macd_line', ser.macd);
+            setLine('macd_signal', ser.signal);
+            const hs = classicLineSeries['macd_hist'];
+            if (hs && Array.isArray(ser.histogram) && ser.histogram.length) {
+                const pos = st.color_hist_up || '#22c55e';
+                const neg = st.color_hist_down || '#ef4444';
+                try {
+                    hs.setData(ser.histogram.map((p) => ({
+                        time: p.time,
+                        value: p.value,
+                        color: Number(p.value) >= 0 ? pos : neg,
+                    })));
+                    touched = true;
+                } catch (e) {
+                    console.error('[classic light-patch] macd_hist', e);
+                }
+            }
+        }
+
+        // Узкие patch-handlers (RSI/DeM/VC) — на случай если payload уже проставлен иначе.
+        if (patchRsiSeries()) touched = true;
+        if (patchDemarkerSeries()) touched = true;
+        if (patchVolatilityCandlesSeries()) touched = true;
+        return touched;
     }
 
     const CLASSIC_SERIES_PATCH_HANDLERS = {
@@ -5841,6 +5927,43 @@
         if (activeMsg) activeMsg.classList.toggle('hidden', !active);
         if (idleMsg) idleMsg.classList.toggle('hidden', active);
     }
+    /** Рендер строк «поток #N · пара · остаток» из scan_shards (6 параллельных bots:scan). */
+    function renderScanShardRows(payload) {
+        const list = document.getElementById('bot-scan-shards');
+        const wrap = document.getElementById('bot-scan-remaining-wrap');
+        if (!list) return;
+        const shardCount = Math.max(
+            1,
+            Number.parseInt(String(payload?.scan_shard_count ?? wrap?.dataset?.shardCount ?? '1'), 10) || 1
+        );
+        if (wrap) wrap.dataset.shardCount = String(shardCount);
+        // Один процесс — список потоков не нужен (как раньше, только общий счётчик).
+        if (shardCount <= 1) {
+            list.innerHTML = '';
+            return;
+        }
+        const byIndex = new Map();
+        const shards = Array.isArray(payload?.scan_shards) ? payload.scan_shards : [];
+        shards.forEach((row) => {
+            if (row && Number.isFinite(Number(row.index))) {
+                byIndex.set(Number(row.index), row);
+            }
+        });
+        let html = '';
+        for (let i = 0; i < shardCount; i++) {
+            const row = byIndex.get(i);
+            const pair = row && row.current ? String(row.current) : '…';
+            const left = row && row.remaining != null
+                ? String(Math.max(0, Number.parseInt(String(row.remaining), 10) || 0))
+                : (row && row.active ? '…' : '—');
+            html += `<li data-shard="${i}" class="flex items-center gap-1 truncate">`
+                + `<span class="shrink-0 text-zinc-600">#${i + 1}</span>`
+                + `<span class="bot-scan-shard-pair min-w-0 flex-1 truncate text-zinc-300">${pair}</span>`
+                + `<span class="bot-scan-shard-left shrink-0 text-zinc-400">${left}</span>`
+                + `</li>`;
+        }
+        list.innerHTML = html;
+    }
     function tickScanNextCountdown() {
         const el = document.getElementById('bot-scan-next-countdown');
         const idleMsg = document.getElementById('bot-scan-idle-msg');
@@ -5849,8 +5972,13 @@
             el.textContent = '—';
             return;
         }
-        // Не крутим новый 30-секундный цикл на клиенте: 00:00, пока сервер не даст next_scan_at или scan_active.
-        el.textContent = formatMmSs(Math.max(0, scanNextAtUnix - scanUnixNow()));
+        const left = scanNextAtUnix - scanUnixNow();
+        // 00:00 = уже due: ждём bots:scan-dispatch / конец предыдущего процесса, не «тишину».
+        if (left <= 0) {
+            el.textContent = 'запуск…';
+            return;
+        }
+        el.textContent = formatMmSs(left);
     }
     function updateScanRemainingCounter(payload) {
         const wrap = document.getElementById('bot-scan-remaining-wrap');
@@ -5863,9 +5991,15 @@
         }
         const total = Number.parseInt(String(payload?.scan_total ?? ''), 10);
         const analyzed = Array.isArray(payload?.analyzed_instruments) ? payload.analyzed_instruments.length : 0;
+        const analyzingList = Array.isArray(payload?.analyzing_instruments)
+            ? payload.analyzing_instruments
+            : (payload?.analyzing_instrument ? [payload.analyzing_instrument] : []);
+        const shardCount = Number.parseInt(String(payload?.scan_shard_count ?? ''), 10);
         const active = !!(payload && (
             payload.scan_active
+            || analyzingList.length > 0
             || payload.analyzing_instrument
+            || (Number.isFinite(shardCount) && shardCount > 1 && Array.isArray(payload.scan_shards) && payload.scan_shards.some((s) => s && s.active))
             || (Number.isFinite(total) && total > 0 && analyzed > 0)
         ));
         let remaining = payload ? payload.scan_remaining : null;
@@ -5873,6 +6007,7 @@
             remaining = Math.max(0, total - analyzed);
         }
         wrap.classList.remove('hidden');
+        renderScanShardRows(payload || {});
         if (active) {
             // Scan идёт: останавливаем idle-таймер, даже если remaining ещё не приехал из cache.
             scanNextAtUnix = null;
@@ -6161,12 +6296,19 @@
         const payload = {
             scan_active: !!scan.scan_active,
             analyzing_instrument: scan.analyzing_instrument || scan.current || null,
+            analyzing_instruments: Array.isArray(scan.analyzing_instruments)
+                ? scan.analyzing_instruments
+                : (scan.analyzing_instrument || scan.current
+                    ? [scan.analyzing_instrument || scan.current]
+                    : []),
             analyzed_instruments: Array.isArray(scan.analyzed_instruments)
                 ? scan.analyzed_instruments
                 : (Array.isArray(scan.analyzed) ? scan.analyzed : []),
             scan_total: scan.scan_total ?? scan.total ?? 0,
             scan_remaining: scan.scan_remaining ?? null,
             scan_min_payout: scan.scan_min_payout ?? scan.min_payout ?? null,
+            scan_shard_count: scan.scan_shard_count ?? 1,
+            scan_shards: Array.isArray(scan.scan_shards) ? scan.scan_shards : [],
             next_scan_at: scan.next_scan_at ?? null,
         };
         updateScanRemainingCounter(payload);
@@ -6174,11 +6316,16 @@
     }
 
     function patchSidebarScanDots(payload) {
-        const analyzing = payload.analyzing_instrument || null;
+        const analyzingSet = new Set(
+            (Array.isArray(payload.analyzing_instruments) && payload.analyzing_instruments.length
+                ? payload.analyzing_instruments
+                : (payload.analyzing_instrument ? [payload.analyzing_instrument] : [])
+            ).map(String)
+        );
         const analyzed = new Set(
             (Array.isArray(payload.analyzed_instruments) ? payload.analyzed_instruments : []).map(String)
         );
-        const active = !!(payload.scan_active || analyzing || analyzed.size);
+        const active = !!(payload.scan_active || analyzingSet.size || analyzed.size);
         document.querySelectorAll('.instrument-btn').forEach((btn) => {
             const inst = btn.dataset.instrument;
             if (!inst) return;
@@ -6186,7 +6333,7 @@
             if (!nameWrap) return;
             let color = 'none';
             if (active) {
-                if (analyzing === inst) color = 'red';
+                if (analyzingSet.has(inst)) color = 'red';
                 else if (analyzed.has(inst)) color = 'green';
                 else color = 'gray';
             }
@@ -7460,10 +7607,13 @@
             candleSmooth = window.PlatformCandleSmooth.create({
                 getSeries: () => candlestickSeries,
                 paintBar: paintBarForSmooth,
-                // ~poll/WS interval: tween перекрывает паузу между тиками.
-                durationMs: 450,
-                // PR3: меньше series.update → меньше LWC paint long tasks.
-                maxFps: Math.max(0, Number(boot.smoothMaxFps) || 24),
+                // Binodex/PO: непрерывный chase (не timed easeOut) — тики не рвут скорость.
+                tauMs: 160,
+                // 0 = каждый rAF; Number(x)||24 ломал CHART_SMOOTH_MAX_FPS=0 (0 falsy).
+                maxFps: (() => {
+                    const n = Number(boot.smoothMaxFps);
+                    return Number.isFinite(n) ? Math.max(0, n) : 24;
+                })(),
             });
             // Таймер над полоской: каждый visual frame smooth → та же Y, что у last price.
             if (typeof candleSmooth.setOnVisualFrame === 'function') {
@@ -7806,6 +7956,8 @@
                 if (anyOverlayIndicatorLayerOn()) {
                     fetchPriceActionIndicator({ force: true });
                 }
+            } else {
+                // Пустой ответ — очищаем ряд и оверлеи (раньше setData([]) ошибочно шёл в ветке с данными).
                 if (candleSmooth) candleSmooth.reset();
                 candlestickSeries.setData([]);
                 lastZones = [];
@@ -8008,7 +8160,7 @@
             saveLayerPrefs();
             if (!layerSweepRaidLiquidity.checked) {
                 lastSrlPayload = null;
-                redrawStructureOverlay();
+            redrawStructureOverlay();
                 return;
             }
             fetchStructures();
@@ -8019,7 +8171,7 @@
             saveLayerPrefs();
             if (!layerEngulfingLiquidity.checked) {
                 lastEngPayload = null;
-                redrawStructureOverlay();
+            redrawStructureOverlay();
                 return;
             }
             fetchStructures();
@@ -8277,10 +8429,10 @@
 
     const instrumentsPollMs = instrumentsSidebarPollMs();
     if (instrumentsPollMs > 0) {
-        instrumentListRefreshInterval = setInterval(
-            refreshInstrumentSidebar,
+    instrumentListRefreshInterval = setInterval(
+        refreshInstrumentSidebar,
             instrumentsPollMs
-        );
+    );
     }
     let openTradesRayTick = 0;
     openTradesTickInterval = setInterval(() => {

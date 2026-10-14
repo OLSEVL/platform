@@ -836,8 +836,14 @@
                 if (typeof redrawPriceActionOverlay === 'function') redrawPriceActionOverlay();
                 if (typeof redrawLiquiditySwingsOverlay === 'function') redrawLiquiditySwingsOverlay();
                 if (typeof redrawSmcFlowOverlay === 'function') redrawSmcFlowOverlay();
+                // Classic rebuild (clear+addPane+resync setData) нельзя на in-bar тиках:
+                // resyncCandlestickSeriesFromAllChartData → reset/snap убивает PlatformCandleSmooth.
+                // На light обновляем только payload; series.apply — на новом баре / toggle.
+                if (typeof applyClassicOsEngineSeries === 'function') applyClassicOsEngineSeries();
+            } else {
+                // In-bar: setData на существующих series — без addPane/resync свечей.
+                patchClientClassicSeriesFromPayloads();
             }
-            if (typeof applyClassicOsEngineSeries === 'function') applyClassicOsEngineSeries();
             if (typeof renderChartMarkers === 'function') renderChartMarkers();
         }
     }
@@ -1811,17 +1817,28 @@
     function resyncCandlestickSeriesFromAllChartData(opts = {}) {
         if (!candlestickSeries || !allChartData.length) return;
         const preserveRange = opts.preserveRange !== false && chart;
+        // preserveSmooth: setData неизбежен после addPane, но last close снова гоняем через toward
+        // (не snap), чтобы не сбрасывать Binodex/PO chase на каждом rebuild индикаторов.
+        const preserveSmooth = opts.preserveSmooth === true && candleSmooth;
         let savedRange = null;
         if (preserveRange) {
             try { savedRange = chart.timeScale().getVisibleLogicalRange(); } catch (_) {}
         }
         withSuppressedDataSeriesViewport(() => {
-            if (candleSmooth) candleSmooth.reset();
+            if (candleSmooth && !preserveSmooth) candleSmooth.reset();
             try {
-                candlestickSeries.setData(allChartData.map(mapBarForCandlestickSeries));
+                candlestickSeries.setData(allChartData.map((c, idx) => {
+                    // Хвост — визуальный close chase, чтобы setData не мигал серверным OHLC.
+                    const src = (preserveSmooth && idx === allChartData.length - 1)
+                        ? candleSmooth.visualFor(c)
+                        : c;
+                    return mapBarForCandlestickSeries(src);
+                }));
                 candleSeriesBarCount = allChartData.length;
                 if (candleSmooth && allChartData.length) {
-                    candleSmooth.snap(allChartData[allChartData.length - 1]);
+                    const last = allChartData[allChartData.length - 1];
+                    if (preserveSmooth) candleSmooth.toward(last);
+                    else candleSmooth.snap(last);
                 }
             } catch (e) {
                 console.error('[chart] resyncCandlestickSeriesFromAllChartData', e);
@@ -1865,6 +1882,65 @@
         if (!s || !Array.isArray(data) || !data.length) return false;
         s.setData(mapClippedLinePoints(data));
         return true;
+    }
+
+    /**
+     * In-bar: обновить клиентский classic-subset на месте (без addPane/resync свечей).
+     * Не трогает chase PlatformCandleSmooth.
+     */
+    function patchClientClassicSeriesFromPayloads() {
+        if (!chart || !Object.keys(classicLineSeries).length) return false;
+        let touched = false;
+
+        const setLine = (key, points) => {
+            const s = classicLineSeries[key];
+            if (!s || !Array.isArray(points) || !points.length) return;
+            try {
+                s.setData(mapClippedLinePoints(points));
+                touched = true;
+            } catch (e) {
+                console.error('[classic light-patch]', key, e);
+            }
+        };
+
+        if (lastSmaPayload) setLine('sma', (lastSmaPayload.series || {}).ma);
+        if (lastEmaPayload) setLine('ema', (lastEmaPayload.series || {}).ema);
+        if (lastVwmaPayload) setLine('vwma', (lastVwmaPayload.series || {}).vwma);
+        if (lastBollingerPayload) {
+            const ser = lastBollingerPayload.series || {};
+            setLine('bb_up', ser.up);
+            setLine('bb_mid', ser.mid);
+            setLine('bb_down', ser.down);
+        }
+        if (lastRsiPayload) setLine('rsi', (lastRsiPayload.series || {}).rsi);
+        if (lastAtrPayload) setLine('atr', (lastAtrPayload.series || {}).atr);
+        if (lastStochasticPayload) {
+            const ser = lastStochasticPayload.series || {};
+            setLine('stoch_k', ser.k);
+            setLine('stoch_d', ser.d);
+        }
+        if (lastMacdPayload) {
+            const ser = lastMacdPayload.series || {};
+            const st = lastMacdPayload.style || {};
+            setLine('macd_line', ser.macd);
+            setLine('macd_signal', ser.signal);
+            const hs = classicLineSeries['macd_hist'];
+            if (hs && Array.isArray(ser.histogram) && ser.histogram.length) {
+                const pos = st.color_hist_up || '#22c55e';
+                const neg = st.color_hist_down || '#ef4444';
+                try {
+                    hs.setData(mapClippedHistPoints(ser.histogram, pos, neg));
+                    touched = true;
+                } catch (e) {
+                    console.error('[classic light-patch] macd_hist', e);
+                }
+            }
+        }
+
+        if (patchRsiSeries()) touched = true;
+        if (patchDemarkerSeries()) touched = true;
+        if (patchVolatilityCandlesSeries()) touched = true;
+        return touched;
     }
 
     /** Карта patch-обработчиков: только осцилляторы с отдельной pane (без overlay на свечах). */
@@ -4377,8 +4453,9 @@
 
         lastClassicNameState = { overlays, oscillators };
         requestAnimationFrame(() => renderAllIndicatorNameLabels());
-        // addPane/removePane classic-слоёв сбрасывает canvas свечей LWC v5 — один setData из allChartData.
-        resyncCandlestickSeriesFromAllChartData();
+        // addPane/removePane сбрасывает canvas свечей LWC v5 — setData нужен.
+        // После setData продолжаем chase (toward), а не snap: иначе live-свеча снова «прыгает».
+        resyncCandlestickSeriesFromAllChartData({ preserveSmooth: true });
         // После rebuild panes применить режим шкалы (addPane может сбросить autoScale).
         applyPriceScalePanPref();
         renderChartMarkers();
@@ -6001,10 +6078,13 @@
             candleSmooth = window.PlatformCandleSmooth.create({
                 getSeries: () => candlestickSeries,
                 paintBar: paintBarForSmooth,
-                // ~poll/WS interval: tween перекрывает паузу между тиками.
-                durationMs: 450,
-                // PR3: меньше series.update → меньше LWC paint long tasks.
-                maxFps: Math.max(0, Number(boot.smoothMaxFps) || 24),
+                // Binodex/PO: непрерывный chase (не timed easeOut) — тики не рвут скорость.
+                tauMs: 160,
+                // 0 = каждый rAF; Number(x)||24 ломал CHART_SMOOTH_MAX_FPS=0 (0 falsy).
+                maxFps: (() => {
+                    const n = Number(boot.smoothMaxFps);
+                    return Number.isFinite(n) ? Math.max(0, n) : 24;
+                })(),
             });
             // Таймер над полоской: sync на каждом visual frame smooth.
             if (typeof candleSmooth.setOnVisualFrame === 'function') {

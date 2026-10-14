@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label=";0BD>@<0">
+  <!-- "Q<=K9 D>= :0: C UI (#1c202e), A:@C3;Q==K9 :204@0B  G8B05BAO 2 2:;04:5 1@0C75@0. -->
+  <rect width="32" height="32" rx="7" fill="#1c202e"/>
+  <!-- ">=:0O @0<:0, GB>1K 8:>=:0 =5 A;820;0AL A BQ<=K<8 2:;04:0<8 Chrome. -->
+  <rect x="0.75" y="0.75" width="30.5" height="30.5" rx="6.25" fill="none" stroke="#31384e" stroke-width="1.5"/>
+  <!-- "@8 A25G8: 75;Q=0O / :@0A=0O / 75;Q=0O  C7=0205<K9 trading-A83=0;. -->
+  <!-- !25G0 1 (bull) -->
+  <line x1="9" y1="8" x2="9" y2="24" stroke="#22ff00" stroke-width="1.5" stroke-linecap="round"/>
+  <rect x="6.5" y="12" width="5" height="8" rx="1" fill="#22ff00"/>
+  <!-- !25G0 2 (bear) -->
+  <line x1="16" y1="7" x2="16" y2="23" stroke="#ff3b3b" stroke-width="1.5" stroke-linecap="round"/>
+  <rect x="13.5" y="10" width="5" height="9" rx="1" fill="#ff3b3b"/>
+  <!-- !25G0 3 (bull, 2KH5) -->
+  <line x1="23" y1="6" x2="23" y2="20" stroke="#22ff00" stroke-width="1.5" stroke-linecap="round"/>
+  <rect x="20.5" y="8" width="5" height="10" rx="1" fill="#22ff00"/>
+</svg>

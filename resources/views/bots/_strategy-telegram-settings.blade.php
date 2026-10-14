@@ -57,8 +57,43 @@
                 <option value="1" @selected($telegramSendChart === '1')>Да, PNG со свечами и метками</option>
                 <option value="0" @selected($telegramSendChart === '0')>Нет, только текст</option>
             </select>
-            <p class="text-[11px] text-zinc-500">Sweep / Raid: FH/FL, свип, рейд, откат и точка входа. DeMarker: свечи + панель осциллятора. SMC Flow: UT, 3BR и зона OB.</p>
+            <p class="text-[11px] text-zinc-500">Sweep / Raid: FH/FL, свип, рейд, откат и точка входа. DeMarker: свечи + панель осциллятора. SMC Flow: UT, 3BR и зона OB. Engulfing: PNG как у Impulse LVL (#47) — сетка, N свечей, рамка последней.</p>
         </div>
+        @if (($bot->type ?? '') === 'engulfing_liquidity')
+            <div class="space-y-1">
+                <label for="telegram_chart_candles_strategy" class="block text-xs font-medium text-zinc-400">Свечей на PNG (как #47)</label>
+                <input type="number" name="telegram_chart_candles" id="telegram_chart_candles_strategy"
+                    min="{{ \App\Support\EngulfingLiquidityConfig::MIN_TELEGRAM_CHART_CANDLES }}"
+                    max="{{ \App\Support\EngulfingLiquidityConfig::MAX_TELEGRAM_CHART_CANDLES }}"
+                    required
+                    value="{{ old('telegram_chart_candles', $cfg['telegram_chart_candles'] ?? \App\Support\EngulfingLiquidityConfig::DEFAULT_TELEGRAM_CHART_CANDLES) }}"
+                    class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('telegram_chart_candles', \App\Support\EngulfingLiquidityConfig::BOT_TYPE)])
+                @error('telegram_chart_candles')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+            </div>
+            <div class="space-y-1 sm:col-span-2">
+                <input type="hidden" name="telegram_show_nearest_level" value="0">
+                <label class="flex items-start gap-2">
+                    <input type="checkbox" name="telegram_show_nearest_level" id="telegram_show_nearest_level_strategy" value="1"
+                        class="mt-0.5 rounded border-zinc-600 bg-zinc-800 text-blue-500"
+                        @checked(old('telegram_show_nearest_level', $cfg['telegram_show_nearest_level'] ?? true))>
+                    <span>
+                        <span class="text-sm font-medium text-zinc-300">Линия ближайшего уровня (FH/FL)</span>
+                        <span class="mt-0.5 block text-[11px] font-normal text-zinc-500">На PNG — горизонталь ближайшей поддержки (FL) для CALL или сопротивления (FH) для PUT. Видно, будет ли отбой от уровня.</span>
+                    </span>
+                </label>
+                @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('telegram_show_nearest_level', \App\Support\EngulfingLiquidityConfig::BOT_TYPE)])
+            </div>
+            <div class="space-y-1">
+                <label for="telegram_level_lookback_strategy" class="block text-xs font-medium text-zinc-400">Lookback уровня на PNG</label>
+                <input type="number" name="telegram_level_lookback" id="telegram_level_lookback_strategy"
+                    min="0" max="200"
+                    value="{{ old('telegram_level_lookback', $cfg['telegram_level_lookback'] ?? 0) }}"
+                    class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                <p class="text-[11px] text-zinc-500">Сколько баров назад искать фрактал для линии. <span class="font-mono">0</span> = как «Lookback фракталов» в фильтрах стратегии.</p>
+                @error('telegram_level_lookback')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+            </div>
+        @endif
         @if (($bot->type ?? '') === 'sweep_raid_liquidity')
             <div class="space-y-1">
                 <label class="flex items-start gap-2">
@@ -162,7 +197,11 @@
             </button>
             <button type="button" id="telegram-restart-btn-strategy"
                 class="rounded border border-amber-700 bg-amber-950/40 px-3 py-2 text-xs font-medium text-amber-200 hover:bg-amber-900/50">
-                Перезапустить poll
+                @if (in_array($bot->type ?? '', ['engulfing_liquidity', \App\Support\ImpulseLvl1minConfig::BOT_TYPE, \App\Support\ImpulseLvl1minConfig::BOT_TYPE_S15], true))
+                    Перезапустить poll + live
+                @else
+                    Перезапустить poll
+                @endif
             </button>
         </div>
     </div>

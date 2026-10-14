@@ -4,8 +4,10 @@ namespace App\Services;
 
 use App\Models\Bot;
 use App\Models\BotTrade;
+use App\Support\BotScanCoordinator;
 use App\Support\BotScanProgress;
 use App\Support\ChartLiveConfig;
+use App\Support\ImpulseLvl1minConfig;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Redis;
 use Throwable;
@@ -142,6 +144,36 @@ class BotLiveEventsBroadcast
                 return;
             }
             $snap = BotScanProgress::snapshot($botId, $minPayout);
+            // Процесс уже жив (warm/шарды), а cache progress ещё пуст — UI не должен показывать idle «00:00».
+            if (! ($snap['scan_active'] ?? false) && $bot->is_active && BotScanCoordinator::isScanRunning($botId)) {
+                $snap['scan_active'] = true;
+                if ((int) ($snap['scan_shard_count'] ?? 1) < 2) {
+                    $workers = ImpulseLvl1minConfig::is((string) $bot->type)
+                        ? ImpulseLvl1minConfig::scanWorkers(is_array($bot->config) ? $bot->config : [])
+                        : 1;
+                    if ($workers > 1) {
+                        $snap['scan_shard_count'] = $workers;
+                        $snap['scan_shards'] = [];
+                        for ($i = 0; $i < $workers; $i++) {
+                            $snap['scan_shards'][] = [
+                                'index' => $i,
+                                'current' => null,
+                                'remaining' => null,
+                                'total' => 0,
+                                'analyzed_count' => 0,
+                                'active' => false,
+                            ];
+                        }
+                    }
+                }
+            }
+            // После endScan/endShardedWave UI сразу знает, когда ждать следующий dispatch
+            // (иначе счётчик «До следующего…» залипает на «—» до редкого HTTP heal).
+            if (! ($snap['scan_active'] ?? false) && $bot->is_active) {
+                $snap['next_scan_at'] = BotScanCoordinator::nextDueUnix($bot);
+            } else {
+                $snap['next_scan_at'] = null;
+            }
             $this->publishRaw([
                 'bot_id' => $botId,
                 'user_id' => (int) $bot->user_id,

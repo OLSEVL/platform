@@ -8,7 +8,7 @@ use App\Support\ImpulseLvl1minSignalEvaluator;
 use App\Support\OsEngineBinaryDecision;
 
 /**
- * Impulse LVL 1min: live M1, trend CALL/PUT, профили + MAX, обязательный LVL на M1–M30.
+ * Impulse LVL 1min: live M1, профили + MAX, LVL M1–M30; CALL/PUT — bounce или continuation.
  */
 class ImpulseLvl1minStrategy implements BotStrategyInterface
 {
@@ -129,7 +129,10 @@ class ImpulseLvl1minStrategy implements BotStrategyInterface
     private function packDecision(array $signal, ?array $partialCandle, array $context): array
     {
         $color = (string) ($signal['color'] ?? 'green');
-        $side = $color === 'green' ? 'CALL' : 'PUT';
+        $cfg = is_array($context['config'] ?? null) ? $context['config'] : [];
+        // bounce = против импульса; continuation = по импульсу (старое поведение).
+        $side = ImpulseLvl1minConfig::sideFromImpulseColor($color, $cfg);
+        $entryMode = ImpulseLvl1minConfig::entrySideMode($cfg);
         $kind = (string) ($signal['kind'] ?? 'profile');
         $value = (float) ($signal['value'] ?? 0);
         $strategyId = (string) ($signal['strategy_id'] ?? '');
@@ -148,7 +151,13 @@ class ImpulseLvl1minStrategy implements BotStrategyInterface
         $outputLabel = ImpulseLvl1minConfig::outputLabel($signal + ['strategy_id' => $strategyId]);
         $reasons = [
             trim($outputLabel.' '.$valueText.($labels !== [] ? ' '.implode(' ', $labels) : '')),
-            sprintf('%s → %s · LVL %s', $color === 'green' ? 'быч.' : 'медв.', $valueText, $lvlText),
+            sprintf(
+                '%s импульс → вход %s (%s) · LVL %s',
+                $color === 'green' ? 'быч.' : 'медв.',
+                $side,
+                $entryMode === ImpulseLvl1minConfig::ENTRY_SIDE_CONTINUATION ? 'продолжение' : 'отбой',
+                $lvlText
+            ),
             sprintf('Close=%.8f · mean=%.8f', $close, (float) ($signal['average_body'] ?? 0)),
         ];
         if ($payout !== null) {
@@ -157,10 +166,14 @@ class ImpulseLvl1minStrategy implements BotStrategyInterface
 
         $setup = $color === 'green' ? 'impulse_lvl_bull' : 'impulse_lvl_bear';
 
+        $version = ImpulseLvl1minConfig::barPeriodSec($cfg) === ImpulseLvl1minConfig::S15_TIMEFRAME_SEC
+            ? ImpulseLvl1minConfig::VERSION_S15
+            : ImpulseLvl1minConfig::VERSION;
+
         return OsEngineBinaryDecision::pack(
             $side,
             $setup,
-            ImpulseLvl1minConfig::VERSION,
+            $version,
             $confidence,
             $reasons,
             sprintf(
@@ -174,6 +187,7 @@ class ImpulseLvl1minStrategy implements BotStrategyInterface
             [
                 'strategy_id' => $strategyId,
                 'profile_emoji' => (string) ($signal['emoji'] ?? ''),
+                'profile_label' => (string) ($signal['label'] ?? ''),
                 'output_label' => $outputLabel,
                 'is_prev' => (bool) ($signal['is_prev'] ?? false),
                 'candle_count' => (int) ($signal['candle_count'] ?? 0),
@@ -182,11 +196,13 @@ class ImpulseLvl1minStrategy implements BotStrategyInterface
                 'value' => round($value, 4),
                 'impulse_color' => $color,
                 'lvl_labels' => $labels,
+                // Зоны фильтра — для PNG и в bounce, и в continuation (не путать с CALL/PUT).
+                'lvl_zones' => is_array($signal['lvl_zones'] ?? null) ? $signal['lvl_zones'] : [],
                 'close' => round($close, 8),
                 'level_price' => round($close, 8),
                 'level_kind' => 'impulse_lvl',
                 'level_strength' => round(50.0 + 40.0 * $depth, 2),
-                'entry_regime' => 'impulse',
+                'entry_regime' => $entryMode,
                 'partial_present' => $partialCandle !== null,
             ],
             $payout,

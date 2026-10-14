@@ -1,0 +1,40 @@
+{
+  "manifest_version": 3,
+  "name": "Platform Signals",
+  "version": "0.6.4",
+  "description": "Сигналы ботов: внутренняя/внешняя сеть, фильтр, звук, float остаётся поверх при клике по сигналу.",
+  "permissions": [
+    "storage",
+    "tabs",
+    "scripting",
+    "sidePanel"
+  ],
+  "host_permissions": [
+    "*://*/*",
+    "*://pocketoption.com/*",
+    "*://*.pocketoption.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "side_panel": {
+    "default_path": "float.html"
+  },
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": true
+  },
+  "action": {
+    "default_title": "Platform Signals"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "*://pocketoption.com/*",
+        "*://*.pocketoption.com/*"
+      ],
+      "js": ["content/po-open-asset.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}

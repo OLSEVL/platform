@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\ExtensionSignalsController;
 use App\Http\Middleware\ValidateProxyIngestToken;
 use Illuminate\Support\Facades\Route;
 
@@ -15,3 +16,7 @@ Route::middleware(ValidateProxyIngestToken::class)->post('ingest-current-candle'
 Route::middleware(ValidateProxyIngestToken::class)->post('ingest-proxy-failure', [App\Http\Controllers\Api\ProxyInstrumentController::class, 'ingestProxyFailure']);
 Route::middleware(ValidateProxyIngestToken::class)->post('ingest-proxy-health', [App\Http\Controllers\Api\ProxyInstrumentController::class, 'ingestProxyHealth']);
 Route::middleware(ValidateProxyIngestToken::class)->get('bot/series', [App\Http\Controllers\Api\BotMarketDataController::class, 'series']);
+
+// Chrome-расширение (LAN): история сигналов без токена.
+Route::get('extension/signals', [ExtensionSignalsController::class, 'index']);
+Route::get('extension/resolve', [ExtensionSignalsController::class, 'resolve']);

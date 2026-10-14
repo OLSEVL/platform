@@ -242,16 +242,16 @@ final class HybridAnalystConfig
     public static function resolveExpirySecFromSource(array $sourceSignal, ?int $fromTradeSec = null): int
     {
         $fromPayload = (int) ($sourceSignal['expiry_sec'] ?? 0);
-        if ($fromPayload >= 60) {
-            return max(60, min(3600, $fromPayload));
+        if ($fromPayload >= 15) {
+            return max(15, min(3600, $fromPayload));
         }
-        if ($fromTradeSec !== null && $fromTradeSec >= 60) {
-            return max(60, min(3600, $fromTradeSec));
+        if ($fromTradeSec !== null && $fromTradeSec >= 15) {
+            return max(15, min(3600, $fromTradeSec));
         }
-        // Impulse LVL (бот 47) торгует 60с; без expiry_sec в payload раньше падали на 180с и WR ломался.
+        // Impulse LVL: 60с на M1, 15с на S15; без expiry_sec в payload раньше падали на 180с.
         $sourceType = (string) ($sourceSignal['source_bot_type'] ?? '');
-        if ($sourceType === \App\Support\ImpulseLvl1minConfig::BOT_TYPE) {
-            return 60;
+        if (ImpulseLvl1minConfig::is($sourceType)) {
+            return ImpulseLvl1minConfig::isS15($sourceType) ? 15 : 60;
         }
 
         return 180;

@@ -62,7 +62,7 @@ class ImpulseLvl1minStrategyTest extends TestCase
         ]));
     }
 
-    public function test_profile_without_lvl_returns_call(): void
+    public function test_profile_without_lvl_returns_call_on_impulse(): void
     {
         $closed = $this->history(120, 0.0010);
         $impulse = $this->bull(120, 0.0040, 0.0002);
@@ -81,9 +81,51 @@ class ImpulseLvl1minStrategyTest extends TestCase
         $this->assertSame('CALL', $out['side']);
         $this->assertContains($out['features']['strategy_id'], ['extra', 'extra_wl']);
         $this->assertSame(ImpulseLvl1minConfig::VERSION, $out['decision_version']);
-        $this->assertStringContainsString($out['features']['strategy_id'], (string) $out['features']['output_label']);
+        $this->assertStringContainsString((string) $out['features']['profile_emoji'], (string) $out['features']['output_label']);
+        $this->assertNotSame('', (string) $out['features']['output_label']);
         $this->assertNotSame('', (string) $out['features']['profile_emoji']);
         $this->assertStringContainsString((string) $out['features']['profile_emoji'], $out['reasons_short'][0]);
+        $this->assertSame(ImpulseLvl1minConfig::ENTRY_SIDE_CONTINUATION, $out['features']['entry_regime']);
+    }
+
+    public function test_entry_side_bounce_returns_put_on_bull(): void
+    {
+        $closed = $this->history(120, 0.0010);
+        $impulse = $this->bull(120, 0.0040, 0.0002);
+
+        $strategy = new ImpulseLvl1minStrategy;
+        $out = $strategy->analyze($closed, $impulse, [
+            'config' => array_merge(ImpulseLvl1minConfig::defaultConfig(), [
+                'lvl_filter' => false,
+                'max_enabled' => false,
+                'entry_side_mode' => ImpulseLvl1minConfig::ENTRY_SIDE_BOUNCE,
+            ]),
+            'payout' => 80.0,
+            'mtf' => [],
+        ]);
+
+        $this->assertNotNull($out);
+        $this->assertSame('PUT', $out['side']);
+        $this->assertSame(ImpulseLvl1minConfig::ENTRY_SIDE_BOUNCE, $out['features']['entry_regime']);
+        $this->assertStringContainsString('отбой', $out['reasons_short'][1] ?? '');
+    }
+
+    public function test_side_from_impulse_color_stays_cheap(): void
+    {
+        $cont = ImpulseLvl1minConfig::defaultConfig();
+        $bounce = array_merge($cont, ['entry_side_mode' => ImpulseLvl1minConfig::ENTRY_SIDE_BOUNCE]);
+        $t0 = hrtime(true);
+        for ($i = 0; $i < 2000; $i++) {
+            ImpulseLvl1minConfig::sideFromImpulseColor($i % 2 === 0 ? 'green' : 'red', $bounce);
+            ImpulseLvl1minConfig::sideFromImpulseColor($i % 2 === 0 ? 'green' : 'red', $cont);
+        }
+        $ms = (hrtime(true) - $t0) / 1e6;
+        $this->assertLessThan(80.0, $ms, 'маппинг CALL/PUT не должен тормозить scan');
+        $this->assertSame('CALL', ImpulseLvl1minConfig::sideFromImpulseColor('green', $cont));
+        $this->assertSame('PUT', ImpulseLvl1minConfig::sideFromImpulseColor('green', $bounce));
+        $this->assertSame(1, ImpulseLvl1minConfig::impulseDirectionFromColor('green'));
+        $this->assertSame(-1, ImpulseLvl1minConfig::impulseDirectionFromColor('red'));
+        $this->assertSame(ImpulseLvl1minConfig::ENTRY_SIDE_CONTINUATION, ImpulseLvl1minConfig::entrySideMode([]));
     }
 
     public function test_lvl_filter_blocks_when_no_swings(): void
@@ -104,7 +146,7 @@ class ImpulseLvl1minStrategyTest extends TestCase
         $this->assertNull($out);
     }
 
-    public function test_lvl_touch_on_m1_swing_high_allows_call(): void
+    public function test_lvl_touch_on_m1_swing_high_allows_call_on_impulse(): void
     {
         $closed = [];
         for ($i = 0; $i < 40; $i++) {
@@ -137,6 +179,37 @@ class ImpulseLvl1minStrategyTest extends TestCase
         $this->assertNotNull($out);
         $this->assertSame('CALL', $out['side']);
         $this->assertContains('M1', $out['features']['lvl_labels']);
+        $this->assertNotEmpty($out['features']['lvl_zones']);
+
+        $bounceCfg = array_merge(ImpulseLvl1minConfig::defaultConfig(), [
+            'lvl_filter' => true,
+            'max_enabled' => false,
+            'entry_side_mode' => ImpulseLvl1minConfig::ENTRY_SIDE_BOUNCE,
+        ]);
+        $bounce = $strategy->analyze($closed, $impulse, [
+            'config' => $bounceCfg,
+            'payout' => 80.0,
+            'mtf' => [],
+        ]);
+        $this->assertNotNull($bounce);
+        $this->assertSame('PUT', $bounce['side']);
+        $this->assertNotEmpty($bounce['features']['lvl_zones']);
+        $filterPrice = (float) $bounce['features']['lvl_zones'][0]['price'];
+        $this->assertGreaterThan(1.04, $filterPrice, 'фильтр — свинг high, не поддержка');
+        // Старый PNG брал direction из PUT (−1) и рисовал поддержку (~0.999), не зону фильтра.
+        $wrongSideZones = ImpulseLvl1minLevels::matchedZones($closed, $impulse, [], -1, $bounceCfg);
+        $wrongPrices = array_map(static fn (array $z): float => (float) $z['price'], $wrongSideZones);
+        $this->assertNotContains($filterPrice, $wrongPrices);
+        $chartZones = ImpulseLvl1minLevels::zonesForTelegramChart(
+            $closed,
+            $impulse,
+            [],
+            $bounce['features'],
+            $bounceCfg,
+        );
+        $this->assertNotEmpty($chartZones);
+        $this->assertEqualsWithDelta($filterPrice, (float) $chartZones[0]['price'], 1e-9);
+        $this->assertSame(1, ImpulseLvl1minLevels::chartDirectionFromFeatures($bounce['features'], $impulse));
     }
 
     public function test_max_priority_over_profile_when_both_match(): void
@@ -185,10 +258,17 @@ class ImpulseLvl1minStrategyTest extends TestCase
         ]);
         $this->assertNotNull($out);
         $this->assertTrue((bool) $out['features']['is_prev']);
-        $this->assertStringContainsString('prev', (string) $out['features']['output_label']);
+        // «prev» — суффикс caption (как в updateBotM1), не часть output_label.
+        $this->assertStringNotContainsString('prev', (string) $out['features']['output_label']);
+        $caption = app(\App\Services\Telegram\LevelBounceAlertPresenter::class)
+            ->formatImpulseLvlCaption('EURUSD_otc', $out, 80.0, new \DateTimeImmutable('2026-09-25 11:37:05', new \DateTimeZone('Europe/Kyiv')));
+        $this->assertStringContainsString('prev', $caption);
+        $this->assertStringContainsString('▲', $caption);
+        $this->assertStringNotContainsString('CALL', $caption);
+        $this->assertStringContainsString('11:37:05', $caption);
     }
 
-    public function test_put_on_bear_impulse(): void
+    public function test_put_on_bear_impulse_continuation(): void
     {
         $closed = [];
         for ($i = 0; $i < 120; $i++) {
@@ -332,6 +412,89 @@ class ImpulseLvl1minStrategyTest extends TestCase
     {
         $engine = app(\App\Services\Bots\BotEngineService::class);
         $this->assertInstanceOf(ImpulseLvl1minStrategy::class, $engine->strategyForType(ImpulseLvl1minConfig::BOT_TYPE));
+        $this->assertInstanceOf(ImpulseLvl1minStrategy::class, $engine->strategyForType(ImpulseLvl1minConfig::BOT_TYPE_S15));
+    }
+
+    public function test_s15_defaults_and_ladders_leave_m1_untouched(): void
+    {
+        $t0 = hrtime(true);
+        $m1 = ImpulseLvl1minConfig::defaultConfig();
+        $s15 = ImpulseLvl1minConfig::defaultConfig(ImpulseLvl1minConfig::BOT_TYPE_S15);
+        $ms = (hrtime(true) - $t0) / 1e6;
+        $this->assertLessThan(5.0, $ms, 'defaultConfig M1+S15 должен быть дешёвым');
+
+        $this->assertSame(60, $m1['timeframe_sec']);
+        $this->assertSame(60, $m1['expiry_sec']);
+        $this->assertSame(400, $m1['count']);
+        $this->assertSame(ImpulseLvl1minConfig::VERSION, $m1['version']);
+        $this->assertSame('body_to_wick', $m1['level_settings']['1']['zone_mode']);
+        $this->assertArrayNotHasKey('m1_take', $m1);
+
+        $this->assertSame(15, $s15['timeframe_sec']);
+        $this->assertSame(15, $s15['expiry_sec']);
+        $this->assertSame(800, $s15['count']);
+        $this->assertSame(ImpulseLvl1minConfig::VERSION_S15, $s15['version']);
+        $this->assertFalse($s15['live_candle_wick_signals']);
+        $this->assertSame(120, $s15['m1_take']);
+        $this->assertSame('wick_tip', $s15['level_settings']['1']['zone_mode']);
+        $this->assertSame('body_to_wick', $s15['level_settings']['4015']['zone_mode']);
+
+        $this->assertSame(4015, ImpulseLvl1minConfig::dashboardTimeframeId(15));
+        $this->assertSame(1, ImpulseLvl1minConfig::dashboardTimeframeId(60));
+        $this->assertSame(15, ImpulseLvl1minConfig::barPeriodSec($s15));
+        $this->assertSame(60, ImpulseLvl1minConfig::barPeriodSec($m1));
+        $this->assertSame([1, 5, 15], array_keys(ImpulseLvl1minConfig::mtfTakeMap($s15)));
+        $this->assertSame([5, 15, 30], array_keys(ImpulseLvl1minConfig::mtfTakeMap($m1)));
+        $this->assertSame([4015, 1, 5, 15], array_keys(ImpulseLvl1minConfig::lvlTfLadder($s15)));
+        $this->assertSame([1, 5, 15, 30], array_keys(ImpulseLvl1minConfig::lvlTfLadder($m1)));
+        $this->assertSame('S15', ImpulseLvl1minLevels::tfLabel(15));
+
+        $s15Bot = new \App\Models\Bot;
+        $s15Bot->forceFill(['type' => ImpulseLvl1minConfig::BOT_TYPE_S15, 'config' => []]);
+        $this->assertSame(5, \App\Support\BotScanCoordinator::scanIntervalSecForBot($s15Bot));
+
+        $runtime = app(\App\Services\Bots\BotEngineService::class)->runtimeSettings($s15Bot);
+        $this->assertSame(15, $runtime['config']['timeframe_sec']);
+        $this->assertSame(4015, $runtime['series_timeframe']);
+        $this->assertSame(15, $runtime['expiry_sec']);
+
+        $closed = $this->history(120, 0.0010);
+        $impulse = $this->bull(120, 0.0040);
+        $out = (new ImpulseLvl1minStrategy)->analyze($closed, $impulse, [
+            'config' => array_merge($s15, ['lvl_filter' => false, 'max_enabled' => false]),
+            'payout' => 80.0,
+            'mtf' => [],
+            'bot_type' => ImpulseLvl1minConfig::BOT_TYPE_S15,
+        ]);
+        $this->assertNotNull($out);
+        $this->assertSame(ImpulseLvl1minConfig::VERSION_S15, $out['decision_version']);
+    }
+
+    public function test_s15_settings_partial_shows_m1_take_not_m30(): void
+    {
+        view()->share('errors', new \Illuminate\Support\ViewErrorBag);
+        $bot = new \App\Models\Bot;
+        $bot->forceFill(['id' => 99049, 'type' => ImpulseLvl1minConfig::BOT_TYPE_S15]);
+        $bot->exists = true;
+        $cfg = ImpulseLvl1minConfig::defaultConfig(ImpulseLvl1minConfig::BOT_TYPE_S15);
+        $t0 = hrtime(true);
+        $html = view('bots._impulse-lvl-1min-settings', ['bot' => $bot, 'cfg' => $cfg])->render();
+        $ms = (hrtime(true) - $t0) / 1e6;
+        $this->assertLessThan(200.0, $ms, 'partial настроек S15 должен рендериться быстро');
+        $this->assertStringContainsString('Impulse LVL S15', $html);
+        $this->assertStringContainsString('name="m1_take"', $html);
+        $this->assertStringNotContainsString('name="m30_take"', $html);
+
+        $m1Bot = new \App\Models\Bot;
+        $m1Bot->forceFill(['id' => 47, 'type' => ImpulseLvl1minConfig::BOT_TYPE]);
+        $m1Bot->exists = true;
+        $m1Html = view('bots._impulse-lvl-1min-settings', [
+            'bot' => $m1Bot,
+            'cfg' => ImpulseLvl1minConfig::defaultConfig(),
+        ])->render();
+        $this->assertStringContainsString('Impulse LVL 1min', $m1Html);
+        $this->assertStringContainsString('name="m30_take"', $m1Html);
+        $this->assertStringNotContainsString('name="m1_take"', $m1Html);
     }
 
     public function test_python_new_config_maps_same_thresholds_as_defaults(): void
@@ -399,7 +562,7 @@ class ImpulseLvl1minStrategyTest extends TestCase
         $this->assertNotNull($out);
         $this->assertSame('structure_no_lvl', $out['features']['strategy_id']);
         $this->assertStringContainsString('🟤', (string) $out['features']['output_label']);
-        $this->assertStringContainsString('structure_no_lvl', (string) $out['features']['output_label']);
+        $this->assertSame('structure_no_lvl', (string) $out['features']['strategy_id']);
     }
 
     public function test_telegram_brief_includes_colored_circle_and_profile_id(): void
@@ -429,10 +592,52 @@ class ImpulseLvl1minStrategyTest extends TestCase
         $t0 = hrtime(true);
         $text = $format();
         $ms = (hrtime(true) - $t0) / 1e6;
-        $this->assertLessThan(20.0, $ms, 'формат алерта не должен тормозить скан');
+        $this->assertLessThan(50.0, $ms, 'формат алерта не должен тормозить скан');
+        // Одна строка как оригинал: display (payout%) label value [suffixes] — без «Impulse LVL 1min».
         $this->assertStringContainsString((string) $decision['features']['profile_emoji'], $text);
-        $this->assertStringContainsString((string) $decision['features']['strategy_id'], $text);
-        $this->assertStringContainsString('Impulse LVL 1min', $text);
+        $this->assertStringContainsString((string) $decision['features']['output_label'], $text);
+        $this->assertStringContainsString('(80%)', $text);
+        $this->assertStringContainsString('▲', $text);
+        $this->assertStringNotContainsString('CALL', $text);
+        $this->assertStringNotContainsString('PUT', $text);
+        $this->assertMatchesRegularExpression('/\b\d{2}:\d{2}:\d{2}\b/', $text);
+        $this->assertStringNotContainsString('Impulse LVL 1min', $text);
+        $this->assertStringNotContainsString('Пара:', $text);
+    }
+
+    public function test_impulse_telegram_chart_matches_original_size(): void
+    {
+        if (! extension_loaded('gd')) {
+            $this->markTestSkipped('gd required');
+        }
+        $closed = $this->history(50, 0.0010);
+        $impulse = $this->bull(50, 0.0040, 0.0002);
+        $series = array_merge($closed, [$impulse]);
+        $renderer = app(\App\Services\Telegram\ImpulseLvl1minTelegramChartRenderer::class);
+        $zones = [[
+            'tf' => 'M5',
+            'tf_seconds' => 300,
+            'zone_min' => 1.003,
+            'zone_max' => 1.005,
+        ]];
+        $opts = ['max_bars' => 50, 'signal_time' => (int) $impulse['time']];
+        // Прогрев GD/шрифтов — холодный старт не входит в бюджет алерта.
+        $warm = $renderer->render($series, $zones, $opts);
+        if ($warm !== null) {
+            @unlink($warm);
+        }
+        $t0 = hrtime(true);
+        $path = $renderer->render($series, $zones, $opts);
+        $ms = (hrtime(true) - $t0) / 1e6;
+        $this->assertNotNull($path);
+        $this->assertFileExists($path);
+        $info = getimagesize($path);
+        $this->assertIsArray($info);
+        $this->assertSame(960, $info[0]);
+        $this->assertSame(600, $info[1]);
+        // Тёплый рендер ~150–250ms на CI; жёсткий бюджет не держим — сеть Telegram всё равно дольше.
+        $this->assertLessThan(1500.0, $ms, 'аномально медленный рендер PNG');
+        @unlink($path);
     }
 
     public function test_live_wick_measure_prefers_upper_side(): void

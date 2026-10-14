@@ -51,6 +51,7 @@ use App\Services\Indicators\SmcFlowIndicatorService;
 use App\Services\Indicators\DemarkerIndicatorService;
 use App\Services\Mirror\MirrorTradeDispatcher;
 use App\Services\Telegram\TelegramAlertService;
+use App\Support\BotInstrumentMarketScope;
 use App\Support\BotScanCoordinator;
 use App\Support\BotScanProgress;
 use App\Support\BinaryExpiry;
@@ -127,6 +128,8 @@ class BotEngineService
                 }
             }
         }
+        // all | otc | non_otc — для Impulse / Engulfing (и любых ботов с ключом в config).
+        $marketScope = BotInstrumentMarketScope::fromConfig($config);
 
         $strategy = $this->resolveStrategy($bot->type);
         if (! $strategy) {
@@ -141,25 +144,61 @@ class BotEngineService
         $processed = 0;
         $signals = 0;
         $trades = 0;
+        $cacheHits = 0;
+        $dbLoads = 0;
+        $promotedBars = 0;
+        $scanWallStarted = hrtime(true);
         // Логи analysis-runs включаются только при одновременном выполнении двух условий:
         // 1) таблица bot_analysis_runs существует (миграции применены),
         // 2) у конкретного бота флаг analysis_runs_logging_enabled не выключен в config.
         // Такой подход даёт персональную настройку шумности/нагрузки по каждому боту.
-        $analysisLogsEnabled = Schema::hasTable('bot_analysis_runs') && (bool) ($config['analysis_runs_logging_enabled'] ?? true);
+        $analysisLogsEnabled = empty($scanOptions['disable_analysis_runs'])
+            && Schema::hasTable('bot_analysis_runs')
+            && (bool) ($config['analysis_runs_logging_enabled'] ?? true);
         $eligible = [];
-        foreach ($instruments as $instrumentRow) {
-            $instrumentKey = (string) $instrumentRow->instrument;
-            if ($allowedInstrumentSet !== [] && ! isset($allowedInstrumentSet[$instrumentKey])) {
-                continue;
+        // Impulse live: готовые строки (instrument + payout) без повторного SELECT.
+        if (isset($scanOptions['instrument_rows']) && is_array($scanOptions['instrument_rows']) && $scanOptions['instrument_rows'] !== []) {
+            foreach ($scanOptions['instrument_rows'] as $row) {
+                if (is_object($row) && isset($row->instrument)) {
+                    $eligible[] = $row;
+                } elseif (is_array($row) && isset($row['instrument'])) {
+                    $eligible[] = (object) $row;
+                }
             }
-            if (isset($blockedInstrumentSet[$instrumentKey])) {
-                continue;
+        } else {
+            foreach ($instruments as $instrumentRow) {
+                $instrumentKey = (string) $instrumentRow->instrument;
+                if ($allowedInstrumentSet !== [] && ! isset($allowedInstrumentSet[$instrumentKey])) {
+                    continue;
+                }
+                if (isset($blockedInstrumentSet[$instrumentKey])) {
+                    continue;
+                }
+                if (! BotInstrumentMarketScope::allows($instrumentKey, $marketScope)) {
+                    continue;
+                }
+                $rowPayout = $instrumentRow->current_payout !== null ? (float) $instrumentRow->current_payout : null;
+                if ($rowPayout === null || $rowPayout < $minPayout) {
+                    continue;
+                }
+                $eligible[] = $instrumentRow;
             }
-            $rowPayout = $instrumentRow->current_payout !== null ? (float) $instrumentRow->current_payout : null;
-            if ($rowPayout === null || $rowPayout < $minPayout) {
-                continue;
+        }
+        // Точечный проход: только перечисленные пары (live worker).
+        if (isset($scanOptions['only_instruments']) && is_array($scanOptions['only_instruments']) && $scanOptions['only_instruments'] !== []) {
+            $want = [];
+            foreach ($scanOptions['only_instruments'] as $rawInst) {
+                $k = trim((string) $rawInst);
+                if ($k !== '') {
+                    $want[$k] = true;
+                }
             }
-            $eligible[] = $instrumentRow;
+            if ($want !== []) {
+                $eligible = array_values(array_filter(
+                    $eligible,
+                    static fn ($row): bool => isset($want[(string) $row->instrument])
+                ));
+            }
         }
         $shardIndex = isset($scanOptions['shard_index']) ? (int) $scanOptions['shard_index'] : 0;
         $shardCount = isset($scanOptions['shard_count']) ? (int) $scanOptions['shard_count'] : 1;
@@ -167,14 +206,23 @@ class BotEngineService
             $eligible = BotScanCoordinator::takeShard($eligible, $shardIndex, $shardCount);
         }
         $scanInstrumentTotal = count($eligible);
-        $scanRunId = BotScanProgress::beginScan($bot->id, $scanInstrumentTotal);
+        $skipProgressLifecycle = ! empty($scanOptions['skip_progress_begin_end']);
+        // Шард пишет в свой ключ: 6 потоков не затирают друг друга в BotScanProgress.
+        $scanRunId = $skipProgressLifecycle
+            ? null
+            : BotScanProgress::beginScan($bot->id, $scanInstrumentTotal, $shardIndex, $shardCount);
+        $seriesResolver = isset($scanOptions['series_resolver']) && is_callable($scanOptions['series_resolver'])
+            ? $scanOptions['series_resolver']
+            : null;
         try {
             foreach ($eligible as $instrumentRow) {
                 $instrument = (string) $instrumentRow->instrument;
                 $currentPayout = $instrumentRow->current_payout !== null ? (float) $instrumentRow->current_payout : null;
                 $processed++;
                 // Пишем в cache текущую пару — sidebar бота показывает красный индикатор «идёт анализ».
-                BotScanProgress::setCurrentInstrument($bot->id, $instrument);
+                if (! $skipProgressLifecycle) {
+                    BotScanProgress::setCurrentInstrument($bot->id, $instrument, $shardIndex, $shardCount);
+                }
                 try {
                     $analysisRun = $analysisLogsEnabled ? BotAnalysisRun::query()->create([
                         'bot_id' => $bot->id,
@@ -194,8 +242,21 @@ class BotEngineService
                     ]) : null;
                     $seriesTimeframe = (int) ($runtime['series_timeframe'] ?? 1);
                     $mtf = [];
+                    // Live-cache / тесты: готовый closed+partial+mtf без похода в MySQL.
+                    if ($seriesResolver !== null) {
+                        $packed = $seriesResolver($instrument, $count, $staleAfterSec, $seriesTimeframe, $config);
+                        $series = is_array($packed) ? $packed : ['closed' => [], 'partial' => null, 'series' => [], 'mtf' => []];
+                        $mtf = is_array($series['mtf'] ?? null) ? $series['mtf'] : [];
+                        if (! empty($series['cache_hit'])) {
+                            $cacheHits++;
+                        } else {
+                            $dbLoads++;
+                        }
+                        if (! empty($series['promoted'])) {
+                            $promotedBars++;
+                        }
                     // Strong Level / CRC: M1+M5+M15+H1 из одной выборки S5, а не 4 похода в candles.
-                    if ($bot->type === 'candle_reversal_confirm' || $bot->type === 'strong_level') {
+                    } elseif ($bot->type === 'candle_reversal_confirm' || $bot->type === 'strong_level') {
                         $packed = $this->botDataService->seriesWithMtf(
                             $instrument,
                             $count,
@@ -211,8 +272,8 @@ class BotEngineService
                         $series = $packed;
                         $mtf = $packed['mtf'];
                     } elseif (ImpulseLvl1minConfig::is((string) $bot->type)) {
-                        // M1 + закрытые M5/M15/M30; формирующийся HTF достраивает ImpulseLvl1minLevels из M1.
-                        $packed = $this->botDataService->seriesWithMtf(
+                        // M1 + MTF из Redis-кэша (hit) или seriesBundle (miss); partial — live Redis.
+                        $packed = $this->botDataService->impulseSeriesWithMtf(
                             $instrument,
                             $count,
                             ImpulseLvl1minConfig::mtfTakeMap($config),
@@ -223,6 +284,14 @@ class BotEngineService
                         );
                         $series = $packed;
                         $mtf = $packed['mtf'];
+                        if (! empty($packed['cache_hit'])) {
+                            $cacheHits++;
+                        } else {
+                            $dbLoads++;
+                        }
+                        if (! empty($packed['promoted'])) {
+                            $promotedBars++;
+                        }
                     } else {
                         $series = $this->botDataService->series($instrument, $count, true, $staleAfterSec, $seriesTimeframe);
                     }
@@ -247,6 +316,7 @@ class BotEngineService
                         'payout' => $currentPayout,
                         'config' => $config,
                         'mtf' => $mtf,
+                        'bot_type' => (string) $bot->type,
                     ];
                     if ($bot->type === 'smc_flow') {
                         $analyzeContext['smc_params'] = IndicatorSetting::mergedSmcFlowParams($bot);
@@ -355,6 +425,7 @@ class BotEngineService
                                 $closed,
                                 $dedupeBucketSec,
                                 $wantPaper,
+                                is_array($partial) ? $partial : null,
                             );
                             if (! ($commit['ok'] ?? false)) {
                                 $lastSkip = (string) ($commit['skip'] ?? 'dedupe');
@@ -399,7 +470,7 @@ class BotEngineService
                     $dedupeSuffix = match ($bot->type) {
                         'strong_trend_telegram' => $trendKey,
                         'strong_level', 'candle_reversal_confirm' => sprintf('%s:%.5f', $side, $levelPrice),
-                        MaxBotConfig::BOT_TYPE, ImpulseLvl1minConfig::BOT_TYPE => sprintf(
+                        MaxBotConfig::BOT_TYPE, ImpulseLvl1minConfig::BOT_TYPE, ImpulseLvl1minConfig::BOT_TYPE_S15 => sprintf(
                             '%s:%d',
                             (string) (($decision['features']['strategy_id'] ?? '') ?: 'max'),
                             (int) ($decision['features']['signal_timestamp'] ?? 0)
@@ -763,7 +834,9 @@ class BotEngineService
                     ]);
                 } finally {
                     // Пара проверена: red → green в sidebar текущего scan.
-                    BotScanProgress::finishInstrument($bot->id, $instrument);
+                    if (! $skipProgressLifecycle) {
+                        BotScanProgress::finishInstrument($bot->id, $instrument, $shardIndex, $shardCount);
+                    }
                 }
             }
 
@@ -771,9 +844,15 @@ class BotEngineService
                 'processed' => $processed,
                 'signals' => $signals,
                 'trades' => $trades,
+                'cache_hits' => $cacheHits,
+                'db_loads' => $dbLoads,
+                'promoted' => $promotedBars,
+                'wall_ms' => (int) round((hrtime(true) - $scanWallStarted) / 1e6),
             ];
         } finally {
-            BotScanProgress::endScan($bot->id, $scanRunId);
+            if (! $skipProgressLifecycle) {
+                BotScanProgress::endScan($bot->id, $scanRunId, $shardIndex, $shardCount);
+            }
         }
     }
 
@@ -977,6 +1056,9 @@ class BotEngineService
             'sweep_raid_liquidity' => $analystSrlEnabled && is_array($srlPack) ? $srlPack['overlay'] : null,
             'engulfing_liquidity' => $analystEngulfEnabled && is_array($engulfPack) ? $engulfPack['overlay'] : null,
             'impulse_lvl' => $analystImpulseEnabled && is_array($impulsePack) ? $impulsePack['overlay'] : null,
+            'impulse_lvl_telegram' => $analystImpulseEnabled && is_array($impulsePack)
+                ? ($impulsePack['telegram'] ?? null)
+                : null,
             'hybrid_mode' => is_array($hybridSourceSignal) && $hybridSourceSignal !== [],
         ];
     }
@@ -1162,7 +1244,7 @@ class BotEngineService
      * Impulse LVL для аналитика: непробитые зоны M1–M30 + live-хиты 47 в snapshot.
      *
      * @param  array<string, mixed>  $config
-     * @return array{snapshot:array<string,mixed>,overlay:array<string,mixed>,chart_levels:array<string,mixed>,bar_count:int}
+     * @return array{snapshot:array<string,mixed>,overlay:array<string,mixed>,chart_levels:array<string,mixed>,telegram:array<string,mixed>,bar_count:int}
      */
     private function buildAnalystImpulseLvlPack(Bot $bot, string $instrument, int $m1BarCount, array $config): array
     {
@@ -1208,6 +1290,13 @@ class BotEngineService
             'snapshot' => $pack['snapshot'],
             'overlay' => $pack['overlay'],
             'chart_levels' => $pack['chart_levels'],
+            'telegram' => is_array($pack['telegram'] ?? null) ? $pack['telegram'] : [
+                'zones' => [],
+                'overlay_lines' => [],
+                'price_levels' => [],
+                'markers' => [],
+                'signal_time' => 0,
+            ],
             'bar_count' => count($closed) + ($partial ? 1 : 0),
         ];
     }
@@ -1442,7 +1531,7 @@ class BotEngineService
                     'three_soldier_vol_adaptive' => 'Нет Three Soldiers (vola-adaptive): 3 свечи одного цвета и высоты.',
                     'custom_candles_impulse' => 'Нет импульса: N свечей подряд в одну сторону за TimeSpan.',
                     MaxBotConfig::BOT_TYPE => 'Нет импульса MaxBot: серия + ratio тел к историческому максимуму.',
-                    ImpulseLvl1minConfig::BOT_TYPE => 'Нет импульса 1min: профиль/MAX + касание LVL.',
+                    ImpulseLvl1minConfig::BOT_TYPE, ImpulseLvl1minConfig::BOT_TYPE_S15 => 'Нет импульса Impulse LVL: профиль/MAX + касание LVL.',
                     default => '',
                 },
                 'reasons_short' => [],
@@ -1540,6 +1629,11 @@ class BotEngineService
     public function runtimeSettings(Bot $bot): array
     {
         $config = is_array($bot->config) ? $bot->config : [];
+        // Пустой JSON у S15 не должен читать M1 (timeframe_sec=60). Бот 47 не трогаем.
+        if (ImpulseLvl1minConfig::isS15((string) $bot->type)) {
+            $config['timeframe_sec'] = ImpulseLvl1minConfig::S15_TIMEFRAME_SEC;
+            $config['_bot_type'] = ImpulseLvl1minConfig::BOT_TYPE_S15;
+        }
         $defaultCount = match ($bot->type) {
             'smc_flow' => 500,
             // Длинная история нужна для подтверждённых фракталов и активных уровней ликвидности.
@@ -1558,7 +1652,10 @@ class BotEngineService
                 MaxBotConfig::enabledStrategies($config),
                 (int) ($config['count'] ?? MaxBotConfig::DEFAULT_HISTORY_BARS)
             )),
-            ImpulseLvl1minConfig::BOT_TYPE => max(400, (int) ($config['count'] ?? 400)),
+            ImpulseLvl1minConfig::BOT_TYPE, ImpulseLvl1minConfig::BOT_TYPE_S15 => max(
+                ImpulseLvl1minConfig::isS15((string) $bot->type) ? 800 : 400,
+                (int) ($config['count'] ?? (ImpulseLvl1minConfig::isS15((string) $bot->type) ? 800 : 400))
+            ),
             // Wave B vola-adaptive: нужна ~1 день M1 для AdaptSoldiersHeight / AdaptSignalCandleHeight.
             'vol_adaptive_candles', 'three_soldier_vol_adaptive', 'pivot_points' => 2000,
             default => LevelBounceBotTypes::isOsEngineBinary($bot->type) ? 150 : 120,
@@ -1581,7 +1678,7 @@ class BotEngineService
             'strong_trend_demarker' => (int) ($config['expiry_sec'] ?? 30),
             DemarkerDualFastConfig::BOT_TYPE => (int) ($config['expiry_sec'] ?? 30),
             MaxBotConfig::BOT_TYPE => (int) ($config['expiry_sec'] ?? 60),
-            ImpulseLvl1minConfig::BOT_TYPE => (int) ($config['expiry_sec'] ?? 60),
+            ImpulseLvl1minConfig::BOT_TYPE, ImpulseLvl1minConfig::BOT_TYPE_S15 => (int) ($config['expiry_sec'] ?? (ImpulseLvl1minConfig::isS15((string) $bot->type) ? 15 : 60)),
             'strong_level' => (int) ($config['expiry_sec_bounce'] ?? 180),
             // По ТЗ для MTF-разворота вход идёт на 5 минут независимо от рыночной фазы.
             'candle_reversal_confirm' => (int) ($config['expiry_sec'] ?? 300),
@@ -1600,7 +1697,7 @@ class BotEngineService
             'strong_trend_demarker' => 80.0,
             DemarkerDualFastConfig::BOT_TYPE => 80.0,
             MaxBotConfig::BOT_TYPE => 90.0,
-            ImpulseLvl1minConfig::BOT_TYPE => 80.0,
+            ImpulseLvl1minConfig::BOT_TYPE, ImpulseLvl1minConfig::BOT_TYPE_S15 => 80.0,
             default => LevelBounceBotTypes::isOsEngineBinary($bot->type) ? 75.0 : 80.0,
         });
         $staleAfterSec = (int) ($config['stale_after_sec'] ?? (LevelBounceBotTypes::isOsEngineBinary($bot->type) ? 60 : 30));
@@ -1682,7 +1779,7 @@ class BotEngineService
                 is_array($config['strategies'] ?? null) ? $config['strategies'] : MaxBotConfig::defaultStrategies(),
                 max(MaxBotConfig::DEFAULT_HISTORY_BARS, (int) ($config['count'] ?? 0) - 10)
             ),
-            ImpulseLvl1minConfig::BOT_TYPE => ImpulseLvl1minConfig::DEFAULT_HISTORY_BARS,
+            ImpulseLvl1minConfig::BOT_TYPE, ImpulseLvl1minConfig::BOT_TYPE_S15 => ImpulseLvl1minConfig::DEFAULT_HISTORY_BARS,
             // LLM-боту нужен достаточно широкий контекст последних свечей,
             // иначе модель чаще даёт шумные и нестабильные решения.
             'openrouter_llm' => 20,
@@ -1700,8 +1797,8 @@ class BotEngineService
             MaxBotConfig::BOT_TYPE => MaxBotConfig::dashboardTimeframeId(
                 (int) ($config['timeframe_sec'] ?? MaxBotConfig::DEFAULT_TIMEFRAME_SEC)
             ),
-            ImpulseLvl1minConfig::BOT_TYPE => ImpulseLvl1minConfig::dashboardTimeframeId(
-                (int) ($config['timeframe_sec'] ?? ImpulseLvl1minConfig::DEFAULT_TIMEFRAME_SEC)
+            ImpulseLvl1minConfig::BOT_TYPE, ImpulseLvl1minConfig::BOT_TYPE_S15 => ImpulseLvl1minConfig::dashboardTimeframeId(
+                (int) ($config['timeframe_sec'] ?? (ImpulseLvl1minConfig::isS15((string) $bot->type) ? ImpulseLvl1minConfig::S15_TIMEFRAME_SEC : ImpulseLvl1minConfig::DEFAULT_TIMEFRAME_SEC))
             ),
             'strong_trend_demarker', DemarkerDualFastConfig::BOT_TYPE => in_array(
                 (int) ($config['timeframe'] ?? CandleService::TF_S30),
@@ -1723,7 +1820,7 @@ class BotEngineService
             'strong_trend_telegram' => max(60, min(3600, (int) ($config['dedupe_bucket_sec'] ?? 300))),
             'strong_trend_demarker', DemarkerDualFastConfig::BOT_TYPE => max(30, min(3600, (int) ($config['dedupe_bucket_sec'] ?? $expirySec))),
             MaxBotConfig::BOT_TYPE => max(5, min(3600, (int) ($config['dedupe_bucket_sec'] ?? $expirySec))),
-            ImpulseLvl1minConfig::BOT_TYPE => max(5, min(3600, (int) ($config['dedupe_bucket_sec'] ?? $expirySec))),
+            ImpulseLvl1minConfig::BOT_TYPE, ImpulseLvl1minConfig::BOT_TYPE_S15 => max(5, min(3600, (int) ($config['dedupe_bucket_sec'] ?? $expirySec))),
             // Dedupe ≈ expiry: при 15с не держим искусственный floor 60.
             'smc_flow', 'strong_level', 'openrouter_llm', 'candle_reversal_confirm', 'sweep_raid_liquidity', 'engulfing_liquidity' => max(15, min(900, $expirySec)),
             default => LevelBounceBotTypes::isOsEngineBinary($bot->type)
@@ -1815,7 +1912,7 @@ class BotEngineService
             'strong_trend_demarker' => new StrongTrendDemarkerStrategy(new DemarkerIndicatorService),
             DemarkerDualFastConfig::BOT_TYPE => new DemarkerDualFastStrategy(new DemarkerIndicatorService),
             MaxBotConfig::BOT_TYPE => new MaxBotStrategy,
-            ImpulseLvl1minConfig::BOT_TYPE => new ImpulseLvl1minStrategy,
+            ImpulseLvl1minConfig::BOT_TYPE, ImpulseLvl1minConfig::BOT_TYPE_S15 => new ImpulseLvl1minStrategy,
             default => null,
         };
     }
@@ -1924,6 +2021,7 @@ class BotEngineService
      *
      * @param  array<string, mixed>  $decision
      * @param  list<array<string, mixed>>  $closed
+     * @param  array<string, mixed>|null  $partial  live M1 — обязателен на PNG, иначе график отстаёт на 1+ свечу
      * @return array{ok:bool,skip?:string,signal_id?:int,trade_id?:int,telegram?:array<string,mixed>|null}
      */
     private function commitImpulseLvlHit(
@@ -1936,6 +2034,7 @@ class BotEngineService
         array $closed,
         int $dedupeBucketSec,
         bool $createTrade,
+        ?array $partial = null,
     ): array {
         $side = (string) ($decision['side'] ?? '');
         $confidence = (float) ($decision['confidence'] ?? 0);
@@ -2049,14 +2148,18 @@ class BotEngineService
             );
         }
 
-        $telegramResult = app(TelegramAlertService::class)->sendStrongLevelAlert(
+        // PNG как у updateBotM1: closed + текущий forming M1. Без partial график отстаёт на 1+ свечу
+        // (сигнал live по signal_timestamp отсутствует в серии → золотая рамка на старой закрытой).
+        $chartCandles = $this->impulseChartCandles($closed, $partial);
+
+        $telegramResult = app(TelegramAlertService::class)->sendImpulseLvlAlert(
             $bot,
             $instrument,
             $decision,
             $payoutSnapshot,
             $expirySec,
             $entryPrice,
-            $closed
+            $chartCandles
         );
 
         return [
@@ -2065,5 +2168,36 @@ class BotEngineService
             'trade_id' => $createdTradeId,
             'telegram' => $telegramResult,
         ];
+    }
+
+    /**
+     * Серия для Telegram M1: закрытые + live partial (по time, partial перекрывает тот же бакет).
+     *
+     * @param  list<array<string, mixed>>  $closed
+     * @param  array<string, mixed>|null  $partial
+     * @return list<array<string, mixed>>
+     */
+    private function impulseChartCandles(array $closed, ?array $partial): array
+    {
+        $byTime = [];
+        foreach ($closed as $row) {
+            if (! is_array($row)) {
+                continue;
+            }
+            $t = (int) ($row['time'] ?? 0);
+            if ($t <= 0) {
+                continue;
+            }
+            $byTime[$t] = $row;
+        }
+        if ($partial !== null) {
+            $t = (int) ($partial['time'] ?? 0);
+            if ($t > 0) {
+                $byTime[$t] = $partial;
+            }
+        }
+        ksort($byTime, SORT_NUMERIC);
+
+        return array_values($byTime);
     }
 }

@@ -163,6 +163,10 @@ class HybridAnalystConfigTest extends TestCase
         $this->assertSame(60, HybridAnalystConfig::resolveExpirySecFromSource([
             'source_bot_type' => 'impulse_lvl_1min',
         ]));
+        $this->assertSame(15, HybridAnalystConfig::resolveExpirySecFromSource([
+            'source_bot_type' => 'impulse_lvl_s15',
+        ]));
+        $this->assertSame(15, HybridAnalystConfig::resolveExpirySecFromSource(['expiry_sec' => 15]));
     }
 
     public function test_build_source_signal_payload(): void

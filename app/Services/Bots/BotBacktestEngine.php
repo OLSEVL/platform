@@ -170,7 +170,12 @@ class BotBacktestEngine
         // PA/SMC params один раз на chunk: merged*() ходит в БД/кэш — не на каждый бар.
         $needsSmcParams = in_array($bot->type, ['smc_flow', 'strong_level', 'candle_reversal_confirm'], true);
         $needsPaParams = in_array($bot->type, ['strong_level', 'candle_reversal_confirm'], true);
-        $needsMtf = in_array($bot->type, ['candle_reversal_confirm', 'strong_level', \App\Support\ImpulseLvl1minConfig::BOT_TYPE], true);
+        $needsMtf = in_array($bot->type, [
+            'candle_reversal_confirm',
+            'strong_level',
+            \App\Support\ImpulseLvl1minConfig::BOT_TYPE,
+            \App\Support\ImpulseLvl1minConfig::BOT_TYPE_S15,
+        ], true);
         $smcParams = $needsSmcParams ? IndicatorSetting::mergedSmcFlowParams($botClone) : null;
         $paParams = $needsPaParams ? IndicatorSetting::mergedPriceActionDgtParams($botClone) : null;
 
@@ -882,11 +887,7 @@ class BotBacktestEngine
     {
         $cfg = is_array($runtime['config'] ?? null) ? $runtime['config'] : [];
         $map = \App\Support\ImpulseLvl1minConfig::is($botType)
-            ? [
-                '5' => (int) ($cfg['m5_take'] ?? 80),
-                '15' => (int) ($cfg['m15_take'] ?? 60),
-                '30' => (int) ($cfg['m30_take'] ?? 40),
-            ]
+            ? \App\Support\ImpulseLvl1minConfig::mtfTakeMap($cfg)
             : [
                 '5' => (int) ($cfg['m5_take'] ?? 120),
                 '15' => (int) ($cfg['m15_take'] ?? 80),

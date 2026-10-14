@@ -55,6 +55,16 @@
             </select>
             @include('partials.field-hint', ['text' => \App\Support\SettingsFieldHints::bot('telegram_send_chart')])
         </div>
+        @if (\App\Support\ImpulseLvl1minConfig::is((string) ($bot->type ?? '')))
+            <div class="space-y-1">
+                <label for="telegram_chart_candles_ose" class="block text-xs font-medium text-zinc-400">Свечей на PNG {{ \App\Support\ImpulseLvl1minConfig::isS15((string) ($bot->type ?? '')) ? 'S15' : 'M1' }}</label>
+                <input type="number" name="telegram_chart_candles" id="telegram_chart_candles_ose"
+                    min="20" max="80" required
+                    value="{{ old('telegram_chart_candles', $cfg['telegram_chart_candles'] ?? 50) }}"
+                    class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                <p class="text-[11px] text-zinc-500">Как TELEGRAM_CHART_CANDLES в updateBotM1 (дефолт 50). Сетка + золотая рамка сигнальной свечи.</p>
+            </div>
+        @endif
         <div class="space-y-1">
             <label for="telegram_send_chart_m5_ose" class="block text-xs font-medium text-zinc-400">График M5</label>
             @php $telegramSendChartM5 = old('telegram_send_chart_m5', ($cfg['telegram_send_chart_m5'] ?? true) ? '1' : '0'); @endphp

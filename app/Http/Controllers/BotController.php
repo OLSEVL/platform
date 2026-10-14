@@ -104,6 +104,7 @@ use App\Support\ChartAnalystBotTypes;
 use App\Support\OsEngineWaveABotConfig;
 use App\Support\MaxBotConfig;
 use App\Support\ImpulseLvl1minConfig;
+use App\Support\EngulfingLiquidityConfig;
 use App\Support\OsEngineWaveBBotConfig;
 use App\Support\SmcFlowWorkingSnapshot;
 use App\Support\CardSmcFlowAnalysisStore;
@@ -1761,73 +1762,8 @@ class BotController extends Controller
             ]);
             $config = TelegramBotConfigFields::mergeFromRequest($request, $config, $bot->config ?? []);
         } elseif ($bot->type === 'engulfing_liquidity') {
-            // 3-шаговое поглощение: вход только на close контр-поглощения (не на первом engulf).
-            $extra = $request->validate([
-                'count' => ['required', 'integer', 'min:30', 'max:5000'],
-                'expiry_sec' => ['required', 'integer', 'min:15', 'max:900'],
-                'timeframe' => ['required', 'integer', Rule::in([
-                    CandleService::TF_S5,
-                    CandleService::TF_S15,
-                    CandleService::TF_S30,
-                    1,
-                ])],
-                'min_confidence' => ['required', 'numeric', 'min:0', 'max:1'],
-                'min_payout' => ['required', 'numeric', 'min:0', 'max:100'],
-                'stale_after_sec' => ['required', 'integer', 'min:5', 'max:600'],
-                'eng_allow_classic' => ['sometimes', 'boolean'],
-                'eng_allow_same_color' => ['sometimes', 'boolean'],
-                'eng_gap_filter_enabled' => ['sometimes', 'boolean'],
-                'eng_gap_lookback' => ['required', 'integer', 'min:5', 'max:500'],
-                'eng_gap_max_ratio' => ['required', 'numeric', 'min:0.05', 'max:1'],
-                'eng_gap_size_mult' => ['required', 'numeric', 'min:0.1', 'max:10'],
-                'eng_skip_martingale_if_session_green' => ['sometimes', 'boolean'],
-                'telegram_enabled' => ['sometimes', 'boolean'],
-                'telegram_notify_result' => ['sometimes', 'boolean'],
-                'telegram_notify_on' => ['required', 'string', Rule::in(['signal_trade', 'off'])],
-                'telegram_send_chart' => ['required', 'string', Rule::in(['1', '0'])],
-                'telegram_bot_token' => ['nullable', 'string', 'max:128'],
-                'telegram_chat_id' => ['nullable', 'string', 'max:64'],
-                'telegram_analyst_llm_enabled' => ['sometimes', 'boolean'],
-                'telegram_analyst_bot_id' => ['nullable', 'integer', 'min:1'],
-                'telegram_analyst_llm_question' => ['nullable', 'string', 'max:500'],
-            ] + TelegramBotConfigFields::validationRules());
-            if (! $request->boolean('eng_allow_classic') && ! $request->boolean('eng_allow_same_color')) {
-                throw ValidationException::withMessages([
-                    'eng_allow_classic' => 'Включите хотя бы один тип поглощения: классическое или same-color.',
-                ]);
-            }
-            $existingToken = trim((string) (($bot->config ?? [])['telegram_bot_token'] ?? ''));
-            $tokenInput = trim((string) ($extra['telegram_bot_token'] ?? ''));
-            $config = array_merge($bot->config ?? [], [
-                'count' => (int) $extra['count'],
-                'expiry_sec' => (int) $extra['expiry_sec'],
-                'timeframe' => (int) $extra['timeframe'],
-                'min_confidence' => (float) $extra['min_confidence'],
-                'min_payout' => (float) $extra['min_payout'],
-                'stale_after_sec' => (int) $extra['stale_after_sec'],
-                'eng_allow_classic' => $request->boolean('eng_allow_classic'),
-                'eng_allow_same_color' => $request->boolean('eng_allow_same_color'),
-                'eng_gap_filter_enabled' => $request->boolean('eng_gap_filter_enabled'),
-                'eng_gap_lookback' => (int) $extra['eng_gap_lookback'],
-                'eng_gap_max_ratio' => (float) $extra['eng_gap_max_ratio'],
-                'eng_gap_size_mult' => (float) $extra['eng_gap_size_mult'],
-                'eng_skip_martingale_if_session_green' => $request->boolean('eng_skip_martingale_if_session_green'),
-                'telegram_enabled' => $request->boolean('telegram_enabled'),
-                'telegram_notify_result' => $request->boolean('telegram_notify_result'),
-                'telegram_notify_on' => (string) $extra['telegram_notify_on'],
-                'telegram_send_chart' => ($extra['telegram_send_chart'] ?? '1') === '1',
-                'telegram_bot_token' => $tokenInput !== '' ? $tokenInput : $existingToken,
-                'telegram_chat_id' => trim((string) ($extra['telegram_chat_id'] ?? '')),
-                'telegram_analyst_llm_enabled' => $request->boolean('telegram_analyst_llm_enabled'),
-                'telegram_analyst_bot_id' => ! empty($extra['telegram_analyst_bot_id'])
-                    ? (int) $extra['telegram_analyst_bot_id']
-                    : null,
-                'telegram_analyst_llm_question' => StrongLevelTelegramLlmButton::llmQuestionFromConfig([
-                    'telegram_analyst_llm_question' => $extra['telegram_analyst_llm_question'] ?? null,
-                ]),
-                'version' => 'engulfing_liquidity_v2',
-            ]);
-            $config = TelegramBotConfigFields::mergeFromRequest($request, $config, $bot->config ?? []);
+            // 3-шаговое поглощение v3 + live-инфра как у Impulse LVL (#47).
+            $config = EngulfingLiquidityConfig::buildFromRequest($request, $bot->config ?? []);
         } elseif ($bot->type === 'smc_flow') {
             // SMC Flow: UT flip + 3BR confirm + LuxAlgo OB filter; экспирация по умолчанию 3 мин.
             // Telegram — тот же блок, что у Sweep / Raid и Engulfing: алерт, PNG, LLM-кнопка, poll /start.
@@ -2291,6 +2227,7 @@ class BotController extends Controller
                 'eng_gap_max_ratio' => ['sometimes', 'numeric', 'min:0.05', 'max:1'],
                 'eng_gap_size_mult' => ['sometimes', 'numeric', 'min:0.1', 'max:10'],
                 'eng_skip_martingale_if_session_green' => ['sometimes', 'boolean'],
+                'entry_side_mode' => ['sometimes', 'string', Rule::in(\App\Support\ImpulseLvl1minConfig::allowedEntrySideModes())],
             ]);
             if (ChartAnalystBotTypes::isSrl($bot->type)
                 && ! $request->boolean('srl_enter_sweep')
@@ -2468,6 +2405,9 @@ class BotController extends Controller
                 $config['eval_prev_candle'] = $request->boolean('eval_prev_candle');
                 $config['live_candle_wick_signals'] = $request->boolean('live_candle_wick_signals');
                 $config['lvl_filter'] = $request->boolean('lvl_filter');
+                $config['entry_side_mode'] = ImpulseLvl1minConfig::entrySideMode([
+                    'entry_side_mode' => $extra['entry_side_mode'] ?? (($bot->config ?? [])['entry_side_mode'] ?? ImpulseLvl1minConfig::ENTRY_SIDE_CONTINUATION),
+                ]);
             }
             // Плановый scan для аналитика не выполняется (scanBot сразу выходит).
             // is_active=true при гибриде — чтобы бот был «active» в списке/аналитике.
@@ -2675,7 +2615,7 @@ class BotController extends Controller
             'three_soldier_vol_adaptive',
             'custom_candles_impulse' => '@candle_reversal_confirm_bot',
             MaxBotConfig::BOT_TYPE => '@candle_reversal_confirm_bot',
-            ImpulseLvl1minConfig::BOT_TYPE => '@candle_reversal_confirm_bot',
+            ImpulseLvl1minConfig::BOT_TYPE, ImpulseLvl1minConfig::BOT_TYPE_S15 => '@candle_reversal_confirm_bot',
             'openrouter_llm_analyst' => '@chart_analyct_smc_flow_bot',
             ChartAnalystBotTypes::SRL => '@chart_analyst_sweep_raid_bot',
             ChartAnalystBotTypes::ENGULF => '@chart_analyst_engulf_bot',
@@ -3030,10 +2970,13 @@ class BotController extends Controller
             ])->values(),
             'scan_active' => $scanProgress['scan_active'],
             'analyzing_instrument' => $scanProgress['analyzing_instrument'],
+            'analyzing_instruments' => $scanProgress['analyzing_instruments'] ?? [],
             'analyzed_instruments' => $scanProgress['analyzed_instruments'],
             'scan_total' => $scanProgress['scan_total'],
             'scan_remaining' => $scanProgress['scan_remaining'],
             'scan_min_payout' => $scanMinPayout,
+            'scan_shard_count' => $scanProgress['scan_shard_count'] ?? 1,
+            'scan_shards' => $scanProgress['scan_shards'] ?? [],
             'next_scan_at' => $scanProgress['next_scan_at'],
             'server_time' => now()->toIso8601String(),
         ]);
@@ -4071,11 +4014,14 @@ class BotController extends Controller
      * @return array{
      *     scan_active: bool,
      *     analyzing_instrument: ?string,
+     *     analyzing_instruments: list<string>,
      *     analyzed_instruments: list<string>,
      *     scan_total: int,
      *     scan_remaining: ?int,
      *     scan_min_payout: ?float,
      *     analyzing_since: ?int,
+     *     scan_shard_count: int,
+     *     scan_shards: list<array{index:int,current:?string,remaining:?int,total:int,analyzed_count:int,active:bool}>,
      *     next_scan_at: ?int
      * }
      */

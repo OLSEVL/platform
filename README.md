@@ -21,10 +21,10 @@ php artisan key:generate
 php artisan migrate
 ```
 
-## Запуск (внутренний IP или домен bot13123.online)
+## Запуск (внутренний IP или домен bot123456789.space)
 
 1. В `.env` задайте **APP_URL** — по какому адресу заходят пользователи:
-   - по домену: `APP_URL=http://bot13123.online` (или `https://...` при наличии SSL);
+   - по домену: `APP_URL=http://bot123456789.space` (или `https://...` при наличии SSL);
    - по внутреннему IP: `APP_URL=http://192.168.1.100:8000` (подставьте свой IP).
 2. Запустите прокси свечей (из папки bot): `python pocket-options-proxy.py`
 3. Очередь (в отдельном терминале): `php artisan queue:work`
@@ -44,9 +44,9 @@ php artisan migrate
    - **`./start.sh`** или **`./start.sh 8000`** — слушает `0.0.0.0:8000`;
    - либо вручную: `php artisan serve --host=0.0.0.0 --port=8000`
 
-Откройте в браузере APP_URL (например http://bot13123.online или http://ВАШ_IP:8000), зарегистрируйтесь, создайте бота. Для графика и свечей настройте аккаунт Pocket Options (таблица `pocket_options_accounts`).
+Откройте в браузере APP_URL (например http://bot123456789.space или http://ВАШ_IP:8000), зарегистрируйтесь, создайте бота. Для графика и свечей настройте аккаунт Pocket Options (таблица `pocket_options_accounts`).
 
-**Домен bot13123.online:** на сервере должен быть настроен DNS (A-запись на IP этого хоста).
+**Домен bot123456789.space:** на сервере должен быть настроен DNS (A-запись на IP этого хоста).
 
 ### Запуск через Nginx + PHP-FPM
 
@@ -60,10 +60,10 @@ php artisan migrate
    sudo nginx -t && sudo systemctl reload nginx
    ```
 2. Сайт слушает **порт 8080** (порт 80 был занят; чтобы перейти на 80, освободите его и в конфиге раскомментируйте `listen 80`, закомментируйте `listen 8080`, затем `sudo systemctl reload nginx`).
-3. В `.env` укажите **APP_URL** с портом, если используете 8080: `APP_URL=http://bot13123.online:8080` или `APP_URL=http://ВАШ_IP:8080`.
+3. В `.env` укажите **APP_URL** с портом, если используете 8080: `APP_URL=http://bot123456789.space:8080` или `APP_URL=http://ВАШ_IP:8080`.
 4. Очередь по-прежнему: `php artisan queue:work`, плюс **cron** на `schedule:run` (см. выше) или `php artisan schedule:work`.
 
-Открывайте в браузере: **http://localhost:8080**, **http://ваш-IP:8080** или **http://bot13123.online:8080** (домен на выделенном сервере, без Traefik).
+Открывайте в браузере: **http://localhost:8080**, **http://ваш-IP:8080** или **http://bot123456789.space:8080** (домен на выделенном сервере, без Traefik).
 
 ### Запуск всей платформы одной командой
 
@@ -72,7 +72,7 @@ cd /home/o/platform
 ./start-all.sh
 ```
 
-Скрипт поднимает: **MySQL**, **PHP-FPM**, **Nginx**, воркер очереди. Сайт: **http://bot13123.online:8080**. С прокси свечей (Python, WebSocket → Pocket Options): `./start-all.sh --with-proxy`. Подробнее про прокси: **PROXY.md**.
+Скрипт поднимает: **MySQL**, **PHP-FPM**, **Nginx**, воркер очереди. Сайт: **http://bot123456789.space:8080**. С прокси свечей (Python, WebSocket → Pocket Options): `./start-all.sh --with-proxy`. Подробнее про прокси: **PROXY.md**.
 
 ## Основное
 

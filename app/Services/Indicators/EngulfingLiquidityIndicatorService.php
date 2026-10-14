@@ -40,6 +40,13 @@ class EngulfingLiquidityIndicatorService
         $entries = $detector->detect($rows, [
             'allow_classic' => (bool) ($p['allow_classic'] ?? true),
             'allow_same_color' => (bool) ($p['allow_same_color'] ?? true),
+            'require_level' => (bool) ($p['require_level'] ?? false),
+            'level_lookback' => (int) ($p['level_lookback'] ?? 40),
+            'level_touch_pct' => (float) ($p['level_touch_pct'] ?? 0.15),
+            'reaction_max_bars' => (int) ($p['reaction_max_bars'] ?? 3),
+            'skip_if_left' => (bool) ($p['skip_if_left'] ?? false),
+            'skip_if_breakout_hold' => (bool) ($p['skip_if_breakout_hold'] ?? false),
+            'breakout_hold_closes' => (int) ($p['breakout_hold_closes'] ?? 2),
         ]);
 
         $labels = [];

@@ -58,7 +58,8 @@ final class BotAlgorithmSummary
             'strong_trend_demarker' => 'Strong Trend + DeMarker',
             DemarkerDualFastConfig::BOT_TYPE => 'Dual DeMarker Fast',
             MaxBotConfig::BOT_TYPE => 'MaxBot',
-            ImpulseLvl1minConfig::BOT_TYPE => 'Impulse LVL 1min',
+            ImpulseLvl1minConfig::BOT_TYPE => ImpulseLvl1minConfig::TITLE,
+            ImpulseLvl1minConfig::BOT_TYPE_S15 => ImpulseLvl1minConfig::TITLE_S15,
             'openrouter_llm' => 'OpenRouter LLM',
             'openrouter_llm_analyst' => 'OpenRouter Chart Analyst',
             ChartAnalystBotTypes::SRL => 'OpenRouter Chart Analyst Sweep/Raid',
@@ -73,7 +74,7 @@ final class BotAlgorithmSummary
     {
         return match ($type) {
             'three_candles_in_row' => 'counter_three',
-            'strong_trend_telegram', 'custom_candles_impulse', MaxBotConfig::BOT_TYPE, ImpulseLvl1minConfig::BOT_TYPE, 'three_soldier', 'three_soldier_vol_adaptive' => 'impulse_three',
+            'strong_trend_telegram', 'custom_candles_impulse', MaxBotConfig::BOT_TYPE, ImpulseLvl1minConfig::BOT_TYPE, ImpulseLvl1minConfig::BOT_TYPE_S15, 'three_soldier', 'three_soldier_vol_adaptive' => 'impulse_three',
             'strong_trend_demarker', DemarkerDualFastConfig::BOT_TYPE => 'oscillator_zones',
             'pinbar_trade' => 'pinbar',
             'bollinger_contrtrend' => 'bb_reversion',
@@ -165,14 +166,17 @@ final class BotAlgorithmSummary
                 ."Несколько правил (1:110%, 2:120%…); первая сработавшая — сигнал.\n"
                 .'live — на текущей свече; trend/counter задаёт CALL/PUT.',
             ImpulseLvl1minConfig::BOT_TYPE => "Импульс 1min: тело vs trim-mean × множитель или MAX-ratio к истории.\n"
-                ."Обязательное касание swing-зоны LVL на M1/M5/M15/M30 (high/low).\n"
+                ."Касание swing-зоны LVL (M1/M5/M15/M30). Сторона — настройка: отбой (зелёный у сопротивления → PUT) или продолжение (зелёный → CALL).\n"
                 .'Опция live-фитиль: незакрытая M1 по max(high−open, open−low), как updateBotM1.',
+            ImpulseLvl1minConfig::BOT_TYPE_S15 => "Тот же Impulse LVL, но на закрытых S15 (15 с), не M1.\n"
+                ."LVL: S15 + M1 + M5 + M15. Экспирация 15 с. Redis S5 не считается баром S15.\n"
+                .'Сторона — продолжение или отбой, как у 1min.',
             'smc_flow' => "Три фильтра на закрытой M1 должны совпасть:\n"
                 ."UT Bot (свежий Buy/Sell) + 3BR confirm + цена в LuxAlgo OB.\n"
                 .'Только при полном совпадении стороны → CALL или PUT.',
-            'engulfing_liquidity' => "3-шаговое поглощение на закрытой M1:\n"
-                ."Шаг1 engulf (контекст) → шаг2 реакция → шаг3 контр-pogloщение → вход.\n"
-                .'Не на первом engulf. Классика и same-color. Экспирация 60 с.',
+            'engulfing_liquidity' => "3-шаговое поглощение (сценарий D) на закрытой свече:\n"
+                ."Шаг1 engulf → шаг2 реакция (окно 1…N) → шаг3 контр-поглощение → вход.\n"
+                .'Фильтры со стримов: FH/FL у шага 1, skip «уход», skip пробой+закреп (ветка E). Live daemon как #47.',
             'strong_level' => "Строит сильные уровни из нескольких источников (конфлюенс).\n"
                 ."Ждёт касание цены и подтверждение отскока/пробоя на M5/M1.\n"
                 .'Отбой/пробой задаёт CALL или PUT; есть карточки и Telegram.',
@@ -266,11 +270,18 @@ final class BotAlgorithmSummary
                 $s('Важно', 'scan_interval_sec по умолчанию 5 с для live на M1. ТФ бота: 5/15/30/60/300 с.'),
             ],
             ImpulseLvl1minConfig::BOT_TYPE => [
-                $s('Идея', 'Порт docs_need_release/1min: импульс к trimmed mean (10+10 из 100) или MAX-серия vs исторический максимум одноцветных блоков, плюс касание swing-зоны LVL.'),
-                $s('Когда CALL', 'Бычий импульс (профиль extra_wl/extra/extreme/structure или MAX) коснулся LVL high. Сторона всегда по импульсу.'),
-                $s('Когда PUT', 'Медвежий импульс коснулся LVL low.'),
+                $s('Идея', 'Порт docs_need_release/1min: импульс к trimmed mean (10+10 из 100) или MAX-серия vs исторический максимум одноцветных блоков + касание LVL. Сторона входа переключается в настройках: отбой или продолжение импульса.'),
+                $s('Когда CALL', 'Отбой: красный импульс у поддержки. Продолжение: зелёный импульс у сопротивления.'),
+                $s('Когда PUT', 'Отбой: зелёный импульс у сопротивления. Продолжение: красный импульс у поддержки.'),
                 $s('Приоритет', 'MAX и каждый профиль — отдельные алерты (если включено в настройках). Paper одна: occupancy и «prefer live» задаются галочками.'),
                 $s('Важно', 'Воркеры, prev, живой HTF, live-фитиль, держать формирующуюся M1 — в карточке бота. Бэктест без forming-бара остаётся по телу. Диагностические логи scan сильно замедляют круг.'),
+            ],
+            ImpulseLvl1minConfig::BOT_TYPE_S15 => [
+                $s('Идея', 'Тот же Impulse LVL, что бот 47, на закрытых свечах S15. LVL: S15 (тело↔фитиль) + M1/M5/M15 из БД. Формирующийся Redis S5 в ряд S15 не кладём.'),
+                $s('Когда CALL', 'Как у 1min: продолжение — зелёный у сопротивления; отбой — красный у поддержки.'),
+                $s('Когда PUT', 'Как у 1min: продолжение — красный у поддержки; отбой — зелёный у сопротивления.'),
+                $s('Приоритет', 'MAX и профили как у 1min. Paper одна. Экспирация по умолчанию 15 с.'),
+                $s('Важно', 'Не включает бот 47 (M1). Live-фитиль по умолчанию выкл. — нет честного формирующегося S15 в Redis.'),
             ],
             'pinbar_trade' => [
                 $s('Идея', 'Пинбар = разворотная свеча: маленькое тело и длинный хвост. Тело должно лежать в верхней или нижней трети диапазона high−low.'),
@@ -411,11 +422,11 @@ final class BotAlgorithmSummary
                 $s('Важно', 'Строгий AND — сигналов мало, зато идея «структура + зона».'),
             ],
             'engulfing_liquidity' => [
-                $s('Идея', 'Поглощение в 3 шага: engulf (контекст) → реакция одной свечой → контр-pogloщение. Вход на close 3-й свечи.'),
-                $s('Когда CALL', 'Бычий engulf → красная реакция → зелёная контр-pogloщение (classic или same-color).'),
-                $s('Когда PUT', 'Медвежий engulf → зелёная реакция → красная контр-pogloщение.'),
-                $s('Пример', '10:01 engulf ↑, 10:02 откат ↓, 10:03 контр-pogloщение ↑ → CALL на close 10:03, expiry 60 с.'),
-                $s('Важно', 'Один engulf без цепочки — не вход. FH/FL не нужны. Same-color можно отключить в настройках.'),
+                $s('Идея', 'Сценарий D: engulf (контекст) → реакция → контр-поглощение. Вход на close 3-й свечи. Live poll+workers как Impulse LVL (#47).'),
+                $s('Когда CALL', 'Бычий engulf у FL → красная реакция в окне 1…N → зелёная контр-поглощение (classic или same-color).'),
+                $s('Когда PUT', 'Медвежий engulf у FH → зелёная реакция → красная контр-поглощение.'),
+                $s('Пример', '10:01 engulf ↑ у уровня, 10:02–10:03 откат ↓, 10:04 контр ↑ → CALL на close, expiry 60 с.'),
+                $s('Важно', 'Один engulf без цепочки — не вход. Skip «уход» (2+ бара в сторону шага 1) и пробой+закреп (ветка E). FH/FL опционально, по умолчанию вкл.'),
             ],
             'openrouter_llm' => [
                 $s('Идея', 'Торговое решение принимает LLM по JSON (side, confidence, reasons). Индикаторных правил нет.'),
@@ -444,10 +455,10 @@ final class BotAlgorithmSummary
                 $s('Важно', 'Пустой candidates → NONE. Первое поглощение без цепочки — не вход. Rule-based engulfing_liquidity отдельно.'),
             ],
             ChartAnalystBotTypes::IMPULSE => [
-                $s('Идея', 'Как Chart Analyst SMC Flow: уровни Impulse LVL (M1–M30) рисуются на графике и уходят в промпт. LLM сам решает CALL/PUT/NONE, не только подтверждает хиты 47.'),
-                $s('Когда CALL', 'Бычий импульс (тело vs trim-mean или MAX) + касание непробитой поддержки LVL.'),
-                $s('Когда PUT', 'Медвежий импульс + касание непробитого сопротивления LVL.'),
-                $s('Пример', 'На M1 сильное зелёное тело касается M15 support → LLM CALL на 60 с, зоны на графике.'),
+                $s('Идея', 'Как Chart Analyst SMC Flow: уровни Impulse LVL (M1–M30) рисуются на графике и уходят в промпт. LLM сам решает CALL/PUT/NONE. Rule-based 47 даёт отбой (не продолжение).'),
+                $s('Когда CALL', 'Подсказка детектора: красный импульс у поддержки LVL (отбой вверх). LLM может не согласиться.'),
+                $s('Когда PUT', 'Подсказка: зелёный импульс у сопротивления LVL (отбой вниз).'),
+                $s('Пример', 'На M1 сильное зелёное тело касается M15 resistance → live_setups PUT (отбой), зоны на графике.'),
                 $s('Важно', 'Плановый scan выключен. Бот 47 (impulse_lvl_1min) остаётся отдельным сканером.'),
             ],
             default => [

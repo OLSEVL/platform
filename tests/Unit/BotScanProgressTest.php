@@ -75,4 +75,38 @@ class BotScanProgressTest extends TestCase
         BotScanProgress::endScan($botId);
         $this->assertNull(BotScanProgress::remainingCount($botId));
     }
+
+    /** 6 параллельных шардов не затирают прогресс друг друга — UI видит все потоки. */
+    public function test_sharded_scan_exposes_all_streams(): void
+    {
+        $botId = 7373;
+        BotScanProgress::endScan($botId);
+        BotScanProgress::forgetLastStarted($botId);
+
+        BotScanProgress::beginShardedWave($botId, 6);
+        $snap0 = BotScanProgress::snapshot($botId);
+        $this->assertTrue($snap0['scan_active']);
+        $this->assertSame(6, $snap0['scan_shard_count']);
+        $this->assertCount(6, $snap0['scan_shards']);
+
+        BotScanProgress::beginScan($botId, 10, 0, 6);
+        BotScanProgress::beginScan($botId, 10, 1, 6);
+        BotScanProgress::setCurrentInstrument($botId, 'EURUSD_otc', 0, 6);
+        BotScanProgress::setCurrentInstrument($botId, 'GBPUSD_otc', 1, 6);
+
+        $snap = BotScanProgress::snapshot($botId);
+        $this->assertSame(20, $snap['scan_total']);
+        $this->assertSame(20, $snap['scan_remaining']);
+        $this->assertContains('EURUSD_otc', $snap['analyzing_instruments']);
+        $this->assertContains('GBPUSD_otc', $snap['analyzing_instruments']);
+        $this->assertSame('red', BotScanProgress::dotColor($botId, 'EURUSD_otc'));
+        $this->assertSame('red', BotScanProgress::dotColor($botId, 'GBPUSD_otc'));
+
+        BotScanProgress::finishInstrument($botId, 'EURUSD_otc', 0, 6);
+        $this->assertSame('green', BotScanProgress::dotColor($botId, 'EURUSD_otc'));
+        $this->assertSame(19, BotScanProgress::remainingCount($botId));
+
+        BotScanProgress::endShardedWave($botId);
+        $this->assertNull(BotScanProgress::remainingCount($botId));
+    }
 }

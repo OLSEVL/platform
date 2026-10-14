@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Сигналы</title>
+  <link rel="stylesheet" href="float.css" />
+</head>
+<body>
+  <!-- Одна строка топбара: заголовок · статус · Боты · очистка · настройки -->
+  <header class="hdr">
+    <div class="hdr-title">Сигналы</div>
+    <div id="status" class="status status-off" title="Статус WS">●</div>
+    <button type="button" id="btn-bots" class="hdr-text-btn" title="Фильтр по ботам">Боты</button>
+    <button type="button" id="btn-clear" class="icon-btn" title="Очистить список сигналов">🗑</button>
+    <button type="button" id="btn-settings" class="icon-btn" title="Сервер">⚙</button>
+  </header>
+
+  <!-- Выпадающий выбор ботов (открывается кнопкой «Боты»). -->
+  <div id="bots-panel" class="bots-panel hidden">
+    <div class="bots-panel-head">
+      <span>Каких ботов показывать</span>
+      <button type="button" id="btn-filter-all" class="mini-btn" title="Показать всех">Все</button>
+    </div>
+    <div id="bot-filter" class="bot-filter"></div>
+  </div>
+
+  <section id="settings" class="settings hidden">
+    <label class="mode-label">Сеть</label>
+    <div class="mode-row">
+      <label><input type="radio" name="networkMode" value="lan" /> Внутренняя</label>
+      <label><input type="radio" name="networkMode" value="wan" checked /> Внешняя</label>
+    </div>
+    <label class="mode-label">Открытие по иконке</label>
+    <div class="mode-row">
+      <label><input type="radio" name="uiMode" value="float" /> Окно</label>
+      <label><input type="radio" name="uiMode" value="sidepanel" checked /> Панель</label>
+    </div>
+    <div class="settings-row" style="margin-top:10px">
+      <button type="button" id="btn-save">OK</button>
+    </div>
+
+    <label class="mode-label">Звук нового сигнала</label>
+    <div class="sound-row">
+      <label class="sound-toggle">
+        <input type="checkbox" id="soundEnabled" checked />
+        Воспроизводить
+      </label>
+      <button type="button" id="btn-sound-test" class="mini-btn">Тест</button>
+    </div>
+    <div class="sound-file-row">
+      <input type="file" id="soundFile" accept="audio/*,.mp3,.wav,.ogg,.m4a" />
+      <button type="button" id="btn-sound-reset" class="mini-btn">Сброс</button>
+    </div>
+    <p id="sound-name" class="settings-hint">Звук: стандартный сигнал</p>
+
+    <p class="settings-hint">Дома — «Внутренняя», снаружи — «Внешняя» (порт 8080). После смены сети — OK. Плавающее окно при клике по сигналу остаётся сверху; полностью «всегда поверх» Chrome API не даёт — для постоянного закрепления у края экрана лучше режим «Панель».</p>
+  </section>
+
+  <p id="status-text" class="status-text">Подключение…</p>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Пара</th>
+          <th>Сторона</th>
+          <th>%</th>
+          <th>Бот</th>
+          <th>Время</th>
+        </tr>
+      </thead>
+      <tbody id="rows">
+        <tr class="empty"><td colspan="5">Нет сигналов</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <script src="endpoints.js"></script>
+  <script src="float.js"></script>
+</body>
+</html>

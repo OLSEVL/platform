@@ -2,10 +2,13 @@
 
 namespace App\Models;
 
+use App\Services\ExtensionSignalsBroadcast;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Support\Facades\Log;
+use Throwable;
 
 class BotSignal extends Model
 {
@@ -34,6 +37,31 @@ class BotSignal extends Model
             'reasons_json' => 'array',
             'features_json' => 'array',
         ];
+    }
+
+    protected static function booted(): void
+    {
+        // Любой новый сигнал бота → Chrome-расширение (накопительный список).
+        // afterCommit: create часто внутри DB::transaction — публикуем только после успешного commit.
+        // Важно: long-running bots:impulse-live держит классы в RAM — после правок модели нужен restartScan.
+        static::created(function (BotSignal $signal): void {
+            $publish = static function () use ($signal): void {
+                try {
+                    app(ExtensionSignalsBroadcast::class)->publishFromSignal($signal);
+                } catch (Throwable $e) {
+                    Log::warning('extension_signals_publish_failed', [
+                        'signal_id' => $signal->id,
+                        'error' => $e->getMessage(),
+                    ]);
+                }
+            };
+
+            if ($signal->getConnection()->transactionLevel() > 0) {
+                $signal->getConnection()->afterCommit($publish);
+            } else {
+                $publish();
+            }
+        });
     }
 
     public function bot(): BelongsTo

@@ -50,8 +50,15 @@ final class SettingsFieldHints
                 ?? self::COMMON[$field]
                 ?? self::guess($field);
         }
-        if ($botType === ImpulseLvl1minConfig::BOT_TYPE) {
+        if (ImpulseLvl1minConfig::is((string) $botType)) {
             return self::IMPULSE_LVL_1MIN[$field]
+                ?? self::BOT[$field]
+                ?? self::COMMON[$field]
+                ?? self::guess($field);
+        }
+        // Engulfing Liquidity (#45): live-инфра как #47 + фильтры со стримов D.
+        if ($botType === EngulfingLiquidityConfig::BOT_TYPE) {
+            return self::ENGULFING_LIQUIDITY[$field]
                 ?? self::BOT[$field]
                 ?? self::COMMON[$field]
                 ?? self::guess($field);
@@ -617,6 +624,18 @@ final class SettingsFieldHints
         'srl_enter_breakout' => 'Сценарий E: пробой FH/FL с закреплением close — продолжение тренда, не fade.',
         'srl_gap_filter_enabled' => 'Пропуск «грязных» OTC-пар с частыми гэпами close→open (стрим kAyG).',
         'srl_skip_martingale_if_session_green' => 'Не поднимать ступень мартингейла, пока paper-день уже в плюсе.',
+        'eng_allow_classic' => 'Классическое поглощение: свеча другого цвета перекрывает тело предыдущей.',
+        'eng_allow_same_color' => 'Same-color: тот же цвет + снятие high/low соседа. Хотя бы один тип должен быть включён.',
+        'eng_require_level' => 'Шаг 1 только рядом с фрактальным FH/FL (как на стримах). Выкл. — engulf без привязки к уровню.',
+        'eng_level_lookback' => 'Сколько баров назад искать фракталы FH/FL для фильтра уровня.',
+        'eng_level_touch_pct' => 'Макс. расстояние (%) от high/low/close шага 1 до уровня, чтобы считать касание.',
+        'eng_reaction_max_bars' => 'Окно реакции после engulf: 1 = соседняя свеча, 3 = как на стримах (реакция через 1–3 бара).',
+        'eng_skip_if_left' => 'Пропуск «ухода»: 2+ бара подряд в сторону шага 1 без реакции → не ждём fade.',
+        'eng_skip_if_breakout_hold' => 'Если close закрепился за уровнем (ветка E) — не входим в fade D.',
+        'eng_breakout_hold_closes' => 'Сколько closes подряд за уровнем считать закрепом пробоя.',
+        'eng_gap_filter_enabled' => 'Пропуск OTC-пар с частыми гэпами close→open.',
+        'eng_skip_martingale_if_session_green' => 'Не поднимать ступень мартингейла при зелёном paper-дне.',
+        'continuous_scan' => 'Live daemon bots:impulse-live: poll всех пар + воркеры. Выкл. = batch bots:scan.',
         'timeframe' => 'Таймфрейм свечей стратегии (M1 / S5 / S15 / S30).',
         'telegram_analyst_llm_enabled' => 'Кнопка запуска LLM-анализа по паре: в Telegram под алертом и на странице карточек.',
         'telegram_analyst_bot_id' => 'Какого бота-аналитика использовать для кнопки LLM. «Авто» = первый доступный Chart Analyst.',
@@ -726,18 +745,21 @@ final class SettingsFieldHints
     private const IMPULSE_LVL_1MIN = [
         'scan_interval_sec' => 'Как часто dispatch может СТАРТОВАТЬ новый круг. Пока прошлый bots:scan не закончил все пары, новый не начнётся. Чтобы круг был ~как 1min (~6 с), ставьте воркеры 6 и выключите диагностические логи scan.',
         'scan_workers' => 'Сколько процессов одновременно обходят пары внутри одного круга (как несколько SSID в main.py). 1 = по очереди (~1–2 мин на рынок). 6 — типичный оригинал. Не путать с интервалом 5 с.',
-        'count' => 'Сколько M1 загрузить. Нужно ≥110 для trim-mean (100 тел) и запас под LVL M1; 400 даёт достаточно M30 для свингов.',
-        'expiry_sec' => 'Экспирация paper-сделки в секундах. Дефолт 60 = одна M1, как в 1min.',
+        'count' => 'Сколько сигнальных баров загрузить (M1 у #47, S15 у Impulse LVL S15). Нужно ≥110 для trim-mean (100 тел) и запас под LVL.',
+        'expiry_sec' => 'Экспирация paper-сделки в секундах. У 1min дефолт 60; у S15 — 15.',
         'min_payout' => 'Минимальная выплата пары (%). В 1min дефолт 80%. Ниже порога пара не сканируется.',
+        'market_scope' => 'Какие пары сканировать: все / только OTC (код с _otc) / только non-OTC (без _otc). Работает вместе с min_payout.',
         'stale_after_sec' => 'Если live-свеча не обновлялась дольше N секунд — не используем partial. Для Impulse LVL при включённом «Держать формирующуюся M1» этот порог не режет текущую минуту.',
         'keep_stale_forming_m1' => 'Как оригинал history(1): пока минута не закрылась, берём последний снимок M1 из Redis даже если тик старше «свежести». Выкл. — строго stale_after_sec (как DeMarker/CRC).',
         'lvl_filter' => 'Обязательное касание swing-зоны LVL (high импульса vs сопротивление, low vs поддержка). Выкл. — только импульс/MAX, как выключенный structure_no_lvl в оригинале мы не тащим по умолчанию.',
+        'entry_side_mode' => 'По умолчанию — продолжение импульса: зелёный → CALL, красный → PUT. Отбой — против импульса: зелёный у сопротивления → PUT, красный у поддержки → CALL. LVL-фильтр не меняется.',
         'max_enabled' => 'Блок MAX/MAX2/MAX3: сумма тел серии vs исторический максимум одноцветных блоков. Пороги: 1→110%, 2→130%, иначе 120%. Берётся только самая длинная серия.',
         'impulse_profile_enabled' => 'Включить профиль. Порядок сверху вниз: extra_wl 3×4.75, extra 1×3.50, extreme 3×4.25, structure 1×3.00. Первый совпавший.',
         'impulse_profile_multiplier' => 'Сумма тел N свечей одного цвета должна быть ≥ trim-mean × этот множитель. Сколько тонких/толстых отрезать — поля Trim выше (у #47 после импорта часто 70+5, не 10+10).',
         'm5_take' => 'Сколько закрытых M5 держать для поиска уровней. Больше — больше старших зон, чуть медленнее scan.',
         'm15_take' => 'Сколько закрытых M15 для LVL.',
-        'm30_take' => 'Сколько закрытых M30 для LVL. Если бэктест станет тяжёлым — режьте это число первым, не LVL целиком.',
+        'm30_take' => 'Сколько закрытых M30 для LVL (только Impulse LVL 1min). Если бэктест станет тяжёлым — режьте это число первым, не LVL целиком.',
+        'm1_take' => 'Сколько закрытых M1 для LVL у Impulse LVL S15 (M1 здесь старший ТФ, не сигнальный бар).',
         'trim_low_count' => 'Сколько самых тонких тел отрезать из последних 100 закрытых перед средним. В свежем config.py часто 70 (не 10).',
         'trim_high_count' => 'Сколько самых толстых тел отрезать. В свежем config.py часто 5.',
         'max_only_longest' => 'Как MAX_ONLY_LONGEST_SERIES: слать только самую длинную одноцветную MAX-серию. Снимите — уйдут MAX1+MAX2+… на одном баре (если каждый бьёт порог).',
@@ -749,5 +771,28 @@ final class SettingsFieldHints
         'occupancy_blocks_alerts' => 'Если paper уже открыта — не слать и алерты. По умолчанию выкл., как сейчас: Telegram не молчит из-за сделки.',
         'occupancy_scope' => 'Где смотреть открытую paper: только эта пара (как раньше) или любая пара этого бота (один вход на весь рынок).',
         'paper_prefer_live' => 'Если на текущем баре есть live-хит, paper берём с него, а не с prev. Снимите — можно открыть сделку с prev, даже когда live тоже есть.',
+    ];
+
+    /**
+     * Engulfing Liquidity (#45): live как Impulse + фильтры сценария D со стримов.
+     *
+     * @var array<string, string>
+     */
+    private const ENGULFING_LIQUIDITY = [
+        'scan_interval_sec' => 'Как часто parent bots:impulse-live опрашивает рынок (при continuous_scan). 5 с — как у #47.',
+        'scan_workers' => 'Сколько PHP-воркеров параллельно обходят пары внутри live-daemon (как SSID у #47). 6 — типичный дефолт.',
+        'continuous_scan' => 'Вкл. = daemon poll+workers (bots:impulse-live). Выкл. = обычный batch bots:scan (с шардами при workers>1).',
+        'count' => 'Сколько закрытых свечей загрузить на пару. 500 — запас под окно реакции и фракталы.',
+        'expiry_sec' => 'Экспирация paper/PO. На OTC часто 15 с при S15; 60 с — классика M1.',
+        'min_payout' => 'Минимальная выплата пары (%). Ниже порога пара не сканируется.',
+        'market_scope' => 'Какие пары сканировать: все / только OTC (код с _otc) / только non-OTC (без _otc). Работает вместе с min_payout.',
+        'stale_after_sec' => 'Свежесть текущей свечи из Redis. Для live daemon обычно 30–60 с.',
+        'eng_require_level' => 'Engulf шага 1 только у фрактального FH/FL. Как «уровень» на стримах Ihj/Vun.',
+        'eng_reaction_max_bars' => 'Макс. баров от engulf до реакции. 1 = строго сосед; 3 = окно со стримов.',
+        'eng_skip_if_left' => '2+ бара продолжения без реакции = «уход» → skip.',
+        'eng_skip_if_breakout_hold' => 'N closes за уровнем = пробой+закреп (E), не fade D.',
+        'telegram_chart_candles' => 'Сколько последних свечей рисовать на PNG в Telegram. Как у Impulse LVL (#47) / updateBotM1 (дефолт 50). Диапазон 20–80. На графике: сетка цены/времени и золотая рамка вокруг последней свечи.',
+        'telegram_show_nearest_level' => 'Горизонталь ближайшего фрактального уровня на PNG: FL (поддержка) для CALL, FH (сопротивление) для PUT — чтобы видеть, возможен ли отбой.',
+        'telegram_level_lookback' => 'Окно поиска фрактала для линии уровня на PNG. 0 = использовать Lookback фракталов из блока «Со стримов».',
     ];
 }

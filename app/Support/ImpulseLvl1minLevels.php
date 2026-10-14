@@ -16,28 +16,74 @@ final class ImpulseLvl1minLevels
      * @param  array{time:int,open:float,high:float,low:float,close:float}  $evalCandle
      * @param  array<string, list<array<string, mixed>>>  $mtf  ключи dashboard TF: 5/15/30
      * @param  array<string, mixed>  $config
-     * @return array{ok:bool,labels:list<string>,tf_seconds:list<int>}
+     * @return array{ok:bool,labels:list<string>,tf_seconds:list<int>,zones:list<array<string,mixed>>}
      */
     public static function match(array $m1Closed, array $evalCandle, array $mtf, int $direction, array $config = []): array
     {
+        $zones = self::matchedZones($m1Closed, $evalCandle, $mtf, $direction, $config);
+        if ($zones === []) {
+            return ['ok' => false, 'labels' => [], 'tf_seconds' => [], 'zones' => []];
+        }
+
+        $labels = [];
+        $seconds = [];
+        foreach ($zones as $zone) {
+            $seconds[] = (int) $zone['tf_seconds'];
+            $labels[] = (string) $zone['tf'];
+        }
+        $labels = array_values(array_unique($labels));
+        sort($seconds);
+
+        return ['ok' => true, 'labels' => $labels, 'tf_seconds' => array_values(array_unique($seconds)), 'zones' => $zones];
+    }
+
+    /**
+     * Точные swing-зоны, прошедшие LVL-фильтр (как matched_signal_levels в updateBotM1).
+     * zone_min/max уже с allowance — готовы к отрисовке на Telegram-графике.
+     *
+     * @param  list<array{time:int,open:float,high:float,low:float,close:float}>  $m1Closed
+     * @param  array{time:int,open:float,high:float,low:float,close:float}  $evalCandle
+     * @param  array<string, list<array<string, mixed>>>  $mtf
+     * @param  array<string, mixed>  $config
+     * @return list<array{
+     *   tf:string,
+     *   tf_seconds:int,
+     *   timestamp:int,
+     *   price:float,
+     *   zone_min:float,
+     *   zone_max:float
+     * }>
+     */
+    public static function matchedZones(array $m1Closed, array $evalCandle, array $mtf, int $direction, array $config = []): array
+    {
         if ($direction === 0) {
-            return ['ok' => false, 'labels' => [], 'tf_seconds' => []];
+            return [];
         }
 
         $found = [];
         $m1ForBreak = $m1Closed;
         $m1ForBreak[] = $evalCandle;
-        $m1Hit = self::matchingOnSeries($m1Closed, $m1ForBreak, 1, 60, $evalCandle, $direction, $config);
-        foreach ($m1Hit as $hit) {
-            $found[] = $hit;
+        $ladder = ImpulseLvl1minConfig::lvlTfLadder($config);
+        $baseSec = ImpulseLvl1minConfig::barPeriodSec($config);
+
+        foreach ($ladder as $tfId => $tfSeconds) {
+            if ($tfSeconds !== $baseSec) {
+                continue;
+            }
+            foreach (self::matchingOnSeries($m1Closed, $m1ForBreak, $tfId, $tfSeconds, $evalCandle, $direction, $config) as $hit) {
+                $found[] = $hit;
+            }
         }
 
         // Как 1min LEVEL_UPDATE_HIGHER_TF. Выкл. в настройках — только закрытые HTF из seriesWithMtf.
         if (ImpulseLvl1minConfig::flag($config, 'overlay_forming_htf', true)) {
-            $mtf = self::overlayFormingHtfFromM1($m1ForBreak, $mtf);
+            $mtf = self::overlayFormingHtfFromM1($m1ForBreak, $mtf, $config);
         }
 
-        foreach ([5 => 300, 15 => 900, 30 => 1800] as $tfId => $tfSeconds) {
+        foreach ($ladder as $tfId => $tfSeconds) {
+            if ($tfSeconds === $baseSec) {
+                continue;
+            }
             $series = is_array($mtf[(string) $tfId] ?? null) ? array_values($mtf[(string) $tfId]) : [];
             $normalized = self::normalizeSeries($series);
             if ($normalized === []) {
@@ -49,7 +95,7 @@ final class ImpulseLvl1minLevels
         }
 
         if ($found === []) {
-            return ['ok' => false, 'labels' => [], 'tf_seconds' => []];
+            return [];
         }
 
         usort($found, static function (array $a, array $b): int {
@@ -72,16 +118,67 @@ final class ImpulseLvl1minLevels
             }
         }
 
-        $labels = [];
-        $seconds = [];
+        $out = [];
         foreach ($accepted as $lvl) {
-            $seconds[] = (int) $lvl['timeframe'];
-            $labels[] = self::tfLabel((int) $lvl['timeframe']);
+            $tfSeconds = (int) $lvl['timeframe'];
+            $out[] = [
+                'tf' => self::tfLabel($tfSeconds),
+                'tf_seconds' => $tfSeconds,
+                'timestamp' => (int) $lvl['timestamp'],
+                'price' => (float) $lvl['price'],
+                'zone_min' => (float) $lvl['zone_min'],
+                'zone_max' => (float) $lvl['zone_max'],
+            ];
         }
-        $labels = array_values(array_unique($labels));
-        sort($seconds);
 
-        return ['ok' => $accepted !== [], 'labels' => $labels, 'tf_seconds' => array_values(array_unique($seconds))];
+        return $out;
+    }
+
+    /**
+     * Направление поиска LVL по цвету импульса (не по CALL/PUT).
+     *
+     * @param  array<string, mixed>  $features
+     * @param  array{time?:int,open?:float,high?:float,low?:float,close?:float}  $evalCandle
+     */
+    public static function chartDirectionFromFeatures(array $features, array $evalCandle): int
+    {
+        $fromColor = ImpulseLvl1minConfig::impulseDirectionFromColor((string) ($features['impulse_color'] ?? ''));
+        if ($fromColor !== 0) {
+            return $fromColor;
+        }
+        $open = (float) ($evalCandle['open'] ?? 0);
+        $close = (float) ($evalCandle['close'] ?? 0);
+
+        return $close <=> $open;
+    }
+
+    /**
+     * Зоны для PNG: сначала те, что уже прошли фильтр сигнала; иначе пересчёт по цвету импульса.
+     *
+     * @param  list<array{time:int,open:float,high:float,low:float,close:float}>  $m1Closed
+     * @param  array{time:int,open:float,high:float,low:float,close:float}  $evalCandle
+     * @param  array<string, list<array<string, mixed>>>  $mtf
+     * @param  array<string, mixed>  $features
+     * @param  array<string, mixed>  $config
+     * @return list<array<string, mixed>>
+     */
+    public static function zonesForTelegramChart(
+        array $m1Closed,
+        array $evalCandle,
+        array $mtf,
+        array $features,
+        array $config,
+    ): array {
+        $stored = is_array($features['lvl_zones'] ?? null) ? $features['lvl_zones'] : [];
+        if ($stored !== []) {
+            return array_values($stored);
+        }
+        $dir = self::chartDirectionFromFeatures($features, $evalCandle);
+        if ($dir === 0) {
+            return [];
+        }
+
+        return self::matchedZones($m1Closed, $evalCandle, $mtf, $dir, $config);
     }
 
     /**
@@ -108,15 +205,26 @@ final class ImpulseLvl1minLevels
         $found = [];
         $m1ForBreak = $m1Closed;
         $m1ForBreak[] = $evalCandle;
-        foreach (self::unbrokenOnSeries($m1Closed, $m1ForBreak, 1, 60, $evalCandle, $config) as $zone) {
-            $found[] = $zone;
+        $ladder = ImpulseLvl1minConfig::lvlTfLadder($config);
+        $baseSec = ImpulseLvl1minConfig::barPeriodSec($config);
+
+        foreach ($ladder as $tfId => $tfSeconds) {
+            if ($tfSeconds !== $baseSec) {
+                continue;
+            }
+            foreach (self::unbrokenOnSeries($m1Closed, $m1ForBreak, $tfId, $tfSeconds, $evalCandle, $config) as $zone) {
+                $found[] = $zone;
+            }
         }
 
         if (ImpulseLvl1minConfig::flag($config, 'overlay_forming_htf', true)) {
-            $mtf = self::overlayFormingHtfFromM1($m1ForBreak, $mtf);
+            $mtf = self::overlayFormingHtfFromM1($m1ForBreak, $mtf, $config);
         }
 
-        foreach ([5 => 300, 15 => 900, 30 => 1800] as $tfId => $tfSeconds) {
+        foreach ($ladder as $tfId => $tfSeconds) {
+            if ($tfSeconds === $baseSec) {
+                continue;
+            }
             $series = is_array($mtf[(string) $tfId] ?? null) ? array_values($mtf[(string) $tfId]) : [];
             $normalized = self::normalizeSeries($series);
             if ($normalized === []) {
@@ -145,9 +253,10 @@ final class ImpulseLvl1minLevels
      *
      * @param  list<array{time:int,open:float,high:float,low:float,close:float}>  $m1ThroughEval
      * @param  array<string, list<array<string, mixed>>>  $mtf
+     * @param  array<string, mixed>  $config
      * @return array<string, list<array<string, mixed>>>
      */
-    public static function overlayFormingHtfFromM1(array $m1ThroughEval, array $mtf): array
+    public static function overlayFormingHtfFromM1(array $m1ThroughEval, array $mtf, array $config = []): array
     {
         $lastTime = 0;
         foreach ($m1ThroughEval as $row) {
@@ -157,7 +266,12 @@ final class ImpulseLvl1minLevels
             return $mtf;
         }
 
-        foreach ([5 => 300, 15 => 900, 30 => 1800] as $tfId => $tfSeconds) {
+        $htf = ImpulseLvl1minConfig::htfOverlayLadder($config);
+        if ($htf === []) {
+            $htf = [5 => 300, 15 => 900, 30 => 1800];
+        }
+
+        foreach ($htf as $tfId => $tfSeconds) {
             $tail = self::aggregateLatestHtfBuckets($m1ThroughEval, $tfSeconds, 2);
             if ($tail === []) {
                 continue;
@@ -187,7 +301,7 @@ final class ImpulseLvl1minLevels
      */
     public static function aggregateLatestHtfBuckets(array $m1, int $tfSeconds, int $bucketCount): array
     {
-        $tfSeconds = max(60, $tfSeconds);
+        $tfSeconds = max(15, $tfSeconds);
         $bucketCount = max(1, $bucketCount);
         $lastTime = 0;
         foreach ($m1 as $row) {
@@ -249,7 +363,7 @@ final class ImpulseLvl1minLevels
      * @param  list<array{time:int,open:float,high:float,low:float,close:float}>  $forSwings
      * @param  list<array{time:int,open:float,high:float,low:float,close:float}>  $forBreaks
      * @param  array{time:int,open:float,high:float,low:float,close:float}  $evalCandle
-     * @return list<array{timestamp:int,timeframe:int,price:float}>
+     * @return list<array{timestamp:int,timeframe:int,price:float,zone_min:float,zone_max:float}>
      */
     private static function matchingOnSeries(
         array $forSwings,
@@ -280,10 +394,13 @@ final class ImpulseLvl1minLevels
             if ($price + self::EPSILON < $lo || $price - self::EPSILON > $hi) {
                 continue;
             }
+            // Как в updateBotM1 render_signal_chart: зона на PNG уже с allowance.
             $hits[] = [
                 'timestamp' => (int) $level['time'],
                 'timeframe' => $tfSeconds,
                 'price' => (float) $level['price'],
+                'zone_min' => $lo,
+                'zone_max' => $hi,
             ];
         }
 
@@ -529,11 +646,14 @@ final class ImpulseLvl1minLevels
     public static function tfLabel(int $tfSeconds): string
     {
         return match ($tfSeconds) {
+            15 => 'S15',
             60 => 'M1',
             300 => 'M5',
             900 => 'M15',
             1800 => 'M30',
-            default => 'M'.max(1, intdiv($tfSeconds, 60)),
+            default => $tfSeconds < 60
+                ? 'S'.$tfSeconds
+                : 'M'.max(1, intdiv($tfSeconds, 60)),
         };
     }
 }

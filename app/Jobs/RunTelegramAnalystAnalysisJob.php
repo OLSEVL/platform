@@ -8,6 +8,7 @@ use App\Support\OpenRouterLlmConfig;
 use App\Support\TelegramInstrumentLabel;
 use App\Services\Bots\BotDataService;
 use App\Services\Bots\BotEngineService;
+use App\Services\Telegram\ImpulseLvl1minTelegramChartRenderer;
 use App\Services\Telegram\StrongLevelTelegramLlmButton;
 use App\Services\Telegram\TelegramAlertService;
 use App\Services\Telegram\TelegramAnalystReplyKeyboard;
@@ -46,6 +47,7 @@ class RunTelegramAnalystAnalysisJob implements ShouldQueue
         BotDataService $dataService,
         TelegramAlertService $telegram,
         TelegramChartImageRenderer $chartRenderer,
+        ImpulseLvl1minTelegramChartRenderer $impulseChartRenderer,
         TelegramAnalystStateStore $stateStore,
     ): void {
         $bot = Bot::query()->find($this->botId);
@@ -78,13 +80,21 @@ class RunTelegramAnalystAnalysisJob implements ShouldQueue
         $shortMode = OpenRouterLlmConfig::isAnalystShortPromptMode($cfg);
 
         $chartLevels = is_array($analysis['chart_levels'] ?? null) ? $analysis['chart_levels'] : [];
+        $impulseTelegram = is_array($analysis['impulse_lvl_telegram'] ?? null)
+            ? $analysis['impulse_lvl_telegram']
+            : [];
         $pngPath = null;
-        // PNG всегда (и в кратком режиме). Текстовый список уровней — только в полном.
+        // Impulse LVL: кадр как у бота 47 + зоны фильтра. Остальные аналитики — общий renderer.
         if (extension_loaded('gd')) {
             $series = $dataService->series($this->instrument, 120, true, 31536000, 1);
             $candles = $series['series'];
             if ($candles !== []) {
-                $pngPath = $chartRenderer->render($this->instrument, $candles, $chartLevels);
+                if ($impulseTelegram !== []) {
+                    $pngPath = $impulseChartRenderer->renderFromTelegramPayload($candles, $impulseTelegram);
+                }
+                if ($pngPath === null) {
+                    $pngPath = $chartRenderer->render($this->instrument, $candles, $chartLevels);
+                }
             } else {
                 Log::warning('telegram_analyst_photo_skipped', [
                     'bot_id' => $bot->id,
@@ -111,7 +121,15 @@ class RunTelegramAnalystAnalysisJob implements ShouldQueue
 
         if ($pngPath !== null) {
             $caption = '📊 <b>'.TelegramInstrumentLabel::html($this->instrument).'</b> · M1';
-            $photoResult = $telegram->sendPhoto($token, $this->chatId, $pngPath, $caption);
+            $filterCaption = '';
+            if (is_array($impulseTelegram['overlay_lines'] ?? null) && $impulseTelegram['overlay_lines'] !== []) {
+                $filterCaption = ' · '.htmlspecialchars(
+                    (string) $impulseTelegram['overlay_lines'][array_key_last($impulseTelegram['overlay_lines'])],
+                    ENT_QUOTES | ENT_SUBSTITUTE,
+                    'UTF-8'
+                );
+            }
+            $photoResult = $telegram->sendPhoto($token, $this->chatId, $pngPath, mb_substr($caption.$filterCaption, 0, 1000));
             if (! ($photoResult['ok'] ?? false)) {
                 Log::warning('telegram_analyst_photo_failed', [
                     'bot_id' => $bot->id,

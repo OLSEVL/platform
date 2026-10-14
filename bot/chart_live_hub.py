@@ -1,22 +1,23 @@
 # -*- coding: utf-8 -*-
 """
-PR2 Chart Live Hub: Redis PUBSUB → WebSocket браузерам.
+PR2 Chart Live Hub: Redis PUBSUB → WebSocket браузерам + Chrome-расширению.
 
 Каналы:
   laravel-database-chart:s5            → op=s5 (по подписке на инструмент)
-  laravel-database-instruments:payout  → op=payout (broadcast всем клиентам)
+  laravel-database-instruments:payout  → op=payout (broadcast chart-клиентам)
+  laravel-database-bot:events          → op=bot_event (UI бота)
+  laravel-database-extension:signals   → op=signal (/extension-live клиентам)
 
-Задача: убрать HTTP poll /candles каждые 500ms и частый GET /instruments/data
-для payout. Ingest публикует S5/payout в Redis; этот процесс только раздаёт.
-
-Протокол клиента:
+Протокол chart:
   URL:  ws://host/chart-live?token=<uid|exp.hmac>
   →    {"op":"subscribe","instrument":"EURUSD_otc"}
   ←    {"op":"s5","candle":{...}}
-  ←    {"op":"payout","instrument":"...","current_payout":92,...}
-  →    {"op":"ping"} / ← {"op":"pong"}
 
-Auth: HMAC-SHA256(APP_KEY) над "uid|exp", как App\\Support\\ChartLiveConfig.
+Протокол extension (без токена):
+  URL:  ws://host/extension-live
+  ←    {"op":"hello","ok":true,"channel":"extension"}
+  ←    {"op":"signal","instrument":"...","side":"call",...}
+  →    {"op":"ping"} / ← {"op":"pong"}
 """
 
 from __future__ import annotations
@@ -84,6 +85,8 @@ REDIS_CHANNEL = REDIS_PREFIX + "chart:s5"
 REDIS_PAYOUT_CHANNEL = REDIS_PREFIX + "instruments:payout"
 # Open/settle paper-сделки — зеркало ChartLiveConfig::REDIS_BOT_EVENTS_CHANNEL.
 REDIS_BOT_EVENTS_CHANNEL = REDIS_PREFIX + "bot:events"
+# Сигналы для Chrome-расширения — зеркало ExtensionLiveConfig::REDIS_CHANNEL.
+REDIS_EXTENSION_CHANNEL = REDIS_PREFIX + "extension:signals"
 
 HUB_HOST = os.environ.get("CHART_LIVE_HUB_HOST", "127.0.0.1")
 HUB_PORT = int(os.environ.get("CHART_LIVE_HUB_PORT", "8765"))
@@ -118,10 +121,18 @@ def verify_token(token: str) -> bool:
     return exp >= int(time.time())
 
 
+def _path_is_extension(path: str) -> bool:
+    """True для /extension-live (nginx проксирует полный path + query)."""
+    path_only = urlparse(path).path if path else ""
+    return path_only.rstrip("/").endswith("extension-live")
+
+
 # Клиенты: websocket → подписанный инструмент (один на соединение — достаточно для UI).
 _clients: Dict[Any, Optional[str]] = {}
 # instrument → set(websocket)
 _subs: DefaultDict[str, Set[Any]] = defaultdict(set)
+# Chrome-расширение: все сигналы без subscribe на инструмент.
+_ext_clients: Set[Any] = set()
 _clients_lock = asyncio.Lock()
 
 
@@ -144,6 +155,7 @@ async def _drop_client(ws: Any) -> None:
             _subs[prev].discard(ws)
             if not _subs[prev]:
                 del _subs[prev]
+        _ext_clients.discard(ws)
 
 
 async def _fanout(instrument: str, raw_json: str) -> None:
@@ -162,7 +174,7 @@ async def _fanout(instrument: str, raw_json: str) -> None:
 
 
 async def _fanout_all(raw_json: str) -> None:
-    """Payout и прочие broadcast: всем подключённым браузерам (сайдбар показывает весь список)."""
+    """Payout и прочие broadcast: всем chart-клиентам (не extension)."""
     async with _clients_lock:
         targets = list(_clients.keys())
     if not targets:
@@ -177,8 +189,27 @@ async def _fanout_all(raw_json: str) -> None:
         await _drop_client(ws)
 
 
+async def _fanout_extension(raw_json: str) -> None:
+    """Сигналы ботов → только клиенты /extension-live."""
+    async with _clients_lock:
+        targets = list(_ext_clients)
+    if not targets:
+        # INFO: иначе «тишина» в плагине выглядит как поломка пайплайна, а это просто нет окна.
+        LOG.info("extension signal dropped: no clients")
+        return
+    dead = []
+    for ws in targets:
+        try:
+            await ws.send(raw_json)
+        except Exception:
+            dead.append(ws)
+    for ws in dead:
+        await _drop_client(ws)
+    LOG.info("extension signal → %s client(s)", len(targets) - len(dead))
+
+
 async def handler(ws: Any) -> None:
-    """Один браузерный сокет: auth → subscribe → получают только свой инструмент."""
+    """Браузер /chart-live или Chrome /extension-live."""
     # websockets v10+: request.path; v12+: ws.request.path
     path = ""
     try:
@@ -191,6 +222,31 @@ async def handler(ws: Any) -> None:
     if "?" in path:
         qs = parse_qs(urlparse(path).query)
         token = (qs.get("token") or [""])[0]
+
+    is_extension = _path_is_extension(path)
+    if is_extension:
+        # Без токена: плагин в LAN, путь /extension-live фиксирован на nginx.
+        await ws.send(
+            json.dumps({"op": "hello", "ok": True, "channel": "extension"}, ensure_ascii=False)
+        )
+        async with _clients_lock:
+            _ext_clients.add(ws)
+        try:
+            async for raw in ws:
+                if not isinstance(raw, str):
+                    continue
+                try:
+                    msg = json.loads(raw)
+                except json.JSONDecodeError:
+                    continue
+                # Keepalive от плавающего окна расширения.
+                if msg.get("op") == "ping":
+                    await ws.send(json.dumps({"op": "pong"}, ensure_ascii=False))
+        except Exception as exc:
+            LOG.debug("extension client closed: %s", exc)
+        finally:
+            await _drop_client(ws)
+        return
 
     if not verify_token(token):
         try:
@@ -232,7 +288,7 @@ async def handler(ws: Any) -> None:
 
 
 async def redis_listener() -> None:
-    """SUBSCRIBE chart:s5 + instruments:payout и fan-out. Переподключение при обрыве Redis."""
+    """SUBSCRIBE chart:s5 + payout + bot:events + extension:signals."""
     try:
         import redis.asyncio as aioredis
     except ImportError:
@@ -249,12 +305,18 @@ async def redis_listener() -> None:
                 decode_responses=True,
             )
             pubsub = client.pubsub()
-            await pubsub.subscribe(REDIS_CHANNEL, REDIS_PAYOUT_CHANNEL, REDIS_BOT_EVENTS_CHANNEL)
-            LOG.info(
-                "Redis SUBSCRIBE %s, %s, %s",
+            await pubsub.subscribe(
                 REDIS_CHANNEL,
                 REDIS_PAYOUT_CHANNEL,
                 REDIS_BOT_EVENTS_CHANNEL,
+                REDIS_EXTENSION_CHANNEL,
+            )
+            LOG.info(
+                "Redis SUBSCRIBE %s, %s, %s, %s",
+                REDIS_CHANNEL,
+                REDIS_PAYOUT_CHANNEL,
+                REDIS_BOT_EVENTS_CHANNEL,
+                REDIS_EXTENSION_CHANNEL,
             )
             async for message in pubsub.listen():
                 if message is None or message.get("type") != "message":
@@ -266,6 +328,16 @@ async def redis_listener() -> None:
                 try:
                     payload = json.loads(data)
                 except json.JSONDecodeError:
+                    continue
+
+                # Chrome extension: payload уже с op=signal.
+                if channel == REDIS_EXTENSION_CHANNEL:
+                    if not isinstance(payload, dict):
+                        continue
+                    if payload.get("op") != "signal":
+                        payload = {**payload, "op": "signal"}
+                    out = json.dumps(payload, ensure_ascii=False)
+                    await _fanout_extension(out)
                     continue
 
                 # Payout: broadcast всем WS (сайдбар).
@@ -361,12 +433,13 @@ async def main() -> None:
     redis_task = asyncio.create_task(redis_listener(), name="redis-listener")
 
     LOG.info(
-        "WS hub listening on %s:%s (channels=%s, %s, %s)",
+        "WS hub listening on %s:%s (channels=%s, %s, %s, %s; extension=open)",
         HUB_HOST,
         HUB_PORT,
         REDIS_CHANNEL,
         REDIS_PAYOUT_CHANNEL,
         REDIS_BOT_EVENTS_CHANNEL,
+        REDIS_EXTENSION_CHANNEL,
     )
     async with websockets.serve(
         handler,

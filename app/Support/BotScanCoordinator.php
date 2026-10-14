@@ -3,6 +3,8 @@
 namespace App\Support;
 
 use App\Models\Bot;
+use App\Services\Bots\BotDataService;
+use App\Services\Bots\ImpulseCandleSeriesCache;
 use Illuminate\Contracts\Cache\Lock;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Cache;
@@ -93,6 +95,8 @@ final class BotScanCoordinator
         return in_array($botType, [
             \App\Support\MaxBotConfig::BOT_TYPE,
             \App\Support\ImpulseLvl1minConfig::BOT_TYPE,
+            \App\Support\ImpulseLvl1minConfig::BOT_TYPE_S15,
+            \App\Support\EngulfingLiquidityConfig::BOT_TYPE,
         ], true)
             ? 5
             : self::DEFAULT_SCAN_INTERVAL_SEC;
@@ -128,13 +132,11 @@ final class BotScanCoordinator
         $last = BotScanProgress::lastStartedAt((int) $bot->id);
         if ($last !== null) {
             $earliest = $last + $interval;
-            if ($earliest > $now) {
-                return $earliest;
-            }
+            // Уже пора: не тянем к «следующей границе часов» (иначе UI 00:0x при isDue=true).
+            return $earliest > $now ? $earliest : $now;
         }
-        $mod = $now % $interval;
 
-        return $mod === 0 ? $now : $now + ($interval - $mod);
+        return $now;
     }
 
     public static function botLockName(int $botId): string
@@ -185,7 +187,7 @@ final class BotScanCoordinator
 
     public static function parseBotIdFromCmdline(string $cmdline): ?int
     {
-        if (preg_match('#\bbots:scan\b.*--bot_id=(\d+)#', $cmdline, $m)) {
+        if (preg_match('#\b(?:bots:scan|bots:impulse-live(?:-worker)?)\b.*--bot_id=(\d+)#', $cmdline, $m)) {
             return (int) $m[1];
         }
 
@@ -225,7 +227,18 @@ final class BotScanCoordinator
 
     public static function cmdlineMatchesScan(string $cmdline, ?int $botId): bool
     {
-        if (! preg_match('#(?:^|/)(php\d*(?:\.\d+)?)\s+artisan\s+bots:scan\b#', $cmdline)) {
+        // Live daemon Impulse: parent bots:impulse-live + workers.
+        // Worker cmdline часто `php /abs/path/artisan bots:impulse-live-worker` (не `php artisan`).
+        $artisan = '(?:\S+/)?artisan';
+        $isImpulseLive = (bool) preg_match(
+            '#(?:^|/)(php\d*(?:\.\d+)?)\s+'.$artisan.'\s+bots:impulse-live(?:-worker)?\b#',
+            $cmdline
+        );
+        $isBatchScan = (bool) preg_match(
+            '#(?:^|/)(php\d*(?:\.\d+)?)\s+'.$artisan.'\s+bots:scan\b#',
+            $cmdline
+        );
+        if (! $isImpulseLive && ! $isBatchScan) {
             return false;
         }
 
@@ -234,15 +247,27 @@ final class BotScanCoordinator
         }
 
         $cmdBotId = self::parseBotIdFromCmdline($cmdline);
+        if ($cmdBotId === null && $isImpulseLive) {
+            if (preg_match('#--bot_id=(\d+)#', $cmdline, $m)) {
+                $cmdBotId = (int) $m[1];
+            }
+        }
 
         if ($botId !== null) {
             return $cmdBotId === $botId;
         }
 
         // Watchdog / список всех scan: и per-bot (--bot_id=N), и legacy без --bot_id.
-        // Раньше при null возвращали только legacy → зависшие --bot_id=N никогда не reap'ились
-        // (isScanRunning(N)=true → dispatch skip, сделки на платформе останавливались).
         return true;
+    }
+
+    /** Daemon impulse-live не reap'ить по обычному SCAN_MAX_ELAPSED (он живёт часами). */
+    public static function cmdlineIsImpulseLiveDaemon(string $cmdline): bool
+    {
+        return (bool) preg_match(
+            '#(?:^|/)(php\d*(?:\.\d+)?)\s+(?:\S+/)?artisan\s+bots:impulse-live(?:-worker)?\b#',
+            $cmdline
+        );
     }
 
     /**
@@ -331,9 +356,28 @@ final class BotScanCoordinator
 
     public static function spawnScan(int $botId): bool
     {
-        // Уже крутится bots:scan — не плодим второй процесс.
+        // Уже крутится bots:scan / impulse-live — не плодим второй процесс.
         if (self::isScanRunning($botId)) {
             return false;
+        }
+
+        $bot = Bot::query()->find($botId);
+        $cfg = ($bot instanceof Bot && is_array($bot->config)) ? $bot->config : [];
+        // Impulse LVL / Engulfing + continuous_scan → daemon poll + workers (как updateBotM1).
+        $useLiveDaemon = $bot instanceof Bot && (
+            (ImpulseLvl1minConfig::is((string) $bot->type) && ImpulseLvl1minConfig::continuousScanEnabled($cfg))
+            || (EngulfingLiquidityConfig::is((string) $bot->type) && EngulfingLiquidityConfig::continuousScanEnabled($cfg))
+        );
+        if ($useLiveDaemon) {
+            $ok = ArtisanProcessFinder::spawnBackground(
+                [ArtisanProcessFinder::cliPhpBinary(), 'artisan', 'bots:impulse-live', '--bot_id='.$botId],
+                self::logPathForBot($botId),
+            );
+            if ($ok) {
+                BotScanProgress::markStarted($botId);
+            }
+
+            return $ok;
         }
 
         $ok = ArtisanProcessFinder::spawnBackground(
@@ -346,6 +390,71 @@ final class BotScanCoordinator
         }
 
         return $ok;
+    }
+
+    /**
+     * Жёсткий перезапуск bots:scan / bots:impulse-live после правок кода.
+     * PHP держит классы в памяти — без kill алерты уходят со старым форматом.
+     *
+     * @return array{
+     *     ok:bool,
+     *     deferred?:bool,
+     *     killed:int,
+     *     spawned:bool,
+     *     running:bool,
+     *     pids_before:list<int>,
+     *     pids_after:list<int>,
+     *     message:string
+     * }
+     */
+    public static function restartScan(int $botId): array
+    {
+        $before = self::findScanPids($botId);
+        $killed = 0;
+        if ($before !== []) {
+            $killed = ArtisanProcessFinder::terminatePids($before);
+            ArtisanProcessFinder::waitUntilPidsGone($before, 2500);
+            $still = self::findScanPids($botId);
+            if ($still !== []) {
+                $killed += ArtisanProcessFinder::killPids($still);
+                ArtisanProcessFinder::waitUntilPidsGone($still, 1500);
+            }
+        }
+
+        $afterKill = self::findScanPids($botId);
+        if ($afterKill !== []) {
+            // php-fpm (www-data) не может убить CLI (user o) — cron добьёт флаг.
+            return [
+                'ok' => true,
+                'deferred' => true,
+                'killed' => $killed,
+                'spawned' => false,
+                'running' => true,
+                'pids_before' => $before,
+                'pids_after' => $afterKill,
+                'message' => 'Live/scan запущен от другого пользователя ОС — kill из браузера недоступен. '
+                    .'Перезапуск поставлен в cron (обычно до 1 мин).',
+            ];
+        }
+
+        self::clearLock(self::botLockName($botId));
+        BotScanProgress::endScan($botId);
+
+        $spawned = self::spawnScan($botId);
+        usleep(400_000);
+        $after = self::findScanPids($botId);
+
+        return [
+            'ok' => $spawned || $after !== [],
+            'killed' => $killed,
+            'spawned' => $spawned,
+            'running' => $after !== [],
+            'pids_before' => $before,
+            'pids_after' => $after,
+            'message' => ($spawned || $after !== [])
+                ? 'Live daemon / scan перезапущен (новый код в памяти).'
+                : 'Не удалось запустить live/scan — проверьте storage/logs/bots-scan-'.$botId.'.log',
+        ];
     }
 
     public static function spawnDispatchAll(): int
@@ -481,6 +590,11 @@ final class BotScanCoordinator
 
         foreach (self::listRunningScans() as $row) {
             $pid = (int) $row['pid'];
+            $cmdline = (string) ($row['cmdline'] ?? '');
+            // Live daemon живёт постоянно — не убивать как «зависший batch».
+            if (self::cmdlineIsImpulseLiveDaemon($cmdline)) {
+                continue;
+            }
             $metrics = ArtisanProcessFinder::readPidMetrics($pid);
             $elapsed = (int) ($metrics['elapsed_sec'] ?? 0);
             if ($elapsed < $maxElapsedSec) {
@@ -546,51 +660,100 @@ final class BotScanCoordinator
     }
 
     /**
-     * Параллельный обход пар Impulse LVL: N процессов как SSID у 1min.
+     * Параллельный обход пар Impulse LVL: warm-кэш → N шардов как SSID у 1min.
      *
-     * @return array{processed:int,signals:int,trades:int}
+     * @return array{processed:int,signals:int,trades:int,cache_hits:int,db_loads:int,promoted:int,wall_ms:int,warm_ms:int}
      */
     public static function runImpulseShardedScan(int $botId, int $workers): array
     {
         $workers = max(2, min(8, $workers));
-        $php = self::cliPhpForScan();
-        $artisan = base_path('artisan');
-        $processes = [];
-        for ($i = 0; $i < $workers; $i++) {
-            $cmd = sprintf(
-                '%s %s bots:scan --bot_id=%d --scan-shard=%d/%d --active-only=1',
-                escapeshellarg($php),
-                escapeshellarg($artisan),
-                $botId,
-                $i,
-                $workers
-            );
-            $proc = proc_open($cmd, [
-                0 => ['pipe', 'r'],
-                1 => ['pipe', 'w'],
-                2 => ['pipe', 'w'],
-            ], $pipes, base_path());
-            if (! is_resource($proc)) {
-                continue;
+        $warmMs = 0;
+        // Сразу помечаем волну активной: иначе при warm (до 30–50с) UI видит idle «00:00»,
+        // а процесс уже держит lock и dispatch не стартует новый scan.
+        BotScanProgress::beginShardedWave($botId, $workers);
+        try {
+            // Фаза C: прогреть Redis-кэш в parent до spawn — шарды стартуют с hit.
+            try {
+                $bot = Bot::query()->find($botId);
+                if ($bot instanceof Bot && (
+                    ImpulseLvl1minConfig::is((string) $bot->type)
+                    || EngulfingLiquidityConfig::is((string) $bot->type)
+                )) {
+                    $warm = app(ImpulseCandleSeriesCache::class)->warmForBot(
+                        $bot,
+                        app(BotDataService::class),
+                    );
+                    $warmMs = (int) ($warm['ms'] ?? 0);
+                }
+            } catch (\Throwable $e) {
+                \Illuminate\Support\Facades\Log::warning('impulse_series_cache.warm_failed', [
+                    'bot_id' => $botId,
+                    'error' => $e->getMessage(),
+                ]);
             }
-            fclose($pipes[0]);
-            $processes[] = ['proc' => $proc, 'out' => $pipes[1], 'err' => $pipes[2]];
-        }
 
-        $summary = ['processed' => 0, 'signals' => 0, 'trades' => 0];
-        foreach ($processes as $row) {
-            $stdout = stream_get_contents($row['out']) ?: '';
-            fclose($row['out']);
-            fclose($row['err']);
-            proc_close($row['proc']);
-            if (preg_match('/processed=(\d+)\s+signals=(\d+)\s+trades=(\d+)/', $stdout, $m)) {
-                $summary['processed'] += (int) $m[1];
-                $summary['signals'] += (int) $m[2];
-                $summary['trades'] += (int) $m[3];
+            $php = self::cliPhpForScan();
+            $artisan = base_path('artisan');
+            $wallStarted = hrtime(true);
+            $processes = [];
+            for ($i = 0; $i < $workers; $i++) {
+                $cmd = sprintf(
+                    '%s %s bots:scan --bot_id=%d --scan-shard=%d/%d --active-only=1',
+                    escapeshellarg($php),
+                    escapeshellarg($artisan),
+                    $botId,
+                    $i,
+                    $workers
+                );
+                $proc = proc_open($cmd, [
+                    0 => ['pipe', 'r'],
+                    1 => ['pipe', 'w'],
+                    2 => ['pipe', 'w'],
+                ], $pipes, base_path());
+                if (! is_resource($proc)) {
+                    continue;
+                }
+                fclose($pipes[0]);
+                $processes[] = ['proc' => $proc, 'out' => $pipes[1], 'err' => $pipes[2]];
             }
-        }
 
-        return $summary;
+            $summary = [
+                'processed' => 0,
+                'signals' => 0,
+                'trades' => 0,
+                'cache_hits' => 0,
+                'db_loads' => 0,
+                'promoted' => 0,
+                'wall_ms' => 0,
+                'warm_ms' => $warmMs,
+            ];
+            foreach ($processes as $row) {
+                $stdout = stream_get_contents($row['out']) ?: '';
+                fclose($row['out']);
+                fclose($row['err']);
+                proc_close($row['proc']);
+                if (preg_match(
+                    '/processed=(\d+)\s+signals=(\d+)\s+trades=(\d+)(?:\s+cache_hits=(\d+)\s+db_loads=(\d+)\s+promoted=(\d+)\s+wall_ms=(\d+))?/',
+                    $stdout,
+                    $m
+                )) {
+                    $summary['processed'] += (int) $m[1];
+                    $summary['signals'] += (int) $m[2];
+                    $summary['trades'] += (int) $m[3];
+                    $summary['cache_hits'] += (int) ($m[4] ?? 0);
+                    $summary['db_loads'] += (int) ($m[5] ?? 0);
+                    $summary['promoted'] += (int) ($m[6] ?? 0);
+                }
+            }
+            $summary['wall_ms'] = (int) round((hrtime(true) - $wallStarted) / 1e6);
+
+            return $summary;
+        } finally {
+            BotScanProgress::endShardedWave($botId);
+            // Интервал считаем от конца цикла, а не от spawn/warm: иначе nextDue уже в прошлом
+            // и UI на «00:00» ждёт, пока schedule не подхватит isDueToSpawn.
+            BotScanProgress::markStarted($botId);
+        }
     }
 
     private static function cliPhpForScan(): string

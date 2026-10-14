@@ -6,7 +6,9 @@ use App\Models\Bot;
 use App\Models\BotTrade;
 use App\Models\IndicatorSetting;
 use App\Services\Bots\Levels\StrongLevelCardPresenter;
+use App\Support\EngulfingLiquidityConfig;
 use App\Support\ImpulseLvl1minConfig;
+use App\Support\ImpulseLvl1minLevels;
 use App\Support\TelegramInstrumentLabel;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
@@ -14,6 +16,7 @@ use Illuminate\Support\Facades\Log;
 /**
  * Отправка алертов в Telegram Bot API.
  * Token — из config бота; получатели — telegram_chat_id + telegram_subscribers.
+ * Chrome-расширение получает сигналы отдельно через BotSignal::created.
  */
 class TelegramAlertService
 {
@@ -373,6 +376,19 @@ class TelegramAlertService
         ?float $entryPrice = null,
         array $closedCandles = [],
     ): array {
+        // Engulfing (#45) — как Impulse (#47): одно sendPhoto+caption, без второго sendMessage.
+        if ($bot->type === 'engulfing_liquidity') {
+            return $this->sendEngulfingLiquidityAlert(
+                $bot,
+                $instrument,
+                $decision,
+                $payout,
+                $expirySec,
+                $entryPrice,
+                $closedCandles,
+            );
+        }
+
         /** @var array<string, mixed> $config */
         $config = is_array($bot->config) ? $bot->config : [];
         if (! (bool) ($config['telegram_enabled'] ?? false)) {
@@ -441,14 +457,6 @@ class TelegramAlertService
                         $decision,
                         $closedCandles,
                         IndicatorSetting::mergedSweepRaidLiquidityParams($bot),
-                    );
-            } elseif ($bot->type === 'engulfing_liquidity') {
-                $chartLogKey = 'engulfing_liquidity_photo';
-                $chartLevels = app(EngulfingLiquidityChartBuilder::class)
-                    ->chartLevelsFromDecision(
-                        $decision,
-                        $closedCandles,
-                        IndicatorSetting::mergedEngulfingLiquidityParams($bot),
                     );
             } elseif ($bot->type === 'smc_flow') {
                 // UT Buy/Sell + 3BR confirm + зона LuxAlgo OB на тех же закрытых M1, что дали вход.
@@ -528,7 +536,7 @@ class TelegramAlertService
                     }
                 }
             }
-        } elseif ($sendChart && in_array($bot->type, ['strong_trend_demarker', \App\Support\DemarkerDualFastConfig::BOT_TYPE, 'sweep_raid_liquidity', 'engulfing_liquidity', 'smc_flow'], true) && ! extension_loaded('gd')) {
+        } elseif ($sendChart && in_array($bot->type, ['strong_trend_demarker', \App\Support\DemarkerDualFastConfig::BOT_TYPE, 'sweep_raid_liquidity', 'smc_flow'], true) && ! extension_loaded('gd')) {
             $photoOk = false;
             $photoError = 'gd_extension_missing';
         }
@@ -616,6 +624,385 @@ class TelegramAlertService
     }
 
     /**
+     * Алерт Impulse LVL 1min: одна строка-caption + одно M1 PNG как у updateBotM1
+     * (без Strong Level «Пара/Уровень/Режим» и без отдельного M5).
+     *
+     * @param  array<string, mixed>  $decision
+     * @param  list<array<string, mixed>>  $m1Candles
+     * @return array{ok:bool,error?:string,message_id?:int,photo_ok?:bool,photo_error?:string}
+     */
+    /**
+     * Engulfing Liquidity (#45): один ответ как у Impulse (#47) —
+     * sendPhoto с коротким caption; пара/сторона/тип нарисованы на PNG.
+     * Без второго HTML-сообщения с «Условиями» и именем бота.
+     *
+     * @param  array<string, mixed>  $decision
+     * @param  list<array<string, mixed>>  $closedCandles
+     * @return array{ok:bool,error?:string,message_id?:int,photo_ok?:bool,photo_error?:string}
+     */
+    public function sendEngulfingLiquidityAlert(
+        Bot $bot,
+        string $instrument,
+        array $decision,
+        ?float $payout,
+        int $expirySec,
+        ?float $entryPrice = null,
+        array $closedCandles = [],
+    ): array {
+        /** @var array<string, mixed> $config */
+        $config = is_array($bot->config) ? $bot->config : [];
+        if (! (bool) ($config['telegram_enabled'] ?? false)) {
+            return ['ok' => false, 'error' => 'telegram_disabled'];
+        }
+        if ((string) ($config['telegram_notify_on'] ?? 'signal_trade') !== 'signal_trade') {
+            return ['ok' => false, 'error' => 'telegram_notify_disabled'];
+        }
+
+        $token = trim((string) ($config['telegram_bot_token'] ?? ''));
+        $recipients = TelegramChatAccess::recipientChatIds($config);
+        if ($token === '' || $recipients === []) {
+            return ['ok' => false, 'error' => 'telegram_token_or_chat_id_missing'];
+        }
+
+        if (TelegramChatAccess::autoSubscribeEnabled($config)) {
+            app(StrongLevelTelegramProcessManager::class)->ensurePollRunning($bot->id);
+        }
+
+        $presenter = app(LevelBounceAlertPresenter::class);
+        // Короткая строка в caption под фото — как formatImpulseLvlCaption у #47.
+        $caption = $presenter->formatEngulfingCaption($instrument, $decision, $payout);
+
+        $sendChart = (bool) ($config['telegram_send_chart'] ?? true);
+        $photoOk = null;
+        $photoError = null;
+        $pngPath = null;
+
+        if ($sendChart && $closedCandles !== [] && extension_loaded('gd')) {
+            $chartLevels = app(EngulfingLiquidityChartBuilder::class)
+                ->chartLevelsFromDecision(
+                    $decision,
+                    $closedCandles,
+                    IndicatorSetting::mergedEngulfingLiquidityParams($bot),
+                    $config,
+                );
+            $entry = is_array($chartLevels['entry'] ?? null) ? $chartLevels['entry'] : null;
+            $signalTime = (int) ($entry['time'] ?? ($decision['features']['event_time'] ?? 0));
+            $maxBars = EngulfingLiquidityConfig::telegramChartCandles($config);
+
+            $pngPath = app(ImpulseLvl1minTelegramChartRenderer::class)->render(
+                $closedCandles,
+                [],
+                [
+                    'max_bars' => $maxBars,
+                    'signal_time' => $signalTime,
+                    'outline_last_bar' => true,
+                    'markers' => is_array($chartLevels['markers'] ?? null) ? $chartLevels['markers'] : [],
+                    // Горизонталь цены входа с подписью «вход …».
+                    'price_levels' => is_array($chartLevels['levels'] ?? null) ? $chartLevels['levels'] : [],
+                    // Место справа под многострочные метки у последней свечи.
+                    'right_pad_bars' => 3,
+                    // Пара / CALL|PUT / цепочка шагов — на самом кадре.
+                    'overlay_lines' => $presenter->engulfingOverlayLines(
+                        $instrument,
+                        $decision,
+                        $expirySec,
+                        $payout,
+                    ),
+                ]
+            );
+            if ($pngPath === null) {
+                $photoOk = false;
+                $photoError = 'render_failed';
+                Log::warning('engulfing_liquidity_photo_skipped', [
+                    'bot_id' => $bot->id,
+                    'instrument' => $instrument,
+                    'reason' => 'render_returned_null',
+                ]);
+            }
+        } elseif ($sendChart && ! extension_loaded('gd')) {
+            $photoOk = false;
+            $photoError = 'gd_extension_missing';
+        }
+
+        $llmMarkup = StrongLevelTelegramLlmButton::inlineKeyboardMarkup($config, $bot, $instrument);
+        if ($llmMarkup !== null || TelegramChatAccess::autoSubscribeEnabled($config)) {
+            app(StrongLevelTelegramProcessManager::class)->ensurePollRunning($bot->id);
+        }
+
+        Log::info('engulfing_liquidity_telegram_send', [
+            'bot_id' => $bot->id,
+            'instrument' => $instrument,
+            'caption' => $caption,
+            'has_chart' => $pngPath !== null,
+            'recipients' => count($recipients),
+        ]);
+
+        $messageResult = $this->broadcastToRecipients($token, $recipients, function (string $chatId) use (
+            $token,
+            $pngPath,
+            $caption,
+            $llmMarkup,
+            $bot,
+            $instrument,
+            &$photoOk,
+            &$photoError,
+        ): array {
+            // Одно сообщение: фото + caption (+ LLM-кнопка на том же фото). Без sendMessage.
+            if ($pngPath !== null) {
+                $photoResult = $this->sendPhoto($token, $chatId, $pngPath, $caption, $llmMarkup);
+                $ok = (bool) ($photoResult['ok'] ?? false);
+                $photoOk = $photoOk === null ? $ok : ($photoOk && $ok);
+                if (! $ok) {
+                    $err = (string) ($photoResult['error'] ?? 'telegram_photo_failed');
+                    $photoError = $photoError !== null ? $photoError.';'.$err : $err;
+                    Log::warning('engulfing_liquidity_photo_failed', [
+                        'bot_id' => $bot->id,
+                        'instrument' => $instrument,
+                        'chat_id' => $chatId,
+                        'error' => $err,
+                    ]);
+
+                    // Фоллбек: хотя бы короткий caption текстом.
+                    return $llmMarkup !== null
+                        ? $this->sendMessageWithMarkup($token, $chatId, $caption, $llmMarkup)
+                        : $this->sendMessage($token, $chatId, $caption);
+                }
+
+                return $photoResult;
+            }
+
+            return $llmMarkup !== null
+                ? $this->sendMessageWithMarkup($token, $chatId, $caption, $llmMarkup)
+                : $this->sendMessage($token, $chatId, $caption);
+        });
+
+        if ($pngPath !== null) {
+            @unlink($pngPath);
+        }
+
+        if (! ($messageResult['ok'] ?? false)) {
+            return array_merge($messageResult, array_filter([
+                'photo_ok' => $photoOk,
+                'photo_error' => $photoError,
+            ]));
+        }
+
+        return array_merge($messageResult, array_filter([
+            'photo_ok' => $photoOk,
+            'photo_error' => $photoError,
+        ]));
+    }
+
+    public function sendImpulseLvlAlert(
+        Bot $bot,
+        string $instrument,
+        array $decision,
+        ?float $payout,
+        int $expirySec,
+        ?float $entryPrice = null,
+        array $m1Candles = [],
+    ): array {
+        /** @var array<string, mixed> $cfg */
+        $cfg = is_array($bot->config) ? $bot->config : [];
+        if (! (bool) ($cfg['telegram_enabled'] ?? false)) {
+            return ['ok' => false, 'error' => 'telegram_disabled'];
+        }
+
+        $notifyOn = (string) ($cfg['telegram_notify_on'] ?? 'signal_trade');
+        if ($notifyOn !== 'signal_trade') {
+            return ['ok' => false, 'error' => 'telegram_notify_disabled'];
+        }
+
+        $token = trim((string) ($cfg['telegram_bot_token'] ?? ''));
+        $recipients = TelegramChatAccess::recipientChatIds($cfg);
+        if ($token === '' || $recipients === []) {
+            return ['ok' => false, 'error' => 'telegram_token_or_chat_id_missing'];
+        }
+
+        $caption = app(LevelBounceAlertPresenter::class)
+            ->formatImpulseLvlCaption($instrument, $decision, $payout);
+
+        $sendChart = (bool) ($cfg['telegram_send_chart'] ?? true);
+        $photoOk = null;
+        $photoError = null;
+        $pngPath = null;
+
+        if ($sendChart && $m1Candles !== [] && extension_loaded('gd')) {
+            $features = is_array($decision['features'] ?? null) ? $decision['features'] : [];
+            $signalTime = (int) ($features['signal_timestamp'] ?? 0);
+
+            $normalized = [];
+            foreach ($m1Candles as $row) {
+                if (! is_array($row)) {
+                    continue;
+                }
+                $t = (int) ($row['time'] ?? 0);
+                if ($t <= 0) {
+                    continue;
+                }
+                $normalized[$t] = [
+                    'time' => $t,
+                    'open' => (float) ($row['open'] ?? 0),
+                    'high' => (float) ($row['high'] ?? 0),
+                    'low' => (float) ($row['low'] ?? 0),
+                    'close' => (float) ($row['close'] ?? 0),
+                ];
+            }
+            ksort($normalized, SORT_NUMERIC);
+            $series = array_values($normalized);
+
+            $evalCandle = null;
+            if ($signalTime > 0 && isset($normalized[$signalTime])) {
+                $evalCandle = $normalized[$signalTime];
+            } elseif ($series !== []) {
+                $evalCandle = $series[array_key_last($series)];
+                $signalTime = (int) $evalCandle['time'];
+            }
+
+            $closedForLvl = [];
+            if ($evalCandle !== null) {
+                foreach ($series as $bar) {
+                    if ($bar['time'] < $signalTime) {
+                        $closedForLvl[] = $bar;
+                    }
+                }
+            }
+
+            // LVL на PNG — по цвету импульса, не по CALL/PUT. Иначе bounce (зелёный → PUT)
+            // ищет поддержку и зоны пропадают.
+            $zones = [];
+            $priceLevels = [];
+            $markers = [];
+            if ($evalCandle !== null) {
+                $zones = ImpulseLvl1minLevels::zonesForTelegramChart(
+                    $closedForLvl,
+                    $evalCandle,
+                    [],
+                    $features,
+                    $cfg,
+                );
+                $impulseDir = ImpulseLvl1minLevels::chartDirectionFromFeatures($features, $evalCandle);
+                $zoneKind = $impulseDir > 0 ? 'resistance' : 'support';
+                $visual = ImpulseLvl1minConfig::lvlZoneEntryVisual($zoneKind, $cfg);
+                $evalClose = (float) ($evalCandle['close'] ?? 0);
+                foreach ($zones as $zone) {
+                    if (! is_array($zone)) {
+                        continue;
+                    }
+                    $tf = (string) ($zone['tf'] ?? '');
+                    $priceLevels[] = [
+                        'price' => (float) ($zone['price'] ?? 0),
+                        'label' => sprintf('%s%s', $tf !== '' ? $tf : 'LVL', $visual['glyph']),
+                        'color' => $zoneKind === 'resistance' ? '#f87171' : '#4ade80',
+                    ];
+                }
+                if ($zones !== [] && $signalTime > 0) {
+                    $markers[] = [
+                        'time' => $signalTime,
+                        'price' => $evalClose > 0 ? $evalClose : (float) ($zones[0]['price'] ?? 0),
+                        'position' => $visual['position'],
+                        'arrow' => $visual['arrow'],
+                        'color' => $zoneKind === 'resistance' ? '#ef4444' : '#22c55e',
+                        'size' => 'entry',
+                        'text' => $visual['text'],
+                    ];
+                }
+            }
+
+            $pngPath = app(ImpulseLvl1minTelegramChartRenderer::class)->render(
+                $series,
+                $zones,
+                [
+                    // Как updateBotM1 TELEGRAM_CHART_CANDLES=50.
+                    'max_bars' => max(20, min(80, (int) ($cfg['telegram_chart_candles'] ?? 50))),
+                    'signal_time' => $signalTime,
+                    'price_levels' => $priceLevels,
+                    'markers' => $markers,
+                ]
+            );
+            if ($pngPath === null) {
+                $photoOk = false;
+                $photoError = 'render_failed';
+                Log::warning('impulse_lvl_telegram_photo_skipped', [
+                    'bot_id' => $bot->id,
+                    'instrument' => $instrument,
+                    'reason' => 'render_returned_null',
+                ]);
+            }
+        } elseif ($sendChart && ! extension_loaded('gd')) {
+            $photoOk = false;
+            $photoError = 'gd_extension_missing';
+        }
+
+        $llmMarkup = StrongLevelTelegramLlmButton::inlineKeyboardMarkup($cfg, $bot, $instrument);
+        if ($llmMarkup !== null || TelegramChatAccess::autoSubscribeEnabled($cfg)) {
+            app(StrongLevelTelegramProcessManager::class)->ensurePollRunning($bot->id);
+        }
+
+        Log::info('impulse_lvl_telegram_send', [
+            'bot_id' => $bot->id,
+            'instrument' => $instrument,
+            'caption' => $caption,
+            'has_chart' => $pngPath !== null,
+            'recipients' => count($recipients),
+        ]);
+
+        $messageResult = $this->broadcastToRecipients($token, $recipients, function (string $chatId) use (
+            $token,
+            $pngPath,
+            $caption,
+            $llmMarkup,
+            $bot,
+            $instrument,
+            &$photoOk,
+            &$photoError,
+        ): array {
+            // Оригинал шлёт одно фото с текстом сигнала в caption — без отдельного HTML-сообщения.
+            if ($pngPath !== null) {
+                $photoResult = $this->sendPhoto($token, $chatId, $pngPath, $caption, $llmMarkup);
+                $ok = (bool) ($photoResult['ok'] ?? false);
+                $photoOk = $photoOk === null ? $ok : ($photoOk && $ok);
+                if (! $ok) {
+                    $err = (string) ($photoResult['error'] ?? 'telegram_photo_failed');
+                    $photoError = $photoError !== null ? $photoError.';'.$err : $err;
+                    Log::warning('impulse_lvl_telegram_photo_failed', [
+                        'bot_id' => $bot->id,
+                        'instrument' => $instrument,
+                        'chat_id' => $chatId,
+                        'error' => $err,
+                    ]);
+                    // Фоллбек: хотя бы текст сигнала.
+                    return $llmMarkup !== null
+                        ? $this->sendMessageWithMarkup($token, $chatId, $caption, $llmMarkup)
+                        : $this->sendMessage($token, $chatId, $caption);
+                }
+
+                return $photoResult;
+            }
+
+            return $llmMarkup !== null
+                ? $this->sendMessageWithMarkup($token, $chatId, $caption, $llmMarkup)
+                : $this->sendMessage($token, $chatId, $caption);
+        });
+
+        if ($pngPath !== null) {
+            @unlink($pngPath);
+        }
+
+        if (! ($messageResult['ok'] ?? false)) {
+            return array_merge($messageResult, array_filter([
+                'photo_ok' => $photoOk,
+                'photo_error' => $photoError,
+            ]));
+        }
+
+        return array_merge($messageResult, array_filter([
+            'photo_ok' => $photoOk,
+            'photo_error' => $photoError,
+        ]));
+    }
+
+    /**
      * Алерт Strong Level: новый сигнал + paper-сделка у сильного уровня.
      *
      * @param  array<string, mixed>  $decision
@@ -630,6 +1017,21 @@ class TelegramAlertService
         ?float $entryPrice = null,
         array $m1Candles = [],
     ): array {
+        // Impulse LVL — отдельный формат (одна строка + M1 PNG как updateBotM1).
+        if (ImpulseLvl1minConfig::is((string) $bot->type)
+            || str_starts_with((string) ($decision['decision_version'] ?? ''), ImpulseLvl1minConfig::VERSION)
+            || str_starts_with((string) ($decision['decision_version'] ?? ''), ImpulseLvl1minConfig::VERSION_S15)) {
+            return $this->sendImpulseLvlAlert(
+                $bot,
+                $instrument,
+                $decision,
+                $payout,
+                $expirySec,
+                $entryPrice,
+                $m1Candles,
+            );
+        }
+
         /** @var array<string, mixed> $cfg */
         $cfg = is_array($bot->config) ? $bot->config : [];
         if (! (bool) ($cfg['telegram_enabled'] ?? false)) {
@@ -845,6 +1247,14 @@ class TelegramAlertService
         $reasons = $this->normalizeAlertReasons($decision['reasons_short'] ?? []);
         $isCrc = $presenter->isCrcDecision($decision, $botType);
 
+        // Impulse LVL: одна строка как updateBotM1 (фото caption) — без Strong Level «Пара/Уровень/Режим».
+        $isImpulse = ImpulseLvl1minConfig::is((string) $botType)
+            || str_starts_with((string) ($decision['decision_version'] ?? ''), ImpulseLvl1minConfig::VERSION)
+            || str_starts_with((string) ($decision['decision_version'] ?? ''), ImpulseLvl1minConfig::VERSION_S15);
+        if ($isImpulse) {
+            return $presenter->formatImpulseLvlCaption($instrument, $decision, $payout);
+        }
+
         // Карточка/текст алерта: display_name из pocket_instruments + короткий instrument в скобках.
         $instrumentEsc = TelegramInstrumentLabel::html($instrument);
         $kindLabel = $presenter->levelKindRu((string) ($features['level_kind'] ?? 'neutral'));
@@ -855,25 +1265,6 @@ class TelegramAlertService
             '',
             'Пара: <b>'.$instrumentEsc.'</b>',
         ];
-
-        // Impulse LVL: как оригинал «EURUSD (80%) ⚪ extra_wl 3- 4.30x M5» — в brief тоже, иначе профиль терялся.
-        $isImpulse = ImpulseLvl1minConfig::is((string) $botType)
-            || str_starts_with((string) ($decision['decision_version'] ?? ''), ImpulseLvl1minConfig::VERSION);
-        if ($isImpulse) {
-            $output = (string) ($features['output_label'] ?? ImpulseLvl1minConfig::outputLabel($features));
-            $kind = (string) ($features['kind'] ?? '');
-            $value = (float) ($features['value'] ?? 0);
-            $valueText = $kind === 'max' ? sprintf('%.0f%%', $value) : sprintf('%.2fx', $value);
-            $lvlBits = is_array($features['lvl_labels'] ?? null) ? $features['lvl_labels'] : [];
-            $lvlBits = array_values(array_filter(array_map('strval', $lvlBits), static fn (string $s): bool => $s !== ''));
-            $payoutBit = $payout !== null ? sprintf(' (%.0f%%)', $payout) : '';
-            $impulseLine = $instrumentEsc.$payoutBit.' '.htmlspecialchars($output, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8')
-                .' '.htmlspecialchars($valueText, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
-            if ($lvlBits !== []) {
-                $impulseLine .= ' '.htmlspecialchars(implode(' ', $lvlBits), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
-            }
-            $lines[] = $impulseLine;
-        }
 
         $levelLine = sprintf(
             'Уровень: <b>%.5f</b> (%s) | сила %.0f',
@@ -1198,9 +1589,10 @@ class TelegramAlertService
     }
 
     /**
+     * @param  array<string, mixed>|null  $replyMarkup  inline_keyboard и т.д. (как у sendMessageWithMarkup)
      * @return array{ok:bool,error?:string,message_id?:int}
      */
-    public function sendPhoto(string $token, string $chatId, string $filePath, ?string $caption = null): array
+    public function sendPhoto(string $token, string $chatId, string $filePath, ?string $caption = null, ?array $replyMarkup = null): array
     {
         $token = trim($token);
         $chatId = trim($chatId);
@@ -1209,13 +1601,15 @@ class TelegramAlertService
         }
 
         try {
+            $fields = array_filter([
+                'chat_id' => $chatId,
+                'caption' => $caption,
+                'parse_mode' => $caption !== null ? 'HTML' : null,
+                'reply_markup' => $replyMarkup !== null ? json_encode($replyMarkup) : null,
+            ]);
             $response = Http::timeout(30)
                 ->attach('photo', fopen($filePath, 'r'), basename($filePath))
-                ->post("https://api.telegram.org/bot{$token}/sendPhoto", array_filter([
-                    'chat_id' => $chatId,
-                    'caption' => $caption,
-                    'parse_mode' => $caption !== null ? 'HTML' : null,
-                ]));
+                ->post("https://api.telegram.org/bot{$token}/sendPhoto", $fields);
         } catch (\Throwable $e) {
             Log::warning('telegram_send_photo_failed', ['error' => $e->getMessage()]);
 

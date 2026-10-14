@@ -8,6 +8,7 @@ use App\Services\Bots\BotDataService;
 use App\Services\Bots\BotEngineService;
 use App\Services\Bots\HybridAnalystTradeService;
 use App\Services\Telegram\TelegramAlertService;
+use App\Services\Telegram\ImpulseLvl1minTelegramChartRenderer;
 use App\Services\Telegram\TelegramChartImageRenderer;
 use App\Services\Telegram\StrongLevelTelegramLlmButton;
 use App\Support\HybridAnalystConfig;
@@ -57,6 +58,7 @@ class RunHybridAnalystAnalysisJob implements ShouldQueue, ShouldBeUnique
         BotDataService $dataService,
         TelegramAlertService $telegram,
         TelegramChartImageRenderer $chartRenderer,
+        ImpulseLvl1minTelegramChartRenderer $impulseChartRenderer,
         HybridAnalystTradeService $tradeService,
     ): void {
         $bot = Bot::query()->find($this->analystBotId);
@@ -156,13 +158,21 @@ class RunHybridAnalystAnalysisJob implements ShouldQueue, ShouldBeUnique
         $llmSide = HybridAnalystConfig::extractRecommendationSide($analysisText) ?? '?';
         $shortMode = OpenRouterLlmConfig::isAnalystShortPromptMode($cfg);
         $chartLevels = is_array($analysis['chart_levels'] ?? null) ? $analysis['chart_levels'] : [];
+        $impulseTelegram = is_array($analysis['impulse_lvl_telegram'] ?? null)
+            ? $analysis['impulse_lvl_telegram']
+            : [];
         $pngPath = null;
-        // Картинку шлём и в кратком режиме (зоны Impulse LVL с движка). Текст уровней — только в полном.
+        // Картинку шлём и в кратком режиме. Impulse LVL — зоны фильтра на кадре как у бота 47.
         if (extension_loaded('gd')) {
             $series = $dataService->series($this->instrument, 120, true, 31536000, 1);
             $candles = $series['series'];
             if ($candles !== []) {
-                $pngPath = $chartRenderer->render($this->instrument, $candles, $chartLevels);
+                if ($impulseTelegram !== []) {
+                    $pngPath = $impulseChartRenderer->renderFromTelegramPayload($candles, $impulseTelegram);
+                }
+                if ($pngPath === null) {
+                    $pngPath = $chartRenderer->render($this->instrument, $candles, $chartLevels);
+                }
             }
         }
 
@@ -206,6 +216,7 @@ class RunHybridAnalystAnalysisJob implements ShouldQueue, ShouldBeUnique
             $sourceBlock,
             $footerParts,
             $llmMarkup,
+            $impulseTelegram,
         ): array {
             $instrumentEsc = TelegramInstrumentLabel::html($this->instrument);
             if ($pngPath !== null) {
@@ -213,7 +224,14 @@ class RunHybridAnalystAnalysisJob implements ShouldQueue, ShouldBeUnique
                     .' · LLM '.$llmSide
                     .' · source: '.htmlspecialchars($sourceName, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8')
                     .' '.$sourceSide;
-                $telegram->sendPhoto($token, $chatId, $pngPath, $caption);
+                if (is_array($impulseTelegram['overlay_lines'] ?? null) && $impulseTelegram['overlay_lines'] !== []) {
+                    $caption .= ' · '.htmlspecialchars(
+                        (string) $impulseTelegram['overlay_lines'][array_key_last($impulseTelegram['overlay_lines'])],
+                        ENT_QUOTES | ENT_SUBSTITUTE,
+                        'UTF-8'
+                    );
+                }
+                $telegram->sendPhoto($token, $chatId, $pngPath, mb_substr($caption, 0, 1000));
             }
 
             $telegram->sendLongMessage($token, $chatId, $header.$body.$sourceBlock);

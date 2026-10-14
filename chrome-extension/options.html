@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Platform Signals — настройки</title>
+  <style>
+    :root {
+      --bg: #0f1419;
+      --panel: #1a222c;
+      --text: #e7ecf1;
+      --muted: #8b9aab;
+      --accent: #38bdf8;
+      --line: #2a3542;
+      --ok: #22c55e;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      padding: 24px;
+      background: var(--bg);
+      color: var(--text);
+      font: 14px/1.45 system-ui, -apple-system, Segoe UI, sans-serif;
+      max-width: 520px;
+    }
+    h1 { font-size: 18px; margin: 0 0 8px; }
+    p.hint { color: var(--muted); margin: 0 0 20px; font-size: 13px; }
+    label { display: block; font-size: 12px; color: var(--muted); margin: 0 0 6px; }
+    .mode-box {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin-bottom: 18px;
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+    }
+    .mode-box label.radio {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      color: var(--text);
+      font-size: 13px;
+      cursor: pointer;
+      margin: 0;
+    }
+    .mode-box label.radio span.desc {
+      display: block;
+      color: var(--muted);
+      font-size: 11px;
+      margin-top: 2px;
+    }
+    .sound-box {
+      margin-bottom: 18px;
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+    }
+    .sound-box label.check {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      color: var(--text);
+      font-size: 13px;
+      cursor: pointer;
+      margin: 0 0 10px;
+    }
+    .sound-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+      margin-bottom: 8px;
+    }
+    .sound-actions input[type="file"] {
+      flex: 1;
+      min-width: 160px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+    #soundName {
+      color: var(--muted);
+      font-size: 12px;
+      margin: 0;
+    }
+    button {
+      padding: 10px 16px;
+      border: 0;
+      border-radius: 8px;
+      background: var(--accent);
+      color: #042033;
+      font-weight: 650;
+      cursor: pointer;
+    }
+    button.secondary {
+      background: transparent;
+      color: var(--text);
+      border: 1px solid var(--line);
+      margin-left: 8px;
+    }
+    #msg { margin-top: 14px; color: var(--ok); font-size: 13px; min-height: 1.2em; }
+  </style>
+</head>
+<body>
+  <h1>Настройки</h1>
+  <p class="hint">
+    Выберите сеть подключения к серверу сигналов. Адрес сервера в плагине не отображается.
+  </p>
+
+  <label>Сеть</label>
+  <div class="mode-box">
+    <label class="radio">
+      <input type="radio" name="networkMode" value="lan" />
+      <div>
+        Внутренняя сеть
+        <span class="desc">Домашний Wi‑Fi / LAN — быстрее и стабильнее.</span>
+      </div>
+    </label>
+    <label class="radio">
+      <input type="radio" name="networkMode" value="wan" checked />
+      <div>
+        Внешняя сеть
+        <span class="desc">Через интернет (нужен проброс порта на роутере). По умолчанию.</span>
+      </div>
+    </label>
+  </div>
+
+  <label>Как открывать по клику на иконку</label>
+  <div class="mode-box">
+    <label class="radio">
+      <input type="radio" name="uiMode" value="float" />
+      <div>
+        Плавающее окно
+        <span class="desc">Отдельное окно поверх браузера.</span>
+      </div>
+    </label>
+    <label class="radio">
+      <input type="radio" name="uiMode" value="sidepanel" checked />
+      <div>
+        Боковая панель
+        <span class="desc">Встроена в Chrome справа (Side Panel). По умолчанию.</span>
+      </div>
+    </label>
+  </div>
+
+  <label>Звук нового сигнала</label>
+  <div class="sound-box">
+    <label class="check">
+      <input type="checkbox" id="soundEnabled" checked />
+      Воспроизводить при появлении сигнала
+    </label>
+    <div class="sound-actions">
+      <input type="file" id="soundFile" accept="audio/*,.mp3,.wav,.ogg,.m4a" />
+      <button id="soundTest" class="secondary" type="button">Тест</button>
+      <button id="soundReset" class="secondary" type="button">Сброс</button>
+    </div>
+    <p id="soundName">Звук: стандартный сигнал</p>
+  </div>
+
+  <button id="save" type="button">Сохранить</button>
+  <button id="open" class="secondary" type="button">Открыть</button>
+  <div id="msg"></div>
+
+  <script src="endpoints.js"></script>
+  <script src="options.js"></script>
+</body>
+</html>

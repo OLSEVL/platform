@@ -26,6 +26,7 @@ class StrongLevelCardPresenterTest extends TestCase
     {
         $this->assertSame('Отбой от уровня', $this->presenter->strategyTitle(['entry_regime' => 'bounce']));
         $this->assertSame('Пробой уровня', $this->presenter->strategyTitle(['entry_regime' => 'breakout']));
+        $this->assertSame('Продолжение импульса', $this->presenter->strategyTitle(['entry_regime' => 'continuation']));
     }
 
     public function test_strategy_narrative_bounce_put_mentions_resistance_and_down(): void

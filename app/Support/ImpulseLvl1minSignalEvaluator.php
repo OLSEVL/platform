@@ -94,7 +94,7 @@ final class ImpulseLvl1minSignalEvaluator
                     continue;
                 }
             } else {
-                $lvl = ['ok' => true, 'labels' => [], 'tf_seconds' => []];
+                $lvl = ['ok' => true, 'labels' => [], 'tf_seconds' => [], 'zones' => []];
             }
             $accepted[] = self::hydrateHit($candidate, $evalCandle, $direction, $mean, $lvl);
         }
@@ -144,6 +144,7 @@ final class ImpulseLvl1minSignalEvaluator
             'close' => (float) ($evalCandle['close'] ?? 0),
             'average_body' => $mean,
             'lvl_labels' => $lvl['labels'],
+            'lvl_zones' => is_array($lvl['zones'] ?? null) ? $lvl['zones'] : [],
             'is_prev' => false,
         ];
     }

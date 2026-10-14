@@ -14,9 +14,152 @@ final class ImpulseLvl1minConfig
 {
     public const BOT_TYPE = 'impulse_lvl_1min';
 
+    /** Тот же алгоритм на закрытых S15 (15 с), LVL: S15 + M1 + M5 + M15. */
+    public const BOT_TYPE_S15 = 'impulse_lvl_s15';
+
     public const VERSION = 'impulse_lvl_1min_v1';
 
+    public const VERSION_S15 = 'impulse_lvl_s15_v1';
+
     public const TITLE = 'Impulse LVL 1min';
+
+    public const TITLE_S15 = 'Impulse LVL S15';
+
+    public static function title(string $botType): string
+    {
+        return self::isS15($botType) ? self::TITLE_S15 : self::TITLE;
+    }
+
+    /** Отбой от LVL: против импульса (зелёный → PUT, красный → CALL). */
+    public const ENTRY_SIDE_BOUNCE = 'bounce';
+
+    /** Продолжение импульса: как раньше (зелёный → CALL, красный → PUT). */
+    public const ENTRY_SIDE_CONTINUATION = 'continuation';
+
+    /**
+     * @return list<string>
+     */
+    public static function allowedEntrySideModes(): array
+    {
+        return [self::ENTRY_SIDE_BOUNCE, self::ENTRY_SIDE_CONTINUATION];
+    }
+
+    /**
+     * Направление импульса для поиска LVL (high/resistance vs low/support), не CALL/PUT сделки.
+     * green → +1, red → −1. Иначе отбой (PUT на зелёном) рисует чужие зоны или пустой график.
+     */
+    public static function impulseDirectionFromColor(string $color): int
+    {
+        return match (strtolower(trim($color))) {
+            'green' => 1,
+            'red' => -1,
+            default => 0,
+        };
+    }
+
+    /**
+     * Режим CALL/PUT: continuation по умолчанию; старые JSON без ключа — по импульсу.
+     * Явный bounce оставляет отбой.
+     *
+     * @param  array<string, mixed>  $config
+     */
+    public static function entrySideMode(array $config = []): string
+    {
+        $raw = strtolower(trim((string) ($config['entry_side_mode'] ?? self::ENTRY_SIDE_CONTINUATION)));
+
+        return $raw === self::ENTRY_SIDE_BOUNCE
+            ? self::ENTRY_SIDE_BOUNCE
+            : self::ENTRY_SIDE_CONTINUATION;
+    }
+
+    public static function isBounceEntry(array $config = []): bool
+    {
+        return self::entrySideMode($config) === self::ENTRY_SIDE_BOUNCE;
+    }
+
+    /**
+     * Сторона сделки по цвету импульса и entry_side_mode.
+     * bounce: green→PUT, red→CALL. continuation: green→CALL, red→PUT.
+     *
+     * @param  array<string, mixed>  $config
+     */
+    public static function sideFromImpulseColor(string $color, array $config = []): string
+    {
+        $green = strtolower($color) === 'green';
+        if (self::isBounceEntry($config)) {
+            return $green ? 'PUT' : 'CALL';
+        }
+
+        return $green ? 'CALL' : 'PUT';
+    }
+
+    /**
+     * Совместимость со старыми вызовами: то же, что sideFromImpulseColor.
+     *
+     * @param  array<string, mixed>  $config
+     */
+    public static function bounceSideFromImpulseColor(string $color, array $config = []): string
+    {
+        return self::sideFromImpulseColor($color, $config);
+    }
+
+    /**
+     * Стрелка на зоне LVL: bounce — от уровня, continuation — по импульсу.
+     *
+     * @param  array<string, mixed>  $config
+     * @return array{glyph:string,position:string,arrow:string,text:string}
+     */
+    public static function lvlZoneEntryVisual(string $kind, array $config = []): array
+    {
+        $isResistance = $kind === 'resistance';
+        $down = self::isBounceEntry($config) === $isResistance;
+
+        return [
+            'glyph' => $down ? '↓' : '↑',
+            'position' => $down ? 'above' : 'below',
+            'arrow' => $down ? 'down' : 'up',
+            'text' => self::isBounceEntry($config)
+                ? ($isResistance ? 'отбой PUT' : 'отбой CALL')
+                : ($isResistance ? 'импульс CALL' : 'импульс PUT'),
+        ];
+    }
+
+    /**
+     * Напоминание для LLM / snapshot: зависит от entry_side_mode.
+     *
+     * @param  array<string, mixed>  $config
+     * @return array<string, string>
+     */
+    public static function llmRuleReminder(array $config = []): array
+    {
+        $impulse = 'Сильное тело vs trim-mean × множитель профиля или MAX-ratio к истории (как бот Impulse LVL).';
+        $none = 'Нет импульса, нет касания LVL, конфликт ТФ или уже пробитая зона → NONE.';
+        $exp = self::barPeriodSec($config) === self::S15_TIMEFRAME_SEC ? 15 : 60;
+        $ladder = self::barPeriodSec($config) === self::S15_TIMEFRAME_SEC
+            ? 'S15/M1/M5/M15'
+            : 'M1/M5/M15/M30';
+        if (self::isBounceEntry($config)) {
+            return [
+                'impulse' => $impulse,
+                'lvl' => 'Вход против импульса, отбой от непробитой LVL-зоны '.$ladder.' (не продолжение).',
+                'call' => 'Медвежий импульс + касание поддержки → CALL (отбой вверх), экспирация '.$exp.' с.',
+                'put' => 'Бычий импульс + касание сопротивления → PUT (отбой вниз), экспирация '.$exp.' с.',
+                'none' => $none,
+                'entry_side_mode' => self::ENTRY_SIDE_BOUNCE,
+                'llm_role' => 'live_setups.side уже отбой. Решение CALL/PUT/NONE — твоё, не обязан копировать детектор.',
+            ];
+        }
+
+        return [
+            'impulse' => $impulse,
+            'lvl' => 'Вход по импульсу (продолжение движения): зелёный у сопротивления → CALL, красный у поддержки → PUT.',
+            'call' => 'Бычий импульс + касание сопротивления → CALL (продолжение вверх), экспирация '.$exp.' с.',
+            'put' => 'Медвежий импульс + касание поддержки → PUT (продолжение вниз), экспирация '.$exp.' с.',
+            'none' => $none,
+            'entry_side_mode' => self::ENTRY_SIDE_CONTINUATION,
+            'llm_role' => 'live_setups.side уже по импульсу (continuation). Решение CALL/PUT/NONE — твоё.',
+        ];
+    }
 
     /** Интервал scan для live M1 (секунды). */
     public const ALLOWED_SCAN_INTERVAL_SEC = [5, 15, 30, 60];
@@ -30,6 +173,8 @@ final class ImpulseLvl1minConfig
 
     public const DEFAULT_TIMEFRAME_SEC = 60;
 
+    public const S15_TIMEFRAME_SEC = 15;
+
     public const DEFAULT_HISTORY_BARS = 100;
 
     public const TRIM_LOW_COUNT = 10;
@@ -38,25 +183,52 @@ final class ImpulseLvl1minConfig
 
     public static function is(string $botType): bool
     {
-        return $botType === self::BOT_TYPE;
+        return $botType === self::BOT_TYPE || $botType === self::BOT_TYPE_S15;
+    }
+
+    public static function isS15(string $botType): bool
+    {
+        return $botType === self::BOT_TYPE_S15;
+    }
+
+    /**
+     * Период сигнального бара: 15 с (S15) или 60 с (M1).
+     *
+     * @param  array<string, mixed>  $config
+     */
+    public static function barPeriodSec(array $config = []): int
+    {
+        if ((int) ($config['timeframe_sec'] ?? 0) === self::S15_TIMEFRAME_SEC
+            || self::isS15((string) ($config['_bot_type'] ?? ''))) {
+            return self::S15_TIMEFRAME_SEC;
+        }
+
+        return self::DEFAULT_TIMEFRAME_SEC;
     }
 
     /**
      * @return array<string, mixed>
      */
-    public static function defaultConfig(): array
+    public static function defaultConfig(?string $botType = null): array
     {
-        return [
+        $s15 = $botType === self::BOT_TYPE_S15;
+        $base = [
             'count' => 400,
             'timeframe_sec' => self::DEFAULT_TIMEFRAME_SEC,
             'expiry_sec' => 60,
             'min_confidence' => 0.0,
             'min_payout' => 80.0,
+            // all | otc | non_otc — суффикс _otc у кода пары.
+            'market_scope' => BotInstrumentMarketScope::ALL,
             'stale_after_sec' => 30,
             'scan_interval_sec' => self::DEFAULT_SCAN_INTERVAL_SEC,
             'scan_workers' => 6,
+            // Live как updateBotM1: daemon poll+workers вместо batch bots:scan.
+            'continuous_scan' => true,
             'signal_timing' => 'live',
             'lvl_filter' => true,
+            // continuation = по импульсу (дефолт); bounce = отбой против импульса.
+            'entry_side_mode' => self::ENTRY_SIDE_CONTINUATION,
             'max_enabled' => true,
             'max_only_longest' => true,
             // Live-поведение как 1min (сегодня было захардкожено в strategy/engine/levels).
@@ -86,9 +258,33 @@ final class ImpulseLvl1minConfig
             'telegram_alert_format' => 'brief',
             'telegram_send_chart' => true,
             'telegram_send_chart_m5' => true,
+            // Как TELEGRAM_CHART_CANDLES в updateBotM1 (дефолт 50).
+            'telegram_chart_candles' => 50,
             'telegram_auto_subscribe' => true,
             'version' => self::VERSION,
         ];
+        if (! $s15) {
+            return $base;
+        }
+
+        // S15: импульс на 15-секундных барах; LVL старшие — M1/M5/M15 из БД.
+        // Redis current_candle = S5, его нельзя считать формирующимся S15.
+        $base['count'] = 800;
+        $base['timeframe_sec'] = self::S15_TIMEFRAME_SEC;
+        $base['expiry_sec'] = 15;
+        $base['m1_take'] = 120;
+        $base['live_candle_wick_signals'] = false;
+        $base['version'] = self::VERSION_S15;
+        // M1 для S15 — старший ТФ, как M5 у бота 47: wick_tip, не body_to_wick сигнального бара.
+        $base['level_settings']['1'] = [
+            'pivot_left' => 3,
+            'pivot_right' => 3,
+            'zone_mode' => 'wick_tip',
+            'wick_tip_fraction' => 0.10,
+            'distance_body_multiplier' => 0.03,
+        ];
+
+        return $base;
     }
 
     /**
@@ -143,7 +339,8 @@ final class ImpulseLvl1minConfig
     }
 
     /**
-     * Строка как в оригинале: «⚪ extra_wl 3-» / «MAX» / «MAX2».
+     * Метка как SIGNAL_OUTPUT_LABELS в updateBotM1: «⚪ сильный3-» / «MAX» / «MAX2».
+     * Суффикс «prev» и LVL (M5…) — отдельно в caption, не здесь.
      *
      * @param  array<string, mixed>  $signal
      */
@@ -152,20 +349,23 @@ final class ImpulseLvl1minConfig
         $kind = (string) ($signal['kind'] ?? '');
         $id = trim((string) ($signal['strategy_id'] ?? $signal['id'] ?? ''));
         if ($kind === 'max' || str_starts_with($id, 'MAX')) {
-            $max = $id !== '' ? $id : 'MAX';
-
-            return ! empty($signal['is_prev']) ? $max.' prev' : $max;
+            return $id !== '' ? $id : 'MAX';
         }
 
         $emoji = self::sanitizeEmoji($signal['emoji'] ?? $signal['profile_emoji'] ?? '');
         if ($emoji === '') {
             $emoji = self::defaultEmojiForProfileId($id);
         }
+        // Оригинал: emoji + profile_label + count- без пробела перед числом.
+        $label = trim((string) ($signal['label'] ?? $signal['profile_label'] ?? ''));
+        if ($label === '') {
+            $label = $id !== '' ? $id : 'profile';
+        }
         $n = (int) ($signal['candle_count'] ?? 0);
-        $nSuffix = $n > 0 ? ' '.$n.'-' : '';
-        $prev = ! empty($signal['is_prev']) ? ' prev' : '';
+        $nSuffix = $n > 0 ? $n.'-' : '';
+        $prefix = $emoji !== '' ? $emoji.' ' : '';
 
-        return trim($emoji.' '.$id.$nSuffix).$prev;
+        return trim($prefix.$label.$nSuffix);
     }
 
     public static function historyPeriod(array $config = []): int
@@ -179,6 +379,16 @@ final class ImpulseLvl1minConfig
         $raw = (int) ($config['scan_workers'] ?? self::DEFAULT_SCAN_WORKERS);
 
         return in_array($raw, self::ALLOWED_SCAN_WORKERS, true) ? $raw : self::DEFAULT_SCAN_WORKERS;
+    }
+
+    /**
+     * true → bots:impulse-live (poll/analyze как updateBotM1), false → batch bots:scan шарды.
+     *
+     * @param  array<string, mixed>  $config
+     */
+    public static function continuousScanEnabled(array $config = []): bool
+    {
+        return self::flag($config, 'continuous_scan', true);
     }
 
     /**
@@ -262,6 +472,14 @@ final class ImpulseLvl1minConfig
                 'wick_tip_fraction' => 0.0,
                 'distance_body_multiplier' => 0.03,
             ],
+            // S15 как M1: зона тело↔фитиль на сигнальном ТФ.
+            '4015' => [
+                'pivot_left' => 3,
+                'pivot_right' => 3,
+                'zone_mode' => 'body_to_wick',
+                'wick_tip_fraction' => 0.0,
+                'distance_body_multiplier' => 0.03,
+            ],
             '5' => [
                 'pivot_left' => 2,
                 'pivot_right' => 2,
@@ -330,6 +548,14 @@ final class ImpulseLvl1minConfig
      */
     public static function mtfTakeMap(array $config): array
     {
+        if (self::barPeriodSec($config) === self::S15_TIMEFRAME_SEC) {
+            return [
+                1 => max(40, min(400, (int) ($config['m1_take'] ?? 120))),
+                5 => max(20, min(300, (int) ($config['m5_take'] ?? 80))),
+                15 => max(20, min(300, (int) ($config['m15_take'] ?? 60))),
+            ];
+        }
+
         return [
             5 => max(20, min(300, (int) ($config['m5_take'] ?? 80))),
             15 => max(20, min(300, (int) ($config['m15_take'] ?? 60))),
@@ -337,9 +563,55 @@ final class ImpulseLvl1minConfig
         ];
     }
 
+    /**
+     * Ступени LVL: dashboard TF → секунды бара.
+     * M1: M1/M5/M15/M30. S15: S15/M1/M5/M15.
+     *
+     * @param  array<string, mixed>  $config
+     * @return array<int, int>
+     */
+    public static function lvlTfLadder(array $config = []): array
+    {
+        if (self::barPeriodSec($config) === self::S15_TIMEFRAME_SEC) {
+            return [
+                4015 => 15,
+                1 => 60,
+                5 => 300,
+                15 => 900,
+            ];
+        }
+
+        return [
+            1 => 60,
+            5 => 300,
+            15 => 900,
+            30 => 1800,
+        ];
+    }
+
+    /**
+     * HTF для overlay из сигнального ряда (без базового ТФ).
+     *
+     * @param  array<string, mixed>  $config
+     * @return array<int, int>
+     */
+    public static function htfOverlayLadder(array $config = []): array
+    {
+        $baseSec = self::barPeriodSec($config);
+        $out = [];
+        foreach (self::lvlTfLadder($config) as $tfId => $tfSeconds) {
+            if ($tfSeconds > $baseSec) {
+                $out[$tfId] = $tfSeconds;
+            }
+        }
+
+        return $out;
+    }
+
     public static function dashboardTimeframeId(int $timeframeSec): int
     {
         return match ($timeframeSec) {
+            self::S15_TIMEFRAME_SEC => 4015,
             60 => 1,
             default => 1,
         };
@@ -492,15 +764,18 @@ final class ImpulseLvl1minConfig
             'expiry_sec' => ['required', 'integer', 'min:5', 'max:900'],
             'min_confidence' => ['required', 'numeric', 'min:0', 'max:1'],
             'min_payout' => ['required', 'numeric', 'min:0', 'max:100'],
+            'market_scope' => BotInstrumentMarketScope::validationRules(),
             'stale_after_sec' => ['required', 'integer', 'min:5', 'max:600'],
             'scan_interval_sec' => ['required', 'integer', Rule::in(self::ALLOWED_SCAN_INTERVAL_SEC)],
             'scan_workers' => ['required', 'integer', Rule::in(self::ALLOWED_SCAN_WORKERS)],
+            'continuous_scan' => ['sometimes', 'boolean'],
             'occupancy_scope' => ['required', 'string', Rule::in(['instrument', 'bot'])],
             'trim_low_count' => ['required', 'integer', 'min:0', 'max:90'],
             'trim_high_count' => ['required', 'integer', 'min:0', 'max:90'],
             'm5_take' => ['required', 'integer', 'min:20', 'max:300'],
             'm15_take' => ['required', 'integer', 'min:20', 'max:300'],
-            'm30_take' => ['required', 'integer', 'min:10', 'max:200'],
+            'm30_take' => ['sometimes', 'integer', 'min:10', 'max:200'],
+            'm1_take' => ['sometimes', 'integer', 'min:40', 'max:400'],
             'profiles' => ['required', 'array', 'min:1', 'max:8'],
             'profiles.*.id' => ['required', 'string', 'max:32'],
             'profiles.*.label' => ['nullable', 'string', 'max:32'],
@@ -517,9 +792,11 @@ final class ImpulseLvl1minConfig
             'telegram_alert_format' => ['required', 'string', Rule::in(['brief', 'detailed', 'card'])],
             'telegram_send_chart' => ['required', 'string', Rule::in(['1', '0'])],
             'telegram_send_chart_m5' => ['required', 'string', Rule::in(['1', '0'])],
+            'telegram_chart_candles' => ['required', 'integer', 'min:20', 'max:80'],
             'telegram_analyst_llm_enabled' => ['sometimes', 'boolean'],
             'telegram_analyst_bot_id' => ['nullable', 'integer', 'min:1'],
             'telegram_analyst_llm_question' => ['nullable', 'string', 'max:500'],
+            'entry_side_mode' => ['required', 'string', Rule::in(self::allowedEntrySideModes())],
         ]);
 
         $existingToken = trim((string) (($bot->config ?? [])['telegram_bot_token'] ?? ''));
@@ -559,15 +836,18 @@ final class ImpulseLvl1minConfig
 
         return array_merge($bot->config ?? [], [
             'count' => (int) $extra['count'],
-            'timeframe_sec' => self::DEFAULT_TIMEFRAME_SEC,
+            'timeframe_sec' => self::isS15((string) $bot->type) ? self::S15_TIMEFRAME_SEC : self::DEFAULT_TIMEFRAME_SEC,
             'expiry_sec' => (int) $extra['expiry_sec'],
             'min_confidence' => (float) $extra['min_confidence'],
             'min_payout' => (float) $extra['min_payout'],
+            'market_scope' => BotInstrumentMarketScope::normalize($extra['market_scope'] ?? BotInstrumentMarketScope::ALL),
             'stale_after_sec' => (int) $extra['stale_after_sec'],
             'scan_interval_sec' => self::normalizeScanIntervalSec($extra['scan_interval_sec']),
             'scan_workers' => self::scanWorkers(['scan_workers' => $extra['scan_workers'] ?? self::DEFAULT_SCAN_WORKERS]),
+            'continuous_scan' => $request->boolean('continuous_scan'),
             'signal_timing' => $request->boolean('signal_timing_closed') ? 'closed' : 'live',
             'lvl_filter' => $request->boolean('lvl_filter'),
+            'entry_side_mode' => self::entrySideMode(['entry_side_mode' => $extra['entry_side_mode'] ?? self::ENTRY_SIDE_CONTINUATION]),
             'max_enabled' => $maxEnabled,
             'max_only_longest' => $request->boolean('max_only_longest'),
             'eval_prev_candle' => $request->boolean('eval_prev_candle'),
@@ -583,7 +863,8 @@ final class ImpulseLvl1minConfig
             'trim_high_count' => self::trimHighCount(['trim_high_count' => $extra['trim_high_count'] ?? self::TRIM_HIGH_COUNT]),
             'm5_take' => (int) $extra['m5_take'],
             'm15_take' => (int) $extra['m15_take'],
-            'm30_take' => (int) $extra['m30_take'],
+            'm30_take' => (int) ($extra['m30_take'] ?? (($bot->config ?? [])['m30_take'] ?? 40)),
+            'm1_take' => (int) ($extra['m1_take'] ?? (($bot->config ?? [])['m1_take'] ?? 120)),
             'profiles' => $profiles,
             'telegram_enabled' => $request->boolean('telegram_enabled'),
             'telegram_notify_result' => $request->boolean('telegram_notify_result'),
@@ -594,10 +875,11 @@ final class ImpulseLvl1minConfig
             'telegram_alert_format' => (string) $extra['telegram_alert_format'],
             'telegram_send_chart' => $extra['telegram_send_chart'] === '1',
             'telegram_send_chart_m5' => $extra['telegram_send_chart_m5'] === '1',
+            'telegram_chart_candles' => max(20, min(80, (int) ($extra['telegram_chart_candles'] ?? 50))),
             'telegram_analyst_llm_enabled' => $request->boolean('telegram_analyst_llm_enabled'),
             'telegram_analyst_bot_id' => isset($extra['telegram_analyst_bot_id']) ? (int) $extra['telegram_analyst_bot_id'] : null,
             'telegram_analyst_llm_question' => trim((string) ($extra['telegram_analyst_llm_question'] ?? '')),
-            'version' => self::VERSION,
+            'version' => self::isS15((string) $bot->type) ? self::VERSION_S15 : self::VERSION,
         ]);
     }
 }

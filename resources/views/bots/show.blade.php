@@ -242,29 +242,6 @@
                     <a href="{{ route('bots.settings', $bot) }}"
                         class="inline-flex items-center rounded border border-zinc-600 bg-zinc-800 px-2.5 py-1 text-xs font-medium text-zinc-200 shadow-sm transition-colors hover:bg-zinc-700 hover:border-zinc-500 hover:text-zinc-50 focus:outline-none focus:ring-2 focus:ring-blue-500/50">Настройки</a>
                 </div>
-                {{-- Справа от кнопок: слот всегда занят (остаток пар или отсчёт до dispatch), кнопки не прыгают. --}}
-                @unless($isChartAnalystBot)
-                @php($scanRemaining = ($scanProgress['scan_active'] ?? false) ? ($scanProgress['scan_remaining'] ?? null) : null)
-                @php($scanMinPayoutDisplay = rtrim(rtrim(number_format((float) ($scanMinPayout ?? 80), 1, '.', ''), '0'), '.'))
-                @php($scanNextAt = (int) ($scanProgress['next_scan_at'] ?? 0))
-                @php($scanIdle = $scanRemaining === null)
-                @php($scanNextLeft = $scanNextAt > 0 ? max(0, $scanNextAt - time()) : null)
-                <span
-                    id="bot-scan-remaining-wrap"
-                    class="shrink-0 text-xs text-zinc-400 tabular-nums"
-                    aria-live="polite"
-                    data-next-scan-at="{{ $scanNextAt > 0 ? $scanNextAt : '' }}"
-                >
-                    <span id="bot-scan-active-msg" class="{{ $scanIdle ? 'hidden' : '' }}">
-                        Осталось для анализа пар (для payout &gt; <span id="bot-scan-min-payout" class="font-medium text-zinc-300">{{ $scanMinPayoutDisplay }}</span>%):
-                        <span id="bot-scan-remaining-count" class="font-medium text-zinc-200">{{ $scanRemaining ?? 0 }}</span>
-                    </span>
-                    <span id="bot-scan-idle-msg" class="{{ $scanIdle ? '' : 'hidden' }}">
-                        До следующего сканирования:
-                        <span id="bot-scan-next-countdown" class="font-medium font-mono text-zinc-200">@if($scanNextLeft === null)—@else{{ sprintf('%02d:%02d', intdiv($scanNextLeft, 60), $scanNextLeft % 60) }}@endif</span>
-                    </span>
-                </span>
-                @endunless
             </div>
         </div>
         {{-- Панель анализа над графиком: шапка фиксирована, тело с overflow-y (как в правом сайдбаре). --}}
@@ -354,10 +331,51 @@
         </div>
     </div>
 
-    <aside class="w-52 shrink-0 border-l border-zinc-800 bg-zinc-950/40 overflow-hidden min-h-0 flex flex-col">
+    <aside class="w-56 shrink-0 border-l border-zinc-800 bg-zinc-950/40 overflow-hidden min-h-0 flex flex-col">
         <div class="border-b border-zinc-800 bg-zinc-900 px-2 py-2">
             {{-- Имя бота над статистикой: тот же кегль, что у «Статистика», чтобы не спорило с шапкой графика. --}}
             <div id="bot-name-badge" class="text-[10px] font-medium uppercase tracking-wide text-emerald-400 truncate" title="{{ $bot->name }}">{{ $bot->name }}</div>
+            {{-- Прогресс scan под именем: общий остаток + все потоки (шарды), чтобы видно параллельный обход. --}}
+            @unless($isChartAnalystBot)
+            @php($scanRemaining = ($scanProgress['scan_active'] ?? false) ? ($scanProgress['scan_remaining'] ?? null) : null)
+            @php($scanMinPayoutDisplay = rtrim(rtrim(number_format((float) ($scanMinPayout ?? 80), 1, '.', ''), '0'), '.'))
+            @php($scanNextAt = (int) ($scanProgress['next_scan_at'] ?? 0))
+            @php($scanIdle = !($scanProgress['scan_active'] ?? false))
+            @php($scanNextLeft = $scanNextAt > 0 ? max(0, $scanNextAt - time()) : null)
+            @php($scanShards = $scanProgress['scan_shards'] ?? [])
+            @php($scanShardCount = (int) ($scanProgress['scan_shard_count'] ?? 1))
+            <div
+                id="bot-scan-remaining-wrap"
+                class="mt-1.5 text-[10px] leading-snug text-zinc-400 tabular-nums"
+                aria-live="polite"
+                data-next-scan-at="{{ $scanNextAt > 0 ? $scanNextAt : '' }}"
+                data-shard-count="{{ max(1, $scanShardCount) }}"
+            >
+                <div id="bot-scan-active-msg" class="{{ $scanIdle ? 'hidden' : '' }}">
+                    <div>
+                        Осталось для анализа пар (для payout &gt; <span id="bot-scan-min-payout" class="font-medium text-zinc-300">{{ $scanMinPayoutDisplay }}</span>%):
+                        <span id="bot-scan-remaining-count" class="font-medium text-zinc-200">{{ $scanRemaining === null ? '…' : $scanRemaining }}</span>
+                    </div>
+                    {{-- Потоки = шарды bots:scan; JS обновляет current/remaining на каждый WS push. --}}
+                    <ul id="bot-scan-shards" class="mt-1 space-y-0.5 border-t border-zinc-800/80 pt-1 font-mono text-[10px] text-zinc-500">
+                        @if($scanShardCount > 1)
+                            @for($si = 0; $si < $scanShardCount; $si++)
+                                @php($row = collect($scanShards)->firstWhere('index', $si) ?? null)
+                                <li data-shard="{{ $si }}" class="flex items-center gap-1 truncate">
+                                    <span class="shrink-0 text-zinc-600">#{{ $si + 1 }}</span>
+                                    <span class="bot-scan-shard-pair min-w-0 flex-1 truncate text-zinc-300">{{ $row['current'] ?? '…' }}</span>
+                                    <span class="bot-scan-shard-left shrink-0 text-zinc-400">{{ isset($row['remaining']) ? $row['remaining'] : '—' }}</span>
+                                </li>
+                            @endfor
+                        @endif
+                    </ul>
+                </div>
+                <div id="bot-scan-idle-msg" class="{{ $scanIdle ? '' : 'hidden' }}">
+                    До следующего сканирования:
+                    <span id="bot-scan-next-countdown" class="font-medium font-mono text-zinc-200">@if($scanNextLeft === null)—@else{{ sprintf('%02d:%02d', intdiv($scanNextLeft, 60), $scanNextLeft % 60) }}@endif</span>
+                </div>
+            </div>
+            @endunless
             <div class="mt-1.5 text-[10px] font-medium uppercase tracking-wide text-zinc-400">Статистика</div>
             {{-- Два режима: скользящий час vs вся история; выбор хранится в localStorage на ключ бота. --}}
             <div class="mt-1.5 flex rounded border border-zinc-700 bg-zinc-950 p-0.5 text-[10px] font-medium">

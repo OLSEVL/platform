@@ -292,6 +292,82 @@ class BotDataService
     }
 
     /**
+     * Impulse LVL: seriesWithMtf + Redis-кэш закрытых баров (общий для 6 шардов).
+     * Partial всегда свежий из CurrentCandleCache; hit ≈ десятки мс вместо 1–2 с MySQL.
+     *
+     * @param  array<int, int>  $tfToMaxBars
+     * @return array{
+     *     closed:list<array<string,mixed>>,
+     *     partial:array<string,mixed>|null,
+     *     series:list<array<string,mixed>>,
+     *     mtf:array<string, list<array{time:int,open:float,high:float,low:float,close:float,volume:float}>>,
+     *     cache_hit: bool,
+     *     promoted: bool
+     * }
+     */
+    public function impulseSeriesWithMtf(
+        string $instrument,
+        int $count,
+        array $tfToMaxBars,
+        bool $includePartial = true,
+        int $staleAfterSec = 30,
+        int $timeframe = 1,
+        bool $keepOpenFormingPartial = false,
+    ): array {
+        $cache = app(ImpulseCandleSeriesCache::class);
+        $partialOverride = null;
+        if ($includePartial) {
+            $partialOverride = $this->currentCandleCache->getPartial($instrument);
+        }
+
+        $periodSec = CandleService::periodSecondsForDashboardTf($timeframe) ?? 60;
+        $result = $cache->resolve(
+            $instrument,
+            $count,
+            $tfToMaxBars,
+            function () use (
+                $instrument,
+                $count,
+                $tfToMaxBars,
+                $includePartial,
+                $staleAfterSec,
+                $timeframe,
+                $keepOpenFormingPartial,
+            ): array {
+                return $this->seriesWithMtf(
+                    $instrument,
+                    $count,
+                    $tfToMaxBars,
+                    $includePartial,
+                    $staleAfterSec,
+                    $timeframe,
+                    $keepOpenFormingPartial,
+                );
+            },
+            $partialOverride,
+            $periodSec,
+        );
+
+        // Те же правила forming-partial, что у seriesWithMtf (stale / закрытый бакет).
+        $partial = $result['partial'] ?? null;
+        $closed = $result['closed'] ?? [];
+        $lastClosedTime = $closed !== [] ? (int) end($closed)['time'] : 0;
+        if (is_array($partial) && ! self::shouldUseFormingPartial(
+            $partial,
+            $lastClosedTime,
+            $periodSec,
+            $staleAfterSec,
+            $keepOpenFormingPartial,
+        )) {
+            $partial = null;
+            $result['partial'] = null;
+            $result['series'] = $closed;
+        }
+
+        return $result;
+    }
+
+    /**
      * Брать ли Redis-partial как live-бар стратегии.
      *
      * stale_after_sec: защита DeMarker/CRC от торговли по зависшему тику.

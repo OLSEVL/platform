@@ -486,7 +486,8 @@ final class ArtisanProcessFinder
             return false;
         }
 
-        return (bool) preg_match('#(?:^|/)(php\d*(?:\.\d+)?)\s+artisan\s+#', $cmdline);
+        // Parent: `php artisan …`; workers proc_open: `php /abs/path/artisan …`.
+        return (bool) preg_match('#(?:^|/)(php\d*(?:\.\d+)?)\s+(?:\S+/)?artisan\s+#', $cmdline);
     }
 
     /** Оболочки, в cmdline которых может быть текст чужих команд (Cursor sandbox, bash -c). */

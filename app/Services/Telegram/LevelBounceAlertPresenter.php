@@ -5,6 +5,7 @@ namespace App\Services\Telegram;
 use App\Support\LevelBounceBotTypes;
 use App\Support\MaxBotConfig;
 use App\Support\ImpulseLvl1minConfig;
+use App\Support\TelegramInstrumentLabel;
 
 /**
  * Тексты Telegram-алертов и карточек для ботов отбития от уровня
@@ -144,7 +145,7 @@ class LevelBounceAlertPresenter
             'vol_adaptive_candles' => '⚡',
             'custom_candles_impulse' => '🚀',
             MaxBotConfig::BOT_TYPE => '⚡',
-            ImpulseLvl1minConfig::BOT_TYPE => $this->impulseLvlEmoji($decision),
+            ImpulseLvl1minConfig::BOT_TYPE, ImpulseLvl1minConfig::BOT_TYPE_S15 => $this->impulseLvlEmoji($decision),
             'cci_trade' => '📐',
             'rsi_trade' => '📊',
             'rvi_trade' => '📈',
@@ -170,7 +171,7 @@ class LevelBounceAlertPresenter
             'vol_adaptive_candles' => '⚡ <b>Vol Adaptive Candle — '.$sideEsc.'</b>',
             'custom_candles_impulse' => '🚀 <b>Candles Impulse — '.$sideEsc.'</b>',
             MaxBotConfig::BOT_TYPE => '⚡ <b>MaxBot — '.$sideEsc.'</b>',
-            ImpulseLvl1minConfig::BOT_TYPE => $this->impulseLvlTitle($decision, $sideEsc),
+            ImpulseLvl1minConfig::BOT_TYPE, ImpulseLvl1minConfig::BOT_TYPE_S15 => $this->impulseLvlTitle($decision, $sideEsc, (string) $type),
             'cci_trade' => '📐 <b>CCI — '.$sideEsc.'</b>',
             'rsi_trade' => '📊 <b>RSI Trade — '.$sideEsc.'</b>',
             'rvi_trade' => '📈 <b>RVI — '.$sideEsc.'</b>',
@@ -202,14 +203,160 @@ class LevelBounceAlertPresenter
     }
 
     /**
+     * Одна строка: «AUD/NZD OTC (92%) ▲ ⚪ сильный3- 4.75x prev M5 11:37:05».
+     * Время скана — локальные часы сервера (Europe/Kyiv), как HH:MM:SS у updateBotM1.
+     * HTML-экранировано для parse_mode=HTML (caption к фото).
+     *
      * @param  array<string, mixed>  $decision
      */
-    private function impulseLvlTitle(array $decision, string $sideEsc): string
+    public function formatImpulseLvlCaption(
+        string $instrument,
+        array $decision,
+        ?float $payout,
+        ?\DateTimeInterface $scannedAt = null,
+    ): string {
+        $features = is_array($decision['features'] ?? null) ? $decision['features'] : [];
+        $display = htmlspecialchars(
+            TelegramInstrumentLabel::displayName($instrument),
+            ENT_QUOTES | ENT_SUBSTITUTE,
+            'UTF-8'
+        );
+        $payoutBit = $payout !== null ? sprintf(' (%.0f%%)', $payout) : '';
+
+        // Только стрелка направления (без слов CALL/PUT) — сразу после пары/payout.
+        $side = strtoupper((string) ($decision['side'] ?? ''));
+        $sideBit = match ($side) {
+            'CALL' => ' ▲',
+            'PUT' => ' ▼',
+            default => '',
+        };
+
+        $label = (string) ($features['output_label'] ?? ImpulseLvl1minConfig::outputLabel($features));
+        $kind = (string) ($features['kind'] ?? '');
+        $value = (float) ($features['value'] ?? 0);
+        $valueText = $kind === 'max' ? sprintf('%.0f%%', $value) : sprintf('%.2fx', $value);
+
+        $suffixes = [];
+        if (! empty($features['is_prev'])) {
+            $suffixes[] = 'prev';
+        }
+        $lvlBits = is_array($features['lvl_labels'] ?? null) ? $features['lvl_labels'] : [];
+        foreach ($lvlBits as $bit) {
+            $bit = trim((string) $bit);
+            if ($bit !== '') {
+                $suffixes[] = $bit;
+            }
+        }
+
+        // Время скана ЧЧ:ММ:СС (стена оператора, не UTC из APP_TIMEZONE).
+        $scanClock = \Illuminate\Support\Carbon::instance(
+            $scannedAt ?? now()
+        )->timezone('Europe/Kyiv')->format('H:i:s');
+
+        $line = $display.$payoutBit.$sideBit.' '
+            .htmlspecialchars($label, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8').' '
+            .htmlspecialchars($valueText, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+        if ($suffixes !== []) {
+            $line .= ' '.htmlspecialchars(implode(' ', $suffixes), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+        }
+        $line .= ' '.$scanClock;
+
+        return $line;
+    }
+
+    /**
+     * Короткий caption Engulfing как у Impulse (#47): одно фото, без простыни «Условия».
+     * Пример: «AED/CNY OTC (89%) ▲ Поглощение классика 11:12:07»
+     *
+     * @param  array<string, mixed>  $decision
+     */
+    public function formatEngulfingCaption(
+        string $instrument,
+        array $decision,
+        ?float $payout,
+        ?\DateTimeInterface $scannedAt = null,
+    ): string {
+        $features = is_array($decision['features'] ?? null) ? $decision['features'] : [];
+        $display = htmlspecialchars(
+            TelegramInstrumentLabel::displayName($instrument),
+            ENT_QUOTES | ENT_SUBSTITUTE,
+            'UTF-8'
+        );
+        $payoutBit = $payout !== null ? sprintf(' (%.0f%%)', $payout) : '';
+        $side = strtoupper((string) ($decision['side'] ?? ''));
+        $sideBit = match ($side) {
+            'CALL' => ' ▲',
+            'PUT' => ' ▼',
+            default => '',
+        };
+        $kind = (string) ($features['engulf_kind'] ?? 'classic');
+        // Caption на русском: без англ. «Engulf classic».
+        $kindBit = $kind === 'same_color' ? 'Поглощение одного цвета' : 'Поглощение классика';
+        $scanClock = \Illuminate\Support\Carbon::instance(
+            $scannedAt ?? now()
+        )->timezone('Europe/Kyiv')->format('H:i:s');
+
+        return $display.$payoutBit.$sideBit.' '.$kindBit.' '.$scanClock;
+    }
+
+    /**
+     * Строки на PNG Engulfing (вместо длинного текста в Telegram).
+     *
+     * @param  array<string, mixed>  $decision
+     * @return list<string>
+     */
+    public function engulfingOverlayLines(
+        string $instrument,
+        array $decision,
+        int $expirySec,
+        ?float $payout = null,
+    ): array {
+        $features = is_array($decision['features'] ?? null) ? $decision['features'] : [];
+        $side = strtoupper((string) ($decision['side'] ?? ''));
+        $sideBit = match ($side) {
+            'CALL' => 'ВХОД CALL ▲ (вверх)',
+            'PUT' => 'ВХОД PUT ▼ (вниз)',
+            default => $side !== '' ? $side : '—',
+        };
+        $kind = (string) ($features['engulf_kind'] ?? 'classic');
+        $kindBit = $kind === 'same_color' ? 'одного цвета' : 'класси. поглощение';
+        $gap = max(1, (int) ($features['reaction_gap_bars'] ?? 1));
+        $payoutBit = $payout !== null ? sprintf(' · %.0f%%', $payout) : '';
+
+        return [
+            TelegramInstrumentLabel::displayName($instrument).' · '.$sideBit.$payoutBit,
+            '① Поглощение → ② Реакция → ③ Контр-поглощение = вход на close',
+            'Тип: '.$kindBit.' · реакция '.$gap.' бар'.($gap === 1 ? '' : 'а').' · эксп. '.$expirySec.'с'
+                .$this->engulfingLevelOverlayBit($features),
+        ];
+    }
+
+    /**
+     * Хвост overlay: « · FL 1.234» если уровень известен.
+     *
+     * @param  array<string, mixed>  $features
+     */
+    private function engulfingLevelOverlayBit(array $features): string
+    {
+        $price = (float) ($features['level_price'] ?? 0);
+        if ($price <= 0) {
+            return '';
+        }
+        $type = (string) ($features['level_type'] ?? 'ур.');
+        $typeRu = $type === 'FH' ? 'FH' : ($type === 'FL' ? 'FL' : 'ур.');
+
+        return ' · '.$typeRu.' '.number_format($price, 5, '.', '');
+    }
+
+    /**
+     * @param  array<string, mixed>  $decision
+     */
+    private function impulseLvlTitle(array $decision, string $sideEsc, string $botType = ImpulseLvl1minConfig::BOT_TYPE): string
     {
         $emoji = $this->impulseLvlEmoji($decision);
         $features = is_array($decision['features'] ?? null) ? $decision['features'] : [];
 
-        return $emoji.' <b>Impulse LVL 1min'.(! empty($features['is_prev']) ? ' prev' : '').' — '.$sideEsc.'</b>';
+        return $emoji.' <b>'.ImpulseLvl1minConfig::title($botType).(! empty($features['is_prev']) ? ' prev' : '').' — '.$sideEsc.'</b>';
     }
 
     /**
@@ -229,7 +376,8 @@ class LevelBounceAlertPresenter
             'vol_adaptive_candles' => 'Vol Adaptive Candles',
             'custom_candles_impulse' => 'Custom Candles Impulse',
             MaxBotConfig::BOT_TYPE => 'MaxBot',
-            ImpulseLvl1minConfig::BOT_TYPE => 'Impulse LVL 1min',
+            ImpulseLvl1minConfig::BOT_TYPE => ImpulseLvl1minConfig::TITLE,
+            ImpulseLvl1minConfig::BOT_TYPE_S15 => ImpulseLvl1minConfig::TITLE_S15,
             'cci_trade' => 'CCI',
             'rsi_trade' => 'RSI Trade',
             'rvi_trade' => 'RVI',
@@ -445,7 +593,11 @@ class LevelBounceAlertPresenter
 
         $regime = (string) ($features['entry_regime'] ?? 'bounce');
 
-        return $regime === 'breakout' ? 'Пробой уровня' : 'Отбой от уровня';
+        return match ($regime) {
+            'breakout' => 'Пробой уровня',
+            'continuation' => 'Продолжение импульса',
+            default => 'Отбой от уровня',
+        };
     }
 
     /**

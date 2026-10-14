@@ -627,6 +627,29 @@ Artisan::command('bots:impulse-lvl-1min-bootstrap', function () {
     $this->info("Готово: #{$bot->id} {$bot->name} ({$bot->type})");
 })->purpose('Создать Impulse LVL 1min (импульс + LVL), inactive');
 
+Artisan::command('bots:impulse-lvl-s15-bootstrap', function () {
+    $user = User::query()->orderBy('id')->first();
+    if (! $user) {
+        $this->error('Нет пользователей. Сначала зарегистрируйте пользователя.');
+
+        return;
+    }
+
+    $bot = Bot::query()->firstOrCreate(
+        [
+            'user_id' => $user->id,
+            'name' => \App\Support\ImpulseLvl1minConfig::TITLE_S15,
+            'type' => \App\Support\ImpulseLvl1minConfig::BOT_TYPE_S15,
+        ],
+        [
+            'is_active' => false,
+            'config' => \App\Support\ImpulseLvl1minConfig::defaultConfig(\App\Support\ImpulseLvl1minConfig::BOT_TYPE_S15),
+        ]
+    );
+
+    $this->info("Готово: #{$bot->id} {$bot->name} ({$bot->type})");
+})->purpose('Создать Impulse LVL S15 (тот же алгоритм на 15с), inactive');
+
 Artisan::command('bots:impulse-lvl-1min-import {botId?} {--config=docs_need_release/1min/new/config.py} {--pairs}', function () {
     $botId = $this->argument('botId');
     $bot = $botId
@@ -1377,6 +1400,186 @@ Artisan::command('bots:openrouter-list-models', function (OpenRouterClient $clie
     }
 })->purpose('Проверить загрузку каталога моделей OpenRouter');
 
+Artisan::command('bots:impulse-live {--bot_id=} {--once : Один poll+analyze (smoke), без вечного цикла}', function (
+    \App\Services\Bots\ImpulseLiveScanService $live,
+) {
+    // Parent poller updateBotM1-style: MGET всех пар каждые N сек, воркеры анализируют снимок.
+    $botIdOpt = $this->option('bot_id');
+    $botId = $botIdOpt !== null && $botIdOpt !== '' ? (int) $botIdOpt : null;
+    if ($botId === null || $botId <= 0) {
+        $this->error('Нужен --bot_id=N');
+
+        return 1;
+    }
+
+    $bot = Bot::query()->find($botId);
+    if (! $bot instanceof Bot) {
+        $this->error("Бот #{$botId} не найден.");
+
+        return 1;
+    }
+    if (! \App\Support\ImpulseLvl1minConfig::is((string) $bot->type)
+        && ! \App\Support\EngulfingLiquidityConfig::is((string) $bot->type)) {
+        $this->error("Бот #{$botId} не impulse_lvl_1min / impulse_lvl_s15 / engulfing_liquidity (type={$bot->type}).");
+
+        return 1;
+    }
+    if (! $bot->is_active) {
+        $this->warn("Бот #{$botId} неактивен — выход.");
+
+        return 0;
+    }
+    $cfg = is_array($bot->config) ? $bot->config : [];
+    $continuous = \App\Support\EngulfingLiquidityConfig::is((string) $bot->type)
+        ? \App\Support\EngulfingLiquidityConfig::continuousScanEnabled($cfg)
+        : \App\Support\ImpulseLvl1minConfig::continuousScanEnabled($cfg);
+    if (! $continuous) {
+        $this->warn('continuous_scan=off — используйте обычный bots:scan. Выход.');
+
+        return 0;
+    }
+
+    if (bots_scan_process_running(getmypid(), $botId)) {
+        $this->warn("bots:scan/impulse-live для #{$botId} уже выполняется — пропуск.");
+
+        return 0;
+    }
+
+    $lockResult = BotScanCoordinator::acquireLock(BotScanCoordinator::botLockName($botId), getmypid());
+    if (! $lockResult['acquired'] || ! $lockResult['lock'] instanceof \Illuminate\Contracts\Cache\Lock) {
+        $this->warn("Не удалось взять lock bots:scan:bot:{$botId}.");
+
+        return 0;
+    }
+    $lock = $lockResult['lock'];
+
+    $stop = false;
+    if (function_exists('pcntl_async_signals')) {
+        pcntl_async_signals(true);
+        pcntl_signal(SIGTERM, static function () use (&$stop): void {
+            $stop = true;
+        });
+        pcntl_signal(SIGINT, static function () use (&$stop): void {
+            $stop = true;
+        });
+    }
+
+    $once = (bool) $this->option('once');
+    $onceDeadline = $once ? (time() + 12) : 0;
+
+    $workers = \App\Support\EngulfingLiquidityConfig::is((string) $bot->type)
+        ? \App\Support\EngulfingLiquidityConfig::scanWorkers($cfg)
+        : \App\Support\ImpulseLvl1minConfig::scanWorkers($cfg);
+    $this->info(sprintf(
+        'Live #%d (%s) parent: interval=%ds workers=%d%s',
+        $botId,
+        $bot->type,
+        BotScanCoordinator::scanIntervalSecForBot($bot),
+        $workers,
+        $once ? ' (once)' : ''
+    ));
+
+    try {
+        $totals = $live->runParent(
+            $bot,
+            static function () use (&$stop, $once, $onceDeadline): bool {
+                if ($stop) {
+                    return true;
+                }
+                if ($once && time() >= $onceDeadline) {
+                    return true;
+                }
+
+                return false;
+            },
+            function (array $totals, int $pairs, int $fetchMs, int $gen): void {
+                $this->line(sprintf(
+                    'POLL gen=%d pairs=%d fetch_ms=%d cycles=%d',
+                    $gen,
+                    $pairs,
+                    $fetchMs,
+                    $totals['cycles'] ?? 0
+                ));
+            }
+        );
+        $this->info(sprintf(
+            'Stop: cycles=%d processed=%d signals=%d trades=%d',
+            $totals['cycles'],
+            $totals['processed'],
+            $totals['signals'],
+            $totals['trades']
+        ));
+    } finally {
+        BotScanCoordinator::releaseLock($lock);
+    }
+
+    return 0;
+})->purpose('Impulse LVL live parent: poll всех пар как updateBotM1 history(1)');
+
+Artisan::command('bots:impulse-live-worker {--bot_id=} {--scan-shard=}', function (
+    \App\Services\Bots\ImpulseLiveScanService $live,
+) {
+    $botIdOpt = $this->option('bot_id');
+    $botId = $botIdOpt !== null && $botIdOpt !== '' ? (int) $botIdOpt : null;
+    if ($botId === null || $botId <= 0) {
+        $this->error('Нужен --bot_id=N');
+
+        return 1;
+    }
+    $shard = BotScanCoordinator::parseScanShard(is_string($this->option('scan-shard')) ? $this->option('scan-shard') : null);
+    if ($shard === null) {
+        $this->error('Нужен --scan-shard=i/N');
+
+        return 1;
+    }
+
+    $bot = Bot::query()->find($botId);
+    if (! $bot instanceof Bot) {
+        $this->error("Бот #{$botId} не найден.");
+
+        return 1;
+    }
+
+    $stop = false;
+    if (function_exists('pcntl_async_signals')) {
+        pcntl_async_signals(true);
+        pcntl_signal(SIGTERM, static function () use (&$stop): void {
+            $stop = true;
+        });
+        pcntl_signal(SIGINT, static function () use (&$stop): void {
+            $stop = true;
+        });
+    }
+
+    $this->info(sprintf('Impulse live worker #%d shard %d/%d', $botId, $shard['index'], $shard['count']));
+    $totals = $live->runWorker(
+        $bot,
+        $shard['index'],
+        $shard['count'],
+        static function () use (&$stop): bool {
+            return $stop;
+        },
+        function (array $totals, int $n, int $signals, int $trades): void {
+            $this->line(sprintf(
+                'ANALYZE pairs=%d signals=%d trades=%d cache_hits=%d db_loads=%d',
+                $n,
+                $signals,
+                $trades,
+                $totals['cache_hits'] ?? 0,
+                $totals['db_loads'] ?? 0
+            ));
+        }
+    );
+    $this->info(sprintf(
+        'Worker stop: cycles=%d processed=%d signals=%d',
+        $totals['cycles'],
+        $totals['processed'],
+        $totals['signals']
+    ));
+
+    return 0;
+})->purpose('Impulse LVL live worker: анализ шарда пар из Redis-снимка');
+
 Artisan::command('bots:scan-dispatch', function () {
     $bots = BotScanCoordinator::scannableBots();
     if ($bots->isEmpty()) {
@@ -1501,9 +1704,13 @@ Artisan::command('bots:scan {--bot_id=} {--active-only=1} {--scan-shard=}', func
             if ($bot->type === 'openrouter_llm_analyst') {
                 continue;
             }
-            $workers = \App\Support\ImpulseLvl1minConfig::is((string) $bot->type)
-                ? \App\Support\ImpulseLvl1minConfig::scanWorkers(is_array($bot->config) ? $bot->config : [])
-                : 1;
+            // Impulse LVL / Engulfing: параллельные шарды как у #47; остальные — один процесс.
+            $botCfg = is_array($bot->config) ? $bot->config : [];
+            $workers = match (true) {
+                \App\Support\ImpulseLvl1minConfig::is((string) $bot->type) => \App\Support\ImpulseLvl1minConfig::scanWorkers($botCfg),
+                \App\Support\EngulfingLiquidityConfig::is((string) $bot->type) => \App\Support\EngulfingLiquidityConfig::scanWorkers($botCfg),
+                default => 1,
+            };
             if ($isShard) {
                 $r = $engine->scanBot($bot, [
                     'shard_index' => $shard['index'],
@@ -1518,12 +1725,19 @@ Artisan::command('bots:scan {--bot_id=} {--active-only=1} {--scan-shard=}', func
             $summary['signals'] += (int) $r['signals'];
             $summary['trades'] += (int) $r['trades'];
             $this->line(sprintf(
-                '[bot:%d] processed=%d signals=%d trades=%d',
+                '[bot:%d] processed=%d signals=%d trades=%d cache_hits=%d db_loads=%d promoted=%d wall_ms=%d',
                 $bot->id,
                 $r['processed'],
                 $r['signals'],
-                $r['trades']
+                $r['trades'],
+                (int) ($r['cache_hits'] ?? 0),
+                (int) ($r['db_loads'] ?? 0),
+                (int) ($r['promoted'] ?? 0),
+                (int) ($r['wall_ms'] ?? 0),
             ));
+            if (isset($r['warm_ms']) && (int) $r['warm_ms'] > 0) {
+                $this->line(sprintf('[bot:%d] warm_ms=%d', $bot->id, (int) $r['warm_ms']));
+            }
         }
 
         $this->info(sprintf(

@@ -4,13 +4,15 @@ namespace App\Services\Bots\Strategies;
 
 use App\Services\Indicators\EngulfingDetector;
 use App\Support\BinaryExpiry;
+use App\Support\EngulfingLiquidityConfig;
 use App\Support\OtcGapFilter;
 
 /**
  * Rule-based бот «Поглощение (engulfing)» — 3-шаговая цепочка автора.
  *
- * Вход только на close 3-й свечи (контр-поглощение), не на первом engulf.
- * Опционально: фильтр OTC-гэпов (стрим kAyG3wJDPBU).
+ * Вход только на close контр-поглощения, не на первом engulf.
+ * v3: уровень FH/FL, окно реакции, skip «уход» и пробой+закреп (стримы Ihj/Vun).
+ * Опционально: фильтр OTC-гэпов.
  */
 class EngulfingLiquidityStrategy implements BotStrategyInterface
 {
@@ -22,8 +24,9 @@ class EngulfingLiquidityStrategy implements BotStrategyInterface
     {
         /** @var array<string,mixed> $cfg */
         $cfg = is_array($context['config'] ?? null) ? $context['config'] : [];
-        $allowClassic = (bool) ($cfg['eng_allow_classic'] ?? true);
-        $allowSameColor = (bool) ($cfg['eng_allow_same_color'] ?? true);
+        $detectorOpts = EngulfingLiquidityConfig::detectorOptions($cfg);
+        $allowClassic = (bool) $detectorOpts['allow_classic'];
+        $allowSameColor = (bool) $detectorOpts['allow_same_color'];
 
         if (count($closedCandles) < 4 || (! $allowClassic && ! $allowSameColor)) {
             return null;
@@ -34,10 +37,7 @@ class EngulfingLiquidityStrategy implements BotStrategyInterface
         }
 
         $detector = $this->detector ?? new EngulfingDetector;
-        $entries = $detector->detect($closedCandles, [
-            'allow_classic' => $allowClassic,
-            'allow_same_color' => $allowSameColor,
-        ]);
+        $entries = $detector->detect($closedCandles, $detectorOpts);
         $lastIndex = count($closedCandles) - 1;
         $lastCandle = $closedCandles[$lastIndex];
 
@@ -73,6 +73,7 @@ class EngulfingLiquidityStrategy implements BotStrategyInterface
         $kindRu = $engulfKind === 'same_color' ? 'same-color' : 'классическое';
         $gapStats = OtcGapFilter::measure($closedCandles, $cfg, 'eng');
 
+        $reactionGap = (int) ($entry['reaction_gap_bars'] ?? 1);
         $features = [
             'setup' => 'engulf_'.$side,
             'entry_mode' => 'counter_engulf',
@@ -85,11 +86,20 @@ class EngulfingLiquidityStrategy implements BotStrategyInterface
             'step1_bar_index' => (int) ($entry['step1_bar_index'] ?? 0),
             'step2_bar_index' => (int) ($entry['step2_bar_index'] ?? 0),
             'step3_bar_index' => (int) ($entry['step3_bar_index'] ?? 0),
+            'reaction_gap_bars' => $reactionGap,
             'payout' => $payout,
             'partial_present' => $partialCandle !== null,
+            'eng_require_level' => EngulfingLiquidityConfig::flag($cfg, 'eng_require_level', true),
             'eng_gap_filter_enabled' => (bool) ($cfg['eng_gap_filter_enabled'] ?? false),
             'skip_martingale_if_session_green' => (bool) ($cfg['eng_skip_martingale_if_session_green'] ?? false),
         ];
+        // Ближайший FH/FL — для линии на Telegram PNG («сработает ли отбой»).
+        if (isset($entry['level_price']) && (float) $entry['level_price'] > 0) {
+            $features['level_price'] = (float) $entry['level_price'];
+            $features['level_type'] = (string) ($entry['level_type'] ?? '');
+            $features['level_time'] = (int) ($entry['level_time'] ?? 0);
+            $features['level_dist_pct'] = (float) ($entry['level_dist_pct'] ?? 0);
+        }
         if ($gapStats !== null) {
             $features['gap_ratio'] = $gapStats['gap_ratio'];
             $features['gap_bars'] = $gapStats['bars'];
@@ -101,20 +111,21 @@ class EngulfingLiquidityStrategy implements BotStrategyInterface
             'expiry_sec' => $expirySec,
             'reasons_short' => [
                 sprintf('3-шаговое поглощение (%s): engulf → реакция → контр-поглощение.', $kindRu),
-                sprintf('Вход на close 3-й свечи → %s.', $directionRu),
+                sprintf('Вход на close контр-поглощения → %s (реакция через %d бар.).', $directionRu, $reactionGap),
                 sprintf('Закрытая свеча: O=%.8f, C=%.8f.', (float) $candle['open'], (float) $candle['close']),
             ],
             'analysis_text' => sprintf(
-                'engulfing_liquidity: %s; side=%s; expiry=%ds; step1=%d step2=%d step3=%d',
+                'engulfing_liquidity_v3: %s; side=%s; expiry=%ds; gap=%d; step1=%d step2=%d step3=%d',
                 $engulfKind,
                 $side,
                 $expirySec,
+                $reactionGap,
                 (int) ($entry['step1_time'] ?? 0),
                 (int) ($entry['step2_time'] ?? 0),
                 (int) ($entry['step3_time'] ?? 0),
             ),
             'features' => $features,
-            'decision_version' => 'engulfing_liquidity_v2',
+            'decision_version' => EngulfingLiquidityConfig::VERSION,
         ];
     }
 }

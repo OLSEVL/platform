@@ -91,6 +91,20 @@ class BotScanCoordinatorTest extends TestCase
         $this->assertSame(5, BotScanCoordinator::scanIntervalSecForBot($bot));
     }
 
+    public function test_default_scan_interval_for_engulfing_is_five_seconds(): void
+    {
+        $bot = new \App\Models\Bot;
+        $bot->forceFill([
+            'type' => \App\Support\EngulfingLiquidityConfig::BOT_TYPE,
+            'config' => [],
+        ]);
+
+        $this->assertSame(5, BotScanCoordinator::scanIntervalSecForBot($bot));
+        $this->assertSame(5, BotScanCoordinator::defaultScanIntervalSecForType(
+            \App\Support\EngulfingLiquidityConfig::BOT_TYPE
+        ));
+    }
+
     public function test_missing_config_key_means_m1_interval(): void
     {
         $bot = new \App\Models\Bot;
@@ -113,6 +127,8 @@ class BotScanCoordinatorTest extends TestCase
         $this->assertFalse(BotScanCoordinator::isDueToSpawn($bot, 1_700_000_030));
         $this->assertTrue(BotScanCoordinator::isDueToSpawn($bot, 1_700_000_060));
         $this->assertSame(1_700_000_060, BotScanCoordinator::nextDueUnix($bot, 1_700_000_030));
+        // Уже due: nextDue = now (не «следующая граница часов»).
+        $this->assertSame(1_700_000_090, BotScanCoordinator::nextDueUnix($bot, 1_700_000_090));
 
         \App\Support\BotScanProgress::forgetLastStarted(9902);
     }

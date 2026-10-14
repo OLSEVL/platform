@@ -315,7 +315,9 @@ class TelegramChartImageRenderer
             }
             $price = (float) $lvl['price'];
             $y = $this->priceToY($price, $priceMin, $priceMax, $plotY0, $candleH);
-            $lineColor = $this->levelColor($img, (string) ($lvl['timeframe'] ?? ''));
+            $lineColor = trim((string) ($lvl['color'] ?? '')) !== ''
+                ? $this->colorFromHex($img, (string) $lvl['color'], 148, 163, 184)
+                : $this->levelColor($img, (string) ($lvl['timeframe'] ?? ''));
             $style = strtolower((string) ($lvl['style'] ?? 'solid'));
             if ($style === 'dashed') {
                 for ($x = $plotX0; $x < $width - $marginRight; $x += 8) {
@@ -759,6 +761,7 @@ class TelegramChartImageRenderer
 
         return match ($tf) {
             'H1' => imagecolorallocate($img, 168, 85, 247),
+            'M30' => imagecolorallocate($img, 192, 132, 252),
             'M15' => imagecolorallocate($img, 59, 130, 246),
             'M5' => imagecolorallocate($img, 34, 197, 94),
             'M1' => imagecolorallocate($img, 245, 158, 11),

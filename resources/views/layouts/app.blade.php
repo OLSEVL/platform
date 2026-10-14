@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="csrf-token" content="{{ csrf_token() }}">
     <title>@yield('title', 'Платформа')</title>
+    @include('partials.favicon')
     @include('partials.platform-timezone')
     {{-- Собранный Tailwind (Vite), без runtime CDN-компилятора — быстрее FCP и меньше JS на каждой странице. --}}
     @vite(['resources/css/app.css'])

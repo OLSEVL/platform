@@ -87,8 +87,8 @@ final class OpenRouterChartLevelsParser
 Причина: одно короткое предложение
 
 Правила:
-- CALL: бычий импульс + касание поддержки (support / touching_zones side CALL).
-- PUT: медвежий импульс + касание сопротивления (resistance / touching_zones side PUT).
+- Сторона входа задана в impulse_lvl_summary.entry_side_mode и rule_reminder (bounce = отбой, continuation = по импульсу).
+- Следуй live_setups.side и rule_reminder.call/put; не переворачивай сторону сам.
 - Нет импульса, нет касания LVL, пробитая зона или конфликт ТФ → NONE.
 - Вероятность успеха: целое 0–100. При NONE обычно ≤50%.
 - Пиши только по-русски (кроме CALL/PUT/NONE). Без chart_levels.
@@ -280,9 +280,9 @@ live_setups — подсказка детектора 47, не обязател�
 - expiry_focus_sec: 60
 - user_question — вопрос трейдера (может быть null)
 
-Правила стратегии (как бот 47):
+Правила стратегии (как бот 47; сторону бери из impulse_lvl_summary):
 1) Импульс: тело (или live-фитиль) сильно больше trim-mean × множитель профиля, либо MAX-ratio к истории.
-2) LVL обязателен: цена eval-свечи касается непробитой зоны того же направления (CALL — support снизу, PUT — resistance сверху).
+2) LVL: цена касается непробитой зоны. bounce — против импульса; continuation — по импульсу. Точные CALL/PUT — в rule_reminder и live_setups.side.
 3) ТФ зон: M1 body_to_wick, M5/M15/M30 wick_tip. Старший ТФ важнее при близких timestamps.
 4) Экспирация 60 секунд. При сомнении, флэте или конфликте MTF — NONE.
 
@@ -560,7 +560,7 @@ TXT
 Дополнительно для Impulse LVL:
 - В levels/zones копируй цены из impulse_lvl_summary.active_zones (label вида «M15 сопротивление · price» / «M5 зона · low–high»).
 - timeframe: H1 | M30 | M15 | M5 | M1.
-- entry.price — close или край касаемой зоны; side только CALL или PUT.
+- entry.price — close или край касаемой зоны; side только CALL или PUT (как live_setups / rule_reminder, bounce или continuation).
 - Не рисуй уровни, которых нет в snapshot.
 TXT;
     }

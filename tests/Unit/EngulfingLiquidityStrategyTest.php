@@ -84,6 +84,56 @@ class EngulfingLiquidityStrategyTest extends TestCase
         $this->assertStringContainsString('CALL', $joined);
     }
 
+    /** Реакция через 2 бара (окно 3) — вход на close контр-поглощения. */
+    public function test_enters_when_reaction_within_window(): void
+    {
+        $strategy = new EngulfingLiquidityStrategy;
+        // t=3 step1 CALL; t=4 продолжение (зелёная); t=5 реакция; t=6 контр.
+        $candles = [
+            $this->candle(1, 10.0, 10.1, 9.9, 10.0),
+            $this->candle(2, 10.0, 10.05, 9.85, 9.90),
+            $this->candle(3, 9.90, 10.20, 9.80, 10.15), // step1
+            $this->candle(4, 10.15, 10.28, 10.10, 10.25), // ещё зелёная (не реакция)
+            $this->candle(5, 10.25, 10.28, 10.05, 10.08), // red reaction
+            $this->candle(6, 10.08, 10.35, 10.00, 10.30), // green counter → CALL
+        ];
+
+        $decision = $strategy->analyze($candles, null, [
+            'config' => [
+                'eng_reaction_max_bars' => 3,
+                'eng_skip_if_left' => false,
+                'expiry_sec' => 60,
+            ],
+        ]);
+
+        $this->assertIsArray($decision);
+        $this->assertSame('CALL', $decision['side']);
+        $this->assertSame(2, $decision['features']['reaction_gap_bars']);
+    }
+
+    /** Два бара «ухода» без реакции → skip (стрим: «сразу вышли»). */
+    public function test_skips_when_left_without_reaction(): void
+    {
+        $strategy = new EngulfingLiquidityStrategy;
+        $candles = [
+            $this->candle(1, 10.0, 10.1, 9.9, 10.0),
+            $this->candle(2, 10.0, 10.05, 9.85, 9.90),
+            $this->candle(3, 9.90, 10.20, 9.80, 10.15), // step1 CALL
+            $this->candle(4, 10.15, 10.30, 10.10, 10.28), // continuation 1
+            $this->candle(5, 10.28, 10.40, 10.20, 10.35), // continuation 2 → left
+            $this->candle(6, 10.35, 10.38, 10.10, 10.12), // late red (не должна спасти)
+            $this->candle(7, 10.12, 10.45, 10.05, 10.40), // counter
+        ];
+
+        $this->assertNull($strategy->analyze($candles, null, [
+            'config' => [
+                'eng_reaction_max_bars' => 4,
+                'eng_skip_if_left' => true,
+                'expiry_sec' => 60,
+            ],
+        ]));
+    }
+
     /** @return array{time:int,open:float,high:float,low:float,close:float,volume:float} */
     private function candle(int $time, float $open, float $high, float $low, float $close): array
     {

@@ -1,18 +1,36 @@
-{{-- Impulse LVL 1min: профили trim-mean + MAX + LVL M1–M30. --}}
+{{-- Impulse LVL 1min / S15: профили trim-mean + MAX + LVL. --}}
 @php
+    use App\Support\BotInstrumentMarketScope;
     use App\Support\ImpulseLvl1minConfig;
     use App\Support\SettingsFieldHints;
-    $defs = ImpulseLvl1minConfig::defaultConfig();
+    $impulseBotType = (string) ($bot->type ?? ImpulseLvl1minConfig::BOT_TYPE);
+    $isImpulseS15 = ImpulseLvl1minConfig::isS15($impulseBotType);
+    $defs = ImpulseLvl1minConfig::defaultConfig($impulseBotType);
     $profiles = old('profiles', $cfg['profiles'] ?? $defs['profiles']);
     if (! is_array($profiles) || $profiles === []) {
         $profiles = $defs['profiles'];
     }
     $scanIntervalSec = (int) old('scan_interval_sec', $cfg['scan_interval_sec'] ?? $defs['scan_interval_sec']);
     $scanWorkers = (int) old('scan_workers', $cfg['scan_workers'] ?? $defs['scan_workers']);
-    $hint = static fn (string $field): string => SettingsFieldHints::bot($field, ImpulseLvl1minConfig::BOT_TYPE);
+    $impulseMarketScope = BotInstrumentMarketScope::normalize(
+        old('market_scope', $cfg['market_scope'] ?? $defs['market_scope'] ?? BotInstrumentMarketScope::ALL)
+    );
+    $hint = static fn (string $field): string => SettingsFieldHints::bot($field, $impulseBotType);
 @endphp
 <div class="space-y-5 border-t border-zinc-800 pt-4" id="impulse-lvl-1min-settings">
     <div class="space-y-3 rounded-lg border border-zinc-700/80 bg-zinc-900/40 p-4 text-sm text-zinc-400">
+        @if ($isImpulseS15)
+            <p>
+                <strong class="text-zinc-200">Impulse LVL S15</strong> — тот же алгоритм, что Impulse LVL 1min, на закрытых свечах S15 (15 с, dashboard 4015).
+                Бот 47 на M1 не меняется.
+            </p>
+            <ol class="list-decimal space-y-1.5 pl-5 text-[12px] leading-relaxed text-zinc-400">
+                <li>Среднее тело = trim из последних 100 <em>закрытых</em> S15 (формирующийся бар в среднее не входит).</li>
+                <li>MAX и профили — как у 1min. Paper — одна сделка. Экспирация по умолчанию 15 с.</li>
+                <li>LVL: S15 тело↔фитиль; M1/M5/M15 из БД (wick_tip на старших). Redis current_candle = S5, его нельзя считать S15.</li>
+                <li>Сторона входа — продолжение или отбой, как у 1min. Live-фитиль по умолчанию выкл.</li>
+            </ol>
+        @else
         <p>
             <strong class="text-zinc-200">Impulse LVL 1min</strong> — порт <code class="text-zinc-300">docs_need_release/1min</code>:
             импульс к trimmed mean или MAX-ratio, плюс касание swing-зоны LVL.
@@ -22,8 +40,9 @@
             <li>MAX и каждый профиль на одном баре — отдельные алерты (как 1min). Paper — одна сделка, без пачки.</li>
             <li>MAX: самая длинная одноцветная серия vs исторический максимум (1→110%, 2→130%, иначе 120%).</li>
             <li>LVL: high/low импульса в зоне свинга. M1 тело↔фитиль; M5/M15/M30 — wick_tip. Live: текущий M5/M15/M30 собирается из M1 (как 1min). Старший ТФ побеждает дубли.</li>
-            <li>Зелёный → CALL, красный → PUT. Доджи рвут серию. После закрытия M1 ещё раз гоняем её как prev. Открытая paper не режет алерты.</li>
+            <li>Сторона входа по умолчанию — продолжение импульса (зелёный → CALL, красный → PUT). В поле ниже можно включить отбой. Доджи рвут серию. После закрытия M1 ещё раз гоняем её как prev. Открытая paper не режет алерты.</li>
         </ol>
+        @endif
     </div>
 
     <p class="text-xs font-semibold uppercase tracking-wide text-zinc-500">Общие параметры</p>
@@ -48,8 +67,18 @@
             </select>
             @include('partials.field-hint', ['text' => $hint('scan_workers')])
         </div>
+        <div class="sm:col-span-2 flex items-start gap-2 rounded border border-zinc-800 bg-zinc-950/40 px-3 py-2">
+            <input type="hidden" name="continuous_scan" value="0">
+            <input type="checkbox" name="continuous_scan" id="impulse_lvl_continuous_scan" value="1"
+                class="mt-0.5 rounded border-zinc-600 bg-zinc-900 text-emerald-500 focus:ring-emerald-500/40"
+                @checked((bool) old('continuous_scan', $cfg['continuous_scan'] ?? $defs['continuous_scan'] ?? true))>
+            <label for="impulse_lvl_continuous_scan" class="text-xs leading-snug text-zinc-300">
+                <span class="font-medium text-zinc-200">Live daemon (updateBotM1)</span> —
+                poll всех пар каждые N сек + фоновые воркеры. Выкл. = batch <code class="text-zinc-500">bots:scan</code>.
+            </label>
+        </div>
         <div class="space-y-1">
-            <label for="count" class="block text-xs font-medium text-zinc-400">Глубина истории M1 (count)</label>
+            <label for="count" class="block text-xs font-medium text-zinc-400">Глубина истории {{ $isImpulseS15 ? 'S15' : 'M1' }} (count)</label>
             <input type="number" name="count" id="count" min="110" max="5000" required
                 value="{{ old('count', $cfg['count'] ?? $defs['count']) }}"
                 class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
@@ -77,6 +106,16 @@
             @include('partials.field-hint', ['text' => $hint('min_payout')])
         </div>
         <div class="space-y-1">
+            <label for="impulse_lvl_market_scope" class="block text-xs font-medium text-zinc-400">Рынок пар</label>
+            <select name="market_scope" id="impulse_lvl_market_scope" required
+                class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                @foreach (BotInstrumentMarketScope::labels() as $scopeValue => $scopeLabel)
+                    <option value="{{ $scopeValue }}" @selected($impulseMarketScope === $scopeValue)>{{ $scopeLabel }}</option>
+                @endforeach
+            </select>
+            @include('partials.field-hint', ['text' => $hint('market_scope')])
+        </div>
+        <div class="space-y-1">
             <label for="stale_after_sec" class="block text-xs font-medium text-zinc-400">Свежесть live-свечи (сек)</label>
             <input type="number" name="stale_after_sec" id="stale_after_sec" min="5" max="600" required
                 value="{{ old('stale_after_sec', $cfg['stale_after_sec'] ?? $defs['stale_after_sec']) }}"
@@ -89,7 +128,7 @@
                 class="mt-0.5 rounded border-zinc-600 bg-zinc-800 text-blue-500"
                 @checked(old('keep_stale_forming_m1', $cfg['keep_stale_forming_m1'] ?? true))>
             <span>
-                <span class="font-medium text-zinc-200">Держать формирующуюся M1</span>
+                <span class="font-medium text-zinc-200">Держать формирующуюся {{ $isImpulseS15 ? 'S15' : 'M1' }}</span>
                 <span class="mt-0.5 block text-[11px] font-normal text-zinc-500">{{ $hint('keep_stale_forming_m1') }}</span>
             </span>
         </label>
@@ -131,6 +170,15 @@
                 class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
             @include('partials.field-hint', ['text' => $hint('m15_take')])
         </div>
+        @if ($isImpulseS15)
+        <div class="space-y-1">
+            <label for="m1_take" class="block text-xs font-medium text-zinc-400">Баров M1 для LVL</label>
+            <input type="number" name="m1_take" id="m1_take" min="40" max="400" required
+                value="{{ old('m1_take', $cfg['m1_take'] ?? $defs['m1_take'] ?? 120) }}"
+                class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+            @include('partials.field-hint', ['text' => $hint('m1_take')])
+        </div>
+        @else
         <div class="space-y-1">
             <label for="m30_take" class="block text-xs font-medium text-zinc-400">Баров M30 для LVL</label>
             <input type="number" name="m30_take" id="m30_take" min="10" max="200" required
@@ -138,9 +186,20 @@
                 class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
             @include('partials.field-hint', ['text' => $hint('m30_take')])
         </div>
+        @endif
     </div>
 
     <div class="flex flex-wrap gap-6">
+        <div class="w-full space-y-1 sm:w-auto sm:min-w-[18rem]">
+            <label for="impulse_lvl_entry_side_mode" class="block text-xs font-medium text-zinc-400">Сторона входа</label>
+            @php $entrySideMode = old('entry_side_mode', $cfg['entry_side_mode'] ?? $defs['entry_side_mode'] ?? ImpulseLvl1minConfig::ENTRY_SIDE_CONTINUATION); @endphp
+            <select name="entry_side_mode" id="impulse_lvl_entry_side_mode" required
+                class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                <option value="continuation" @selected($entrySideMode === ImpulseLvl1minConfig::ENTRY_SIDE_CONTINUATION)>Продолжение импульса</option>
+                <option value="bounce" @selected($entrySideMode === ImpulseLvl1minConfig::ENTRY_SIDE_BOUNCE)>Отбой от LVL (против импульса)</option>
+            </select>
+            @include('partials.field-hint', ['text' => $hint('entry_side_mode')])
+        </div>
         <label class="flex items-start gap-2 text-sm text-zinc-300">
             <input type="hidden" name="lvl_filter" value="0">
             <input type="checkbox" name="lvl_filter" id="lvl_filter" value="1"

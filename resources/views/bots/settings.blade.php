@@ -3,6 +3,10 @@
 @section('content')
 @php
     $cfg = is_array($bot->config) ? $bot->config : [];
+    // Engulfing Liquidity (#45): подтянуть live-инфру v3 и фильтры со стримов, не затирая сохранённое.
+    if ($bot->type === \App\Support\EngulfingLiquidityConfig::BOT_TYPE) {
+        $cfg = array_replace(\App\Support\EngulfingLiquidityConfig::defaultConfig(), $cfg);
+    }
     // price_action_dgt задаётся на отдельной странице индикатора (indicator_settings), в общий JSON не включаем.
     $configForJsonField = $cfg;
     unset($configForJsonField['price_action_dgt']);
@@ -1166,109 +1170,7 @@
                 @include('bots._strategy-telegram-settings', ['bot' => $bot, 'cfg' => $cfg])
             </div>
         @elseif ($bot->type === 'engulfing_liquidity')
-            <div class="space-y-5 border-t border-zinc-800 pt-4">
-                <div class="space-y-2 text-sm text-zinc-400">
-                    <p>
-                        <strong class="text-zinc-300">Поглощение (3 шага)</strong> — rule-based бот по стратегии автора:
-                        engulf → реакция → контр-pogloщение. Вход на close 3-й свечи, не на первом engulf.
-                    </p>
-                    <p class="text-[11px] text-zinc-500">
-                        Оверлей ENGULF 1/2/3 —
-                        <a href="{{ route('bots.indicators.engulfing-liquidity.edit', $bot) }}" class="text-blue-400 hover:underline">Engulfing Liquidity</a>.
-                        Экспирация по умолчанию — 60 секунд; для OTC S15 допустимо 15с.
-                    </p>
-                </div>
-                <div class="grid gap-4 sm:grid-cols-2">
-                    <div class="space-y-1">
-                        <label for="timeframe" class="block text-xs font-medium text-zinc-400">Таймфрейм</label>
-                        @php $engTf = (int) old('timeframe', $cfg['timeframe'] ?? 1); @endphp
-                        <select name="timeframe" id="timeframe" required
-                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-                            <option value="{{ \App\Services\CandleService::TF_S15 }}" @selected($engTf === \App\Services\CandleService::TF_S15)>S15 — OTC</option>
-                            <option value="1" @selected($engTf === 1)>M1</option>
-                            <option value="{{ \App\Services\CandleService::TF_S30 }}" @selected($engTf === \App\Services\CandleService::TF_S30)>S30</option>
-                            <option value="{{ \App\Services\CandleService::TF_S5 }}" @selected($engTf === \App\Services\CandleService::TF_S5)>S5</option>
-                        </select>
-                        @error('timeframe')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
-                    </div>
-                    <div class="space-y-1">
-                        <label for="count" class="block text-xs font-medium text-zinc-400">Свечей (count)</label>
-                        <input type="number" name="count" id="count" min="30" max="5000" required value="{{ old('count', $cfg['count'] ?? 500) }}"
-                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-                    </div>
-                    <div class="space-y-1">
-                        <label for="expiry_sec" class="block text-xs font-medium text-zinc-400">Экспирация (сек)</label>
-                        <input type="number" name="expiry_sec" id="expiry_sec" min="15" max="900" required value="{{ old('expiry_sec', $cfg['expiry_sec'] ?? 60) }}"
-                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-                    </div>
-                    <div class="space-y-1">
-                        <label for="min_payout" class="block text-xs font-medium text-zinc-400">Мин. payout (%)</label>
-                        <input type="number" name="min_payout" id="min_payout" min="0" max="100" step="0.1" required value="{{ old('min_payout', $cfg['min_payout'] ?? 80) }}"
-                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-                    </div>
-                    <div class="space-y-1">
-                        <label for="min_confidence" class="block text-xs font-medium text-zinc-400">Мин. confidence (0–1)</label>
-                        <input type="number" name="min_confidence" id="min_confidence" min="0" max="1" step="0.01" required value="{{ old('min_confidence', $cfg['min_confidence'] ?? 0) }}"
-                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-                    </div>
-                    <div class="space-y-1">
-                        <label for="stale_after_sec" class="block text-xs font-medium text-zinc-400">Свежесть текущей свечи (сек)</label>
-                        <input type="number" name="stale_after_sec" id="stale_after_sec" min="5" max="600" required value="{{ old('stale_after_sec', $cfg['stale_after_sec'] ?? 60) }}"
-                            class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-                    </div>
-                </div>
-                <div class="space-y-3 rounded border border-zinc-800 bg-zinc-900/40 p-4">
-                    <p class="text-xs font-semibold uppercase tracking-wide text-zinc-500">Типы поглощения (шаг 1)</p>
-                    <input type="hidden" name="eng_allow_classic" value="0">
-                    <label class="flex items-start gap-2">
-                        <input type="checkbox" name="eng_allow_classic" value="1" @checked(old('eng_allow_classic', $cfg['eng_allow_classic'] ?? true))
-                            class="mt-0.5 rounded border-zinc-600 bg-zinc-900 text-blue-500">
-                        <span><span class="text-sm font-medium text-zinc-200">Классическое engulf</span><span class="mt-0.5 block text-[11px] text-zinc-500">Противоположный цвет: зелёная съела красную (CALL) или красная зелёную (PUT).</span></span>
-                    </label>
-                    <input type="hidden" name="eng_allow_same_color" value="0">
-                    <label class="flex items-start gap-2">
-                        <input type="checkbox" name="eng_allow_same_color" value="1" @checked(old('eng_allow_same_color', $cfg['eng_allow_same_color'] ?? true))
-                            class="mt-0.5 rounded border-zinc-600 bg-zinc-900 text-blue-500">
-                        <span><span class="text-sm font-medium text-zinc-200">Same-color engulf</span><span class="mt-0.5 block text-[11px] text-zinc-500">Тот же цвет + снятие high/low соседа (как на стриме AED/CNY).</span></span>
-                    </label>
-                </div>
-                <div class="space-y-3 rounded border border-zinc-800 bg-zinc-900/40 p-4">
-                    <p class="text-xs font-semibold uppercase tracking-wide text-zinc-500">OTC-гэпы и сессия</p>
-                    <input type="hidden" name="eng_gap_filter_enabled" value="0">
-                    <label class="flex items-start gap-2">
-                        <input type="checkbox" name="eng_gap_filter_enabled" value="1" @checked(old('eng_gap_filter_enabled', $cfg['eng_gap_filter_enabled'] ?? false))
-                            class="mt-0.5 rounded border-zinc-600 bg-zinc-900 text-blue-500">
-                        <span><span class="text-sm font-medium text-zinc-200">Пропускать пару с частыми гэпами</span><span class="mt-0.5 block text-[11px] text-zinc-500">Тот же фильтр, что у Sweep/Raid: dirty OTC → нет сигналов.</span></span>
-                    </label>
-                    <div class="grid gap-4 sm:grid-cols-3">
-                        <div class="space-y-1">
-                            <label for="eng_gap_lookback" class="block text-xs font-medium text-zinc-400">Окно баров</label>
-                            <input type="number" name="eng_gap_lookback" id="eng_gap_lookback" min="5" max="500" required
-                                value="{{ old('eng_gap_lookback', $cfg['eng_gap_lookback'] ?? 40) }}"
-                                class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-                        </div>
-                        <div class="space-y-1">
-                            <label for="eng_gap_max_ratio" class="block text-xs font-medium text-zinc-400">Макс. доля гэпов</label>
-                            <input type="number" name="eng_gap_max_ratio" id="eng_gap_max_ratio" min="0.05" max="1" step="0.01" required
-                                value="{{ old('eng_gap_max_ratio', $cfg['eng_gap_max_ratio'] ?? 0.35) }}"
-                                class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-                        </div>
-                        <div class="space-y-1">
-                            <label for="eng_gap_size_mult" class="block text-xs font-medium text-zinc-400">Порог гэпа × range</label>
-                            <input type="number" name="eng_gap_size_mult" id="eng_gap_size_mult" min="0.1" max="10" step="0.1" required
-                                value="{{ old('eng_gap_size_mult', $cfg['eng_gap_size_mult'] ?? 0.5) }}"
-                                class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-                        </div>
-                    </div>
-                    <input type="hidden" name="eng_skip_martingale_if_session_green" value="0">
-                    <label class="flex items-start gap-2">
-                        <input type="checkbox" name="eng_skip_martingale_if_session_green" value="1" @checked(old('eng_skip_martingale_if_session_green', $cfg['eng_skip_martingale_if_session_green'] ?? false))
-                            class="mt-0.5 rounded border-zinc-600 bg-zinc-900 text-blue-500">
-                        <span><span class="text-sm font-medium text-zinc-200">Не поднимать мартингейл, если день уже в плюсе</span><span class="mt-0.5 block text-[11px] text-zinc-500">После LOSS ступень не растёт при зелёном paper-дне бота.</span></span>
-                    </label>
-                </div>
-                @include('bots._strategy-telegram-settings', ['bot' => $bot, 'cfg' => $cfg])
-            </div>
+            @include('bots._engulfing-liquidity-settings', ['bot' => $bot, 'cfg' => $cfg])
         @elseif ($bot->type === 'smc_flow')
             <div class="space-y-5 border-t border-zinc-800 pt-4">
                 <div class="space-y-2 text-sm text-zinc-400">
@@ -1679,6 +1581,16 @@
                             @checked(old('lvl_filter', ($cfg['lvl_filter'] ?? true) ? '1' : '') === '1' || (old('lvl_filter') === null && ($cfg['lvl_filter'] ?? true)))>
                         <span class="text-xs text-zinc-300">LVL обязателен для live_setups детектора (зоны на график всё равно считаются)</span>
                     </label>
+                    <div class="space-y-1">
+                        <label for="analyst_impulse_entry_side_mode" class="block text-xs font-medium text-zinc-400">Сторона подсказки детектора (live_setups)</label>
+                        @php $analystEntrySide = old('entry_side_mode', $cfg['entry_side_mode'] ?? \App\Support\ImpulseLvl1minConfig::ENTRY_SIDE_CONTINUATION); @endphp
+                        <select name="entry_side_mode" id="analyst_impulse_entry_side_mode"
+                            class="w-full max-w-md rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                            <option value="continuation" @selected($analystEntrySide === 'continuation')>Продолжение импульса</option>
+                            <option value="bounce" @selected($analystEntrySide === 'bounce')>Отбой от LVL (против импульса)</option>
+                        </select>
+                        <p class="text-[11px] text-zinc-500">LLM всё равно решает сам; меняется только сторона в live_setups и стрелки на PNG.</p>
+                    </div>
                 </div>
                 @endif
 

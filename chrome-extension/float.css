@@ -1,0 +1,262 @@
+/* Плавающее окно сигналов */
+:root {
+  --bg: #0f1419;
+  --panel: #1a222c;
+  --text: #e7ecf1;
+  --muted: #8b9aab;
+  --call: #22c55e;
+  --put: #f43f5e;
+  --line: #2a3542;
+  --hover: #243040;
+  --accent: #38bdf8;
+}
+
+* { box-sizing: border-box; }
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 12px/1.35 system-ui, -apple-system, Segoe UI, sans-serif;
+  min-height: 100%;
+  user-select: none;
+}
+
+.hdr {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  -webkit-app-region: drag;
+}
+.hdr-title { font-weight: 650; font-size: 13px; flex: 1; }
+.status { font-size: 11px; -webkit-app-region: no-drag; }
+.status-on { color: var(--call); }
+.status-off { color: var(--muted); }
+.status-err { color: var(--put); }
+.icon-btn {
+  -webkit-app-region: no-drag;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 14px;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+.icon-btn:hover { color: var(--text); background: var(--hover); }
+
+/* Текстовая кнопка «Боты» в одной строке с иконками */
+.hdr-text-btn {
+  -webkit-app-region: no-drag;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font: 600 11px/1 system-ui, -apple-system, Segoe UI, sans-serif;
+  padding: 4px 8px;
+  border-radius: 5px;
+  white-space: nowrap;
+}
+.hdr-text-btn:hover,
+.hdr-text-btn.open {
+  color: var(--text);
+  border-color: var(--accent);
+  background: var(--hover);
+}
+.hdr-text-btn.active {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.settings {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+  background: #121820;
+}
+.settings.hidden { display: none; }
+.settings label {
+  display: block;
+  font-size: 11px;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+.settings-row { display: flex; gap: 8px; }
+.settings input {
+  flex: 1;
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--text);
+  font: inherit;
+}
+.settings button {
+  padding: 8px 12px;
+  border: 0;
+  border-radius: 6px;
+  background: var(--accent);
+  color: #042033;
+  font-weight: 650;
+  cursor: pointer;
+}
+.settings-hint {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 11px;
+}
+.settings-hint code {
+  background: var(--panel);
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+.mode-label {
+  display: block;
+  font-size: 11px;
+  color: var(--muted);
+  margin: 10px 0 6px;
+}
+.mode-row {
+  display: flex;
+  gap: 14px;
+  font-size: 12px;
+  color: var(--text);
+}
+.mode-row label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  margin: 0;
+}
+/* Корзина в топбаре — подсветка как «опасное» действие */
+#btn-clear:hover { color: var(--put); }
+
+/* Звук: компактный блок в настройках окна */
+.sound-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.sound-toggle {
+  display: flex !important;
+  align-items: center;
+  gap: 8px;
+  margin: 0 !important;
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+}
+.sound-file-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.sound-file-row input[type="file"] {
+  flex: 1;
+  min-width: 0;
+  font-size: 11px;
+  color: var(--muted);
+}
+.mini-btn {
+  padding: 5px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+  white-space: nowrap;
+}
+.mini-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+.status-text {
+  margin: 0;
+  padding: 6px 12px;
+  color: var(--muted);
+  font-size: 11px;
+  border-bottom: 1px solid var(--line);
+}
+
+/* Выпадающая панель фильтра ботов под топбаром */
+.bots-panel {
+  padding: 8px 12px 10px;
+  border-bottom: 1px solid var(--line);
+  background: #121820;
+  -webkit-app-region: no-drag;
+}
+.bots-panel.hidden { display: none; }
+.bots-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.bot-filter {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 160px;
+  overflow: auto;
+}
+.bot-filter label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 12px;
+  color: var(--text);
+  cursor: pointer;
+}
+.bot-filter label input {
+  margin: 0;
+  accent-color: var(--accent);
+}
+.bot-filter .empty-bots {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.table-wrap { overflow: auto; max-height: calc(100vh - 90px); }
+table {
+  width: 100%;
+  border-collapse: collapse;
+}
+th, td {
+  padding: 7px 8px;
+  text-align: left;
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+}
+th {
+  color: var(--muted);
+  font-weight: 600;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  position: sticky;
+  top: 0;
+  background: var(--bg);
+}
+tbody tr { cursor: pointer; }
+tbody tr:hover { background: var(--hover); }
+tbody tr.empty { cursor: default; }
+tbody tr.empty:hover { background: transparent; }
+tbody tr.empty td { color: var(--muted); text-align: center; padding: 24px 8px; }
+
+.side-call { color: var(--call); font-weight: 700; }
+.side-put { color: var(--put); font-weight: 700; }
+.pair { font-weight: 600; }
+.bot { color: var(--text); max-width: 90px; overflow: hidden; text-overflow: ellipsis; }
+.time { color: var(--text); font-variant-numeric: tabular-nums; }
