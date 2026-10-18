@@ -123,6 +123,9 @@ final class ImpulseCandleSeriesCache
         $keepForming = ImpulseLvl1minConfig::flag($config, 'keep_stale_forming_m1', true);
         $mtfTake = ImpulseLvl1minConfig::mtfTakeMap($config);
         $minPayout = (float) ($config['min_payout'] ?? 80);
+        $timeframe = ImpulseLvl1minConfig::dashboardTimeframeId(
+            ImpulseLvl1minConfig::barPeriodSec($config)
+        );
 
         $instruments = $this->eligibleInstruments($config, $minPayout);
         if ($instruments === []) {
@@ -139,7 +142,7 @@ final class ImpulseCandleSeriesCache
                 $mtfTake,
                 true,
                 $staleAfterSec,
-                1,
+                $timeframe,
                 $keepForming,
             );
             if (! empty($packed['cache_hit'])) {
@@ -171,7 +174,7 @@ final class ImpulseCandleSeriesCache
                 $mtfTake,
                 true,
                 $staleAfterSec,
-                1,
+                $timeframe,
                 $keepForming,
             );
             $warmed++;

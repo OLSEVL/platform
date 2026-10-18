@@ -5,8 +5,6 @@ namespace App\Http\Controllers\Auth;
 use App\Http\Controllers\Controller;
 use App\Models\User;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Auth;
-use Illuminate\Support\Facades\Hash;
 use Illuminate\Validation\Rules\Password;
 
 class RegisterController extends Controller
@@ -23,13 +21,17 @@ class RegisterController extends Controller
            'email' => 'required|string|email|max:255|unique:users',
            'password' => ['required', 'confirmed', Password::defaults()],
        ]);
-       $user = User::create([
+       User::create([
            'name' => $request->name,
            'email' => $request->email,
-           'password' => Hash::make($request->password),
+           // Cast User::password = hashed сам хеширует; Hash::make здесь дал бы двойной хеш и вход после активации не работал бы.
+           'password' => $request->password,
+           // Явно false: колонка default false, в кабинет не пускаем до активации.
+           'active' => false,
        ]);
-       Auth::login($user);
-       $request->session()->regenerate();
-        return redirect('/');
+
+       return redirect()
+           ->route('login')
+           ->with('status', 'Регистрация принята. Вход откроется после активации учётной записи.');
     }
 }

@@ -73,6 +73,11 @@ class OpenRouterLlmAnalystStrategy implements BotStrategyInterface
         $impulseLvlSummary = $analystImpulseEnabled && is_array($context['impulse_lvl_summary'] ?? null)
             ? $context['impulse_lvl_summary']
             : [];
+        $analystAuthorFlowEnabled = (bool) ($context['analyst_author_flow_enabled'] ?? false);
+        /** @var array<string,mixed> $authorFlowSummary */
+        $authorFlowSummary = $analystAuthorFlowEnabled && is_array($context['author_flow_summary'] ?? null)
+            ? $context['author_flow_summary']
+            : [];
 
         // Гибрид: полный decision source-бота (runtime), без изменения сохранённого system_prompt.
         /** @var array<string,mixed>|null $hybridSourceSignal */
@@ -130,6 +135,16 @@ class OpenRouterLlmAnalystStrategy implements BotStrategyInterface
             $payload['impulse_lvl_summary'] = $impulseLvlSummary;
             $payload['expiry_focus_sec'] = 60;
         }
+        if ($analystAuthorFlowEnabled) {
+            // Основной ТФ Author Flow — S15; дублируем ряд под явным ключом для промпта.
+            $payload['closed_candles_s15'] = $closedForLlm;
+            $payload['partial_candle_s15'] = $partialCandle;
+            if ($shortPromptMode) {
+                unset($authorFlowSummary['rule_reminder']);
+            }
+            $payload['author_flow_summary'] = $authorFlowSummary;
+            $payload['expiry_focus_sec'] = (int) ($authorFlowSummary['expiry_focus_sec'] ?? 15);
+        }
         if ($hybridSourceSignal !== null) {
             // Краткий режим: без analysis_text/features source — иначе модель копирует простыню лидера.
             $payload['hybrid_source_signal'] = $shortPromptMode
@@ -145,6 +160,10 @@ class OpenRouterLlmAnalystStrategy implements BotStrategyInterface
                 $userContent = "Гибридный разбор: сначала независимый вердикт по рынку (без hybrid_source_signal), "
                     ."затем сверка с source и итоговая Рекомендация. Ответ — связный текст на русском.\n";
             }
+        } elseif ($analystAuthorFlowEnabled && $shortPromptMode) {
+            $userContent = "Выбери CALL/PUT из author_flow_summary.candidates или NONE (горизонт — следующая S15). Вероятность успеха.\n";
+        } elseif ($analystAuthorFlowEnabled) {
+            $userContent = "Разбери пул author_flow_summary.candidates с учётом structure/liquidity. Side только из pool или NONE. Горизонт — следующая S15. Ответ — связный текст на русском.\n";
         } elseif ($analystEngulfEnabled && $shortPromptMode) {
             $userContent = "Подтверди или отклони candidates из engulfing_summary: CALL/PUT/NONE и вероятность успеха.\n";
         } elseif ($analystEngulfEnabled) {
@@ -273,6 +292,10 @@ class OpenRouterLlmAnalystStrategy implements BotStrategyInterface
                 'analyst_engulf_flow_enabled' => $analystEngulfEnabled,
                 'engulf_candidates_count' => $analystEngulfEnabled
                     ? count($engulfingSummary['candidates'] ?? [])
+                    : 0,
+                'analyst_author_flow_enabled' => $analystAuthorFlowEnabled,
+                'author_flow_candidates_count' => $analystAuthorFlowEnabled
+                    ? count($authorFlowSummary['candidates'] ?? [])
                     : 0,
                 'mtf_enabled' => $mtfEnabled,
                 'm1_bars_sent' => count($m1),

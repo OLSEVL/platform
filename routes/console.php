@@ -19,6 +19,7 @@ use App\Services\Telegram\TelegramAlertService;
 use App\Services\Telegram\TelegramAnalystHandler;
 use App\Services\Telegram\TelegramAnalystProcessManager;
 use App\Services\WebshareProxyRefreshService;
+use App\Support\AuthorFlowConfig;
 use App\Support\BotScanCoordinator;
 use App\Support\ChartAnalystBotTypes;
 use App\Support\ImpulseLvl1minConfig;
@@ -860,6 +861,36 @@ Artisan::command('bots:engulfing-liquidity-bootstrap', function () {
     $this->info("Engulfing Liquidity: #{$bot->id} {$bot->name} ({$bot->type}) — проверьте ENGULF 1/2/3 на графике.");
 })->purpose('Создать выключенного M1-бота Engulfing Liquidity (60 сек, 3 шага)');
 
+Artisan::command('bots:author-flow-bootstrap', function () {
+    $user = \App\Models\User::query()->orderBy('id')->first();
+    if (! $user) {
+        $this->error('Нет пользователей. Сначала зарегистрируйте пользователя.');
+
+        return;
+    }
+
+    $defaults = \App\Support\AuthorFlowConfig::defaultConfig();
+    $bot = Bot::query()->firstOrCreate(
+        ['user_id' => $user->id, 'name' => 'Author Flow', 'type' => \App\Support\AuthorFlowConfig::BOT_TYPE],
+        [
+            'is_active' => false,
+            'config' => array_merge($defaults, [
+                'telegram_enabled' => false,
+                'telegram_notify_result' => true,
+                'telegram_notify_on' => 'signal_trade',
+                'telegram_send_chart' => true,
+                'telegram_chat_id' => '',
+                'telegram_auto_subscribe' => true,
+                'telegram_analyst_llm_enabled' => false,
+                'telegram_analyst_bot_id' => null,
+                'telegram_analyst_llm_question' => \App\Services\Telegram\StrongLevelTelegramLlmButton::DEFAULT_LLM_QUESTION,
+            ]),
+        ],
+    );
+
+    $this->info("Author Flow: #{$bot->id} {$bot->name} ({$bot->type}) — inactive; continuous_scan S15 OTC.");
+})->purpose('Создать выключенного бота Author Flow (оркестратор D/E/sweep/raid_pb)');
+
 Artisan::command('bots:strong-trend-telegram-bootstrap', function () {
     $user = User::query()->orderBy('id')->first();
     if (! $user) {
@@ -1379,6 +1410,71 @@ Artisan::command('bots:openrouter-analyst-impulse-lvl-bootstrap', function () {
     return 0;
 })->purpose('Создать бота OpenRouter Chart Analyst Impulse LVL (уровни 47 + LLM решает CALL/PUT/NONE)');
 
+Artisan::command('bots:openrouter-analyst-author-flow-bootstrap', function () {
+    $user = User::query()->orderBy('id')->first();
+    if (! $user) {
+        $this->error('Нет пользователей. Сначала зарегистрируйте пользователя.');
+
+        return 1;
+    }
+
+    $name = ChartAnalystBotTypes::label(ChartAnalystBotTypes::AUTHOR_FLOW);
+    $afDefaults = AuthorFlowConfig::defaultConfig();
+    unset(
+        $afDefaults['telegram_enabled'],
+        $afDefaults['telegram_bot_token'],
+        $afDefaults['telegram_chat_id'],
+        $afDefaults['scan_interval_sec'],
+        $afDefaults['scan_workers'],
+        $afDefaults['continuous_scan'],
+    );
+    $config = array_merge($afDefaults, [
+        'count' => 200,
+        's5_take' => 240,
+        'timeframe' => \App\Services\CandleService::TF_S15,
+        'expiry_sec' => 15,
+        'model' => 'openai/gpt-5.2',
+        'temperature' => 0.2,
+        'max_tokens' => 900,
+        'max_tokens_short' => OpenRouterLlmConfig::ANALYST_SHORT_MAX_TOKENS_DEFAULT,
+        'openrouter_timeout_sec' => 180,
+        'mtf_enabled' => true,
+        'm5_take' => 96,
+        'm15_take' => 64,
+        'h1_take' => 24,
+        'analyst_smc_flow_enabled' => false,
+        'analyst_srl_flow_enabled' => false,
+        'analyst_engulf_flow_enabled' => false,
+        'analyst_impulse_lvl_flow_enabled' => false,
+        'analyst_author_flow_enabled' => true,
+        'analyst_prompt_mode' => OpenRouterLlmConfig::ANALYST_PROMPT_MODE_FULL,
+        'system_prompt' => OpenRouterChartLevelsParser::defaultAnalystSystemPromptWithAuthorFlow(),
+        'system_prompt_short' => OpenRouterChartLevelsParser::defaultAnalystSystemPromptShortWithAuthorFlow(),
+        'version' => 'openrouter_llm_analyst_author_flow_v1',
+    ]);
+
+    $bot = Bot::query()->firstOrCreate(
+        [
+            'user_id' => $user->id,
+            'name' => $name,
+            'type' => ChartAnalystBotTypes::AUTHOR_FLOW,
+        ],
+        [
+            'is_active' => false,
+            'config' => $config,
+        ]
+    );
+
+    $existing = is_array($bot->config) ? $bot->config : [];
+    $bot->config = array_merge($existing, $config);
+    $bot->save();
+
+    $this->info("Author Flow Chart Analyst: #{$bot->id} {$bot->name} ({$bot->type})");
+    $this->line('Средний вариант: pool + context, side ∈ pool|NONE, горизонт следующая S15. Проверьте OPENROUTER_API_KEY.');
+
+    return 0;
+})->purpose('Создать бота OpenRouter Chart Analyst Author Flow (пул D/E/sweep/raid_pb + LLM, следующая S15)');
+
 Artisan::command('bots:openrouter-list-models', function (OpenRouterClient $client) {
     // Проверка доступности каталога OpenRouter (тот же запрос, что на странице настроек LLM-бота).
     try {
@@ -1419,8 +1515,9 @@ Artisan::command('bots:impulse-live {--bot_id=} {--once : Один poll+analyze 
         return 1;
     }
     if (! \App\Support\ImpulseLvl1minConfig::is((string) $bot->type)
-        && ! \App\Support\EngulfingLiquidityConfig::is((string) $bot->type)) {
-        $this->error("Бот #{$botId} не impulse_lvl_1min / impulse_lvl_s15 / engulfing_liquidity (type={$bot->type}).");
+        && ! \App\Support\EngulfingLiquidityConfig::is((string) $bot->type)
+        && ! \App\Support\AuthorFlowConfig::is((string) $bot->type)) {
+        $this->error("Бот #{$botId} не impulse_lvl_1min / impulse_lvl_s15 / engulfing_liquidity / author_flow (type={$bot->type}).");
 
         return 1;
     }
@@ -1430,9 +1527,11 @@ Artisan::command('bots:impulse-live {--bot_id=} {--once : Один poll+analyze 
         return 0;
     }
     $cfg = is_array($bot->config) ? $bot->config : [];
-    $continuous = \App\Support\EngulfingLiquidityConfig::is((string) $bot->type)
-        ? \App\Support\EngulfingLiquidityConfig::continuousScanEnabled($cfg)
-        : \App\Support\ImpulseLvl1minConfig::continuousScanEnabled($cfg);
+    $continuous = match (true) {
+        \App\Support\AuthorFlowConfig::is((string) $bot->type) => \App\Support\AuthorFlowConfig::continuousScanEnabled($cfg),
+        \App\Support\EngulfingLiquidityConfig::is((string) $bot->type) => \App\Support\EngulfingLiquidityConfig::continuousScanEnabled($cfg),
+        default => \App\Support\ImpulseLvl1minConfig::continuousScanEnabled($cfg),
+    };
     if (! $continuous) {
         $this->warn('continuous_scan=off — используйте обычный bots:scan. Выход.');
 
@@ -1976,7 +2075,7 @@ Artisan::command('telegram:strong-level-poll {--bot= : ID бота с Telegram (
     if ($botId <= 0) {
         $supportedTypes = array_values(array_unique(array_merge(
             \App\Services\Telegram\StrongLevelTelegramLlmButton::SUPPORTED_BOT_TYPES,
-            ['strong_trend_telegram', 'strong_trend_demarker', \App\Support\DemarkerDualFastConfig::BOT_TYPE, 'sweep_raid_liquidity', 'engulfing_liquidity'],
+            ['strong_trend_telegram', 'strong_trend_demarker', \App\Support\DemarkerDualFastConfig::BOT_TYPE, 'sweep_raid_liquidity', 'engulfing_liquidity', \App\Support\AuthorFlowConfig::BOT_TYPE],
         )));
         $bot = Bot::query()->whereIn('type', $supportedTypes)->where('is_active', true)->orderBy('id')->first();
         if ($bot === null) {

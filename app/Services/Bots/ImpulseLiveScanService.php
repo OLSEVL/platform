@@ -9,8 +9,10 @@ use App\Support\ArtisanProcessFinder;
 use App\Support\BotInstrumentMarketScope;
 use App\Support\BotScanCoordinator;
 use App\Support\BotScanProgress;
+use App\Support\AuthorFlowConfig;
 use App\Support\EngulfingLiquidityConfig;
 use App\Support\ImpulseLvl1minConfig;
+use App\Support\ImpulseLvl1minLiveWick;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Redis;
@@ -49,9 +51,10 @@ final class ImpulseLiveScanService
     public function runParent(Bot $bot, callable $shouldStop, ?callable $onTick = null): array
     {
         if (! ImpulseLvl1minConfig::is((string) $bot->type)
-            && ! EngulfingLiquidityConfig::is((string) $bot->type)) {
+            && ! EngulfingLiquidityConfig::is((string) $bot->type)
+            && ! AuthorFlowConfig::is((string) $bot->type)) {
             throw new \InvalidArgumentException(
-                'ImpulseLiveScanService только для impulse_lvl_1min / impulse_lvl_s15 или engulfing_liquidity'
+                'ImpulseLiveScanService только для impulse_lvl_1min / impulse_lvl_s15 / engulfing_liquidity / author_flow'
             );
         }
 
@@ -67,9 +70,7 @@ final class ImpulseLiveScanService
         $botId = (int) $bot->id;
         $config = is_array($bot->config) ? $bot->config : [];
         $interval = max(1, BotScanCoordinator::scanIntervalSecForBot($bot));
-        $workers = EngulfingLiquidityConfig::is((string) $bot->type)
-            ? EngulfingLiquidityConfig::scanWorkers($config)
-            : ImpulseLvl1minConfig::scanWorkers($config);
+        $workers = $this->liveScanWorkers($bot, $config);
         $eligibleRefreshSec = 30;
         $settleEverySec = 15;
         $heartbeatEverySec = 10;
@@ -126,9 +127,7 @@ final class ImpulseLiveScanService
                     if ($n < 0) {
                         break;
                     }
-                    $workers = EngulfingLiquidityConfig::is((string) $bot->type)
-                        ? EngulfingLiquidityConfig::scanWorkers($config)
-                        : ImpulseLvl1minConfig::scanWorkers($config);
+                    $workers = $this->liveScanWorkers($bot, $config);
                     $interval = max(1, (int) ($config['scan_interval_sec'] ?? $interval));
                 }
 
@@ -399,33 +398,48 @@ final class ImpulseLiveScanService
     ): array {
         $count = max(110, (int) ($config['count'] ?? 400));
         $staleAfterSec = max(5, (int) ($config['stale_after_sec'] ?? 30));
-        $isEngulf = EngulfingLiquidityConfig::is((string) $bot->type);
-        $keepForming = $isEngulf
+        // Engulfing / AuthorFlow: dashboard TF из config.timeframe (без MTF Impulse).
+        $isDashboardTfBot = EngulfingLiquidityConfig::is((string) $bot->type)
+            || AuthorFlowConfig::is((string) $bot->type);
+        $keepForming = $isDashboardTfBot
             ? true
             : ImpulseLvl1minConfig::flag($config, 'keep_stale_forming_m1', true);
-        $mtfTake = $isEngulf
+        $mtfTake = $isDashboardTfBot
             ? []
             : ImpulseLvl1minConfig::mtfTakeMap($config);
         // dashboard TF: 1=M1, 4005=S5, 4015=S15, 4030=S30 — НЕ путать ID с секундами бара.
-        $timeframe = $isEngulf
-            ? max(1, (int) ($config['timeframe'] ?? 1))
+        $defaultTf = AuthorFlowConfig::is((string) $bot->type)
+            ? CandleService::TF_S15
+            : 1;
+        $timeframe = $isDashboardTfBot
+            ? max(1, (int) ($config['timeframe'] ?? $defaultTf))
             : ImpulseLvl1minConfig::dashboardTimeframeId(
                 ImpulseLvl1minConfig::barPeriodSec($config)
             );
         $periodSec = CandleService::periodSecondsForDashboardTf($timeframe) ?? 60;
 
-        // Redis-partial (ingest) — формирующийся S5. Его нельзя считать баром S15/S30:
-        // иначе в ряд стратегии попадут бары чужого периода.
-        $partialForCache = ($timeframe !== 1) ? null : $partial;
+        // M1: Redis current_candle как раньше. S15: сложить S5 в текущий 15с бакет (RAM).
+        // Сырой S5 в ряд S15 не кладём — иначе live-фитиль и LVL смотрят чужой период.
+        $partialForCache = null;
+        $loaderIncludePartial = $timeframe === 1;
+        if ($timeframe === 1) {
+            $partialForCache = $partial;
+        } elseif (! $isDashboardTfBot && ($timeframe === CandleService::TF_S15 || $timeframe === CandleService::TF_S30) && is_array($partial)) {
+            $partialForCache = ImpulseLvl1minLiveWick::foldS5IntoBarPeriod(
+                $partial,
+                $periodSec,
+                $this->seriesCache->lastPartial($instrument),
+            );
+        }
 
         $packed = $this->seriesCache->resolve(
             $instrument,
-            function () use ($instrument, $count, $mtfTake, $staleAfterSec, $keepForming, $timeframe) {
+            function () use ($instrument, $count, $mtfTake, $staleAfterSec, $keepForming, $timeframe, $loaderIncludePartial) {
                 return $this->botData->seriesWithMtf(
                     $instrument,
                     $count,
                     $mtfTake,
-                    true,
+                    $loaderIncludePartial,
                     $staleAfterSec,
                     $timeframe,
                     $keepForming,
@@ -477,17 +491,35 @@ final class ImpulseLiveScanService
     }
 
     /**
-     * Live daemon включён для Impulse LVL или Engulfing Liquidity.
+     * Live daemon включён для Impulse LVL / Engulfing / AuthorFlow.
      *
      * @param  array<string, mixed>  $config
      */
     private function continuousScanEnabled(Bot $bot, array $config): bool
     {
+        if (AuthorFlowConfig::is((string) $bot->type)) {
+            return AuthorFlowConfig::continuousScanEnabled($config);
+        }
         if (EngulfingLiquidityConfig::is((string) $bot->type)) {
             return EngulfingLiquidityConfig::continuousScanEnabled($config);
         }
 
         return ImpulseLvl1minConfig::continuousScanEnabled($config);
+    }
+
+    /**
+     * @param  array<string, mixed>  $config
+     */
+    private function liveScanWorkers(Bot $bot, array $config): int
+    {
+        if (AuthorFlowConfig::is((string) $bot->type)) {
+            return AuthorFlowConfig::scanWorkers($config);
+        }
+        if (EngulfingLiquidityConfig::is((string) $bot->type)) {
+            return EngulfingLiquidityConfig::scanWorkers($config);
+        }
+
+        return ImpulseLvl1minConfig::scanWorkers($config);
     }
 
     /**

@@ -24,7 +24,8 @@
     $isSrlAnalystBot = \App\Support\ChartAnalystBotTypes::isSrl($bot->type);
     $isEngulfAnalystBot = \App\Support\ChartAnalystBotTypes::isEngulf($bot->type);
     $isImpulseAnalystBot = \App\Support\ChartAnalystBotTypes::isImpulse($bot->type);
-    $analystSmcFlowEnabled = $isChartAnalystBot && ! $isSrlAnalystBot && ! $isEngulfAnalystBot && ! $isImpulseAnalystBot
+    $isAuthorFlowAnalystBot = \App\Support\ChartAnalystBotTypes::isAuthorFlow($bot->type);
+    $analystSmcFlowEnabled = $isChartAnalystBot && ! $isSrlAnalystBot && ! $isEngulfAnalystBot && ! $isImpulseAnalystBot && ! $isAuthorFlowAnalystBot
         && \App\Support\OpenRouterLlmConfig::analystSmcFlowEnabled($cfg);
     $analystSrlFlowEnabled = $isSrlAnalystBot;
     $analystEngulfFlowEnabled = $isEngulfAnalystBot;
@@ -1171,6 +1172,8 @@
             </div>
         @elseif ($bot->type === 'engulfing_liquidity')
             @include('bots._engulfing-liquidity-settings', ['bot' => $bot, 'cfg' => $cfg])
+        @elseif ($bot->type === \App\Support\AuthorFlowConfig::BOT_TYPE)
+            @include('bots._author-flow-settings', ['bot' => $bot, 'cfg' => $cfg])
         @elseif ($bot->type === 'smc_flow')
             <div class="space-y-5 border-t border-zinc-800 pt-4">
                 <div class="space-y-2 text-sm text-zinc-400">
@@ -1439,8 +1442,10 @@
             <div class="space-y-5 border-t border-zinc-800 pt-4">
                 <div class="space-y-2 text-sm text-zinc-400">
                     <p>
-                        <strong class="text-zinc-300">{{ $isImpulseAnalystBot ? 'Chart Analyst Impulse LVL' : ($isEngulfAnalystBot ? 'Chart Analyst Engulfing' : ($isSrlAnalystBot ? 'Chart Analyst Sweep/Raid' : 'Chart Analyst')) }}</strong> —
-                    @if($isImpulseAnalystBot)
+                        <strong class="text-zinc-300">{{ $isAuthorFlowAnalystBot ? 'Chart Analyst Author Flow' : ($isImpulseAnalystBot ? 'Chart Analyst Impulse LVL' : ($isEngulfAnalystBot ? 'Chart Analyst Engulfing' : ($isSrlAnalystBot ? 'Chart Analyst Sweep/Raid' : 'Chart Analyst'))) }}</strong> —
+                    @if($isAuthorFlowAnalystBot)
+                            средний вариант: пул D/E/sweep/raid_pb + structure/liquidity, LLM выбирает side только из pool или NONE. Горизонт — следующая свеча S15 (~15 с).
+                    @elseif($isImpulseAnalystBot)
                             ручной и Telegram-анализ: уровни Impulse LVL (бот 47) на графике и в промпте, LLM сам даёт CALL/PUT/NONE. Экспирация ориентир 60 с.
                     @elseif($isEngulfAnalystBot)
                             ручной и Telegram-анализ: детектор находит ENGULF 1/2/3, LLM только подтверждает или отклоняет. Экспирация ориентир 60 с.
@@ -1555,6 +1560,58 @@
                         <span class="text-xs text-zinc-300">Не поднимать мартингейл при зелёном дне бота</span>
                     </label>
                     @error('eng_allow_classic')<p class="text-xs text-rose-400">{{ $message }}</p>@enderror
+                </div>
+                @endif
+
+                @if ($isAuthorFlowAnalystBot)
+                @php
+                    $afDefs = \App\Support\AuthorFlowConfig::defaultConfig();
+                    $afFlag = static fn (string $key) => (bool) old($key, $cfg[$key] ?? $afDefs[$key] ?? false);
+                @endphp
+                <p class="text-xs font-semibold uppercase tracking-wide text-zinc-500">Author Flow — пул для LLM (S15)</p>
+                <div class="space-y-2">
+                    <div class="space-y-1">
+                        <label for="expiry_sec" class="block text-xs font-medium text-zinc-400">Горизонт / экспирация (сек)</label>
+                        <input type="number" name="expiry_sec" id="expiry_sec" min="5" max="900"
+                            value="{{ old('expiry_sec', $cfg['expiry_sec'] ?? 15) }}"
+                            class="w-full max-w-xs rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        <p class="text-[11px] text-zinc-500">По умолчанию 15 = следующая свеча S15.</p>
+                    </div>
+                    @foreach ([
+                        'af_enable_breakout_e' => 'E · пробой + закреп',
+                        'af_enable_engulf_d' => 'D · 3-шаговое поглощение',
+                        'af_enable_raid_pb' => 'Raid → первая откатная',
+                        'af_enable_sweep' => 'Sweep fade',
+                        'af_enable_skop_score' => 'Skop boost score',
+                        'af_require_structure' => 'Учитывать alignment со структурой (в контексте LLM)',
+                        'af_allow_range_entries' => 'Разрешать range в контексте',
+                        'af_require_open_liquidity' => 'Флаг open liquidity в контексте',
+                        'af_eng_allow_classic' => 'D: classic engulf',
+                        'af_eng_allow_same_color' => 'D: same-color engulf',
+                        'af_eng_require_level' => 'D: требовать уровень FH/FL',
+                        'af_gap_filter_enabled' => 'Фильтр OTC-гэпов',
+                    ] as $afKey => $afLabel)
+                        <input type="hidden" name="{{ $afKey }}" value="0">
+                        <label class="flex items-start gap-2">
+                            <input type="checkbox" name="{{ $afKey }}" value="1" class="mt-0.5 rounded border-zinc-600 bg-zinc-800 text-blue-500"
+                                @checked($afFlag($afKey))>
+                            <span class="text-xs text-zinc-300">{{ $afLabel }}</span>
+                        </label>
+                    @endforeach
+                    <div class="grid gap-3 sm:grid-cols-2 pt-1">
+                        <div class="space-y-1">
+                            <label class="block text-[11px] text-zinc-400">Pivot структуры</label>
+                            <input type="number" name="af_structure_pivot" min="1" max="10"
+                                value="{{ old('af_structure_pivot', $cfg['af_structure_pivot'] ?? $afDefs['af_structure_pivot']) }}"
+                                class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        </div>
+                        <div class="space-y-1">
+                            <label class="block text-[11px] text-zinc-400">Lookback ликвидности</label>
+                            <input type="number" name="af_liquidity_lookback" min="10" max="200"
+                                value="{{ old('af_liquidity_lookback', $cfg['af_liquidity_lookback'] ?? $afDefs['af_liquidity_lookback']) }}"
+                                class="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
+                        </div>
+                    </div>
                 </div>
                 @endif
 
@@ -2048,7 +2105,9 @@
                     <p id="telegram-action-status-analyst" class="text-xs text-zinc-500"></p>
                     <p class="text-[11px] text-zinc-500">
                         Напишите боту
-                        @if($isImpulseAnalystBot)
+                        @if($isAuthorFlowAnalystBot)
+                        (токен этого Chart Analyst Author Flow)
+                        @elseif($isImpulseAnalystBot)
                         (токен этого Chart Analyst Impulse LVL)
                         @elseif($isEngulfAnalystBot)
                         (токен этого Chart Analyst Engulfing)

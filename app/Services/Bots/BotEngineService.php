@@ -27,8 +27,10 @@ use App\Services\Bots\Strategies\StrongLevelStrategy;
 use App\Services\Bots\Strategies\DemarkerDualFastStrategy;
 use App\Services\Bots\Strategies\StrongTrendDemarkerStrategy;
 use App\Services\Bots\Strategies\StrongTrendTelegramStrategy;
+use App\Services\Bots\Strategies\AuthorFlowStrategy;
 use App\Services\Bots\Strategies\EngulfingLiquidityStrategy;
 use App\Services\Bots\Strategies\SweepRaidLiquidityStrategy;
+use App\Support\AuthorFlowConfig;
 use App\Support\DemarkerDualFastConfig;
 use App\Services\Bots\Strategies\ThreeCandlesInRowStrategy;
 use App\Services\Bots\Strategies\EnvelopTrendStrategy;
@@ -60,6 +62,7 @@ use App\Support\LevelBounceBotTypes;
 use App\Support\MaxBotConfig;
 use App\Support\ImpulseLvl1minConfig;
 use App\Support\ImpulseLvlLlmSnapshot;
+use App\Support\AuthorFlowLlmSnapshot;
 use App\Support\EngulfingLlmSnapshot;
 use App\Support\SmcFlowLlmSnapshot;
 use App\Support\SweepRaidLlmSnapshot;
@@ -341,7 +344,7 @@ class BotEngineService
                     $decisionExpirySec = $expirySec;
                     if (in_array($bot->type, ['smc_flow', 'strong_level', 'candle_reversal_confirm'], true) && isset($decision['expiry_sec'])) {
                         $decisionExpirySec = max(120, min(600, (int) $decision['expiry_sec']));
-                    } elseif (in_array($bot->type, ['sweep_raid_liquidity', 'engulfing_liquidity'], true) && isset($decision['expiry_sec'])) {
+                    } elseif (in_array($bot->type, ['sweep_raid_liquidity', 'engulfing_liquidity', AuthorFlowConfig::BOT_TYPE], true) && isset($decision['expiry_sec'])) {
                         // SRL/Engulf: 15–900с (авторский OTC часто 15с); не поднимаем обратно до 60.
                         $decisionExpirySec = \App\Support\BinaryExpiry::clamp((int) $decision['expiry_sec']);
                     }
@@ -768,7 +771,7 @@ class BotEngineService
                     // Telegram только после настоящей paper-сделки: виртуальные проверки
                     // Strong Trend + DeMarker не должны создавать торговые уведомления.
                     $telegramResult = null;
-                    if (in_array($bot->type, ['strong_trend_demarker', DemarkerDualFastConfig::BOT_TYPE, 'sweep_raid_liquidity', 'engulfing_liquidity', 'smc_flow'], true)) {
+                    if (in_array($bot->type, ['strong_trend_demarker', DemarkerDualFastConfig::BOT_TYPE, 'sweep_raid_liquidity', 'engulfing_liquidity', AuthorFlowConfig::BOT_TYPE, 'smc_flow'], true)) {
                         $telegramResult = app(TelegramAlertService::class)->sendStrategyAlert(
                             $bot,
                             $instrument,
@@ -925,24 +928,29 @@ class BotEngineService
         }
 
         $config = is_array($bot->config) ? $bot->config : [];
-        // Промпты ForConfig различают SMC/SRL по флагу и type — прокидываем type в config.
+        // Промпты ForConfig различают SMC/SRL/AF по флагу и type — прокидываем type в config.
         $config['_bot_type'] = $bot->type;
         $count = \App\Support\OpenRouterLlmConfig::m1BarCount($config);
         $s5Count = \App\Support\OpenRouterLlmConfig::s5BarCount($config);
-        // stale_after_sec не проверяем: передаём очень большой порог «свежести».
-        $series = $this->botDataService->series($instrument, $count, true, 31536000, 1);
-        $closed = $series['closed'];
-        $partial = $series['partial'];
-        // S5 — сырой секундный поток ingest (4005), для тайминга внутри текущей M1.
-        $s5Series = $this->botDataService->s5Series($instrument, $s5Count, true, 31536000);
-        $mtf = $this->openRouterMtfSeries($instrument, $config, true);
         $analystSrlEnabled = ChartAnalystBotTypes::isSrl($bot->type)
             || \App\Support\OpenRouterLlmConfig::analystSrlFlowEnabled($config);
         $analystEngulfEnabled = ChartAnalystBotTypes::isEngulf($bot->type)
             || \App\Support\OpenRouterLlmConfig::analystEngulfFlowEnabled($config);
         $analystImpulseEnabled = ChartAnalystBotTypes::isImpulse($bot->type)
             || \App\Support\OpenRouterLlmConfig::analystImpulseLvlFlowEnabled($config);
+        $analystAuthorFlowEnabled = ChartAnalystBotTypes::isAuthorFlow($bot->type)
+            || \App\Support\OpenRouterLlmConfig::analystAuthorFlowEnabled($config);
+        // Author Flow считает на S15; остальные аналитики — на M1.
+        $primaryTf = $analystAuthorFlowEnabled ? CandleService::TF_S15 : 1;
+        // stale_after_sec не проверяем: передаём очень большой порог «свежести».
+        $series = $this->botDataService->series($instrument, $count, true, 31536000, $primaryTf);
+        $closed = $series['closed'];
+        $partial = $series['partial'];
+        // S5 — сырой секундный поток ingest (4005), для тайминга внутри текущего бара.
+        $s5Series = $this->botDataService->s5Series($instrument, $s5Count, true, 31536000);
+        $mtf = $this->openRouterMtfSeries($instrument, $config, true);
         $analystSmcEnabled = ! $analystSrlEnabled && ! $analystEngulfEnabled && ! $analystImpulseEnabled
+            && ! $analystAuthorFlowEnabled
             && \App\Support\OpenRouterLlmConfig::analystSmcFlowEnabled($config);
         $smcFlowPack = $analystSmcEnabled
             ? $this->buildAnalystSmcFlowPack($bot, $instrument, $count)
@@ -955,6 +963,9 @@ class BotEngineService
             : null;
         $impulsePack = $analystImpulseEnabled
             ? $this->buildAnalystImpulseLvlPack($bot, $instrument, $count, $config)
+            : null;
+        $authorFlowPack = $analystAuthorFlowEnabled
+            ? $this->buildAnalystAuthorFlowPack($closed, $config)
             : null;
 
         $analyzeContext = [
@@ -970,6 +981,7 @@ class BotEngineService
             'analyst_srl_flow_enabled' => $analystSrlEnabled,
             'analyst_engulf_flow_enabled' => $analystEngulfEnabled,
             'analyst_impulse_lvl_flow_enabled' => $analystImpulseEnabled,
+            'analyst_author_flow_enabled' => $analystAuthorFlowEnabled,
         ];
         if ($analystSmcEnabled && is_array($smcFlowPack)) {
             $analyzeContext['smc_flow_summary'] = $smcFlowPack['snapshot'];
@@ -982,6 +994,9 @@ class BotEngineService
         }
         if ($analystImpulseEnabled && is_array($impulsePack)) {
             $analyzeContext['impulse_lvl_summary'] = $impulsePack['snapshot'];
+        }
+        if ($analystAuthorFlowEnabled && is_array($authorFlowPack)) {
+            $analyzeContext['author_flow_summary'] = $authorFlowPack['snapshot'];
         }
         // Гибрид: полный прогноз source-бота уходит в payload LLM (+ секция в system prompt).
         if (is_array($hybridSourceSignal) && $hybridSourceSignal !== []) {
@@ -1018,7 +1033,7 @@ class BotEngineService
             'entry' => null,
         ];
         $chartLevelsOk = (bool) ($decision['chart_levels_ok'] ?? false);
-        // Зоны 47 рисуем даже если модель не вернула chart_levels; уровни LLM дописываются сверху.
+        // Зоны 47 / свинги AF рисуем даже если модель не вернула chart_levels; уровни LLM дописываются сверху.
         if ($analystImpulseEnabled && is_array($impulsePack)) {
             $seed = is_array($impulsePack['chart_levels'] ?? null) ? $impulsePack['chart_levels'] : [
                 'levels' => [],
@@ -1026,6 +1041,17 @@ class BotEngineService
                 'entry' => null,
             ];
             $chartLevels = ImpulseLvlLlmSnapshot::mergeChartLevels($chartLevels, $seed);
+            if (($seed['levels'] ?? []) !== [] || ($seed['zones'] ?? []) !== []) {
+                $chartLevelsOk = true;
+            }
+        }
+        if ($analystAuthorFlowEnabled && is_array($authorFlowPack)) {
+            $seed = is_array($authorFlowPack['chart_levels'] ?? null) ? $authorFlowPack['chart_levels'] : [
+                'levels' => [],
+                'zones' => [],
+                'entry' => null,
+            ];
+            $chartLevels = AuthorFlowLlmSnapshot::mergeChartLevels($chartLevels, $seed);
             if (($seed['levels'] ?? []) !== [] || ($seed['zones'] ?? []) !== []) {
                 $chartLevelsOk = true;
             }
@@ -1048,6 +1074,7 @@ class BotEngineService
             'analyst_srl_flow_enabled' => $analystSrlEnabled,
             'analyst_engulf_flow_enabled' => $analystEngulfEnabled,
             'analyst_impulse_lvl_flow_enabled' => $analystImpulseEnabled,
+            'analyst_author_flow_enabled' => $analystAuthorFlowEnabled,
             'analyst_prompt_mode' => (string) ($features['analyst_prompt_mode'] ?? \App\Support\OpenRouterLlmConfig::analystPromptMode($config)),
             'smc_flow' => $analystSmcEnabled && is_array($smcFlowPack) ? $smcFlowPack['overlay'] : null,
             'smc_flow_modules' => $analystSmcEnabled && is_array($smcFlowPack)
@@ -1059,7 +1086,27 @@ class BotEngineService
             'impulse_lvl_telegram' => $analystImpulseEnabled && is_array($impulsePack)
                 ? ($impulsePack['telegram'] ?? null)
                 : null,
+            'author_flow' => $analystAuthorFlowEnabled && is_array($authorFlowPack) ? $authorFlowPack['overlay'] : null,
             'hybrid_mode' => is_array($hybridSourceSignal) && $hybridSourceSignal !== [],
+        ];
+    }
+
+    /**
+     * Author Flow для аналитика: пул кандидатов на S15 + контекст структуры/ликвидности.
+     *
+     * @param  list<array{time:int,open:float,high:float,low:float,close:float,volume?:float}>  $s15Closed
+     * @param  array<string, mixed>  $config
+     * @return array{snapshot:array<string,mixed>,overlay:array<string,mixed>,chart_levels:array<string,mixed>,bar_count:int}
+     */
+    private function buildAnalystAuthorFlowPack(array $s15Closed, array $config): array
+    {
+        $pack = AuthorFlowLlmSnapshot::pack($s15Closed, $config);
+
+        return [
+            'snapshot' => $pack['snapshot'],
+            'overlay' => $pack['overlay'],
+            'chart_levels' => $pack['chart_levels'],
+            'bar_count' => count($s15Closed),
         ];
     }
 
@@ -1639,12 +1686,14 @@ class BotEngineService
             // Длинная история нужна для подтверждённых фракталов и активных уровней ликвидности.
             'sweep_raid_liquidity' => 500,
             'engulfing_liquidity' => 500,
+            AuthorFlowConfig::BOT_TYPE => 500,
             'strong_level' => 500,
             'candle_reversal_confirm' => 500,
             'openrouter_llm_analyst' => 120,
             ChartAnalystBotTypes::SRL => 120,
             ChartAnalystBotTypes::ENGULF => 120,
             ChartAnalystBotTypes::IMPULSE => 120,
+            ChartAnalystBotTypes::AUTHOR_FLOW => 200,
             'strong_trend_telegram' => 120,
             'strong_trend_demarker' => 120,
             DemarkerDualFastConfig::BOT_TYPE => 120,
@@ -1667,6 +1716,7 @@ class BotEngineService
             ChartAnalystBotTypes::SRL => \App\Support\OpenRouterLlmConfig::m1BarCount($config),
             ChartAnalystBotTypes::ENGULF => \App\Support\OpenRouterLlmConfig::m1BarCount($config),
             ChartAnalystBotTypes::IMPULSE => \App\Support\OpenRouterLlmConfig::m1BarCount($config),
+            ChartAnalystBotTypes::AUTHOR_FLOW => \App\Support\OpenRouterLlmConfig::m1BarCount($config),
             default => max(10, min(5000, (int) ($config['count'] ?? $defaultCount))),
         };
         $expirySec = match ($bot->type) {
@@ -1674,6 +1724,7 @@ class BotEngineService
             'smc_flow' => (int) ($config['expiry_sec'] ?? 180),
             'sweep_raid_liquidity' => BinaryExpiry::clamp((int) ($config['expiry_sec'] ?? 60)),
             'engulfing_liquidity' => BinaryExpiry::clamp((int) ($config['expiry_sec'] ?? 60)),
+            AuthorFlowConfig::BOT_TYPE => BinaryExpiry::clamp((int) ($config['expiry_sec'] ?? 15)),
             'strong_trend_telegram' => (int) ($config['expiry_sec'] ?? 60),
             'strong_trend_demarker' => (int) ($config['expiry_sec'] ?? 30),
             DemarkerDualFastConfig::BOT_TYPE => (int) ($config['expiry_sec'] ?? 30),
@@ -1724,6 +1775,7 @@ class BotEngineService
             'smc_flow' => 80,
             'sweep_raid_liquidity' => max(10, (int) ($config['min_closed_bars'] ?? 30)),
             'engulfing_liquidity' => max(4, (int) ($config['min_closed_bars'] ?? 30)),
+            AuthorFlowConfig::BOT_TYPE => max(10, (int) ($config['min_closed_bars'] ?? 30)),
             'strong_level' => max(80, (int) ($config['min_closed_bars'] ?? 200)),
             'strong_trend_telegram' => $trendPatternBars,
             'strong_trend_demarker' => max(
@@ -1788,6 +1840,7 @@ class BotEngineService
             ChartAnalystBotTypes::SRL => 0,
             ChartAnalystBotTypes::ENGULF => 0,
             ChartAnalystBotTypes::IMPULSE => 0,
+            ChartAnalystBotTypes::AUTHOR_FLOW => 0,
             default => 3,
         };
         // Указываем таймфрейм входного потока для стратегии.
@@ -1807,13 +1860,13 @@ class BotEngineService
             )
                 ? (int) ($config['timeframe'] ?? CandleService::TF_S30)
                 : CandleService::TF_S30,
-            'sweep_raid_liquidity', 'engulfing_liquidity' => in_array(
-                (int) ($config['timeframe'] ?? 1),
+            'sweep_raid_liquidity', 'engulfing_liquidity', AuthorFlowConfig::BOT_TYPE => in_array(
+                (int) ($config['timeframe'] ?? ($bot->type === AuthorFlowConfig::BOT_TYPE ? CandleService::TF_S15 : 1)),
                 [CandleService::TF_S5, CandleService::TF_S15, CandleService::TF_S30, 1],
                 true
             )
-                ? (int) ($config['timeframe'] ?? 1)
-                : 1,
+                ? (int) ($config['timeframe'] ?? ($bot->type === AuthorFlowConfig::BOT_TYPE ? CandleService::TF_S15 : 1))
+                : ($bot->type === AuthorFlowConfig::BOT_TYPE ? CandleService::TF_S15 : 1),
             default => 1,
         };
         $dedupeBucketSec = match ($bot->type) {
@@ -1822,7 +1875,7 @@ class BotEngineService
             MaxBotConfig::BOT_TYPE => max(5, min(3600, (int) ($config['dedupe_bucket_sec'] ?? $expirySec))),
             ImpulseLvl1minConfig::BOT_TYPE, ImpulseLvl1minConfig::BOT_TYPE_S15 => max(5, min(3600, (int) ($config['dedupe_bucket_sec'] ?? $expirySec))),
             // Dedupe ≈ expiry: при 15с не держим искусственный floor 60.
-            'smc_flow', 'strong_level', 'openrouter_llm', 'candle_reversal_confirm', 'sweep_raid_liquidity', 'engulfing_liquidity' => max(15, min(900, $expirySec)),
+            'smc_flow', 'strong_level', 'openrouter_llm', 'candle_reversal_confirm', 'sweep_raid_liquidity', 'engulfing_liquidity', AuthorFlowConfig::BOT_TYPE => max(15, min(900, $expirySec)),
             default => LevelBounceBotTypes::isOsEngineBinary($bot->type)
                 ? max(60, min(900, $expirySec))
                 : max(60, min(3600, (int) ($config['dedupe_bucket_sec'] ?? 60))),
@@ -1904,9 +1957,11 @@ class BotEngineService
             ChartAnalystBotTypes::SRL => new OpenRouterLlmAnalystStrategy($this->openRouterClient),
             ChartAnalystBotTypes::ENGULF => new OpenRouterLlmAnalystStrategy($this->openRouterClient),
             ChartAnalystBotTypes::IMPULSE => new OpenRouterLlmAnalystStrategy($this->openRouterClient),
+            ChartAnalystBotTypes::AUTHOR_FLOW => new OpenRouterLlmAnalystStrategy($this->openRouterClient),
             'smc_flow' => new SmcFlowStrategy($this->smcFlowBotSignalAnalyzer),
             'sweep_raid_liquidity' => new SweepRaidLiquidityStrategy,
             'engulfing_liquidity' => new EngulfingLiquidityStrategy,
+            AuthorFlowConfig::BOT_TYPE => new AuthorFlowStrategy,
             'strong_level' => new StrongLevelStrategy,
             'strong_trend_telegram' => new StrongTrendTelegramStrategy,
             'strong_trend_demarker' => new StrongTrendDemarkerStrategy(new DemarkerIndicatorService),

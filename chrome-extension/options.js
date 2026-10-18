@@ -2,6 +2,8 @@
  * Options: сеть (lan/wan) + режим UI + звук. Домен/IP в UI не показываем.
  */
 const soundEnabledEl = document.getElementById('soundEnabled');
+const showReasonLineEl = document.getElementById('showReasonLine');
+const chartMarkersEnabledEl = document.getElementById('chartMarkersEnabled');
 const soundFileEl = document.getElementById('soundFile');
 const soundNameEl = document.getElementById('soundName');
 const msgEl = document.getElementById('msg');
@@ -18,6 +20,8 @@ chrome.storage.sync.get({
   networkMode: 'wan',
   uiMode: DEFAULT_MODE,
   soundEnabled: true,
+  showReasonLine: true,
+  chartMarkersEnabled: true,
 }).then((cfg) => {
   const networkMode = inferNetworkMode(cfg.serverHost, cfg.networkMode);
   const netRadio = document.querySelector(`input[name="networkMode"][value="${networkMode}"]`);
@@ -25,6 +29,10 @@ chrome.storage.sync.get({
     netRadio.checked = true;
   }
   soundEnabledEl.checked = cfg.soundEnabled !== false;
+  showReasonLineEl.checked = cfg.showReasonLine !== false;
+  if (chartMarkersEnabledEl) {
+    chartMarkersEnabledEl.checked = cfg.chartMarkersEnabled !== false;
+  }
   const mode = cfg.uiMode === 'float' ? 'float' : 'sidepanel';
   const radio = document.querySelector(`input[name="uiMode"][value="${mode}"]`);
   if (radio) {
@@ -45,12 +53,19 @@ document.getElementById('save').addEventListener('click', async () => {
   const modeEl = document.querySelector('input[name="uiMode"]:checked');
   const uiMode = modeEl && modeEl.value === 'float' ? 'float' : 'sidepanel';
   const soundEnabled = !!soundEnabledEl.checked;
-  await chrome.storage.sync.set({ networkMode, serverHost, uiMode, soundEnabled });
+  const showReasonLine = !!showReasonLineEl.checked;
+  const chartMarkersEnabled = !!(chartMarkersEnabledEl && chartMarkersEnabledEl.checked);
+  await chrome.storage.sync.set({
+    networkMode,
+    serverHost,
+    uiMode,
+    soundEnabled,
+    showReasonLine,
+    chartMarkersEnabled,
+  });
   await chrome.runtime.sendMessage({ type: 'ext:apply-ui-mode', mode: uiMode }).catch(() => {});
-  // Открытое окно сигналов слушает storage.onChanged и само переподключит WS.
-  msgEl.textContent = networkMode === 'wan'
-    ? 'Сохранено: внешняя сеть. Окно сигналов переподключается…'
-    : 'Сохранено: внутренняя сеть. Окно сигналов переподключается…';
+  // Открытое окно сигналов слушает storage.onChanged и само переподключит WS / перерисует список.
+  msgEl.textContent = 'Сохранено.';
 });
 
 document.getElementById('open').addEventListener('click', async () => {

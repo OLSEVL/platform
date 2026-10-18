@@ -104,6 +104,7 @@ use App\Support\ChartAnalystBotTypes;
 use App\Support\OsEngineWaveABotConfig;
 use App\Support\MaxBotConfig;
 use App\Support\ImpulseLvl1minConfig;
+use App\Support\AuthorFlowConfig;
 use App\Support\EngulfingLiquidityConfig;
 use App\Support\OsEngineWaveBBotConfig;
 use App\Support\SmcFlowWorkingSnapshot;
@@ -1096,7 +1097,7 @@ class BotController extends Controller
             // Текущий объём истории бота по таблицам — для блока «Очистка истории».
             'botCleanupRowCounts' => $dataCleanup->countBotScopedRows($bot->id),
             'openrouterModels' => $openrouterModels,
-            'chartAnalystBots' => in_array($bot->type, array_merge(LevelBounceBotTypes::CARD_AND_TELEGRAM, ['strong_trend_telegram', 'strong_trend_demarker', \App\Support\DemarkerDualFastConfig::BOT_TYPE, 'sweep_raid_liquidity', 'engulfing_liquidity', 'smc_flow']), true)
+            'chartAnalystBots' => in_array($bot->type, array_merge(LevelBounceBotTypes::CARD_AND_TELEGRAM, ['strong_trend_telegram', 'strong_trend_demarker', \App\Support\DemarkerDualFastConfig::BOT_TYPE, 'sweep_raid_liquidity', 'engulfing_liquidity', AuthorFlowConfig::BOT_TYPE, 'smc_flow']), true)
                 ? Bot::query()
                     ->where('user_id', $bot->user_id)
                     ->whereIn('type', ChartAnalystBotTypes::all())
@@ -1764,6 +1765,9 @@ class BotController extends Controller
         } elseif ($bot->type === 'engulfing_liquidity') {
             // 3-шаговое поглощение v3 + live-инфра как у Impulse LVL (#47).
             $config = EngulfingLiquidityConfig::buildFromRequest($request, $bot->config ?? []);
+        } elseif ($bot->type === AuthorFlowConfig::BOT_TYPE) {
+            // Оркестратор D/E/sweep/raid_pb — отдельный бот, #45 не трогаем.
+            $config = AuthorFlowConfig::buildFromRequest($request, $bot->config ?? []);
         } elseif ($bot->type === 'smc_flow') {
             // SMC Flow: UT flip + 3BR confirm + LuxAlgo OB filter; экспирация по умолчанию 3 мин.
             // Telegram — тот же блок, что у Sweep / Raid и Engulfing: алерт, PNG, LLM-кнопка, poll /start.
@@ -2228,6 +2232,22 @@ class BotController extends Controller
                 'eng_gap_size_mult' => ['sometimes', 'numeric', 'min:0.1', 'max:10'],
                 'eng_skip_martingale_if_session_green' => ['sometimes', 'boolean'],
                 'entry_side_mode' => ['sometimes', 'string', Rule::in(\App\Support\ImpulseLvl1minConfig::allowedEntrySideModes())],
+                // Author Flow analyst: сценарии/контекст + горизонт следующей S15.
+                'expiry_sec' => ['sometimes', 'integer', 'min:5', 'max:900'],
+                'af_structure_pivot' => ['sometimes', 'integer', 'min:1', 'max:10'],
+                'af_liquidity_lookback' => ['sometimes', 'integer', 'min:10', 'max:200'],
+                'af_enable_breakout_e' => ['sometimes', 'boolean'],
+                'af_enable_engulf_d' => ['sometimes', 'boolean'],
+                'af_enable_raid_pb' => ['sometimes', 'boolean'],
+                'af_enable_sweep' => ['sometimes', 'boolean'],
+                'af_enable_skop_score' => ['sometimes', 'boolean'],
+                'af_require_structure' => ['sometimes', 'boolean'],
+                'af_allow_range_entries' => ['sometimes', 'boolean'],
+                'af_require_open_liquidity' => ['sometimes', 'boolean'],
+                'af_eng_allow_classic' => ['sometimes', 'boolean'],
+                'af_eng_allow_same_color' => ['sometimes', 'boolean'],
+                'af_eng_require_level' => ['sometimes', 'boolean'],
+                'af_gap_filter_enabled' => ['sometimes', 'boolean'],
             ]);
             if (ChartAnalystBotTypes::isSrl($bot->type)
                 && ! $request->boolean('srl_enter_sweep')
@@ -2316,13 +2336,15 @@ class BotController extends Controller
                 'telegram_analyst_llm_question' => StrongLevelTelegramLlmButton::llmQuestionFromConfig([
                     'telegram_analyst_llm_question' => $extra['telegram_analyst_llm_question'] ?? null,
                 ]),
-                // SRL / Engulf-пакеты: для соответствующих type всегда включены; SMC выключен.
+                // SRL / Engulf / Impulse / Author Flow: для соответствующих type всегда включены; SMC выключен.
                 'analyst_srl_flow_enabled' => ChartAnalystBotTypes::isSrl($bot->type),
                 'analyst_engulf_flow_enabled' => ChartAnalystBotTypes::isEngulf($bot->type),
                 'analyst_impulse_lvl_flow_enabled' => ChartAnalystBotTypes::isImpulse($bot->type),
+                'analyst_author_flow_enabled' => ChartAnalystBotTypes::isAuthorFlow($bot->type),
                 'analyst_smc_flow_enabled' => (ChartAnalystBotTypes::isSrl($bot->type)
                     || ChartAnalystBotTypes::isEngulf($bot->type)
-                    || ChartAnalystBotTypes::isImpulse($bot->type))
+                    || ChartAnalystBotTypes::isImpulse($bot->type)
+                    || ChartAnalystBotTypes::isAuthorFlow($bot->type))
                     ? false
                     : (bool) (($bot->config ?? [])['analyst_smc_flow_enabled'] ?? false),
                 'srl_pivot_length' => ChartAnalystBotTypes::isSrl($bot->type)
@@ -2380,6 +2402,7 @@ class BotController extends Controller
                     ChartAnalystBotTypes::isSrl($bot->type) => 'openrouter_llm_analyst_srl_v2',
                     ChartAnalystBotTypes::isEngulf($bot->type) => 'openrouter_llm_analyst_engulf_v2',
                     ChartAnalystBotTypes::isImpulse($bot->type) => 'openrouter_llm_analyst_impulse_lvl_v1',
+                    ChartAnalystBotTypes::isAuthorFlow($bot->type) => 'openrouter_llm_analyst_author_flow_v1',
                     default => 'openrouter_llm_analyst_v1',
                 },
             ]));
@@ -2408,6 +2431,43 @@ class BotController extends Controller
                 $config['entry_side_mode'] = ImpulseLvl1minConfig::entrySideMode([
                     'entry_side_mode' => $extra['entry_side_mode'] ?? (($bot->config ?? [])['entry_side_mode'] ?? ImpulseLvl1minConfig::ENTRY_SIDE_CONTINUATION),
                 ]);
+            }
+            if (ChartAnalystBotTypes::isAuthorFlow($bot->type)) {
+                // af_* как у rule-based Author Flow, без scan/telegram-токена.
+                $afDefaults = AuthorFlowConfig::defaultConfig();
+                unset(
+                    $afDefaults['count'],
+                    $afDefaults['telegram_enabled'],
+                    $afDefaults['telegram_bot_token'],
+                    $afDefaults['telegram_chat_id'],
+                    $afDefaults['telegram_notify_result'],
+                    $afDefaults['telegram_notify_on'],
+                    $afDefaults['telegram_send_chart'],
+                    $afDefaults['scan_interval_sec'],
+                    $afDefaults['scan_workers'],
+                    $afDefaults['continuous_scan'],
+                );
+                $config = array_merge($afDefaults, $config);
+                $config['timeframe'] = CandleService::TF_S15;
+                $config['expiry_sec'] = max(5, min(900, (int) ($extra['expiry_sec'] ?? ($config['expiry_sec'] ?? 15))));
+                foreach ([
+                    'af_enable_breakout_e',
+                    'af_enable_engulf_d',
+                    'af_enable_raid_pb',
+                    'af_enable_sweep',
+                    'af_enable_skop_score',
+                    'af_require_structure',
+                    'af_allow_range_entries',
+                    'af_require_open_liquidity',
+                    'af_eng_allow_classic',
+                    'af_eng_allow_same_color',
+                    'af_eng_require_level',
+                    'af_gap_filter_enabled',
+                ] as $afFlag) {
+                    $config[$afFlag] = $request->boolean($afFlag);
+                }
+                $config['af_structure_pivot'] = max(1, min(10, (int) ($extra['af_structure_pivot'] ?? ($config['af_structure_pivot'] ?? 2))));
+                $config['af_liquidity_lookback'] = max(10, min(200, (int) ($extra['af_liquidity_lookback'] ?? ($config['af_liquidity_lookback'] ?? 40))));
             }
             // Плановый scan для аналитика не выполняется (scanBot сразу выходит).
             // is_active=true при гибриде — чтобы бот был «active» в списке/аналитике.
@@ -2537,7 +2597,7 @@ class BotController extends Controller
         $this->ensureBotOwner($bot);
         $telegramAllowedTypes = array_merge(
             LevelBounceBotTypes::CARD_AND_TELEGRAM,
-            array_merge(['strong_trend_telegram', 'strong_trend_demarker', \App\Support\DemarkerDualFastConfig::BOT_TYPE, 'sweep_raid_liquidity', 'engulfing_liquidity', 'smc_flow'], ChartAnalystBotTypes::all())
+            array_merge(['strong_trend_telegram', 'strong_trend_demarker', \App\Support\DemarkerDualFastConfig::BOT_TYPE, 'sweep_raid_liquidity', 'engulfing_liquidity', AuthorFlowConfig::BOT_TYPE, 'smc_flow'], ChartAnalystBotTypes::all())
         );
         if (! in_array($bot->type, $telegramAllowedTypes, true)) {
             return response()->json(['ok' => false, 'error' => 'unsupported_bot_type'], 422);
@@ -2556,7 +2616,7 @@ class BotController extends Controller
         $this->ensureBotOwner($bot);
         $telegramAllowedTypes = array_merge(
             LevelBounceBotTypes::CARD_AND_TELEGRAM,
-            array_merge(['strong_trend_telegram', 'strong_trend_demarker', \App\Support\DemarkerDualFastConfig::BOT_TYPE, 'sweep_raid_liquidity', 'engulfing_liquidity', 'smc_flow'], ChartAnalystBotTypes::all())
+            array_merge(['strong_trend_telegram', 'strong_trend_demarker', \App\Support\DemarkerDualFastConfig::BOT_TYPE, 'sweep_raid_liquidity', 'engulfing_liquidity', AuthorFlowConfig::BOT_TYPE, 'smc_flow'], ChartAnalystBotTypes::all())
         );
         if (! in_array($bot->type, $telegramAllowedTypes, true)) {
             return response()->json(['ok' => false, 'error' => 'unsupported_bot_type'], 422);
@@ -2620,10 +2680,12 @@ class BotController extends Controller
             ChartAnalystBotTypes::SRL => '@chart_analyst_sweep_raid_bot',
             ChartAnalystBotTypes::ENGULF => '@chart_analyst_engulf_bot',
             ChartAnalystBotTypes::IMPULSE => '@chart_analyst_impulse_lvl_bot',
+            ChartAnalystBotTypes::AUTHOR_FLOW => '@chart_analyst_author_flow_bot',
             'strong_trend_demarker' => '@strong_DeMarker_bot',
             \App\Support\DemarkerDualFastConfig::BOT_TYPE => '@strong_DeMarker_bot',
             'sweep_raid_liquidity' => 'боту Sweep из сохранённого token (не @trend1123_bot)',
             'engulfing_liquidity' => 'боту Engulfing из сохранённого token',
+            AuthorFlowConfig::BOT_TYPE => 'боту Author Flow из сохранённого token',
             'smc_flow' => 'боту SMC Flow из сохранённого token',
             default => '@trend1123_bot',
         };
@@ -3404,6 +3466,7 @@ class BotController extends Controller
             'analystSrlFlowEnabled' => ChartAnalystBotTypes::isSrl($bot->type),
             'analystEngulfFlowEnabled' => ChartAnalystBotTypes::isEngulf($bot->type),
             'analystImpulseLvlFlowEnabled' => ChartAnalystBotTypes::isImpulse($bot->type),
+            'analystAuthorFlowEnabled' => ChartAnalystBotTypes::isAuthorFlow($bot->type),
             'chartSignals' => $chartSignalsPayload,
             'instruments' => $instruments,
             'timeframes' => $timeframes,

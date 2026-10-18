@@ -37,6 +37,52 @@ final class ImpulseLvl1minLiveWick
     }
 
     /**
+     * Redis current_candle — формирующийся S5. Для S15/S30 не подставляем его как бар стратегии:
+     * open первого S5 в бакете + high/low/close по всем уже виденным S5 того же бакета (RAM, без MySQL).
+     * periodSec=60 сюда не зовём: бот 47 по-прежнему получает сырой Redis-partial.
+     *
+     * @param  array<string, mixed>|null  $s5
+     * @param  array<string, mixed>|null  $prevForming  предыдущий сложенный бар того же ТФ
+     * @return array{time:int,open:float,high:float,low:float,close:float,volume:float,is_partial:bool,updated_at:int}|null
+     */
+    public static function foldS5IntoBarPeriod(?array $s5, int $periodSec, ?array $prevForming = null): ?array
+    {
+        if ($s5 === null || ($periodSec !== 15 && $periodSec !== 30)) {
+            return null;
+        }
+        $t = (int) ($s5['effective_feed_time'] ?? ($s5['time'] ?? 0));
+        if ($t <= 0) {
+            return null;
+        }
+        $bucket = intdiv($t, $periodSec) * $periodSec;
+        $incoming = [
+            'time' => $bucket,
+            'open' => (float) ($s5['open'] ?? 0),
+            'high' => (float) ($s5['high'] ?? 0),
+            'low' => (float) ($s5['low'] ?? 0),
+            'close' => (float) ($s5['close'] ?? 0),
+            'volume' => (float) ($s5['volume'] ?? 0),
+            'is_partial' => true,
+            'updated_at' => (int) ($s5['updated_at'] ?? time()),
+        ];
+        if ($prevForming === null || (int) ($prevForming['time'] ?? 0) !== $bucket) {
+            return $incoming;
+        }
+
+        // Тот же 15с/30с бакет: open не переписываем, фитиль только расширяем.
+        return [
+            'time' => $bucket,
+            'open' => (float) ($prevForming['open'] ?? $incoming['open']),
+            'high' => max((float) ($prevForming['high'] ?? $incoming['high']), $incoming['high']),
+            'low' => min((float) ($prevForming['low'] ?? $incoming['low']), $incoming['low']),
+            'close' => $incoming['close'],
+            'volume' => (float) ($prevForming['volume'] ?? 0) + $incoming['volume'],
+            'is_partial' => true,
+            'updated_at' => $incoming['updated_at'],
+        ];
+    }
+
+    /**
      * Неполный poll не имеет права уменьшить уже виденные high/low.
      *
      * @param  array{time:int,open:float,high:float,low:float,close:float}  $previous

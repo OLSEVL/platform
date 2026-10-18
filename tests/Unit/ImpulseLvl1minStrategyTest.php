@@ -483,6 +483,9 @@ class ImpulseLvl1minStrategyTest extends TestCase
         $this->assertLessThan(200.0, $ms, 'partial настроек S15 должен рендериться быстро');
         $this->assertStringContainsString('Impulse LVL S15', $html);
         $this->assertStringContainsString('name="m1_take"', $html);
+        $this->assertStringContainsString('Фитиль живой S15', $html);
+        $this->assertStringContainsString('Только закрытая S15', $html);
+        $this->assertStringContainsString('Живой HTF из S15', $html);
         $this->assertStringNotContainsString('name="m30_take"', $html);
 
         $m1Bot = new \App\Models\Bot;
@@ -494,7 +497,34 @@ class ImpulseLvl1minStrategyTest extends TestCase
         ])->render();
         $this->assertStringContainsString('Impulse LVL 1min', $m1Html);
         $this->assertStringContainsString('name="m30_take"', $m1Html);
+        $this->assertStringContainsString('Фитиль живой M1', $m1Html);
         $this->assertStringNotContainsString('name="m1_take"', $m1Html);
+    }
+
+    public function test_fold_s5_into_s15_keeps_open_and_expands_wick(): void
+    {
+        $t0 = hrtime(true);
+        $a = ImpulseLvl1minLiveWick::foldS5IntoBarPeriod([
+            'time' => 1005, 'open' => 1.00, 'high' => 1.02, 'low' => 0.99, 'close' => 1.01, 'volume' => 1,
+        ], 15, null);
+        $b = ImpulseLvl1minLiveWick::foldS5IntoBarPeriod([
+            'time' => 1010, 'open' => 1.01, 'high' => 1.04, 'low' => 0.98, 'close' => 1.03, 'volume' => 1,
+        ], 15, $a);
+        $ms = (hrtime(true) - $t0) / 1e6;
+        $this->assertLessThan(2.0, $ms, 'fold S5→S15 должен быть O(1)');
+        $this->assertNotNull($a);
+        $this->assertSame(1005, $a['time']);
+        $this->assertEqualsWithDelta(1.00, $b['open'], 1e-12);
+        $this->assertEqualsWithDelta(1.04, $b['high'], 1e-12);
+        $this->assertEqualsWithDelta(0.98, $b['low'], 1e-12);
+        $this->assertEqualsWithDelta(1.03, $b['close'], 1e-12);
+        $this->assertNull(ImpulseLvl1minLiveWick::foldS5IntoBarPeriod($a, 5, null));
+        $this->assertNull(ImpulseLvl1minLiveWick::foldS5IntoBarPeriod($a, 60, null));
+        $next = ImpulseLvl1minLiveWick::foldS5IntoBarPeriod([
+            'time' => 1020, 'open' => 2.0, 'high' => 2.1, 'low' => 1.9, 'close' => 2.05,
+        ], 15, $b);
+        $this->assertSame(1020, $next['time']);
+        $this->assertEqualsWithDelta(2.0, $next['open'], 1e-12);
     }
 
     public function test_python_new_config_maps_same_thresholds_as_defaults(): void

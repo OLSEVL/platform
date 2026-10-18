@@ -363,10 +363,11 @@ final class BotScanCoordinator
 
         $bot = Bot::query()->find($botId);
         $cfg = ($bot instanceof Bot && is_array($bot->config)) ? $bot->config : [];
-        // Impulse LVL / Engulfing + continuous_scan → daemon poll + workers (как updateBotM1).
+        // Impulse LVL / Engulfing / AuthorFlow + continuous_scan → daemon poll + workers.
         $useLiveDaemon = $bot instanceof Bot && (
             (ImpulseLvl1minConfig::is((string) $bot->type) && ImpulseLvl1minConfig::continuousScanEnabled($cfg))
             || (EngulfingLiquidityConfig::is((string) $bot->type) && EngulfingLiquidityConfig::continuousScanEnabled($cfg))
+            || (AuthorFlowConfig::is((string) $bot->type) && AuthorFlowConfig::continuousScanEnabled($cfg))
         );
         if ($useLiveDaemon) {
             $ok = ArtisanProcessFinder::spawnBackground(
@@ -678,6 +679,7 @@ final class BotScanCoordinator
                 if ($bot instanceof Bot && (
                     ImpulseLvl1minConfig::is((string) $bot->type)
                     || EngulfingLiquidityConfig::is((string) $bot->type)
+                    || AuthorFlowConfig::is((string) $bot->type)
                 )) {
                     $warm = app(ImpulseCandleSeriesCache::class)->warmForBot(
                         $bot,

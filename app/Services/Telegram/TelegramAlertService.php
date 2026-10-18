@@ -6,6 +6,7 @@ use App\Models\Bot;
 use App\Models\BotTrade;
 use App\Models\IndicatorSetting;
 use App\Services\Bots\Levels\StrongLevelCardPresenter;
+use App\Support\AuthorFlowConfig;
 use App\Support\EngulfingLiquidityConfig;
 use App\Support\ImpulseLvl1minConfig;
 use App\Support\ImpulseLvl1minLevels;
@@ -379,6 +380,18 @@ class TelegramAlertService
         // Engulfing (#45) — как Impulse (#47): одно sendPhoto+caption, без второго sendMessage.
         if ($bot->type === 'engulfing_liquidity') {
             return $this->sendEngulfingLiquidityAlert(
+                $bot,
+                $instrument,
+                $decision,
+                $payout,
+                $expirySec,
+                $entryPrice,
+                $closedCandles,
+            );
+        }
+        // AuthorFlow — отдельный presenter; путь Engulfing не расширяем.
+        if ($bot->type === AuthorFlowConfig::BOT_TYPE) {
+            return $this->sendAuthorFlowAlert(
                 $bot,
                 $instrument,
                 $decision,
@@ -763,6 +776,148 @@ class TelegramAlertService
                     ]);
 
                     // Фоллбек: хотя бы короткий caption текстом.
+                    return $llmMarkup !== null
+                        ? $this->sendMessageWithMarkup($token, $chatId, $caption, $llmMarkup)
+                        : $this->sendMessage($token, $chatId, $caption);
+                }
+
+                return $photoResult;
+            }
+
+            return $llmMarkup !== null
+                ? $this->sendMessageWithMarkup($token, $chatId, $caption, $llmMarkup)
+                : $this->sendMessage($token, $chatId, $caption);
+        });
+
+        if ($pngPath !== null) {
+            @unlink($pngPath);
+        }
+
+        if (! ($messageResult['ok'] ?? false)) {
+            return array_merge($messageResult, array_filter([
+                'photo_ok' => $photoOk,
+                'photo_error' => $photoError,
+            ]));
+        }
+
+        return array_merge($messageResult, array_filter([
+            'photo_ok' => $photoOk,
+            'photo_error' => $photoError,
+        ]));
+    }
+
+    /**
+     * AuthorFlow: caption = setup + reason_ru; PNG через Impulse renderer (как #47).
+     *
+     * @param  array<string, mixed>  $decision
+     * @param  list<array<string,mixed>>  $closedCandles
+     * @return array{ok:bool,error?:string,message_id?:int,photo_ok?:bool,photo_error?:string}
+     */
+    public function sendAuthorFlowAlert(
+        Bot $bot,
+        string $instrument,
+        array $decision,
+        ?float $payout,
+        int $expirySec,
+        ?float $entryPrice = null,
+        array $closedCandles = [],
+    ): array {
+        /** @var array<string, mixed> $config */
+        $config = is_array($bot->config) ? $bot->config : [];
+        if (! (bool) ($config['telegram_enabled'] ?? false)) {
+            return ['ok' => false, 'error' => 'telegram_disabled'];
+        }
+        if ((string) ($config['telegram_notify_on'] ?? 'signal_trade') !== 'signal_trade') {
+            return ['ok' => false, 'error' => 'telegram_notify_disabled'];
+        }
+
+        $token = trim((string) ($config['telegram_bot_token'] ?? ''));
+        $recipients = TelegramChatAccess::recipientChatIds($config);
+        if ($token === '' || $recipients === []) {
+            return ['ok' => false, 'error' => 'telegram_token_or_chat_id_missing'];
+        }
+
+        if (TelegramChatAccess::autoSubscribeEnabled($config)) {
+            app(StrongLevelTelegramProcessManager::class)->ensurePollRunning($bot->id);
+        }
+
+        $presenter = app(AuthorFlowAlertPresenter::class);
+        // Caption и overlay — русские названия сетапов/фильтров (не eng/breakout_E).
+        $caption = $presenter->formatCaption($instrument, $decision, $payout, $config);
+
+        $sendChart = (bool) ($config['telegram_send_chart'] ?? true);
+        $photoOk = null;
+        $photoError = null;
+        $pngPath = null;
+        $features = is_array($decision['features'] ?? null) ? $decision['features'] : [];
+
+        if ($sendChart && $closedCandles !== [] && extension_loaded('gd')) {
+            $signalTime = (int) ($features['event_time'] ?? 0);
+            // Если entry_price не в features (старый decision) — подставим из аргумента движка.
+            if ($entryPrice !== null && (float) ($features['entry_price'] ?? 0) <= 0) {
+                $features['entry_price'] = $entryPrice;
+                $decision['features'] = $features;
+            }
+
+            $pngPath = app(ImpulseLvl1minTelegramChartRenderer::class)->render(
+                $closedCandles,
+                [],
+                [
+                    'max_bars' => AuthorFlowConfig::telegramChartCandles($config),
+                    'signal_time' => $signalTime,
+                    'outline_last_bar' => true,
+                    // ①②③ / снятие+откат / свип — русские маркеры на свечах.
+                    'markers' => $presenter->chartMarkers($decision, $closedCandles),
+                    'price_levels' => $presenter->priceLevels($decision, $config),
+                    'right_pad_bars' => 3,
+                    'overlay_lines' => $presenter->overlayLines(
+                        $instrument,
+                        $decision,
+                        $expirySec,
+                        $payout,
+                        $config,
+                    ),
+                ]
+            );
+            if ($pngPath === null) {
+                $photoOk = false;
+                $photoError = 'render_failed';
+            }
+        } elseif ($sendChart && ! extension_loaded('gd')) {
+            $photoOk = false;
+            $photoError = 'gd_extension_missing';
+        }
+
+        $llmMarkup = StrongLevelTelegramLlmButton::inlineKeyboardMarkup($config, $bot, $instrument);
+        if ($llmMarkup !== null || TelegramChatAccess::autoSubscribeEnabled($config)) {
+            app(StrongLevelTelegramProcessManager::class)->ensurePollRunning($bot->id);
+        }
+
+        Log::info('author_flow_telegram_send', [
+            'bot_id' => $bot->id,
+            'instrument' => $instrument,
+            'setup' => (string) ($features['setup'] ?? ''),
+            'caption' => $caption,
+            'has_chart' => $pngPath !== null,
+            'recipients' => count($recipients),
+        ]);
+
+        $messageResult = $this->broadcastToRecipients($token, $recipients, function (string $chatId) use (
+            $token,
+            $pngPath,
+            $caption,
+            $llmMarkup,
+            &$photoOk,
+            &$photoError,
+        ): array {
+            if ($pngPath !== null) {
+                $photoResult = $this->sendPhoto($token, $chatId, $pngPath, $caption, $llmMarkup);
+                $ok = (bool) ($photoResult['ok'] ?? false);
+                $photoOk = $photoOk === null ? $ok : ($photoOk && $ok);
+                if (! $ok) {
+                    $err = (string) ($photoResult['error'] ?? 'telegram_photo_failed');
+                    $photoError = $photoError !== null ? $photoError.';'.$err : $err;
+
                     return $llmMarkup !== null
                         ? $this->sendMessageWithMarkup($token, $chatId, $caption, $llmMarkup)
                         : $this->sendMessage($token, $chatId, $caption);

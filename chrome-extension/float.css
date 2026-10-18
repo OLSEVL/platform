@@ -250,10 +250,34 @@ th {
   background: var(--bg);
 }
 tbody tr { cursor: pointer; }
-tbody tr:hover { background: var(--hover); }
 tbody tr.empty { cursor: default; }
 tbody tr.empty:hover { background: transparent; }
 tbody tr.empty td { color: var(--muted); text-align: center; padding: 24px 8px; }
+
+/* Подсветка пары «сигнал + строка причины» целиком */
+tbody tr.sig-main:hover,
+tbody tr.sig-main:hover + tr.sig-reason,
+tbody tr.sig-reason:hover,
+tbody tr.sig-main:has(+ tr.sig-reason:hover) {
+  background: var(--hover);
+}
+/* У основной строки с причиной убираем нижнюю границу — её даёт строка reason */
+tbody tr.sig-main.has-reason td {
+  border-bottom: 0;
+  padding-bottom: 2px;
+}
+tbody tr.sig-reason td {
+  padding-top: 0;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--line);
+  white-space: normal;
+}
+.reason-cell {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.35;
+  word-break: break-word;
+}
 
 .side-call { color: var(--call); font-weight: 700; }
 .side-put { color: var(--put); font-weight: 700; }

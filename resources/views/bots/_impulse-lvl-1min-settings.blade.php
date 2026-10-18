@@ -27,8 +27,8 @@
             <ol class="list-decimal space-y-1.5 pl-5 text-[12px] leading-relaxed text-zinc-400">
                 <li>Среднее тело = trim из последних 100 <em>закрытых</em> S15 (формирующийся бар в среднее не входит).</li>
                 <li>MAX и профили — как у 1min. Paper — одна сделка. Экспирация по умолчанию 15 с.</li>
-                <li>LVL: S15 тело↔фитиль; M1/M5/M15 из БД (wick_tip на старших). Redis current_candle = S5, его нельзя считать S15.</li>
-                <li>Сторона входа — продолжение или отбой, как у 1min. Live-фитиль по умолчанию выкл.</li>
+                <li>LVL: S15 тело↔фитиль; M1/M5/M15 из БД (wick_tip на старших). Redis S5 live-скан складывает в текущий бакет S15 (open первого S5 + фитиль).</li>
+                <li>Сторона входа — продолжение или отбой, как у 1min. Live-фитиль — галочка ниже; после сохранения перезапустите live.</li>
             </ol>
         @else
         <p>
@@ -226,7 +226,7 @@
                 class="mt-0.5 rounded border-zinc-600 bg-zinc-800 text-blue-500"
                 @checked(old('signal_timing_closed', ($cfg['signal_timing'] ?? 'live') === 'closed'))>
             <span>
-                <span class="font-medium text-zinc-200">Только закрытая M1</span>
+                <span class="font-medium text-zinc-200">Только закрытая {{ $isImpulseS15 ? 'S15' : 'M1' }}</span>
                 <span class="mt-0.5 block text-[11px] font-normal text-zinc-500">По умолчанию live — текущая свеча. Галочка = closed, как бэктест.</span>
             </span>
         </label>
@@ -256,7 +256,7 @@
                 class="mt-0.5 rounded border-zinc-600 bg-zinc-800 text-blue-500"
                 @checked(old('overlay_forming_htf', $cfg['overlay_forming_htf'] ?? true))>
             <span>
-                <span class="font-medium text-zinc-200">Живой HTF из M1</span>
+                <span class="font-medium text-zinc-200">Живой HTF из {{ $isImpulseS15 ? 'S15' : 'M1' }}</span>
                 <span class="mt-0.5 block text-[11px] font-normal text-zinc-500">{{ $hint('overlay_forming_htf') }}</span>
             </span>
         </label>
@@ -266,7 +266,7 @@
                 class="mt-0.5 rounded border-zinc-600 bg-zinc-800 text-blue-500"
                 @checked(old('live_candle_wick_signals', $cfg['live_candle_wick_signals'] ?? false))>
             <span>
-                <span class="font-medium text-zinc-200">Фитиль живой M1</span>
+                <span class="font-medium text-zinc-200">Фитиль живой {{ $isImpulseS15 ? 'S15' : 'M1' }}</span>
                 <span class="mt-0.5 block text-[11px] font-normal text-zinc-500">{{ $hint('live_candle_wick_signals') }}</span>
             </span>
         </label>

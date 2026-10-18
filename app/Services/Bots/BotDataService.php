@@ -272,7 +272,10 @@ class BotDataService
                 $staleAfterSec,
                 $keepOpenFormingPartial,
             )) {
-                $partial = $partialCandidate;
+                // S15/S30: Redis — S5. Складываем в бакет ТФ; M1 (#47) по-прежнему берёт raw partial.
+                $partial = ($timeframe === CandleService::TF_S15 || $timeframe === CandleService::TF_S30)
+                    ? \App\Support\ImpulseLvl1minLiveWick::foldS5IntoBarPeriod($partialCandidate, $periodSec, null)
+                    : $partialCandidate;
             }
         }
 
@@ -316,11 +319,18 @@ class BotDataService
     ): array {
         $cache = app(ImpulseCandleSeriesCache::class);
         $partialOverride = null;
+        $periodSec = CandleService::periodSecondsForDashboardTf($timeframe) ?? 60;
         if ($includePartial) {
             $partialOverride = $this->currentCandleCache->getPartial($instrument);
+            if (is_array($partialOverride)
+                && ($timeframe === CandleService::TF_S15 || $timeframe === CandleService::TF_S30)) {
+                $partialOverride = \App\Support\ImpulseLvl1minLiveWick::foldS5IntoBarPeriod(
+                    $partialOverride,
+                    $periodSec,
+                    null
+                );
+            }
         }
-
-        $periodSec = CandleService::periodSecondsForDashboardTf($timeframe) ?? 60;
         $result = $cache->resolve(
             $instrument,
             $count,

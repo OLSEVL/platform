@@ -73,7 +73,17 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       sendResponse({ ok: false, error: 'empty_instrument' });
       return false;
     }
-    openAssetOnPo(instrument, displayName)
+    // Мета сигнала → маркер CALL/PUT на canvas после переключения пары.
+    const marker = {
+      side: String(msg.side || '').toLowerCase(),
+      ts: msg.ts,
+      confidence: msg.confidence,
+      reason: msg.reason,
+      bot_name: msg.bot_name,
+      instrument,
+      display_name: displayName,
+    };
+    openAssetOnPo(instrument, displayName, marker)
       .then((r) => sendResponse(r))
       .catch((e) => sendResponse({ ok: false, error: String(e) }));
     return true;
@@ -172,11 +182,13 @@ async function openOrFocusFloat() {
  * DOM PO (проверено): a.pair-number-wrap → input.search__field → li.alist__item a.alist__link
  *
  * В режиме float не забираем фокус у плавающего окна (иначе оно «исчезает» под PO).
+ * После успешного switch — рисуем маркер CALL/PUT на canvas (если включено в настройках).
  *
  * @param {string} instrument
  * @param {string} [displayName]
+ * @param {object|null} [marker] side/ts/confidence/… для оверлея
  */
-async function openAssetOnPo(instrument, displayName = '') {
+async function openAssetOnPo(instrument, displayName = '', marker = null) {
   if (!displayName) {
     displayName = await resolveDisplayName(instrument);
   }
@@ -208,6 +220,8 @@ async function openAssetOnPo(instrument, displayName = '') {
 
     await new Promise((r) => setTimeout(r, 200));
 
+    /** @type {{ok?: boolean, [k: string]: unknown}|null} */
+    let result = null;
     try {
       const injected = await chrome.scripting.executeScript({
         target: { tabId: tab.id },
@@ -215,11 +229,10 @@ async function openAssetOnPo(instrument, displayName = '') {
         func: poSwitchAssetInPage,
         args: [instrument, displayName || ''],
       });
-      const result = injected && injected[0] ? injected[0].result : null;
-      if (result && typeof result === 'object') {
-        return result;
+      result = injected && injected[0] ? injected[0].result : null;
+      if (!(result && typeof result === 'object')) {
+        result = { ok: false, error: 'empty_inject_result' };
       }
-      return { ok: false, error: 'empty_inject_result' };
     } catch (e) {
       // Fallback: isolated world + content script message.
       try {
@@ -232,15 +245,92 @@ async function openAssetOnPo(instrument, displayName = '') {
           instrument,
           display_name: displayName || '',
         });
-        return res && typeof res === 'object' ? res : { ok: false, error: String(e) };
+        result = res && typeof res === 'object' ? res : { ok: false, error: String(e) };
       } catch (e2) {
-        return { ok: false, error: String(e2) };
+        result = { ok: false, error: String(e2) };
       }
     }
+
+    // Маркер только после успешного открытия пары (в т.ч. already).
+    if (result && result.ok && marker && marker.side) {
+      const payload = {
+        ...marker,
+        instrument,
+        display_name: displayName || marker.display_name || '',
+        matched: result.matched || '',
+      };
+      await drawMarkerOnPo(tab.id, payload);
+      result.marker = true;
+    }
+
+    return result;
   } finally {
     if (keepFloatOnTop) {
       // Пара уже переключена на PO — возвращаем список сигналов поверх.
       await refocusFloatWindow();
+    }
+  }
+}
+
+/**
+ * Рисуем CALL/PUT на canvas через content script оверлея.
+ * Настройка chartMarkersEnabled=false — тихий no-op.
+ *
+ * @param {number} tabId
+ * @param {object} marker
+ */
+async function drawMarkerOnPo(tabId, marker) {
+  try {
+    const cfg = await chrome.storage.sync.get({ chartMarkersEnabled: true });
+    if (cfg.chartMarkersEnabled === false) {
+      return;
+    }
+  } catch (_) {
+    // storage недоступен — всё равно пробуем нарисовать.
+  }
+
+  const payload = {
+    type: 'po:draw-marker',
+    side: String(marker.side || '').toLowerCase(),
+    ts: marker.ts,
+    confidence: marker.confidence,
+    reason: marker.reason,
+    bot_name: marker.bot_name,
+    instrument: marker.instrument,
+    display_name: marker.display_name,
+  };
+
+  // Небольшая пауза: после closeAssetsList canvas уже на нужной паре.
+  await new Promise((r) => setTimeout(r, 350));
+
+  try {
+    await chrome.tabs.sendMessage(tabId, payload);
+    return;
+  } catch (_) {
+    // Content script мог не подхватиться (SPA navigation) — inject файлы и retry.
+  }
+
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      files: ['content/po-chart-overlay.js'],
+    });
+    await chrome.tabs.sendMessage(tabId, payload);
+  } catch (e) {
+    // Последний шанс: CustomEvent из MAIN world (слушает тот же overlay, если уже был).
+    try {
+      await chrome.scripting.executeScript({
+        target: { tabId },
+        world: 'MAIN',
+        func: (detail) => {
+          const ev = new CustomEvent('platform-signals-marker', { detail, bubbles: true });
+          document.dispatchEvent(ev);
+          window.dispatchEvent(ev);
+        },
+        args: [payload],
+      });
+    } catch (e2) {
+      console.warn('[ext] drawMarkerOnPo failed', e, e2);
     }
   }
 }

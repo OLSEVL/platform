@@ -10,6 +10,9 @@
 <body class="bg-zinc-950 text-zinc-100 min-h-screen flex items-center justify-center antialiased">
     <div class="bg-zinc-900 border border-zinc-800 p-8 rounded-lg shadow-xl shadow-black/40 max-w-md w-full mx-4">
         <h1 class="text-2xl font-bold mb-6 text-zinc-100">Вход</h1>
+        @if (session('status'))
+            <p class="mb-4 text-sm text-emerald-400">{{ session('status') }}</p>
+        @endif
         @if($errors->any())
             <ul class="mb-4 text-red-400 text-sm">@foreach($errors->all() as $e)<li>{{ $e }}</li>@endforeach</ul>
         @endif

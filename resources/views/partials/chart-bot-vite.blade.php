@@ -45,6 +45,7 @@
         analystSmcFlowEnabled: @json($analystSmcFlowEnabled ?? false),
         analystSrlFlowEnabled: @json($analystSrlFlowEnabled ?? false),
         analystEngulfFlowEnabled: @json($analystEngulfFlowEnabled ?? false),
+        analystAuthorFlowEnabled: @json($analystAuthorFlowEnabled ?? false),
         tradingChartLayerIds: @json($tradingChartLayerIds ?? []),
         botId: @json($bot->id),
         tradingChartTimeframe: {{ (int) ($tradingChartTimeframe ?? 1) }},

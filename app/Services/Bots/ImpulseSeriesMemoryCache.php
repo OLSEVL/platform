@@ -103,6 +103,14 @@ final class ImpulseSeriesMemoryCache
         return $this->pack($closed, $mtf, is_array($partial) ? $partial : null, true, $promoted);
     }
 
+    /** Последний сложенный forming-бар пары (для склейки S5→S15 между poll'ами). */
+    public function lastPartial(string $instrument): ?array
+    {
+        $bar = $this->entries[$instrument]['last_partial'] ?? null;
+
+        return is_array($bar) ? $bar : null;
+    }
+
     public function forget(string $instrument): void
     {
         unset($this->entries[$instrument]);

@@ -72,6 +72,8 @@ final class BotTradingChartLayers
             ChartAnalystBotTypes::SRL => ['layer-llm-levels', 'layer-sweep-raid-liquidity'],
             ChartAnalystBotTypes::ENGULF => ['layer-llm-levels', 'layer-engulfing-liquidity'],
             ChartAnalystBotTypes::IMPULSE => ['layer-llm-levels'],
+            ChartAnalystBotTypes::AUTHOR_FLOW => ['layer-llm-levels'],
+            AuthorFlowConfig::BOT_TYPE => ['layer-llm-levels'],
             'strong_trend_telegram' => self::telegramPullbackLayerIds($cfg),
             // Свечные паттерны без оверлей-индикатора: three_candles, three_soldier, Wave B impulse и т.п.
             default => [],
@@ -84,8 +86,17 @@ final class BotTradingChartLayers
      */
     public static function chartTimeframeMinutes(Bot $bot): int
     {
+        $type = (string) $bot->type;
         $cfg = self::config($bot);
-        if (! in_array((string) $bot->type, ['strong_trend_demarker', DemarkerDualFastConfig::BOT_TYPE], true)) {
+        // Author Flow (rule + Chart Analyst) — S15 как у автора на OTC.
+        if ($type === AuthorFlowConfig::BOT_TYPE || ChartAnalystBotTypes::isAuthorFlow($type)) {
+            $tf = (int) ($cfg['timeframe'] ?? CandleService::TF_S15);
+
+            return in_array($tf, [CandleService::TF_S15, CandleService::TF_S30, CandleService::TF_S5, 1], true)
+                ? $tf
+                : CandleService::TF_S15;
+        }
+        if (! in_array($type, ['strong_trend_demarker', DemarkerDualFastConfig::BOT_TYPE], true)) {
             return 1;
         }
         $tf = (int) ($cfg['timeframe'] ?? CandleService::TF_S30);

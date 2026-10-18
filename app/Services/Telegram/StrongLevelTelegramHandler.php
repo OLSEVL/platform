@@ -211,6 +211,7 @@ class StrongLevelTelegramHandler
             \App\Support\DemarkerDualFastConfig::BOT_TYPE => 'Dual DeMarker Fast',
             'sweep_raid_liquidity' => 'Sweep / Raid Liquidity',
             'engulfing_liquidity' => 'Engulfing Liquidity',
+            \App\Support\AuthorFlowConfig::BOT_TYPE => \App\Support\AuthorFlowConfig::TITLE,
             'smc_flow' => 'SMC Flow',
             'candle_reversal_confirm' => 'Candle Reversal + Confirm',
             default => 'Strong Level',

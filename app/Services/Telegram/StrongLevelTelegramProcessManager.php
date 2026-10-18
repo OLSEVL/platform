@@ -5,6 +5,7 @@ namespace App\Services\Telegram;
 use App\Models\Bot;
 use App\Support\ArtisanProcessFinder;
 use App\Support\BotScanCoordinator;
+use App\Support\AuthorFlowConfig;
 use App\Support\EngulfingLiquidityConfig;
 use App\Support\ImpulseLvl1minConfig;
 use Illuminate\Support\Facades\File;
@@ -24,7 +25,7 @@ class StrongLevelTelegramProcessManager
     public static function pollSupported(string $botType): bool
     {
         return StrongLevelTelegramLlmButton::supportsBotType($botType)
-            || in_array($botType, ['strong_trend_demarker', \App\Support\DemarkerDualFastConfig::BOT_TYPE, 'sweep_raid_liquidity', 'engulfing_liquidity', 'smc_flow'], true);
+            || in_array($botType, ['strong_trend_demarker', \App\Support\DemarkerDualFastConfig::BOT_TYPE, 'sweep_raid_liquidity', 'engulfing_liquidity', AuthorFlowConfig::BOT_TYPE, 'smc_flow'], true);
     }
 
     /**
@@ -193,7 +194,8 @@ class StrongLevelTelegramProcessManager
         /** @var array<string, mixed> $cfg */
         $cfg = is_array($bot->config) ? $bot->config : [];
         $needsLive = (ImpulseLvl1minConfig::is((string) $bot->type) && ImpulseLvl1minConfig::continuousScanEnabled($cfg))
-            || (EngulfingLiquidityConfig::is((string) $bot->type) && EngulfingLiquidityConfig::continuousScanEnabled($cfg));
+            || (EngulfingLiquidityConfig::is((string) $bot->type) && EngulfingLiquidityConfig::continuousScanEnabled($cfg))
+            || (AuthorFlowConfig::is((string) $bot->type) && AuthorFlowConfig::continuousScanEnabled($cfg));
         if (! $needsLive) {
             return null;
         }
@@ -344,6 +346,7 @@ class StrongLevelTelegramProcessManager
             \App\Support\DemarkerDualFastConfig::BOT_TYPE => 'Dual DeMarker Fast',
             'sweep_raid_liquidity' => 'Sweep / Raid Liquidity',
             'engulfing_liquidity' => 'Engulfing Liquidity',
+            AuthorFlowConfig::BOT_TYPE => AuthorFlowConfig::TITLE,
             'smc_flow' => 'SMC Flow',
             'candle_reversal_confirm' => 'Candle Reversal + Confirm',
             'rsi_contrtrend' => 'RSI Contrtrend',

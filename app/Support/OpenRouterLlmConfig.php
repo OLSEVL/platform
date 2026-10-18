@@ -152,10 +152,11 @@ final class OpenRouterLlmConfig
      */
     public static function analystSmcFlowEnabled(array $config): bool
     {
-        // SRL / Engulf / Impulse LVL взаимоисключают SMC: иначе в payload уйдут несколько снимков.
+        // SRL / Engulf / Impulse / Author Flow взаимоисключают SMC: иначе в payload уйдут несколько снимков.
         if (self::analystSrlFlowEnabled($config)
             || self::analystEngulfFlowEnabled($config)
-            || self::analystImpulseLvlFlowEnabled($config)) {
+            || self::analystImpulseLvlFlowEnabled($config)
+            || self::analystAuthorFlowEnabled($config)) {
             return false;
         }
 
@@ -208,6 +209,22 @@ final class OpenRouterLlmConfig
         }
 
         return (bool) ($config['analyst_impulse_lvl_flow_enabled'] ?? false);
+    }
+
+    /**
+     * Пакет Author Flow (пул D/E/sweep/raid_pb + контекст) для LLM-аналитика.
+     * Для type=openrouter_llm_analyst_af всегда true.
+     *
+     * @param  array<string, mixed>  $config
+     */
+    public static function analystAuthorFlowEnabled(array $config): bool
+    {
+        $botType = (string) ($config['_bot_type'] ?? '');
+        if ($botType === ChartAnalystBotTypes::AUTHOR_FLOW) {
+            return true;
+        }
+
+        return (bool) ($config['analyst_author_flow_enabled'] ?? false);
     }
 
     /**

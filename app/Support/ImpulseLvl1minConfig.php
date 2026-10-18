@@ -268,7 +268,7 @@ final class ImpulseLvl1minConfig
         }
 
         // S15: импульс на 15-секундных барах; LVL старшие — M1/M5/M15 из БД.
-        // Redis current_candle = S5, его нельзя считать формирующимся S15.
+        // Live-фитиль: Redis S5 складывается в бакет S15 в ImpulseLiveScanService (галочка, дефолт выкл.).
         $base['count'] = 800;
         $base['timeframe_sec'] = self::S15_TIMEFRAME_SEC;
         $base['expiry_sec'] = 15;

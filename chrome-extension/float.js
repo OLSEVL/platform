@@ -8,6 +8,8 @@ const statusText = document.getElementById('status-text');
 const rowsEl = document.getElementById('rows');
 const settingsEl = document.getElementById('settings');
 const soundEnabledEl = document.getElementById('soundEnabled');
+const showReasonLineEl = document.getElementById('showReasonLine');
+const chartMarkersEnabledEl = document.getElementById('chartMarkersEnabled');
 const soundNameEl = document.getElementById('sound-name');
 const soundFileEl = document.getElementById('soundFile');
 const botFilterEl = document.getElementById('bot-filter');
@@ -41,6 +43,10 @@ let serverHost = resolveServerHost('wan');
 /** После подключения WS — можно пищать на новые. */
 let liveReady = false;
 let soundEnabled = true;
+/** Показывать reason отдельной строкой под сигналом (настройка). */
+let showReasonLine = true;
+/** Рисовать CALL/PUT маркер на графике PO при клике по сигналу. */
+let chartMarkersEnabled = true;
 /** data: URL своего звука; пусто = стандартный beep через WebAudio. */
 let soundDataUrl = '';
 let soundName = '';
@@ -65,13 +71,21 @@ async function init() {
     networkMode: 'wan',
     uiMode: 'sidepanel',
     soundEnabled: true,
+    showReasonLine: true,
+    chartMarkersEnabled: true,
     filterBotIds: [],
   });
   networkMode = inferNetworkMode(cfg.serverHost, cfg.networkMode);
   serverHost = resolveServerHost(networkMode);
   soundEnabled = cfg.soundEnabled !== false;
+  showReasonLine = cfg.showReasonLine !== false;
+  chartMarkersEnabled = cfg.chartMarkersEnabled !== false;
   filterBotIds = normalizeFilterIds(cfg.filterBotIds);
   soundEnabledEl.checked = soundEnabled;
+  showReasonLineEl.checked = showReasonLine;
+  if (chartMarkersEnabledEl) {
+    chartMarkersEnabledEl.checked = chartMarkersEnabled;
+  }
 
   const netRadio = document.querySelector(`input[name="networkMode"][value="${networkMode}"]`);
   if (netRadio) {
@@ -113,6 +127,17 @@ async function init() {
     if (area === 'sync' && changes.soundEnabled) {
       soundEnabled = changes.soundEnabled.newValue !== false;
       soundEnabledEl.checked = soundEnabled;
+    }
+    if (area === 'sync' && changes.showReasonLine) {
+      showReasonLine = changes.showReasonLine.newValue !== false;
+      showReasonLineEl.checked = showReasonLine;
+      render();
+    }
+    if (area === 'sync' && changes.chartMarkersEnabled) {
+      chartMarkersEnabled = changes.chartMarkersEnabled.newValue !== false;
+      if (chartMarkersEnabledEl) {
+        chartMarkersEnabledEl.checked = chartMarkersEnabled;
+      }
     }
     if (area === 'sync' && changes.filterBotIds) {
       filterBotIds = normalizeFilterIds(changes.filterBotIds.newValue);
@@ -192,16 +217,39 @@ document.getElementById('btn-save').addEventListener('click', async () => {
   const modeEl = document.querySelector('input[name="uiMode"]:checked');
   const uiMode = modeEl && modeEl.value === 'float' ? 'float' : 'sidepanel';
   soundEnabled = !!soundEnabledEl.checked;
-  await chrome.storage.sync.set({ networkMode, serverHost, uiMode, soundEnabled });
+  showReasonLine = !!showReasonLineEl.checked;
+  chartMarkersEnabled = !!(chartMarkersEnabledEl && chartMarkersEnabledEl.checked);
+  await chrome.storage.sync.set({
+    networkMode,
+    serverHost,
+    uiMode,
+    soundEnabled,
+    showReasonLine,
+    chartMarkersEnabled,
+  });
   await chrome.runtime.sendMessage({ type: 'ext:apply-ui-mode', mode: uiMode }).catch(() => {});
   settingsEl.classList.add('hidden');
   setStatus('connecting');
   connectWs(true);
+  render();
 });
 
 soundEnabledEl.addEventListener('change', async () => {
   soundEnabled = !!soundEnabledEl.checked;
   await chrome.storage.sync.set({ soundEnabled });
+});
+
+if (chartMarkersEnabledEl) {
+  chartMarkersEnabledEl.addEventListener('change', async () => {
+    chartMarkersEnabled = !!chartMarkersEnabledEl.checked;
+    await chrome.storage.sync.set({ chartMarkersEnabled });
+  });
+}
+
+showReasonLineEl.addEventListener('change', async () => {
+  showReasonLine = !!showReasonLineEl.checked;
+  await chrome.storage.sync.set({ showReasonLine });
+  render();
 });
 
 document.getElementById('btn-sound-test').addEventListener('click', () => {
@@ -716,13 +764,29 @@ function render() {
     const pairLabel = s.display_name || s.instrument || '—';
     const pair = escapeHtml(String(pairLabel));
     const bot = escapeHtml(String(s.bot_name || s.bot_type || '—'));
-    return `<tr data-instrument="${escapeAttr(String(s.instrument || ''))}" data-display="${escapeAttr(String(s.display_name || ''))}" title="${escapeAttr(s.reason || s.instrument || '')}">
+    const instrumentAttr = escapeAttr(String(s.instrument || ''));
+    const displayAttr = escapeAttr(String(s.display_name || ''));
+    // Атрибуты для маркера на графике PO (side/ts/confidence/bot).
+    const sideAttr = escapeAttr(side);
+    const tsAttr = escapeAttr(String(s.ts ?? ''));
+    const confAttr = escapeAttr(String(s.confidence ?? ''));
+    const botAttr = escapeAttr(String(s.bot_name || s.bot_type || ''));
+    const reasonAttr = escapeAttr(String(s.reason || ''));
+    const clickAttrs = `data-instrument="${instrumentAttr}" data-display="${displayAttr}" data-side="${sideAttr}" data-ts="${tsAttr}" data-confidence="${confAttr}" data-bot="${botAttr}" data-reason="${reasonAttr}"`;
+    // Строка причины — по настройке showReasonLine (⚙ / options).
+    const reasonRaw = showReasonLine && s.reason ? String(s.reason).trim() : '';
+    const reasonLine = reasonRaw
+      ? `<tr class="sig-reason" ${clickAttrs}>
+          <td colspan="5" class="reason-cell">${escapeHtml(reasonRaw)}</td>
+        </tr>`
+      : '';
+    return `<tr class="sig-main${reasonRaw ? ' has-reason' : ''}" ${clickAttrs}>
       <td class="pair">${pair}</td>
       <td class="${sideClass}">${sideLabel}</td>
       <td>${confLabel}</td>
       <td class="bot">${bot}</td>
       <td class="time">${time}</td>
-    </tr>`;
+    </tr>${reasonLine}`;
   }).join('');
 
   rowsEl.querySelectorAll('tr[data-instrument]').forEach((tr) => {
@@ -736,7 +800,9 @@ function render() {
       if (!displayName) {
         displayName = await resolveDisplayName(instrument);
         if (displayName) {
-          tr.setAttribute('data-display', displayName);
+          rowsEl.querySelectorAll(`tr[data-instrument="${CSS.escape(instrument)}"]`).forEach((row) => {
+            row.setAttribute('data-display', displayName);
+          });
           const row = signals.find((s) => s.instrument === instrument && !s.display_name);
           if (row) {
             row.display_name = displayName;
@@ -749,11 +815,18 @@ function render() {
         type: 'ext:open-asset',
         instrument,
         display_name: displayName,
+        // Мета для оверлея маркера на canvas PO.
+        side: tr.getAttribute('data-side') || '',
+        ts: tr.getAttribute('data-ts') || '',
+        confidence: tr.getAttribute('data-confidence') || '',
+        bot_name: tr.getAttribute('data-bot') || '',
+        reason: tr.getAttribute('data-reason') || '',
       }).catch((e) => ({ ok: false, error: String(e) }));
       if (res && res.ok) {
-        statusText.textContent = res.already
+        const base = res.already
           ? `Уже открыт: ${displayName || instrument}`
           : `Открыт: ${res.matched || displayName || instrument}`;
+        statusText.textContent = res.marker ? `${base} · маркер` : base;
       } else {
         statusText.textContent = `Не найден на PO: ${displayName || instrument}`;
         console.warn('[signals] open-asset failed', res);

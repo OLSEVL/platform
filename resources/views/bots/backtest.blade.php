@@ -202,10 +202,36 @@
             </div>
         </div>
 
-        {{-- Разбивка по парам (режим «Все» и мульти-инструмент). --}}
+        {{-- Разбивка по парам (режим «Все» и мульти-инструмент). Сортировка — на клиенте. --}}
         <div id="bot-backtest-by-instr-wrap" class="hidden">
-            <div class="mb-1 text-[10px] tracking-wide text-zinc-500 flex items-center gap-1">
-                <span>По парам (сорт. по прибыли)</span>{!! $bbHelp('Таблица метрик по каждой паре. Строки отсортированы по суммарной прибыли (убывание).') !!}
+            <div class="mb-1 flex flex-wrap items-center gap-2 text-[10px] tracking-wide text-zinc-500">
+                <span class="inline-flex items-center gap-1">
+                    По парам
+                    {!! $bbHelp('Таблица метрик по каждой паре. Сортировку выбирайте справа: прибыль, WIN/LOSS, % побед, серии и т.д.') !!}
+                </span>
+                <label class="ml-auto inline-flex items-center gap-1.5 normal-case">
+                    <span class="text-zinc-600">Сорт.</span>
+                    <select id="bot-backtest-by-instr-sort"
+                        class="rounded border border-zinc-600 bg-zinc-800 px-2 py-0.5 text-[11px] text-zinc-100"
+                        title="Критерий сортировки таблицы по парам">
+                        <option value="pnl_desc">Прибыль ↓</option>
+                        <option value="pnl_asc">Прибыль ↑</option>
+                        <option value="winrate_desc">% побед ↓</option>
+                        <option value="winrate_asc">% побед ↑</option>
+                        <option value="wins_desc">WIN ↓</option>
+                        <option value="wins_asc">WIN ↑</option>
+                        <option value="losses_desc">LOSS ↓</option>
+                        <option value="losses_asc">LOSS ↑</option>
+                        <option value="trades_desc">Сделки ↓</option>
+                        <option value="trades_asc">Сделки ↑</option>
+                        <option value="max_win_streak_desc">Макс. + ↓</option>
+                        <option value="max_win_streak_asc">Макс. + ↑</option>
+                        <option value="max_loss_streak_desc">Макс. − ↓</option>
+                        <option value="max_loss_streak_asc">Макс. − ↑</option>
+                        <option value="name_asc">Пара A→Z</option>
+                        <option value="name_desc">Пара Z→A</option>
+                    </select>
+                </label>
             </div>
             <div class="rounded border border-zinc-800">
                 <table class="w-full text-left text-xs">
@@ -333,6 +359,71 @@
     const bbStreakDistBody = document.getElementById('bot-backtest-streak-dist-body');
     const bbByInstrWrap = document.getElementById('bot-backtest-by-instr-wrap');
     const bbByInstrBody = document.getElementById('bot-backtest-by-instr-body');
+    const bbByInstrSort = document.getElementById('bot-backtest-by-instr-sort');
+    // Кэш by_instrument текущего прогона — чтобы менять сортировку без перезагрузки summary.
+    let bbByInstrCache = null;
+    const BB_BY_INSTR_SORT_KEY = 'bot_backtest_by_instr_sort_v1';
+    const BB_BY_INSTR_SORT_ALLOWED = new Set([
+        'pnl_desc', 'pnl_asc',
+        'winrate_desc', 'winrate_asc',
+        'wins_desc', 'wins_asc',
+        'losses_desc', 'losses_asc',
+        'trades_desc', 'trades_asc',
+        'max_win_streak_desc', 'max_win_streak_asc',
+        'max_loss_streak_desc', 'max_loss_streak_asc',
+        'name_asc', 'name_desc',
+    ]);
+    function hydrateByInstrSortSelect() {
+        if (!bbByInstrSort || bbByInstrSort.dataset.hydrated === '1') return;
+        let mode = 'pnl_desc';
+        try {
+            const saved = localStorage.getItem(BB_BY_INSTR_SORT_KEY);
+            if (saved && BB_BY_INSTR_SORT_ALLOWED.has(saved)) mode = saved;
+        } catch (_) { /* private mode */ }
+        bbByInstrSort.value = mode;
+        bbByInstrSort.dataset.hydrated = '1';
+    }
+    function readByInstrSortMode() {
+        hydrateByInstrSortSelect();
+        const v = bbByInstrSort ? bbByInstrSort.value : 'pnl_desc';
+        return BB_BY_INSTR_SORT_ALLOWED.has(v) ? v : 'pnl_desc';
+    }
+    function persistByInstrSortMode(mode) {
+        try { localStorage.setItem(BB_BY_INSTR_SORT_KEY, mode); } catch (_) { /* ignore */ }
+    }
+    /** Числовое значение поля для сортировки; null winrate → −∞ при desc, +∞ при asc (вниз списка). */
+    function byInstrSortValue(row, field, dir) {
+        if (field === 'name') return null;
+        if (field === 'winrate') {
+            const wr = row.winrate;
+            if (wr == null || !Number.isFinite(Number(wr))) {
+                return dir === 'desc' ? Number.NEGATIVE_INFINITY : Number.POSITIVE_INFINITY;
+            }
+            return Number(wr);
+        }
+        const n = Number(row[field] ?? 0);
+        return Number.isFinite(n) ? n : 0;
+    }
+    function sortByInstrumentEntries(entries, mode) {
+        const m = BB_BY_INSTR_SORT_ALLOWED.has(mode) ? mode : 'pnl_desc';
+        const lastUs = m.lastIndexOf('_');
+        const field = m.slice(0, lastUs);
+        const dir = m.slice(lastUs + 1);
+        const mul = dir === 'asc' ? 1 : -1;
+        return entries.slice().sort((a, b) => {
+            const [instA, rowA] = a;
+            const [instB, rowB] = b;
+            if (field === 'name') {
+                const cmp = String(instA).localeCompare(String(instB), 'en');
+                return dir === 'asc' ? cmp : -cmp;
+            }
+            const va = byInstrSortValue(rowA, field, dir);
+            const vb = byInstrSortValue(rowB, field, dir);
+            if (va !== vb) return va < vb ? -mul : mul;
+            // Стабильный тай-брейк: имя пары.
+            return String(instA).localeCompare(String(instB), 'en');
+        });
+    }
     const bbTradesWrap = document.getElementById('bot-backtest-trades-wrap');
     const bbTradesBody = document.getElementById('bot-backtest-trades-body');
     const bbTradesInstrument = document.getElementById('bot-backtest-trades-instrument');
@@ -726,13 +817,18 @@
 
     function renderByInstrument(summary) {
         if (!bbByInstrWrap || !bbByInstrBody) return;
-        const by = summary && summary.by_instrument ? summary.by_instrument : null;
+        const by = summary && summary.by_instrument
+            ? summary.by_instrument
+            : bbByInstrCache;
         if (!by || typeof by !== 'object' || !Object.keys(by).length) {
+            bbByInstrCache = null;
             bbByInstrWrap.classList.add('hidden');
             bbByInstrBody.innerHTML = '';
             return;
         }
-        const rows = Object.entries(by);
+        bbByInstrCache = by;
+        const mode = readByInstrSortMode();
+        const rows = sortByInstrumentEntries(Object.entries(by), mode);
         bbByInstrWrap.classList.remove('hidden');
         bbByInstrBody.innerHTML = rows.map(([inst, row]) => {
             const wr = row.winrate != null ? `${(Number(row.winrate) * 100).toFixed(0)}%` : '—';
@@ -972,6 +1068,7 @@
         if (!res.ok) throw new Error('Не удалось удалить');
         if (backtestActiveRunId === runId) {
             backtestActiveRunId = null;
+            bbByInstrCache = null;
             if (bbSummary) bbSummary.textContent = 'Прогон удалён.';
             if (bbMetrics) bbMetrics.classList.add('hidden');
             if (bbByInstrWrap) bbByInstrWrap.classList.add('hidden');
@@ -992,6 +1089,7 @@
         });
         if (!res.ok) throw new Error('Не удалось очистить');
         backtestActiveRunId = null;
+        bbByInstrCache = null;
         if (bbSummary) bbSummary.textContent = 'Все прогоны удалены.';
         if (bbMetrics) bbMetrics.classList.add('hidden');
         if (bbByInstrWrap) bbByInstrWrap.classList.add('hidden');
@@ -1130,6 +1228,15 @@
     }
 
     if (bbPreset) bbPreset.addEventListener('change', updateBacktestPresetUi);
+    // Смена сортировки «По парам» — мгновенно, без повторного запроса summary.
+    if (bbByInstrSort) {
+        hydrateByInstrSortSelect();
+        bbByInstrSort.addEventListener('change', () => {
+            const mode = readByInstrSortMode();
+            persistByInstrSortMode(mode);
+            if (bbByInstrCache) renderByInstrument({ by_instrument: bbByInstrCache });
+        });
+    }
     if (bbRunBtn) bbRunBtn.addEventListener('click', startBacktest);
     if (bbCancelBtn) bbCancelBtn.addEventListener('click', cancelBacktest);
     if (bbClearAll) bbClearAll.addEventListener('click', () => clearAllBacktests().catch((e) => alert(e.message)));

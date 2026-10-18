@@ -5,6 +5,8 @@ namespace App\Support;
 /**
  * Краткие и полные описания алгоритмов ботов для списка /bots.
  *
+ * AuthorFlow — отдельный тип; engulfing_liquidity (#45) здесь не подменяется.
+ *
  * full-карточка: sections[] + diagram (ключ SVG-схемы в попапе).
  *
  * @phpstan-type AlgoSection array{h: string, p: string}
@@ -53,6 +55,7 @@ final class BotAlgorithmSummary
             'smc_flow' => 'SMC Flow',
             'sweep_raid_liquidity' => 'Sweep / Raid Liquidity',
             'engulfing_liquidity' => 'Engulfing Liquidity',
+            AuthorFlowConfig::BOT_TYPE => AuthorFlowConfig::TITLE,
             'strong_level' => 'Strong Level',
             'strong_trend_telegram' => 'Strong Trend Telegram',
             'strong_trend_demarker' => 'Strong Trend + DeMarker',
@@ -65,6 +68,7 @@ final class BotAlgorithmSummary
             ChartAnalystBotTypes::SRL => 'OpenRouter Chart Analyst Sweep/Raid',
             ChartAnalystBotTypes::ENGULF => 'OpenRouter Chart Analyst Engulfing',
             ChartAnalystBotTypes::IMPULSE => 'OpenRouter Chart Analyst Impulse LVL',
+            ChartAnalystBotTypes::AUTHOR_FLOW => 'OpenRouter Chart Analyst Author Flow',
             default => $type,
         };
     }
@@ -88,7 +92,8 @@ final class BotAlgorithmSummary
             'smc_flow' => 'smc_flow',
             'sweep_raid_liquidity' => 'level_bounce',
             'engulfing_liquidity' => 'counter_three',
-            'openrouter_llm', 'openrouter_llm_analyst', ChartAnalystBotTypes::SRL, ChartAnalystBotTypes::ENGULF, ChartAnalystBotTypes::IMPULSE => 'llm',
+            AuthorFlowConfig::BOT_TYPE => 'counter_three',
+            'openrouter_llm', 'openrouter_llm_analyst', ChartAnalystBotTypes::SRL, ChartAnalystBotTypes::ENGULF, ChartAnalystBotTypes::IMPULSE, ChartAnalystBotTypes::AUTHOR_FLOW => 'llm',
             default => 'generic',
         };
     }
@@ -177,6 +182,9 @@ final class BotAlgorithmSummary
             'engulfing_liquidity' => "3-шаговое поглощение (сценарий D) на закрытой свече:\n"
                 ."Шаг1 engulf → шаг2 реакция (окно 1…N) → шаг3 контр-поглощение → вход.\n"
                 .'Фильтры со стримов: FH/FL у шага 1, skip «уход», skip пробой+закреп (ветка E). Live daemon как #47.',
+            AuthorFlowConfig::BOT_TYPE => "Оркестратор «как автор»: D / E / sweep / raid_pb → один сигнал на бар.\n"
+                ."Приоритет: breakout_E → engulf_D → raid_pb → sweep. Фильтры структуры и OTC-гэпов.\n"
+                .'Детекторы #45 и SRL вызываются как библиотеки; их боты не меняются.',
             'strong_level' => "Строит сильные уровни из нескольких источников (конфлюенс).\n"
                 ."Ждёт касание цены и подтверждение отскока/пробоя на M5/M1.\n"
                 .'Отбой/пробой задаёт CALL или PUT; есть карточки и Telegram.',
@@ -207,6 +215,9 @@ final class BotAlgorithmSummary
             ChartAnalystBotTypes::IMPULSE => "Chart Analyst + Impulse LVL: уровни бота 47 на графике и в промпте, LLM сам даёт CALL/PUT/NONE.\n"
                 ."Экспирация ориентир 60 с. Плановый scan выключен (ручной / Telegram / hybrid).\n"
                 .'Rule-based Impulse LVL 1min (#47) не меняется.',
+            ChartAnalystBotTypes::AUTHOR_FLOW => "Chart Analyst + Author Flow (средний): пул D/E/sweep/raid_pb + контекст, side только из pool или NONE.\n"
+                ."Горизонт — следующая свеча S15 (~15 с). Плановый scan выключен (ручной / Telegram / hybrid).\n"
+                .'Rule-based author_flow остаётся отдельным сканером.',
             default => 'Алгоритм не описан для типа «'.$type.'».',
         };
     }
@@ -428,6 +439,13 @@ final class BotAlgorithmSummary
                 $s('Пример', '10:01 engulf ↑ у уровня, 10:02–10:03 откат ↓, 10:04 контр ↑ → CALL на close, expiry 60 с.'),
                 $s('Важно', 'Один engulf без цепочки — не вход. Skip «уход» (2+ бара в сторону шага 1) и пробой+закреп (ветка E). FH/FL опционально, по умолчанию вкл.'),
             ],
+            AuthorFlowConfig::BOT_TYPE => [
+                $s('Идея', 'Один сигнал на инструмент/бар: собирает кандидатов D/E/sweep/raid_pb и выбирает по приоритету автора.'),
+                $s('Когда CALL', 'Победивший setup CALL при alignment со структурой (bias up) и прохождении score ≥ min_confidence.'),
+                $s('Когда PUT', 'Аналогично для PUT при bias down (или range, если allow_range_entries).'),
+                $s('Пример', 'На баре и D PUT и E CALL → побеждает E (priority 10), D уходит в suppressed.'),
+                $s('Важно', 'Бот #45 и SRL не меняются. Конфликт CALL/PUT одного priority при равном score → пропуск.'),
+            ],
             'openrouter_llm' => [
                 $s('Идея', 'Торговое решение принимает LLM по JSON (side, confidence, reasons). Индикаторных правил нет.'),
                 $s('Когда CALL / PUT', 'Модель сама выбирает сторону по свечам M1 и опционально MTF.'),
@@ -460,6 +478,13 @@ final class BotAlgorithmSummary
                 $s('Когда PUT', 'Подсказка: зелёный импульс у сопротивления LVL (отбой вниз).'),
                 $s('Пример', 'На M1 сильное зелёное тело касается M15 resistance → live_setups PUT (отбой), зоны на графике.'),
                 $s('Важно', 'Плановый scan выключен. Бот 47 (impulse_lvl_1min) остаётся отдельным сканером.'),
+            ],
+            ChartAnalystBotTypes::AUTHOR_FLOW => [
+                $s('Идея', 'Средний Chart Analyst: детекторы Author Flow собирают пул D/E/sweep/raid_pb на S15 + structure/liquidity. LLM выбирает side только из pool или NONE.'),
+                $s('Когда CALL', 'В candidates есть CALL (E/D/raid_pb/sweep), контекст не против; LLM подтверждает лучший сетап.'),
+                $s('Когда PUT', 'В candidates есть PUT; структура/ликвидность согласованы.'),
+                $s('Пример', 'На S15 engulf_D CALL + structure up → LLM CALL на следующую свечу (~15 с).'),
+                $s('Важно', 'Пустой pool или конфликт CALL+PUT → NONE. Rule-based author_flow отдельно.'),
             ],
             default => [
                 $s('Описание', 'Для типа «'.$type.'» подробная карточка ещё не заполнена.'),

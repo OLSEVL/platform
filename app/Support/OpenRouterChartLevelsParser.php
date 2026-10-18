@@ -20,6 +20,11 @@ final class OpenRouterChartLevelsParser
      */
     public static function defaultAnalystSystemPromptForConfig(array $config): string
     {
+        // Author Flow: пул кандидатов + контекст; side только из pool или NONE.
+        if (OpenRouterLlmConfig::analystAuthorFlowEnabled($config)) {
+            return self::defaultAnalystSystemPromptWithAuthorFlow();
+        }
+
         // Engulf-аналитик: подтверждение 3-шагового поглощения.
         if (OpenRouterLlmConfig::analystEngulfFlowEnabled($config)) {
             return self::defaultAnalystSystemPromptWithEngulf();
@@ -47,6 +52,10 @@ final class OpenRouterChartLevelsParser
      */
     public static function defaultAnalystSystemPromptShortForConfig(array $config): string
     {
+        if (OpenRouterLlmConfig::analystAuthorFlowEnabled($config)) {
+            return self::defaultAnalystSystemPromptShortWithAuthorFlow();
+        }
+
         if (OpenRouterLlmConfig::analystEngulfFlowEnabled($config)) {
             return self::defaultAnalystSystemPromptShortWithEngulf();
         }
@@ -62,6 +71,77 @@ final class OpenRouterChartLevelsParser
         return OpenRouterLlmConfig::analystSmcFlowEnabled($config)
             ? self::defaultAnalystSystemPromptShortWithSmcFlow()
             : self::defaultAnalystSystemPromptShortClassic();
+    }
+
+    /** Краткий режим Author Flow: вердикт по пулу candidates + контекст, горизонт следующая S15. */
+    public static function defaultAnalystSystemPromptShortWithAuthorFlow(): string
+    {
+        return <<<'PROMPT'
+Ты торговый AI-аналитик для бинарных опционов (краткий режим Author Flow).
+Целевая экспирация: следующая свеча S15 (обычно 15 секунд).
+
+Задача — выбрать CALL/PUT из author_flow_summary.candidates или NONE.
+Ты НЕ ищешь новые сетапы сам по свечам — только оцениваешь пул + structure/liquidity.
+
+Данные в запросе:
+- author_flow_summary — candidates (setup/side/score/priority), structure_bias, open_liquidity_*, rule_reminder
+- closed_candles_s15 / s5 / mtf.* — контекст качества
+- expiry_focus_sec: 15 (или из summary)
+- user_question — вопрос трейдера (может быть null)
+
+Формат ответа (строго, 2–4 строки на русском, без markdown):
+Рекомендация: CALL | PUT | NONE
+Вероятность успеха: NN%
+Причина: одно короткое предложение
+
+Правила:
+- Если candidates пуст → NONE.
+- CALL/PUT только если такой side есть хотя бы у одного кандидата в pool.
+- При конфликте CALL и PUT в pool, структуре против или «уже ушли» → NONE.
+- Контекст (structure_bias, open_liquidity) — фильтр качества, не источник новой стороны.
+- Вероятность успеха: целое 0–100. При NONE обычно ≤50%.
+- Пиши только по-русски (кроме CALL/PUT/NONE). Без chart_levels.
+PROMPT;
+    }
+
+    /** Полный режим Author Flow: пул + контекст, прогноз на следующую S15. */
+    public static function defaultAnalystSystemPromptWithAuthorFlow(): string
+    {
+        return <<<'PROMPT'
+Ты торговый AI-аналитик для бинарных опционов по стратегии Author Flow.
+Целевая экспирация: следующая свеча S15 (~15 секунд). Тайминг — закрытая S15 (+ S5 для микроконтекста).
+
+Главная задача — выбрать сторону из уже найденного пула author_flow_summary.candidates
+с учётом structure_bias и open_liquidity_*, либо NONE.
+Детекторы платформы уже собрали D / E / sweep / raid_pb. Ты НЕ изобретаешь новые паттерны «с нуля».
+Это средний вариант: не «только confirm одного сетапа» и не свободный Impulse — side ∈ pool ∪ {NONE}.
+
+Данные в запросе:
+- author_flow_summary:
+  candidates — пул на last closed S15 (setup, side, priority, score, reason_ru),
+  structure_bias / last_swing_* / open_liquidity_* — контекст,
+  rule_reminder — правила автора
+- closed_candles_s15, partial_candle_s15 — S15 (основной ТФ)
+- closed_candles_s5, partial_candle_s5 — S5
+- mtf.* — старшие ТФ (если mtf.enabled) только как фильтр качества
+- expiry_focus_sec: 15
+- user_question — вопрос трейдера (может быть null)
+
+Правила стратегии (кратко):
+1) E (priority 10) — пробой + закрепление → продолжение.
+2) D (20) — 3-шаговое поглощение → fade на close шага 3.
+3) raid_pb (30) — снятие → первая откатная.
+4) sweep (40) — свип FH/FL → fade.
+5) Пустой pool / конфликт CALL+PUT / структура против / опоздание → NONE.
+
+Обязательно в тексте анализа:
+1) Есть ли кандидаты в pool (явно: setup + side + score) или список пуст.
+2) Согласованность со structure_bias и open_liquidity.
+3) Явная рекомендация: CALL, PUT или NONE (side только из pool).
+4) Горизонт — следующая S15 (~15 с) при CALL/PUT.
+5) Строка «Вероятность успеха: NN%».
+PROMPT
+            .self::promptInstructionsWithAuthorFlow();
     }
 
     /** Краткий режим Impulse LVL: вердикт с учётом impulse_lvl_summary. */
@@ -587,6 +667,32 @@ TXT
 - entry.price бери из кандидата (entry_price), side — только CALL или PUT из candidates.
 - В levels можно указать цену входа (kind entry) с label «M1 вход · price».
 - Не рисуй уровни, которых нет в snapshot.
+TXT;
+    }
+
+    /** Формат ответа для аналитика Author Flow (следующая S15). */
+    public static function promptInstructionsWithAuthorFlow(): string
+    {
+        return <<<'TXT'
+
+Формат ответа (обязательно):
+1) Связный текст на русском: pool candidates → structure/liquidity → выбор side или NONE → сценарий на следующую S15 (~15 с).
+   В конце текстового блока — строка «Рекомендация: CALL» или «Рекомендация: PUT» или «Рекомендация: NONE (причина)».
+TXT
+            .self::successProbabilityInstructionBlock()
+            .<<<'TXT'
+2) В самом конце ответа — отдельный блок для отрисовки на графике (после текста, без markdown вокруг JSON внутри блока):
+
+TXT
+            .self::chartLevelsFenceExample(includeZones: false, includeEntry: true)
+            .self::chartLevelsRulesBlock()
+            .<<<'TXT'
+
+Дополнительно для Author Flow:
+- entry.price бери из выбранного кандидата (entry_price), side — только CALL или PUT из candidates.
+- В levels можно указать swing high/low и цену входа (kind entry) с label «S15 …».
+- timeframe: S15 | S5 | M1 | M5 | M15 | H1.
+- Не рисуй уровни, которых нет в snapshot / candidates.
 TXT;
     }
 

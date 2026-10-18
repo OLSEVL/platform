@@ -36,10 +36,10 @@ final class SettingsFieldHints
         }
 
         // SRL / Engulf: expiry 15с на S15 — не путать с общим текстом «60 = M1».
-        if ($field === 'expiry_sec' && in_array($botType, ['sweep_raid_liquidity', 'engulfing_liquidity'], true)) {
+        if ($field === 'expiry_sec' && in_array($botType, ['sweep_raid_liquidity', 'engulfing_liquidity', AuthorFlowConfig::BOT_TYPE], true)) {
             return 'Длительность paper/PO сделки. На OTC у автора часто 15с при ТФ S15; 60с — legacy M1. Минимум 15, максимум 900. Также окно dedupe по паре.';
         }
-        if ($field === 'timeframe' && in_array($botType, ['sweep_raid_liquidity', 'engulfing_liquidity'], true)) {
+        if ($field === 'timeframe' && in_array($botType, ['sweep_raid_liquidity', 'engulfing_liquidity', AuthorFlowConfig::BOT_TYPE], true)) {
             return 'Таймфрейм закрытых свечей для детекции. S15 (4015) — как стримы DarkSamurai на OTC; M1 — классика. Интервал скана лучше согласовать с ТФ (15с при S15).';
         }
 
@@ -51,7 +51,11 @@ final class SettingsFieldHints
                 ?? self::guess($field);
         }
         if (ImpulseLvl1minConfig::is((string) $botType)) {
-            return self::IMPULSE_LVL_1MIN[$field]
+            $impulseHints = ImpulseLvl1minConfig::isS15((string) $botType)
+                ? (self::IMPULSE_LVL_S15 + self::IMPULSE_LVL_1MIN)
+                : self::IMPULSE_LVL_1MIN;
+
+            return $impulseHints[$field]
                 ?? self::BOT[$field]
                 ?? self::COMMON[$field]
                 ?? self::guess($field);
@@ -771,6 +775,19 @@ final class SettingsFieldHints
         'occupancy_blocks_alerts' => 'Если paper уже открыта — не слать и алерты. По умолчанию выкл., как сейчас: Telegram не молчит из-за сделки.',
         'occupancy_scope' => 'Где смотреть открытую paper: только эта пара (как раньше) или любая пара этого бота (один вход на весь рынок).',
         'paper_prefer_live' => 'Если на текущем баре есть live-хит, paper берём с него, а не с prev. Снимите — можно открыть сделку с prev, даже когда live тоже есть.',
+    ];
+
+    /**
+     * Impulse LVL S15: те же подсказки, что у 1min, с заменой M1→S15 где это про сигнальный бар.
+     *
+     * @var array<string, string>
+     */
+    private const IMPULSE_LVL_S15 = [
+        'stale_after_sec' => 'Если live-свеча не обновлялась дольше N секунд — не используем partial. При «Держать формирующуюся S15» порог не режет открытый 15с бакет.',
+        'keep_stale_forming_m1' => 'Пока текущий S15 не закрылся, держим last snapshot даже если Redis-тик старше «свежести». S5 из Redis складывается в бакет S15, сырой S5 в стратегию не идёт.',
+        'eval_prev_candle' => 'После ухода на новый live-S15 ещё раз проверить только что закрытый 15с бар и пометить prev. Выкл. — только текущая свеча.',
+        'overlay_forming_htf' => 'Собирать текущие M1/M5/M15 из ряда S15 до eval (LEVEL_UPDATE_HIGHER_TF). Выкл. — LVL только по закрытым бакетам из БД.',
+        'live_candle_wick_signals' => 'Незакрытый S15: мера = max(high−open, open−low), не тело. Redis S5 live-скан складывает в текущий 15с бакет (open первого S5 + расширение фитиля). Повтор на том же баре — только новый экстремум и цвет выше по приоритету. Сохраните настройки и перезапустите bots:impulse-live.',
     ];
 
     /**

@@ -46,7 +46,7 @@ class StrongLevelTelegramLlmButton
     public static function supportsBotType(string $type): bool
     {
         // Эти типы шлют ту же кнопку, но не входят в CARD_AND_TELEGRAM (level-bounce).
-        return in_array($type, ['strong_trend_telegram', 'strong_trend_demarker', \App\Support\DemarkerDualFastConfig::BOT_TYPE, 'sweep_raid_liquidity', 'engulfing_liquidity', 'smc_flow', \App\Support\ImpulseLvl1minConfig::BOT_TYPE, \App\Support\ImpulseLvl1minConfig::BOT_TYPE_S15], true)
+        return in_array($type, ['strong_trend_telegram', 'strong_trend_demarker', \App\Support\DemarkerDualFastConfig::BOT_TYPE, 'sweep_raid_liquidity', 'engulfing_liquidity', \App\Support\AuthorFlowConfig::BOT_TYPE, 'smc_flow', \App\Support\ImpulseLvl1minConfig::BOT_TYPE, \App\Support\ImpulseLvl1minConfig::BOT_TYPE_S15], true)
             || in_array($type, self::SUPPORTED_BOT_TYPES, true);
     }
 
@@ -118,6 +118,7 @@ class StrongLevelTelegramLlmButton
         $preferType = match ($sourceBot->type) {
             'sweep_raid_liquidity' => \App\Support\ChartAnalystBotTypes::SRL,
             'engulfing_liquidity' => \App\Support\ChartAnalystBotTypes::ENGULF,
+            \App\Support\AuthorFlowConfig::BOT_TYPE => \App\Support\ChartAnalystBotTypes::AUTHOR_FLOW,
             \App\Support\ImpulseLvl1minConfig::BOT_TYPE, \App\Support\ImpulseLvl1minConfig::BOT_TYPE_S15 => \App\Support\ChartAnalystBotTypes::IMPULSE,
             default => \App\Support\ChartAnalystBotTypes::CLASSIC,
         };

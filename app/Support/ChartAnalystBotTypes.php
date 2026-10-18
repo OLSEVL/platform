@@ -23,11 +23,17 @@ final class ChartAnalystBotTypes
     public const IMPULSE = 'openrouter_llm_analyst_ilvl';
 
     /**
+     * Аналитик Author Flow (средний вариант): пул D/E/sweep/raid_pb + контекст;
+     * side только из candidates или NONE. Горизонт — следующая S15.
+     */
+    public const AUTHOR_FLOW = 'openrouter_llm_analyst_af';
+
+    /**
      * @return list<string>
      */
     public static function all(): array
     {
-        return [self::CLASSIC, self::SRL, self::ENGULF, self::IMPULSE];
+        return [self::CLASSIC, self::SRL, self::ENGULF, self::IMPULSE, self::AUTHOR_FLOW];
     }
 
     public static function isAnalyst(string $type): bool
@@ -50,6 +56,11 @@ final class ChartAnalystBotTypes
         return $type === self::IMPULSE;
     }
 
+    public static function isAuthorFlow(string $type): bool
+    {
+        return $type === self::AUTHOR_FLOW;
+    }
+
     /** Человекочитаемое имя для UI / seed. */
     public static function label(string $type): string
     {
@@ -57,6 +68,7 @@ final class ChartAnalystBotTypes
             self::SRL => 'OpenRouter Chart Analyst Sweep/Raid',
             self::ENGULF => 'OpenRouter Chart Analyst Engulfing',
             self::IMPULSE => 'OpenRouter Chart Analyst Impulse LVL',
+            self::AUTHOR_FLOW => 'OpenRouter Chart Analyst Author Flow',
             default => 'OpenRouter Chart Analyst',
         };
     }
