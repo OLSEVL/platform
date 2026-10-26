@@ -1,135 +1,134 @@
-# Прокси: постоянные WebSocket по одному на актив (PLAN_RELEASE)
+# Proxy: persistent WebSocket per instrument (ingest)
 
-Прокси при запуске может запускать фоновый инжест: загружает список активных инструментов с платформы, для каждого держит **одно постоянное WebSocket-соединение** к Pocket Option, раз в минуту запрашивает M1-свечи и отправляет их на платформу (`POST /api/ingest-candles`).
+On startup the proxy can run a background ingest loop: it loads active instruments from the platform, keeps **one persistent WebSocket per asset** to Pocket Options, requests M1 candles on a schedule, and posts them to Laravel (`POST /api/ingest-candles`). Current (open) minutes can go to Redis for the live chart.
 
-## Настройка платформы
+## Platform configuration
 
-В `.env` платформы:
+In the platform `.env`:
 
 ```env
 POCKET_OPTIONS_PROXY_URL=http://127.0.0.1:3000
 ```
 
-В разделе **Инструменты** добавьте нужные активы и включите их. Для каждого укажите `session_token` и `uid` — они хранятся в БД (`pocket_instruments`) и передаются в API вместе с остальными параметрами инструмента.
+In **Instruments**, enable the assets you need. Each instrument should have `session_token` and `uid` stored in `pocket_instruments` (returned by the instruments API to the proxy).
 
-## Запуск прокси с инжестом
+## Running the proxy with ingest
 
-Из каталога `bot`:
+From `bot/`:
 
 ```bash
-export PLATFORM_URL="http://localhost:8000"     # URL платформы
-export INGEST_MAX_CONNECTIONS=100               # макс. соединений (по умолчанию 100)
-export INSTRUMENTS_REFRESH_SEC=300              # обновление списка инструментов (сек)
+export PLATFORM_URL="http://127.0.0.1:8080"   # must match real Laravel URL
+export INGEST_MAX_CONNECTIONS=100
+export INSTRUMENTS_REFRESH_SEC=300
 
-python pocket-options-proxy.py
+.venv/bin/python pocket-options-proxy.py
 ```
 
-При наличии `PLATFORM_URL` прокси автоматически запускает фоновую задачу инжеста: загружает инструменты с платформы и для каждого (до `INGEST_MAX_CONNECTIONS`) держит одно постоянное соединение, раз в минуту запрашивает M1 и отправляет свечи на платформу. При обрыве соединения — переподключение к тому же инструменту.
+When `PLATFORM_URL` is set, ingest starts automatically: fetch instruments, start up to `INGEST_MAX_CONNECTIONS` workers, reconnect on drop.
+
+Prefer systemd in production: `platform-pocket-proxy.service` via `./deploy/install-platform-services.sh` (loads `bot/proxy.env`). See [DEPLOYMENT.md](./DEPLOYMENT.md).
+
+### Legacy unit (avoid on the same host)
+
+Older docs referenced `bot/pocket-options-proxy.service`. That conflicts on port **3000** with `platform-pocket-proxy.service`. Disable the old unit:
+
+```bash
+sudo systemctl disable --now pocket-options-proxy.service
+```
+
+Useful commands for the current unit:
+
+```bash
+sudo systemctl status platform-pocket-proxy
+sudo journalctl -u platform-pocket-proxy -f
+# or: tail -f storage/logs/proxy.log
+sudo systemctl restart platform-pocket-proxy
+```
 
 ---
 
-## Запуск как systemd-сервис (постоянный сбор)
+## Chart lag vs Pocket Options
 
-В каталоге `bot` есть unit-файл и env-файл:
+Pocket Options updates the browser chart over a **direct WebSocket**. On this platform the path is: ticks aggregated in the ingest worker → open minute to Laravel/Redis → dashboard poll or `/chart-live` WS. Perfect tick-for-tick parity is not the goal; avoid adding avoidable delay.
 
-- `bot/pocket-options-proxy.service` — unit для systemd
-- `bot/proxy.env` — переменная `PLATFORM_URL` (при необходимости отредактируйте)
+### Bottleneck: main ingest loop interval
 
-Установка и запуск (от root или через sudo):
+The worker sleeps **`INGEST_LOOP_INTERVAL_SEC`** between cycles (current-candle post, flush closed bars, etc.). A large interval (historically **5 s**) caps updates even if debounce is small — often **5–10 s** perceived lag with polling.
 
-```bash
-sudo cp /home/o/platform/bot/pocket-options-proxy.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable pocket-options-proxy.service
-sudo systemctl start pocket-options-proxy.service
+Recommended for snappy S5 live:
+
+```env
+INGEST_LOOP_INTERVAL_SEC=0.25
+INGEST_CURRENT_CANDLE_POST_DEBOUNCE_SEC=0.25
+INGEST_CURRENT_CANDLE_REDIS_DIRECT=1
 ```
 
-Полезные команды:
+With a tiny default `www` FPM pool, HTTP `POST /api/ingest-current-candle` cannot sustain 100+ pairs × ~4 Hz (p50 ~1s, 504s). **Redis-direct** writes `SETEX current_candle:*` and `PUBLISH chart:s5` from Python so ticks do not wait on PHP flush of closed bars. Nginx still routes ingest HTTP to the dedicated **ingest** FPM pool (`deploy/php8.3-fpm-ingest.conf`).
 
-```bash
-sudo systemctl status pocket-options-proxy   # статус
-sudo journalctl -u pocket-options-proxy -f   # логи в реальном времени
-sudo systemctl restart pocket-options-proxy  # перезапуск
-sudo systemctl stop pocket-options-proxy     # остановка
-```
+### Current-candle environment variables
 
-После перезагрузки сервера сервис поднимется сам (enabled).
+| Variable | Purpose |
+|----------|---------|
+| `INGEST_CURRENT_CANDLE_ENABLE` | `1` = push forming minute; `0` = closed candles to DB only |
+| `INGEST_CURRENT_CANDLE_POST_DEBOUNCE_SEC` | Min seconds between posts of the same open minute (float OK) |
+| `INGEST_CURRENT_CANDLE_TTL_SEC` | Redis TTL for current candle keys |
+| `INGEST_LOOP_INTERVAL_SEC` | Main worker loop sleep (float); caps post/flush rate |
+| `INGEST_CURRENT_CANDLE_REDIS_DIRECT` | `1` = write Redis + pub/sub from Python |
 
----
-
-## Задержка графика относительно Pocket Options
-
-На стороне Pocket Option график обновляется по **прямому WebSocket** в браузере. На платформе цепочка другая: тики и свечи из потока **агрегируются в воркере** (`bot/ingest_stream.py`), затем **текущая (незакрытая) минута** отправляется на Laravel (`POST /api/ingest-current-candle`, кеш Redis), а дашборд **периодически запрашивает** свечи (`GET /candles` с `include_partial=1`). Поэтому полное совпадение с окном Pocket по времени невозможно; важно не раздувать искусственную задержку на своей стороне.
-
-### Узкое место: интервал главного цикла инжеста
-
-Воркер в цикле делает паузу **`INGEST_LOOP_INTERVAL_SEC`** секунд и только после неё выполняет отправку текущей свечи, сброс завершённых минут в БД и прочие шаги. Если этот интервал большой (раньше в коде было **5 с**), то **даже при малом `INGEST_CURRENT_CANDLE_POST_DEBOUNCE_SEC`** текущая свеча на платформу уходит **не чаще, чем раз за интервал цикла**. В сочетании с опросом графика это давало ощущаемое отставание порядка **5–10 с** от графика Pocket.
-
-Рекомендация для «живой» S5: **`INGEST_LOOP_INTERVAL_SEC=0.25`**, **`INGEST_CURRENT_CANDLE_POST_DEBOUNCE_SEC=0.25`**, **`INGEST_CURRENT_CANDLE_REDIS_DIRECT=1`**.
-
-Важно: при `pm.max_children=5` HTTP `/api/ingest-current-candle` не тянет 100+ пар × 4 Hz (p50~1s, 504). Redis-direct пишет `SETEX current_candle:*` + `PUBLISH chart:s5` из Python; тик планирует publish без ожидания flush закрытых баров в Laravel.
-
-### Остальные переменные (текущая свеча)
-
-| Переменная | Назначение |
-|------------|------------|
-| `INGEST_CURRENT_CANDLE_ENABLE` | `1` — слать формирующуюся минуту на платформу; `0` — только закрытые свечи в БД. |
-| `INGEST_CURRENT_CANDLE_POST_DEBOUNCE_SEC` | Минимальный интервал (сек, дробное ок, напр. `0.25`) между POST одной и той же открытой минуты при обновлении OHLC. |
-| `INGEST_CURRENT_CANDLE_TTL_SEC` | TTL ключа текущей свечи в Redis. |
-| `INGEST_LOOP_INTERVAL_SEC` | Пауза главного цикла воркера (сек, float); потолок частоты POST текущей свечи и flush. |
-
-Пример фрагмента `bot/proxy.env`:
+Example `bot/proxy.env` fragment:
 
 ```env
 INGEST_CURRENT_CANDLE_ENABLE=1
 INGEST_CURRENT_CANDLE_TTL_SEC=180
 INGEST_CURRENT_CANDLE_POST_DEBOUNCE_SEC=0.25
 INGEST_LOOP_INTERVAL_SEC=0.25
+INGEST_CURRENT_CANDLE_REDIS_DIRECT=1
 ```
 
-### Дашборд
+### Dashboard
 
-Страница графиков опрашивает API свечей с интервалом **около 1 с** (см. `resources/views/dashboard.blade.php`, автообновление после выбора инструмента). Это добавляет до ~1 с задержки между обновлением Redis и отображением в браузере.
+Charts also poll candle APIs (~1 s) when not fully on the live hub; that can add up to ~1 s after Redis updates. Prefer `/chart-live` (hub on :8765) for the lowest latency path.
 
 ---
 
-## Если данные не попадают в БД
+## If data never reaches the DB
 
-1. **Порт платформы**  
-   `PLATFORM_URL` должен указывать на тот же хост и порт, на которых реально отвечает приложение (Laravel). Например, при `php artisan serve` это обычно `http://127.0.0.1:8000`, при nginx на 8080 — `http://127.0.0.1:8080`. Проверка с той же машины, где крутится прокси:
+1. **Platform URL / port**  
+   `PLATFORM_URL` must match the host:port that actually serves Laravel (`:8000` for `artisan serve`, `:8080` for nginx). From the proxy host:
+
    ```bash
-   curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:ПОРТ/api/proxy/instruments"
+   curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:PORT/api/proxy/instruments"
    ```
-   Ожидается 200 и JSON-массив (пустой или с инструментами).
 
-2. **Активные инструменты**  
-   В разделе «Инструменты» должны быть включённые инструменты (`is_active = 1`). Иначе API отдаёт пустой список и воркеры не создаются.
+   Expect HTTP 200 and a JSON array.
 
-3. **Auth для инструментов**  
-   У каждого инструмента в БД (`pocket_instruments`) должны быть заполнены `session_token` и `uid` (в форме инструмента). Эти данные отдаются в API вместе с остальными параметрами инструмента. Без них воркеры не стартуют (в логе прокси будет строка вида `[INGEST] skip ...: no session_token`).
+2. **Active instruments**  
+   At least one instrument with `is_active = 1`. Otherwise the API returns `[]` and no workers start.
 
-4. **Логи прокси**  
-   Запускайте прокси в foreground и смотрите вывод:
-   - `[INGEST] background task started` — инжест включён;
-   - `[INGEST] fetched N instruments` — платформа отдала список;
-   - `[INGEST] started worker for X` — воркер по инструменту X запущен;
-   - `[INGEST] X: sent N candles` — свечи по X отправлены в платформу;
-   - `[INGEST] no instruments` — пустой список (проверить активные инструменты и доступность платформы).
+3. **Auth on instruments**  
+   Each row needs `session_token` and `uid`. Missing auth → log line like `[INGEST] skip …: no session_token`.
+
+4. **Outbound proxies / bandwidth**  
+   If the HTTP proxy pool returns `402` / `bandwidthlimit`, PO connections fail and candles stop until bandwidth is restored. Check proxy provider quota and platform proxy settings.
+
+5. **Proxy logs** (foreground or `storage/logs/proxy.log`):  
+   - `[INGEST] background task started` — ingest on  
+   - `[INGEST] fetched N instruments` — platform list OK  
+   - `[INGEST] started worker for X` — worker up  
+   - `[INGEST] X: sent N candles` — posted to platform  
+   - `[INGEST] no instruments` — empty list or unreachable platform  
 
 ---
 
-## Удаление устаревших свечей (старше 24 часов)
+## Pruning old candles (> 24 hours)
 
-Команда `candles:prune-old` удаляет из таблицы `candles` все записи, у которых `time` (unix-время минуты) старше 24 часов. Она запланирована на **каждый час** в планировщике Laravel.
+`php artisan candles:prune-old` deletes `candles` rows whose minute `time` is older than 24 hours. It is scheduled **hourly** in Laravel’s scheduler.
 
-Запуск вручную:
+Manual run:
+
 ```bash
-cd /path/to/platform
+cd /home/o/platform
 php artisan candles:prune-old
 ```
 
-Чтобы расписание выполнялось автоматически, в cron должен быть вызов планировщика раз в минуту (для пользователя, под которым крутится приложение):
-```bash
-* * * * * cd /home/o/platform && php artisan schedule:run >> /dev/null 2>&1
-```
-Проверка запланированных задач: `php artisan schedule:list`.
+Scheduler must run every minute (cron); see `crontab.example` and [DEPLOYMENT.md](./DEPLOYMENT.md). Check with `php artisan schedule:list`.

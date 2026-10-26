@@ -1,43 +1,50 @@
-# Прокси свечей Pocket Options (Python)
+# Pocket Options candle / order proxy (Python)
 
-Платформа **не** подключается к Pocket Options напрямую. Все данные свечей и активов идут через **отдельный Python-прокси** в папке `../bot/`.
+The Laravel platform does **not** open Pocket Options WebSockets itself. Candles, assets, charts, and place-order traffic go through a **separate Python proxy** under `bot/`.
 
-## Что это
+## What it is
 
-- **Скрипт:** `pocket-options-proxy.py` (FastAPI, порт **3000**).
-- **Роль:** подключается к Pocket Options по **WebSocket** (библиотека `PocketOptionAPI-main`), отдаёт данные по **HTTP API**, чтобы Laravel и n8n не работали с WebSocket и токенами напрямую.
+- **Entry script:** `bot/pocket-options-proxy.py` (FastAPI, port **3000**).  
+- **Role:** one (or many) WebSocket sessions to Pocket Options (`PocketOptionAPI-main`), exposed as **HTTP/WS APIs** so Laravel and tooling never hold raw browser tokens on the public site.  
+- **Production unit:** `deploy/platform-pocket-proxy.service` (see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)).
 
-## Что умеет прокси
+## Main HTTP endpoints
 
-| Метод | URL | Описание |
-|-------|-----|----------|
-| GET | `/api/candles?instrument=...&timeframe=...&sessionToken=...&uid=...` | Свечи по инструменту и таймфрейму (данные с WebSocket). |
-| GET | `/api/assets` | Список активов/категорий. |
-| GET | `/api/chart?instrument=...&timeframe=...` | График свечей в виде PNG. |
-| POST | `/api/chart` | График PNG по переданным данным. |
-| GET | `/health` | Проверка работы прокси. |
+| Method | URL | Purpose |
+|--------|-----|---------|
+| GET | `/api/candles?instrument=&timeframe=&sessionToken=&uid=` | Candles for instrument/timeframe |
+| GET | `/api/assets` | Assets / categories |
+| GET | `/api/chart?…` | Chart as PNG |
+| POST | `/api/chart` | Chart PNG from supplied data |
+| POST | `/api/place-order` | Place order (used by platform trading) |
+| GET | `/health` | Liveness |
 
-Токены (`sessionToken`, `uid`) передаются в запросе к прокси; платформа подставляет их из БД при вызове прокси (см. `.env` → `POCKET_OPTIONS_PROXY_URL`).
-
-## Запуск
-
-Из папки с ботом:
-
-```bash
-cd /home/o/platform/bot
-pip install -r requirements.txt   # один раз
-python pocket-options-proxy.py
-```
-
-Сервер слушает **http://0.0.0.0:3000**. В платформе в `.env` должно быть:
+Tokens (`sessionToken`, `uid`) are passed in the request; Laravel loads them from the DB when calling the proxy. Platform `.env`:
 
 ```env
 POCKET_OPTIONS_PROXY_URL=http://127.0.0.1:3000
 ```
 
-## Зависимости
+## Manual start
 
-- Python 3, FastAPI, uvicorn.
-- Папка `python/PocketOptionAPI-main/` с библиотекой для WebSocket Pocket Options.
+```bash
+cd /home/o/platform/bot
+python3 -m venv .venv          # once
+.venv/bin/pip install -r requirements.txt
+.venv/bin/pip install -r python/PocketOptionAPI-main/requirements.txt
+.venv/bin/python pocket-options-proxy.py
+```
 
-Подробнее: `../bot/README-POCKET-OPTIONS.md`.
+Listens on **http://0.0.0.0:3000**.
+
+With continuous ingest enabled, also set `PLATFORM_URL` (and optional vars in `bot/proxy.env`) — details in [docs/PROXY_INGEST.md](docs/PROXY_INGEST.md).
+
+## Dependencies
+
+- Python 3, FastAPI, uvicorn, and the tree `bot/python/PocketOptionAPI-main/`  
+- Redis when using Redis-direct current-candle / `chart:s5` publish  
+
+## Related
+
+- Continuous ingest + systemd: [docs/PROXY_INGEST.md](docs/PROXY_INGEST.md)  
+- Full host deployment: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)  
